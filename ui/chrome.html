@@ -127,6 +127,16 @@ body.size-compact .folder.open > .kids { border-left: 2px solid var(--line); mar
 body.size-compact #bottom { flex-direction: column; gap: 4px; }
 body.size-compact .agents span { display: none; }
 body.size-compact .agents { position: static; }
+/* icons-only sidebar: pinned tabs tucked into one folder tile that opens a column on hover */
+.pinfolder .mini { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; }
+.pinfolder .mini img, .pinfolder .mini .letter { width: 12px; height: 12px; border-radius: 3px; font-size: 7px; }
+.pinfolder.open { background: var(--active); }
+#pinfly { position: fixed; z-index: 9; display: none; padding: 4px; border-radius: 13px; overflow-y: auto; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg1) 92%, #000); box-shadow: 0 10px 26px rgba(0,0,0,.35); }
+:root.light #pinfly { background: #fbfaf8; }
+#pinfly.open { display: block; }
+#pinfly::-webkit-scrollbar { width: 0; }
+#pinfly .grid { margin-bottom: 0; }
 .ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: .97; box-shadow: 0 10px 28px rgba(0,0,0,.35);
   background: color-mix(in srgb, var(--bg2) 88%, #fff); border-radius: 10px; }
 .dragging-src { opacity: .3; }
@@ -191,6 +201,7 @@ body.pointer #topbar .chip:hover { background: var(--hover); }
 <div id="topbar"></div>
 <div id="empty"></div>
 <div id="menu"></div>
+<div id="pinfly"></div>
 <div id="toast"></div>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -311,6 +322,38 @@ function folderEl(n, section = "pinned") {
   return f;
 }
 
+// The pinned tabs as one tile (icons-only sidebar); hovering it opens them in a column below.
+let flyTimer = 0;
+function pinFolder(tabs) {
+  const f = el("div", "tile pinfolder" + (tabs.some(isActive) ? " active" : "")), mini = el("div", "mini");
+  tabs.slice(0, 4).forEach((t) => mini.append(icon(t)));
+  f.append(mini); f.title = "Pinned";
+  if (tabs.some((t) => t.playing)) f.append(el("div", "audio", "♪"));
+  f.onmouseenter = () => openFly(f);
+  f.onmouseleave = () => closeFly();
+  f.onclick = click(() => ($("#pinfly").classList.contains("open") ? closeFly(true) : openFly(f)));
+  zone(f, { kind: "area", list: "pinned", index: S.pinned.length, payload: { section: "pinned" } });
+  return f;
+}
+function openFly(anchor) {
+  clearTimeout(flyTimer);
+  const fly = $("#pinfly"), r = anchor.getBoundingClientRect();
+  fly.style.left = r.left - 4 + "px"; fly.style.width = r.width + 8 + "px";
+  fly.style.top = r.bottom + 6 + "px"; fly.style.maxHeight = innerHeight - r.bottom - 14 + "px";
+  fly.classList.add("open"); anchor.classList.add("open");
+}
+function closeFly(now) {
+  clearTimeout(flyTimer);
+  flyTimer = setTimeout(() => {
+    $("#pinfly").classList.remove("open");
+    document.querySelectorAll(".pinfolder.open").forEach((n) => n.classList.remove("open"));
+  }, now ? 0 : 250);
+}
+$("#pinfly").onmouseenter = () => clearTimeout(flyTimer);
+$("#pinfly").onmouseleave = () => closeFly();
+// Picking a tab closes it; opening a folder inside it doesn't.
+$("#pinfly").addEventListener("click", (e) => { if (!suppressClick && e.target.closest(".tile, .row:not(.folder-row)")) closeFly(true); });
+
 // ---------- render ----------
 function applyTheme(th) {
   const root = document.documentElement, key = JSON.stringify(th);
@@ -393,22 +436,29 @@ function render(state) {
   const icons = S.layout.pinned_style !== "list";
   const pinnedTabs = icons ? S.pinned.map((n, i) => [n, i]).filter(([n]) => n.type !== "folder") : [];
   const strayFavs = showFavRow ? [] : S.favorites;
+  const pins = el("div");
   if (pinnedTabs.length || strayFavs.length) {
     const grid = el("div", "grid");
     zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { section: "pinned" } });
     strayFavs.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); grid.append(f); });
     pinnedTabs.forEach(([n, i]) => { const f = tile(n, "pinned", i); zone(f, { kind: "tile", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); grid.append(f); });
-    sc.append(grid);
+    pins.append(grid);
   }
   S.pinned.forEach((n, i) => {
-    if (n.type === "folder") return sc.append(folderEl(n, "pinned"));
+    if (n.type === "folder") return pins.append(folderEl(n, "pinned"));
     if (icons) return;
-    const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); sc.append(r);
+    const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); pins.append(r);
   });
   if (!S.pinned.length && O.pinned_hint) {
     const e = el("div", "empty-pinned", "Drag here to pin");
-    zone(e, { kind: "area", list: "pinned", index: 0, payload: { section: "pinned" } }); sc.append(e);
+    zone(e, { kind: "area", list: "pinned", index: 0, payload: { section: "pinned" } }); pins.append(e);
   }
+  const fly = $("#pinfly"); fly.replaceChildren();
+  if (S.layout.sidebar_size === "compact" && O.compact_pinned !== "icons" && (S.pinned.length || strayFavs.length)) {
+    const f = pinFolder([...strayFavs, ...flat(S.pinned)]);
+    sc.append(f); fly.append(...pins.childNodes);
+    if (fly.classList.contains("open")) openFly(f);
+  } else { sc.append(...pins.childNodes); fly.classList.remove("open"); }
   if (O.kept_section !== false) {
     const kept = el("div", "kept" + (S.kept.length ? "" : " empty"));
     zone(kept, { kind: "area", list: "kept", index: S.kept.length, payload: { section: "kept" } });
@@ -586,8 +636,8 @@ addEventListener("keydown", (e) => {
 
 // Hover effects only while the pointer is over the sidebar: it can't see the pointer leave onto a page.
 addEventListener("mousemove", () => document.body.classList.add("pointer"), { passive: true });
-document.documentElement.addEventListener("mouseleave", () => document.body.classList.remove("pointer"));
-function pointerOut() { if (!resizing && !(drag && drag.active)) document.body.classList.remove("pointer"); }
+document.documentElement.addEventListener("mouseleave", () => { document.body.classList.remove("pointer"); closeFly(); });
+function pointerOut() { if (!resizing && !(drag && drag.active)) { document.body.classList.remove("pointer"); closeFly(); } }
 
 window.valerie = { render, toast, pointerOut };
 send({ t: "ready" });
