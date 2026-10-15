@@ -46,7 +46,9 @@ the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`),
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).
 - UI is plain HTML/JS in `ui/`; `VALERIE_UI_DIR=ui cargo run` reloads it from disk.
 - Run test instances with `VALERIE_CONFIG_DIR`/`VALERIE_DATA_DIR` pointing at a temp dir and a non-default
-  `mcp.port` (e.g. 7790) so you never touch the owner's real browser. Drive them through the MCP server
+  `mcp.port` (e.g. 7790) so you never touch the owner's real browser. Also give the test config its own profiles
+  and spaces (e.g. `profiles: [{ name: Test }]`, `spaces: [{ name: Test, profile: Test }]`): cookies and site
+  storage are keyed by profile name, so a test using "Personal" reads and writes the owner's real logins. Drive them through the MCP server
   (token in `$VALERIE_DATA_DIR/mcp-token`); the `screenshot` tool shows a page.
 - The agent shell can't capture the screen. Check UI changes by loading `ui/*.html` in Playwright with a stubbed
   `window.ipc` and mock state.
