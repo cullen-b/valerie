@@ -308,7 +308,7 @@ impl App {
         });
         let css: serde_json::Map<String, Value> =
             self.boosts.iter().filter(|b| !b.css.is_empty()).map(|b| (b.host.clone(), json!(b.css))).collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links })
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints })
     }
 
     fn content_script(&self) -> String {
@@ -1271,7 +1271,9 @@ impl App {
         platform::fade_in(&view, self.anim_secs());
         let _ = view.focus();
         self.peek = Some(PeekView { view, url: url.to_string() });
-        let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
+        if self.config.escape_hints {
+            let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
+        }
     }
 
     fn close_peek(&mut self) {

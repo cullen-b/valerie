@@ -50,6 +50,8 @@ sidebar:
   space_switcher: true     # the space icons at the bottom
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
+escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
+                           # "press Esc to exit full screen" banner, whatever this is set to.
 
 command_bar:
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom

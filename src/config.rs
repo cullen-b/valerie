@@ -16,6 +16,7 @@ pub struct Config {
     pub layout: Layout,
     pub sidebar: SidebarConfig,
     pub start_page: String,
+    pub escape_hints: bool,
     pub command_bar: CommandBarConfig,
     pub links: LinksConfig,
     pub tabs: TabsConfig,

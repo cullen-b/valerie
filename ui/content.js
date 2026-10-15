@@ -164,7 +164,7 @@ function run(action) {
       case "bottom": { const s = scroller(); return s.scrollTo({ top: s.scrollHeight, behavior: "instant" }); }
       case "hints": return startHints(false);
       case "hints_new_tab": return startHints(true);
-      case "insert": mode = "insert"; return toast("-- INSERT -- (esc to leave)");
+      case "insert": mode = "insert"; return toast(cfg.escape_hints ? "-- INSERT -- (esc to leave)" : "-- INSERT --");
       case "find": return openFind();
     }
   }

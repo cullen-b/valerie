@@ -13,6 +13,11 @@ add a setting so anyone can switch it back on or off:
   allowed values (`true | false`, or "one of: a | b | c").
 - Add the field to the matching struct in `src/config.rs` and read it where the feature lives.
 
+## Never nag
+
+No "press Esc to exit full screen" banners, ever, and no "esc to …" reminders unless `escape_hints` is on. The owner
+finds them maddening.
+
 ## Keep the settings file readable for people and LLMs
 
 `config/default.yaml` is the reference for every option; users mostly edit their own small
