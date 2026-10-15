@@ -45,6 +45,16 @@ House rules from the owner:
 - Keep `config.yaml` readable: group related keys, add a short comment for anything non-obvious.
 - Never add "press Esc to …" style messages.
 
+## Common recipes
+
+- **Add a site to Tab-to-search** (type its name in the command bar, press Tab, search it): add one entry under
+  `site_search` in `config.yaml`, e.g. `Notion: {{ keywords: [notion], url: "https://www.notion.so/search?q=%s" }}`.
+  `%s` is where the search goes. Remove a built-in one with `Reddit: null`.
+- **Add a shortcut**: an entry under `keybindings`, e.g. `"CmdOrCtrl+Shift+G": {{ cmd: new_tab, url: "https://github.com" }}`.
+- **Send a site to a space**: an entry in `routes` (this list replaces the default list, so copy the existing routes).
+- **Restyle a site**: a CSS file in `boosts/<host>.css`.
+- **Anything with logic** (several steps, page scripts, local programs): a plugin in `plugins/<name>/`.
+
 ## Settings
 
 All options live in `reference/default-config.yaml` (also `"{exe}" default-config`). Read it before editing: every

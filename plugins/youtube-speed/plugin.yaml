@@ -16,6 +16,7 @@ settings:
   remember: true           # keep your speed for the next video
   display: hover           # speed badge on the video. one of: hover | always | flash (only when it changes) | never
   shift_scroll: true       # Shift + scroll over the video changes the speed
+  preserve_pitch: true     # keep voices at normal pitch when sped up; if the sound drops out at some speeds, try false
 
 commands:
   - title: "Video: faster"

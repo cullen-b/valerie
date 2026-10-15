@@ -66,6 +66,9 @@ pub struct Space {
     pub name: String,
     #[serde(default)]
     pub pinned: Vec<Node>,
+    /// "Kept" tabs: a list under the pinned icons that stays until you remove it (never auto-archived).
+    #[serde(default)]
+    pub kept: Vec<Node>,
     #[serde(default)]
     pub today: Vec<TabId>,
     #[serde(default)]
@@ -132,6 +135,9 @@ pub struct State {
     /// Origins where the user chose "Never" save passwords.
     #[serde(default)]
     pub password_never: Vec<String>,
+    /// Sidebar width the user dragged to (overrides layout.sidebar_size until they pick a size again).
+    #[serde(default)]
+    pub sidebar_width: Option<f64>,
     #[serde(default)]
     pub favorites_modified: u64,
     #[serde(default)]
@@ -237,6 +243,7 @@ impl State {
         let mut live: Vec<TabId> = self.favorites.clone();
         for s in &self.spaces {
             walk(&s.pinned, &mut live, false);
+            walk(&s.kept, &mut live, false);
             live.extend(&s.today);
         }
         self.tabs.retain(|id, _| live.contains(id));
@@ -258,21 +265,53 @@ impl State {
         self.space().active.filter(|t| self.tabs.contains_key(t))
     }
 
-    /// Tabs in sidebar order for one space: pinned (inside open folders) then today.
+    /// Tabs in sidebar order for one space: pinned, kept (inside open folders), then today.
     pub fn order(&self, space: usize, only_open: bool) -> Vec<TabId> {
         let s = &self.spaces[space];
         let mut v = Vec::new();
         walk(&s.pinned, &mut v, only_open);
+        walk(&s.kept, &mut v, only_open);
         v.extend(&s.today);
         v
     }
 
+    /// Pinned or kept: tabs that stay in the sidebar until you remove them (closing only unloads them).
     pub fn is_pinned(&self, tab: TabId) -> bool {
-        self.spaces.iter().any(|s| {
-            let mut v = Vec::new();
-            walk(&s.pinned, &mut v, false);
-            v.contains(&tab)
+        self.section_of(tab).is_some_and(|s| s == "pinned" || s == "kept")
+    }
+
+    /// Which part of the sidebar holds a tab: "favorites", "pinned", "kept" or "today".
+    pub fn section_of(&self, tab: TabId) -> Option<&'static str> {
+        if self.favorites.contains(&tab) {
+            return Some("favorites");
+        }
+        self.spaces.iter().find_map(|s| {
+            let (mut p, mut k) = (Vec::new(), Vec::new());
+            walk(&s.pinned, &mut p, false);
+            walk(&s.kept, &mut k, false);
+            if p.contains(&tab) {
+                Some("pinned")
+            } else if k.contains(&tab) {
+                Some("kept")
+            } else if s.today.contains(&tab) {
+                Some("today")
+            } else {
+                None
+            }
         })
+    }
+
+    /// A folder in either the pinned or kept section of any space.
+    pub fn folder_mut(&mut self, folder: TabId) -> Option<&mut Node> {
+        for s in &mut self.spaces {
+            if let Some(f) = find_folder(&mut s.pinned, folder) {
+                return Some(f);
+            }
+            if let Some(f) = find_folder(&mut s.kept, folder) {
+                return Some(f);
+            }
+        }
+        None
     }
 
     /// The space that owns a tab. Favorites belong to no space.
@@ -300,6 +339,7 @@ impl State {
         self.favorites.retain(|t| *t != tab);
         for s in &mut self.spaces {
             remove_from(&mut s.pinned, tab);
+            remove_from(&mut s.kept, tab);
             s.today.retain(|t| *t != tab);
             s.split.retain(|t| *t != tab);
             if s.active == Some(tab) {
@@ -362,6 +402,10 @@ impl State {
         for s in &mut self.spaces {
             if let Some(Node::Folder { children, .. }) = take_folder(&mut s.pinned, folder) {
                 s.pinned.extend(children);
+                return;
+            }
+            if let Some(Node::Folder { children, .. }) = take_folder(&mut s.kept, folder) {
+                s.kept.extend(children);
                 return;
             }
         }
@@ -500,6 +544,14 @@ impl State {
             .collect()
     }
 
+    /// Pinned and kept together, for change detection (an edit to either counts as an edit to the space).
+    fn space_hash(&self, i: usize) -> String {
+        let s = &self.spaces[i];
+        let mut t = self.sync_tree(&s.pinned);
+        t.push(SyncNode::Folder { name: "\u{1}kept".into(), children: self.sync_tree(&s.kept) });
+        tree_hash(&t)
+    }
+
     pub fn favorites_tree(&self) -> Vec<SyncNode> {
         self.favorites.iter().filter_map(|id| self.sync_tab(*id)).collect()
     }
@@ -509,6 +561,7 @@ impl State {
         let mut pinned_ids = self.favorites.clone();
         for s in &self.spaces {
             walk(&s.pinned, &mut pinned_ids, false);
+            walk(&s.kept, &mut pinned_ids, false);
         }
         for id in pinned_ids {
             if let Some(t) = self.tabs.get_mut(&id) {
@@ -519,7 +572,7 @@ impl State {
         }
         let mut changed = false;
         for i in 0..self.spaces.len() {
-            let h = tree_hash(&self.sync_tree(&self.spaces[i].pinned));
+            let h = self.space_hash(i);
             let s = &mut self.spaces[i];
             match &s.pinned_hash {
                 Some(old) if *old == h => {}
@@ -616,11 +669,14 @@ impl State {
             if best.modified <= self.spaces[idx].pinned_modified {
                 continue;
             }
-            let old = std::mem::take(&mut self.spaces[idx].pinned);
+            let mut old = std::mem::take(&mut self.spaces[idx].pinned);
+            old.extend(std::mem::take(&mut self.spaces[idx].kept));
             let (mut pool, folders) = self.pool_of(&old);
-            let nodes = self.adopt(&best.tree, &mut pool, &folders);
-            self.spaces[idx].pinned = nodes;
-            let h = tree_hash(&self.sync_tree(&self.spaces[idx].pinned));
+            let pinned = self.adopt(&best.tree, &mut pool, &folders);
+            let kept = self.adopt(&best.kept, &mut pool, &folders);
+            self.spaces[idx].pinned = pinned;
+            self.spaces[idx].kept = kept;
+            let h = self.space_hash(idx);
             let s = &mut self.spaces[idx];
             s.pinned_hash = Some(h);
             s.pinned_modified = best.modified;
@@ -688,6 +744,7 @@ mod tests {
             pinned: vec![],
             tabs: vec![],
             tree: urls.iter().map(|u| SyncNode::Tab { title: String::new(), url: u.to_string(), custom_title: None }).collect(),
+            kept: vec![],
             modified,
         }
     }

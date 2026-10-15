@@ -1,7 +1,7 @@
 // YouTube speed control. Runs on matching pages with `settings` from plugin.yaml.
 if (window.__valerieSpeed) return;
 const S = Object.assign({ faster_key: "+", slower_key: "-", reset_key: "*", step: 0.25, min_speed: 0.25, max_speed: 16,
-  remember: true, display: "hover", shift_scroll: true }, settings || {});
+  remember: true, display: "hover", shift_scroll: true, preserve_pitch: true }, settings || {});
 const STORE = "valerie-video-speed";
 let rate = (S.remember && parseFloat(localStorage.getItem(STORE))) || 1;
 let ourChangeUntil = 0, loadedAt = 0, badge = null, flashTimer = 0, wheelAcc = 0;
@@ -9,12 +9,24 @@ let ourChangeUntil = 0, loadedAt = 0, badge = null, flashTimer = 0, wheelAcc = 0
 const label = (r) => (Number.isInteger(r) ? r.toFixed(1) : String(r)) + "×";
 const videos = () => [...document.querySelectorAll("video")];
 
+// YouTube's own player API keeps its audio pipeline in step (it's what YouTube's speed menu uses). It covers its
+// listed speeds (0.25×–2×); faster than that we set the video element directly.
+function player() { const p = document.getElementById("movie_player"); return p && p.setPlaybackRate && p.getAvailablePlaybackRates ? p : null; }
 function setRate(r, show = true) {
   rate = Math.round(Math.min(S.max_speed, Math.max(S.min_speed, r)) * 100) / 100;
   ourChangeUntil = performance.now() + 300;
+  const p = player(), wasMuted = p && p.isMuted ? p.isMuted() : null;
+  const viaPlayer = p && p.getAvailablePlaybackRates().some((x) => Math.abs(x - rate) < 0.001);
+  if (viaPlayer) try { p.setPlaybackRate(rate); } catch (_) {}
   for (const v of videos()) {
+    const muted = v.muted, volume = v.volume;
+    v.preservesPitch = S.preserve_pitch !== false;
     if (Math.abs(v.playbackRate - rate) > 0.001) try { v.playbackRate = rate; } catch (_) { /* above this browser's limit */ }
+    // Never let a speed change silence the video.
+    if (!muted && v.muted) v.muted = false;
+    if (v.volume !== volume) v.volume = volume;
   }
+  if (p && wasMuted === false && p.isMuted && p.isMuted()) try { p.unMute(); } catch (_) {}
   if (S.remember) try { localStorage.setItem(STORE, String(rate)); } catch (_) {}
   render(show);
   return label(rate);

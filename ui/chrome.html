@@ -96,6 +96,37 @@ img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .agents { position: absolute; left: 4px; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
 .agents i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 /* drag and drop */
+/* kept section: a list under the pinned icons */
+.kept { margin-top: 2px; }
+.kept.empty { display: none; }
+body.dragging .kept.empty { display: block; }
+.kept-hint { color: var(--fg-dim); font-size: 11.5px; padding: 9px 10px; border-radius: 10px; border: 1.5px dashed var(--line); text-align: center; margin: 4px 0; }
+.ficon { width: 16px; text-align: center; font-size: 12px; flex: none; }
+.folder > .row .chev { display: none; }
+/* resize handle on the sidebar's inner edge */
+#resize { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
+body.left #resize { right: 0; }
+body.right #resize { left: 0; }
+#resize:hover, body.resizing #resize { background: linear-gradient(90deg, transparent 2px, color-mix(in srgb, var(--accent) 55%, transparent) 2px, transparent 5px); }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
+/* medium: icon + domain; tiles three across */
+body.size-medium .grid { grid-template-columns: repeat(3, 1fr); }
+body.size-medium #url .path { display: none; }
+/* compact: icons only, one column */
+body.size-compact #sidebar { padding: 0 6px 8px; }
+body.size-compact .drag { padding-left: 0; justify-content: center; }
+body.size-compact .navbtn, body.size-compact #url, body.size-compact .space-title, body.size-compact .divider span,
+body.size-compact .row .title, body.size-compact .row .x, body.size-compact .row .audio, body.size-compact .kept-hint,
+body.size-compact .empty-pinned { display: none; }
+body.size-compact .grid { grid-template-columns: 1fr; gap: 6px; }
+body.size-compact .tile { height: 40px; }
+body.size-compact .row { justify-content: center; padding: 0; gap: 0; }
+body.size-compact .row img.ico, body.size-compact .row .letter { width: 18px; height: 18px; }
+body.size-compact .folder .kids { padding-left: 0; }
+body.size-compact .folder.open > .kids { border-left: 2px solid var(--line); margin-left: 4px; }
+body.size-compact #bottom { flex-direction: column; gap: 4px; }
+body.size-compact .agents span { display: none; }
+body.size-compact .agents { position: static; }
 .ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: .97; box-shadow: 0 10px 28px rgba(0,0,0,.35);
   background: color-mix(in srgb, var(--bg2) 88%, #fff); border-radius: 10px; }
 .dragging-src { opacity: .3; }
@@ -155,6 +186,7 @@ body.top #topbar { display: flex; }
   <div id="favorites" class="grid"></div>
   <div id="scroll"></div>
   <div id="bottom"></div>
+  <div id="resize" title="Drag to resize · double-click to cycle sizes"></div>
 </div>
 <div id="topbar"></div>
 <div id="empty"></div>
@@ -248,7 +280,8 @@ function tabRow(t, list, index) {
   r.classList.toggle("split", S.split.length > 1 && S.split.includes(t.id));
   r.classList.toggle("unloaded", !t.loaded);
   r.classList.toggle("loading", !!t.loading);
-  r.append(icon(t), el("div", "title", t.title || host(t.url) || "New Tab"));
+  const medium = S.layout.sidebar_size === "medium";
+  r.append(icon(t), el("div", "title", medium ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab"));
   if (t.playing) r.append(el("div", "audio", "♪"));
   const x = el("div", "x", "×"); x.title = t.pinned ? "Unload" : "Close";
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
@@ -260,17 +293,19 @@ function tabRow(t, list, index) {
   source(r, t.id, list, index);
   return r;
 }
-function folderEl(n) {
+function folderEl(n, section = "pinned") {
   const f = el("div", "folder" + (n.open ? " open" : ""));
   const r = el("div", "row");
-  r.append(el("div", "chev", "▶"), el("div", "title", n.name));
+  r.append(el("div", "chev", "▶"), el("div", "ficon", n.open ? "📂" : "📁"), el("div", "title", n.name));
+  r.title = n.name;
   r.onclick = click(() => cmd({ cmd: "toggle_folder", folder: n.id }));
   r.oncontextmenu = (e) => { e.preventDefault(); folderMenu(e, n); };
-  zone(r, { kind: "into", payload: { pinned: true, folder: n.id } });
+  r.classList.add("folder-row");
+  zone(r, { kind: "into", payload: { section, folder: n.id } });
   const kids = el("div", "kids"), list = "folder:" + n.id;
   n.children.forEach((c, i) => {
-    if (c.type === "folder") return kids.append(folderEl(c));
-    const row = tabRow(c, list, i); zone(row, { kind: "row", list, index: i, payload: { pinned: true, folder: n.id, tab: c.id } }); kids.append(row);
+    if (c.type === "folder") return kids.append(folderEl(c, section));
+    const row = tabRow(c, list, i); zone(row, { kind: "row", list, index: i, payload: { section, folder: n.id, tab: c.id } }); kids.append(row);
   });
   f.append(r, kids);
   return f;
@@ -310,7 +345,8 @@ function render(state) {
   applyTheme(S.theme);
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
-  b.className = (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + (drag && drag.active ? " dragging" : "");
+  b.className = (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
+    (drag && drag.active ? " dragging" : "") + (resizing ? " resizing" : "");
   const hidden = !S.layout.sidebar_visible && !S.peek;
   $("#sidebar").classList.toggle("hidden", hidden);
   const O = S.sidebar;
@@ -352,18 +388,28 @@ function render(state) {
   const pinnedTabs = icons ? S.pinned.map((n, i) => [n, i]).filter(([n]) => n.type !== "folder") : [];
   if (pinnedTabs.length) {
     const grid = el("div", "grid");
-    zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { pinned: true } });
-    pinnedTabs.forEach(([n, i]) => { const f = tile(n, "pinned", i); zone(f, { kind: "tile", list: "pinned", index: i, payload: { pinned: true, tab: n.id } }); grid.append(f); });
+    zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { section: "pinned" } });
+    pinnedTabs.forEach(([n, i]) => { const f = tile(n, "pinned", i); zone(f, { kind: "tile", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); grid.append(f); });
     sc.append(grid);
   }
   S.pinned.forEach((n, i) => {
-    if (n.type === "folder") return sc.append(folderEl(n));
+    if (n.type === "folder") return sc.append(folderEl(n, "pinned"));
     if (icons) return;
-    const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { pinned: true, tab: n.id } }); sc.append(r);
+    const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); sc.append(r);
   });
   if (!S.pinned.length && O.pinned_hint) {
     const e = el("div", "empty-pinned", "Drag tabs here to pin them");
-    zone(e, { kind: "area", list: "pinned", index: 0, payload: { pinned: true } }); sc.append(e);
+    zone(e, { kind: "area", list: "pinned", index: 0, payload: { section: "pinned" } }); sc.append(e);
+  }
+  if (O.kept_section !== false) {
+    const kept = el("div", "kept" + (S.kept.length ? "" : " empty"));
+    zone(kept, { kind: "area", list: "kept", index: S.kept.length, payload: { section: "kept" } });
+    S.kept.forEach((n, i) => {
+      if (n.type === "folder") return kept.append(folderEl(n, "kept"));
+      const r = tabRow(n, "kept", i); zone(r, { kind: "row", list: "kept", index: i, payload: { section: "kept", tab: n.id } }); kept.append(r);
+    });
+    if (!S.kept.length) kept.append(el("div", "kept-hint", "Drop here to keep"));
+    sc.append(kept);
   }
   const div = el("div", "divider");
   if (S.today.length && O.clear_button !== "never") {
@@ -371,15 +417,15 @@ function render(state) {
     clr.onclick = () => cmd({ cmd: "clear_today_tabs" }); div.append(clr);
   } else if (O.today_label) div.append(el("span", null, "Today"));
   sc.append(div);
-  zone(div, { kind: "area", list: "today", index: 0, payload: { pinned: false } });
+  zone(div, { kind: "area", list: "today", index: 0, payload: { section: "today" } });
   if (O.new_tab_button) {
     const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New Tab"));
     nt.onclick = () => cmd({ cmd: "new_tab" }); sc.append(nt);
-    zone(nt, { kind: "area", list: "today", index: 0, payload: { pinned: false } });
+    zone(nt, { kind: "area", list: "today", index: 0, payload: { section: "today" } });
   }
-  S.today.forEach((t, i) => { const r = tabRow(t, "today", i); zone(r, { kind: "row", list: "today", index: i, payload: { pinned: false, tab: t.id } }); sc.append(r); });
+  S.today.forEach((t, i) => { const r = tabRow(t, "today", i); zone(r, { kind: "row", list: "today", index: i, payload: { section: "today", tab: t.id } }); sc.append(r); });
   const tail = el("div"); tail.style.minHeight = "60px"; tail.style.flex = "1";
-  zone(tail, { kind: "area", list: "today", index: S.today.length, payload: { pinned: false } }); sc.append(tail);
+  zone(tail, { kind: "area", list: "today", index: S.today.length, payload: { section: "today" } }); sc.append(tail);
   sc.scrollTop = top;
 
   const bottom = $("#bottom"); bottom.innerHTML = "";
@@ -453,7 +499,8 @@ document.addEventListener("mousedown", (e) => { if (!$("#menu").contains(e.targe
 
 function tabMenu(e, t) {
   const items = [
-    [t.pinned ? "Unpin" : "Pin", () => cmd({ cmd: "toggle_pin", tab: t.id })],
+    t.section === "pinned" ? ["Unpin", () => cmd({ cmd: "toggle_pin", tab: t.id })] : ["Pin", () => cmd({ cmd: "move_tab", tab: t.id, section: "pinned" })],
+    t.section === "kept" ? ["Move to Today", () => cmd({ cmd: "toggle_keep", tab: t.id })] : ["Keep", () => cmd({ cmd: "move_tab", tab: t.id, section: "kept" })],
     [S.favorites.some((f) => f.id === t.id) ? "Remove from Favorites" : "Add to Favorites", () => cmd({ cmd: "toggle_favorite", tab: t.id })],
     ["Open in Split View", () => cmd({ cmd: "split_view", tab: t.id })],
     ["Rename…", () => ask("Rename tab", t.title, (n) => cmd({ cmd: "rename_tab", tab: t.id, title: n }))],
@@ -461,7 +508,7 @@ function tabMenu(e, t) {
     "-",
   ];
   S.spaces.forEach((s, i) => { if (i !== S.active_space) items.push(["Move to " + s.name, () => cmd({ cmd: "move_tab", tab: t.id, space: s.name })]); });
-  items.push("-", ["New Folder", () => ask("Folder name", "New Folder", (n) => cmd({ cmd: "new_folder", name: n }))]);
+  items.push("-", ["New Folder", () => ask("Folder name", "New Folder", (n) => cmd({ cmd: "new_folder", name: n, section: t.section === "pinned" ? "pinned" : "kept" }))]);
   items.push([t.pinned ? "Unload Tab" : "Close Tab", () => cmd({ cmd: "close_tab", tab: t.id })]);
   showMenu(e, items);
 }
@@ -503,6 +550,25 @@ $("#sidebar").addEventListener("wheel", (e) => {
   }
   swipe.timer = setTimeout(() => { swipe.acc = 0; springBack(); }, 140);
 }, { passive: true });
+
+// ---------- drag the sidebar's edge to resize (narrow enough and it becomes medium, then icons-only) ----------
+let resizing = false, resizeRaf = 0, resizeW = 0;
+$("#resize").addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault(); resizing = true; document.body.classList.add("resizing");
+});
+// The sidebar webview keeps receiving mouse moves after the press, even over the page.
+addEventListener("mousemove", (e) => {
+  if (!resizing) return;
+  resizeW = S.layout.sidebar_position === "right" ? innerWidth - e.clientX : e.clientX;
+  if (!resizeRaf) resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; send({ t: "resize", width: resizeW }); });
+});
+addEventListener("mouseup", () => {
+  if (!resizing) return;
+  resizing = false; document.body.classList.remove("resizing");
+  send({ t: "resize", width: resizeW || S.layout.sidebar_width, done: true });
+});
+$("#resize").addEventListener("dblclick", () => cmd({ cmd: "cycle_sidebar_size" }));
 
 // Inline text prompt (native JS dialogs are not available in every webview).
 function ask(label, value, done) {

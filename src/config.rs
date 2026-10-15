@@ -18,6 +18,7 @@ pub struct Config {
     pub start_page: String,
     pub escape_hints: bool,
     pub command_bar: CommandBarConfig,
+    pub site_search: BTreeMap<String, Option<SiteSearch>>,
     pub find: FindConfig,
     pub links: LinksConfig,
     pub tabs: TabsConfig,
@@ -40,6 +41,7 @@ pub struct Layout {
     pub tab_bar: TabBar,
     pub sidebar_visible: bool,
     pub sidebar_width: f64,
+    pub sidebar_size: String,
     pub sidebar_position: SidebarPosition,
     pub reveal_sidebar_on_edge: bool,
     pub bezel: f64,
@@ -58,6 +60,7 @@ pub struct SidebarConfig {
     pub url_lock_icon: bool,
     pub space_name: bool,
     pub pinned_hint: bool,
+    pub kept_section: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
     pub clear_button: String,
@@ -83,7 +86,15 @@ pub struct FindConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteSearch {
+    pub keywords: Vec<String>,
+    /// Search URL with `%s` where the query goes.
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandBarConfig {
+    pub site_search: bool,
     pub footer_hints: bool,
     pub empty_hint: bool,
 }
