@@ -110,6 +110,7 @@ function leaveScope() {
 function compute() {
   const raw = q.value.trim(), needle = raw.toLowerCase();
   let out = [];
+  if (D.mode === "prompt") { results = []; sel = 0; return draw(); }
   if (scope) {
     results = raw ? [{ kind: "go", title: raw, sub: "Search " + scope.name, go: scope.url.replace("%s", encodeURIComponent(raw)), icon: "⌕" }] : [];
     sel = 0; return draw();
@@ -204,6 +205,11 @@ q.addEventListener("keydown", (e) => {
   if (k === "Backspace" && scope && !q.value) { e.preventDefault(); return leaveScope(); }
   if (k === "ArrowDown" || (ctl && (k === "n" || k === "j")) || (k === "Tab" && !e.shiftKey)) { e.preventDefault(); sel = Math.min(sel + 1, results.length - 1); mark(); }
   else if (k === "ArrowUp" || (ctl && (k === "p" || k === "k")) || (k === "Tab" && e.shiftKey)) { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(); }
+  else if (k === "Enter" && D.mode === "prompt") {
+    e.preventDefault();
+    const v = q.value.trim();
+    if (v) send({ t: "cmd", cmd: Object.assign({}, D.prompt.then, { [D.prompt.field]: v }) });
+  }
   else if (k === "Enter") { e.preventDefault(); choose(results[sel], e.shiftKey); }
   else if (k === "Escape") { e.preventDefault(); close(); }
 });
@@ -219,7 +225,9 @@ window.palette = {
     else r.style.removeProperty("--bg");
     document.getElementById("foot").style.display = data.options && data.options.footer_hints === false ? "none" : "";
     q.placeholder = data.mode === "current" ? "Edit URL or search…" : "Search or enter URL…";
-    q.value = data.query || "";
+    q.value = data.mode === "prompt" ? data.prompt.value || "" : data.query || "";
+    if (data.mode === "prompt") q.placeholder = data.prompt.label + "…";
+    document.querySelector("#inputrow .glyph").textContent = data.mode === "prompt" ? "✎" : "⌕";
     scope = null; document.body.classList.remove("scoped");
     compute();
     document.body.classList.add("open");

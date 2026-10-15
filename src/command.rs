@@ -113,7 +113,10 @@ pub enum Command {
         tab: Option<TabId>,
     },
     Stop,
-    CopyUrl,
+    CopyUrl {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
     ToggleSidebar,
     ToggleTabBarPosition,
     NextSpace,
@@ -187,6 +190,24 @@ pub enum Command {
         name: String,
     },
     ToggleSiteBlocking,
+    /// Make a pinned / kept / favorite tab's home the page it's on now.
+    SetPinnedUrl {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
+    /// Go back to a pinned / kept / favorite tab's home page.
+    ResetPinnedUrl {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
+    /// Ask for a line of text in the command bar, then run `then` with the text in its `field`.
+    Prompt {
+        label: String,
+        #[serde(default)]
+        value: String,
+        then: serde_json::Value,
+        field: String,
+    },
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
     SetDefaultBrowser,
@@ -252,7 +273,7 @@ impl Command {
                 | Back { tab: None }
                 | Forward { tab: None }
                 | Reload { tab: None }
-                | CopyUrl
+                | CopyUrl { tab: None }
                 | ToggleSidebar
                 | NextSpace
                 | PrevSpace
@@ -321,6 +342,9 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("toggle_favorite", "{ tab? }"),
     ("move_tab", "{ tab, section?: pinned | kept | today, space?, folder?, index?, favorite? }"),
     ("toggle_keep", "{ tab? }"),
+    ("copy_url", "{ tab? }"),
+    ("set_pinned_url", "{ tab? }  (a pinned/kept/favorite tab's home becomes its current page)"),
+    ("reset_pinned_url", "{ tab? }  (go back to the tab's pinned page)"),
     ("rename_tab", "{ tab, title }"),
     ("new_folder", "{ name?, section?: kept | pinned }"),
     ("switch_space", "{ index? | name? }"),

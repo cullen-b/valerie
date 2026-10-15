@@ -980,6 +980,99 @@ impl App {
         self.bar_open = true;
     }
 
+    /// One line of text in the command bar overlay (shown above everything, whatever the sidebar's size).
+    fn open_prompt(&mut self, label: &str, value: &str, then: Value, field: &str) {
+        let data = json!({ "mode": "prompt", "prompt": { "label": label, "value": value, "then": then, "field": field },
+                           "theme": self.theme_for(self.state.active_space), "items": [], "options": self.config.command_bar });
+        let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
+        let _ = self.overlay.set_visible(true);
+        platform::bring_to_front(&self.overlay);
+        let _ = self.overlay.focus();
+        self.bar_open = true;
+    }
+
+    /// A native right-click menu at (x, y) in the main window; each entry runs a command (None = separator).
+    fn popup(&mut self, entries: Vec<Option<(String, Value)>>, x: f64, y: f64) {
+        use muda::ContextMenu;
+        let menu = muda::Menu::new();
+        self.menu_cmds.retain(|k, _| !k.0.starts_with("ctx-"));
+        for (i, e) in entries.into_iter().enumerate() {
+            match e {
+                None => {
+                    let _ = menu.append(&PredefinedMenuItem::separator());
+                }
+                Some((label, cmd)) => {
+                    let Ok(cmd) = serde_json::from_value::<Command>(cmd) else { continue };
+                    let item = MenuItem::with_id(format!("ctx-{i}"), label, true, None);
+                    self.menu_cmds.insert(item.id().clone(), cmd);
+                    let _ = menu.append(&item);
+                }
+            }
+        }
+        let pos: Option<muda::dpi::Position> = Some(muda::dpi::LogicalPosition::new(x, y).into());
+        #[cfg(target_os = "macos")]
+        unsafe {
+            use tao::platform::macos::WindowExtMacOS;
+            menu.show_context_menu_for_nsview(self.window.ns_view() as _, pos);
+        }
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use tao::platform::windows::WindowExtWindows;
+            menu.show_context_menu_for_hwnd(self.window.hwnd(), pos);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use tao::platform::unix::WindowExtUnix;
+            menu.show_context_menu_for_gtk_window(self.window.gtk_window().as_ref(), pos);
+        }
+    }
+
+    fn tab_menu(&mut self, tab: TabId, x: f64, y: f64) {
+        let Some(t) = self.state.tabs.get(&tab).cloned() else { return };
+        let section = self.state.section_of(tab).unwrap_or("today");
+        let keeps = matches!(section, "pinned" | "kept" | "favorites");
+        let mut e: Vec<Option<(String, Value)>> = Vec::new();
+        let item = |label: &str, cmd: Value| Some((label.to_string(), cmd));
+        e.push(if section == "pinned" { item("Unpin", json!({ "cmd": "toggle_pin", "tab": tab })) } else { item("Pin", json!({ "cmd": "move_tab", "tab": tab, "section": "pinned" })) });
+        e.push(if section == "kept" { item("Move to Today", json!({ "cmd": "toggle_keep", "tab": tab })) } else { item("Keep", json!({ "cmd": "move_tab", "tab": tab, "section": "kept" })) });
+        e.push(item(if section == "favorites" { "Remove from Favorites" } else { "Add to Favorites" }, json!({ "cmd": "toggle_favorite", "tab": tab })));
+        if keeps {
+            e.push(None);
+            e.push(item("Set Pinned URL to Current Page", json!({ "cmd": "set_pinned_url", "tab": tab })));
+            if t.pinned_url.as_deref().is_some_and(|h| h != t.url) {
+                e.push(item("Back to Pinned URL", json!({ "cmd": "reset_pinned_url", "tab": tab })));
+            }
+        }
+        e.push(None);
+        e.push(item("Open in Split View", json!({ "cmd": "split_view", "tab": tab })));
+        e.push(item("Rename…", json!({ "cmd": "prompt", "label": "Rename tab", "value": t.display_title(), "then": { "cmd": "rename_tab", "tab": tab }, "field": "title" })));
+        e.push(item("Copy Link", json!({ "cmd": "copy_url", "tab": tab })));
+        let others: Vec<String> = self.state.spaces.iter().enumerate().filter(|(i, _)| *i != self.state.active_space).map(|(_, s)| s.name.clone()).collect();
+        if !others.is_empty() {
+            e.push(None);
+            for name in others {
+                e.push(item(&format!("Move to {name}"), json!({ "cmd": "move_tab", "tab": tab, "space": name })));
+            }
+        }
+        e.push(None);
+        let folder_section = if section == "pinned" { "pinned" } else { "kept" };
+        e.push(item("New Folder…", json!({ "cmd": "prompt", "label": "Folder name", "value": "New Folder", "then": { "cmd": "new_folder", "section": folder_section }, "field": "name" })));
+        e.push(item(if keeps { "Unload Tab" } else { "Close Tab" }, json!({ "cmd": "close_tab", "tab": tab })));
+        self.popup(e, x, y);
+    }
+
+    fn folder_menu(&mut self, folder: TabId, x: f64, y: f64) {
+        let name = match self.state.folder_mut(folder) {
+            Some(Node::Folder { name, .. }) => name.clone(),
+            _ => return,
+        };
+        let e = vec![
+            Some(("Rename…".to_string(), json!({ "cmd": "prompt", "label": "Rename folder", "value": name, "then": { "cmd": "rename_folder", "folder": folder }, "field": "name" }))),
+            Some(("Delete Folder (keep tabs)".to_string(), json!({ "cmd": "delete_folder", "folder": folder }))),
+        ];
+        self.popup(e, x, y);
+    }
+
     fn close_bar(&mut self) {
         if !self.bar_open {
             return;
@@ -1187,7 +1280,7 @@ impl App {
                 Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => 1,
                 Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit | Command::FocusNextPane | Command::ZoomIn
                 | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } => 2,
-                Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl => 3,
+                Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => 3,
                 _ => 0,
             };
             let _ = groups[g].append(&item);
@@ -1700,7 +1793,7 @@ impl App {
                     }
                     return;
                 }
-                Command::CopyUrl => {
+                Command::CopyUrl { tab: None } => {
                     let url = self.peek.as_ref().map(|p| p.url.clone()).unwrap_or_default();
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
                     return self.toast("Copied URL");
@@ -1720,7 +1813,7 @@ impl App {
                     return;
                 }
                 Command::MoveToMainWindow { space } => return self.little_to_main(id, space.clone()),
-                Command::CopyUrl => {
+                Command::CopyUrl { tab: None } => {
                     let url = l.url.clone();
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
                     return self.toast("Copied URL");
@@ -1953,8 +2046,8 @@ impl App {
                     let _ = v.evaluate_script("window.stop()");
                 }
             }
-            Command::CopyUrl => {
-                if let Some(url) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) {
+            Command::CopyUrl { tab } => {
+                if let Some(url) = self.target_tab(tab).and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) {
                     match arboard::Clipboard::new().and_then(|mut c| c.set_text(url)) {
                         Ok(_) => self.toast("Copied URL"),
                         Err(e) => self.toast(&format!("Clipboard error: {e}")),
@@ -2217,6 +2310,20 @@ impl App {
                     send(&p, UserEvent::SiteDataCleared { message: msg, reload: n > 0 });
                 });
             }
+            Command::SetPinnedUrl { tab } => {
+                if let Some(t) = self.target_tab(tab).and_then(|t| self.state.tabs.get_mut(&t)) {
+                    t.pinned_url = Some(t.url.clone());
+                    self.dirty = true;
+                    self.toast("This tab now comes back to this page");
+                }
+            }
+            Command::ResetPinnedUrl { tab } => {
+                let Some(t) = self.target_tab(tab) else { return };
+                if let Some(home) = self.state.tabs.get(&t).and_then(|x| x.pinned_url.clone()) {
+                    self.navigate(t, &home);
+                }
+            }
+            Command::Prompt { label, value, then, field } => self.open_prompt(&label, &value, then, &field),
             Command::ToggleSiteBlocking => {
                 let host = self
                     .state
@@ -2282,6 +2389,20 @@ impl App {
                     self.render();
                     self.refresh_content_config();
                 }
+            }
+            (Source::Chrome, "tab_menu") => {
+                if let Some(tab) = m["tab"].as_u64() {
+                    self.tab_menu(tab, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
+                }
+            }
+            (Source::Chrome, "folder_menu") => {
+                if let Some(f) = m["folder"].as_u64() {
+                    self.folder_menu(f, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
+                }
+            }
+            (Source::Page(Target::Tab(_)), "pointer") => {
+                // The pointer moved onto a page: the sidebar can't tell on its own, so clear its hover states.
+                let _ = self.chrome.evaluate_script("window.valerie && valerie.pointerOut && valerie.pointerOut()");
             }
             (Source::Chrome, "resize") => {
                 let w = m["width"].as_f64().unwrap_or(0.0).clamp(SIDEBAR_COMPACT, 520.0);

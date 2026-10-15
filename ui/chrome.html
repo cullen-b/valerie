@@ -31,15 +31,15 @@ body.left #sidebar { left: 0; }
 .drag { height: 40px; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-left: 76px; }
 body.right .drag { padding-left: 0; justify-content: flex-start; }
 .navbtn { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: var(--fg-dim); font-size: 15px; }
-.navbtn:hover { background: var(--hover); color: var(--fg); }
+body.pointer .navbtn:hover { background: var(--hover); color: var(--fg); }
 .navbtn.off { opacity: .35; pointer-events: none; }
 #url {
   height: 34px; flex: none; border-radius: 10px; background: var(--tile); display: flex; align-items: center;
   padding: 0 11px; gap: 7px; color: var(--fg-dim); font-size: 12.5px; margin-bottom: 10px; overflow: hidden; white-space: nowrap;
 }
-#url:hover { background: var(--active); color: var(--fg); }
+body.pointer #url:hover { background: var(--active); color: var(--fg); }
 #url b { color: var(--fg-dim); font-weight: 500; }
-#url:hover b { color: var(--fg); }
+body.pointer #url:hover b { color: var(--fg); }
 #url .path { opacity: .6; }
 #url .lock { font-size: 10px; opacity: .7; }
 #url .insecure { font-size: 11px; color: #ff9a6b; opacity: .85; }
@@ -48,7 +48,7 @@ body.right .drag { padding-left: 0; justify-content: flex-start; }
 body.dragging #favorites:empty { display: block; height: 46px; border-radius: 11px; border: 1.5px dashed var(--line); }
 body.dragging #favorites:empty::after { content: "Drop here to favorite"; display: grid; place-items: center; height: 100%; color: var(--fg-dim); font-size: 11.5px; }
 .tile { height: 46px; border-radius: 11px; background: var(--tile); display: grid; place-items: center; position: relative; transition: background .12s, transform .12s; }
-.tile:hover { background: var(--active); }
+body.pointer .tile:hover { background: var(--active); }
 .tile.active { background: var(--active); box-shadow: 0 0 0 1.5px var(--accent) inset; }
 .tile img, .tile .letter { width: 20px; height: 20px; }
 .tile.unloaded img, .tile.unloaded .letter { filter: grayscale(.35); opacity: .7; }
@@ -61,15 +61,15 @@ body.dragging #favorites:empty::after { content: "Drop here to favorite"; displa
   height: 34px; border-radius: 9px; display: flex; align-items: center; gap: 9px; padding: 0 6px 0 10px;
   position: relative; color: var(--fg); transition: background .12s;
 }
-.row:hover { background: var(--hover); }
+body.pointer .row:hover { background: var(--hover); }
 .row.active { background: var(--active); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
 :root.light .row.active { box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .row .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .row.unloaded .title { color: var(--fg-dim); }
 .row .x { width: 22px; height: 22px; border-radius: 6px; display: none; place-items: center; color: var(--fg-dim); font-size: 14px; }
-.row:hover .x { display: grid; }
-body.dragging .row:hover .x { display: none; }
-.row .x:hover { background: var(--hover); color: var(--fg); }
+body.pointer .row:hover .x { display: grid; }
+body.pointer.dragging .row:hover .x { display: none; }
+body.pointer .row .x:hover { background: var(--hover); color: var(--fg); }
 .row .audio { font-size: 11px; color: var(--accent); }
 .row.split::after { content: ""; position: absolute; left: 2px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
 img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
@@ -83,15 +83,15 @@ img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .divider { display: flex; align-items: center; margin: 10px 4px 6px; color: var(--fg-dim); font-size: 11px; min-height: 14px; }
 .divider span { padding: 0 8px; white-space: nowrap; }
 .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
-.divider span:hover { color: var(--fg); }
+body.pointer .divider span:hover { color: var(--fg); }
 .divider .hover { max-width: 0; padding: 0; opacity: 0; overflow: hidden; transition: opacity .15s, max-width .15s, padding .15s; }
-.divider:hover .hover { max-width: 80px; padding: 0 8px; opacity: 1; }
+body.pointer .divider:hover .hover { max-width: 80px; padding: 0 8px; opacity: 1; }
 .newtab { color: var(--fg-dim); }
 .newtab .plus { width: 16px; text-align: center; font-size: 16px; }
 .empty-pinned { color: var(--fg-dim); font-size: 11.5px; padding: 10px; border-radius: 10px; border: 1.5px dashed var(--line); text-align: center; margin-bottom: 4px; }
 #bottom { flex: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding-top: 8px; position: relative; }
 .sp { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--fg-dim); font-size: 13px; transition: background .15s, color .15s; }
-.sp:hover { background: var(--hover); color: var(--fg); }
+body.pointer .sp:hover { background: var(--hover); color: var(--fg); }
 .sp.active { color: var(--fg); background: var(--hover); }
 .agents { position: absolute; left: 4px; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
 .agents i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
@@ -107,7 +107,7 @@ body.dragging .kept.empty { display: block; }
 #resize { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
 body.left #resize { right: 0; }
 body.right #resize { left: 0; }
-#resize:hover, body.resizing #resize { background: linear-gradient(90deg, transparent 2px, color-mix(in srgb, var(--accent) 55%, transparent) 2px, transparent 5px); }
+body.pointer #resize:hover, body.resizing #resize { background: linear-gradient(90deg, transparent 2px, color-mix(in srgb, var(--accent) 55%, transparent) 2px, transparent 5px); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 /* medium: icon + domain; tiles three across */
 body.size-medium .grid { grid-template-columns: repeat(3, 1fr); }
@@ -144,7 +144,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 }
 :root.light #menu { background: #fbfaf8; }
 #menu div { padding: 6px 10px; border-radius: 6px; }
-#menu div:hover { background: var(--accent); color: #fff; }
+body.pointer #menu div:hover { background: var(--accent); color: #fff; }
 #menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 #toast {
   position: fixed; bottom: 54px; left: 12px; width: calc(var(--sw) - 24px); padding: 9px 12px; border-radius: 10px;
@@ -162,7 +162,7 @@ kbd { font: 12px -apple-system, system-ui; padding: 2px 6px; border-radius: 5px;
 body.top #sidebar { display: none; }
 body.top #topbar { display: flex; }
 #topbar .chip { height: 28px; max-width: 200px; min-width: 40px; border-radius: 8px; display: flex; align-items: center; gap: 7px; padding: 0 9px; }
-#topbar .chip:hover { background: var(--hover); }
+body.pointer #topbar .chip:hover { background: var(--hover); }
 #topbar .chip.active { background: var(--active); }
 #topbar .chip .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #topbar .spc { font-weight: 600; padding: 0 8px; color: var(--accent); }
@@ -186,7 +186,7 @@ body.top #topbar { display: flex; }
   <div id="favorites" class="grid"></div>
   <div id="scroll"></div>
   <div id="bottom"></div>
-  <div id="resize" title="Drag to resize · double-click to cycle sizes"></div>
+  <div id="resize"></div>
 </div>
 <div id="topbar"></div>
 <div id="empty"></div>
@@ -345,7 +345,8 @@ function render(state) {
   applyTheme(S.theme);
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
-  b.className = (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
+  const hadPointer = b.classList.contains("pointer");
+  b.className = (hadPointer ? "pointer " : "") + (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
     (drag && drag.active ? " dragging" : "") + (resizing ? " resizing" : "");
   const hidden = !S.layout.sidebar_visible && !S.peek;
   $("#sidebar").classList.toggle("hidden", hidden);
@@ -380,7 +381,7 @@ function render(state) {
   if (O.space_name) {
     const title = el("div", "space-title");
     title.append(el("span", "icon", sp.icon || "●"), el("span", null, sp.name));
-    title.ondblclick = () => ask("Rename space", sp.name, (n) => cmd({ cmd: "rename_space", name: n }));
+    title.ondblclick = () => prompt_("Rename space", sp.name, { cmd: "rename_space" }, "name");
     sc.append(title);
   }
 
@@ -441,7 +442,7 @@ function render(state) {
   });
   if (O.space_switcher) {
     const add = el("div", "sp", "+"); add.title = "New Space";
-    add.onclick = () => ask("New space name", "", (n) => cmd({ cmd: "new_space", name: n }));
+    add.onclick = () => prompt_("New space name", "", { cmd: "new_space" }, "name");
     bottom.append(add);
   }
 
@@ -497,27 +498,10 @@ function showMenu(e, items) {
 function hideMenu() { $("#menu").style.display = "none"; }
 document.addEventListener("mousedown", (e) => { if (!$("#menu").contains(e.target)) hideMenu(); });
 
-function tabMenu(e, t) {
-  const items = [
-    t.section === "pinned" ? ["Unpin", () => cmd({ cmd: "toggle_pin", tab: t.id })] : ["Pin", () => cmd({ cmd: "move_tab", tab: t.id, section: "pinned" })],
-    t.section === "kept" ? ["Move to Today", () => cmd({ cmd: "toggle_keep", tab: t.id })] : ["Keep", () => cmd({ cmd: "move_tab", tab: t.id, section: "kept" })],
-    [S.favorites.some((f) => f.id === t.id) ? "Remove from Favorites" : "Add to Favorites", () => cmd({ cmd: "toggle_favorite", tab: t.id })],
-    ["Open in Split View", () => cmd({ cmd: "split_view", tab: t.id })],
-    ["Rename…", () => ask("Rename tab", t.title, (n) => cmd({ cmd: "rename_tab", tab: t.id, title: n }))],
-    ["Copy Link", () => { cmd({ cmd: "activate_tab", tab: t.id }); cmd({ cmd: "copy_url" }); }],
-    "-",
-  ];
-  S.spaces.forEach((s, i) => { if (i !== S.active_space) items.push(["Move to " + s.name, () => cmd({ cmd: "move_tab", tab: t.id, space: s.name })]); });
-  items.push("-", ["New Folder", () => ask("Folder name", "New Folder", (n) => cmd({ cmd: "new_folder", name: n, section: t.section === "pinned" ? "pinned" : "kept" }))]);
-  items.push([t.pinned ? "Unload Tab" : "Close Tab", () => cmd({ cmd: "close_tab", tab: t.id })]);
-  showMenu(e, items);
-}
-function folderMenu(e, f) {
-  showMenu(e, [
-    ["Rename…", () => ask("Rename folder", f.name, (n) => cmd({ cmd: "rename_folder", folder: f.id, name: n }))],
-    ["Delete Folder (keep tabs)", () => cmd({ cmd: "delete_folder", folder: f.id })],
-  ]);
-}
+// Right-click menus are native (they float over the page at any sidebar size); Valerie builds them.
+function tabMenu(e, t) { send({ t: "tab_menu", tab: t.id, x: e.clientX, y: e.clientY }); }
+function folderMenu(e, f) { send({ t: "folder_menu", folder: f.id, x: e.clientX, y: e.clientY }); }
+const prompt_ = (label, value, then, field) => cmd({ cmd: "prompt", label, value, then, field });
 
 $("#back").onclick = () => cmd({ cmd: "back" });
 $("#fwd").onclick = () => cmd({ cmd: "forward" });
@@ -570,16 +554,6 @@ addEventListener("mouseup", () => {
 });
 $("#resize").addEventListener("dblclick", () => cmd({ cmd: "cycle_sidebar_size" }));
 
-// Inline text prompt (native JS dialogs are not available in every webview).
-function ask(label, value, done) {
-  const box = el("div", "ask"), inp = el("input");
-  box.append(el("div", null, label), inp); inp.value = value || "";
-  document.body.append(box); inp.focus(); inp.select();
-  const close = () => box.remove();
-  inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) { close(); done(inp.value.trim()); } if (e.key === "Escape") close(); };
-  inp.onblur = close;
-}
-
 let toastTimer;
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
@@ -603,7 +577,12 @@ addEventListener("keydown", (e) => {
   vimBuf = "";
 });
 
-window.valerie = { render, toast };
+// Hover effects only while the pointer is over the sidebar: it can't see the pointer leave onto a page.
+addEventListener("mousemove", () => document.body.classList.add("pointer"), { passive: true });
+document.documentElement.addEventListener("mouseleave", () => document.body.classList.remove("pointer"));
+function pointerOut() { if (!resizing && !(drag && drag.active)) document.body.classList.remove("pointer"); }
+
+window.valerie = { render, toast, pointerOut };
 send({ t: "ready" });
 </script>
 </body>

@@ -643,6 +643,9 @@ const inOurUi = (e) => e.composedPath && e.composedPath().some((n) => n.tagName 
 for (const ev of ["mousedown", "scroll", "blur"]) addEventListener(ev, (e) => { if (linkMenu && !inOurUi(e)) hideLinkMenu(); }, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideLinkMenu(); }, true);
 
+// ---------- the pointer entering a page tells the sidebar to drop its hover states ----------
+if (document.documentElement) document.documentElement.addEventListener("mouseenter", () => post({ t: "pointer" }));
+
 // ---------- tell Valerie when this page gets focus (split view tracks the active pane) ----------
 let focusedAt = 0;
 const reportFocus = (e) => { if (!e.isTrusted || e.timeStamp - focusedAt < 200) return; focusedAt = e.timeStamp; post({ t: "focused" }); };
