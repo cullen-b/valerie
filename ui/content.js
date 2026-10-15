@@ -643,6 +643,12 @@ const inOurUi = (e) => e.composedPath && e.composedPath().some((n) => n.tagName 
 for (const ev of ["mousedown", "scroll", "blur"]) addEventListener(ev, (e) => { if (linkMenu && !inOurUi(e)) hideLinkMenu(); }, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideLinkMenu(); }, true);
 
+// ---------- tell Valerie when this page gets focus (split view tracks the active pane) ----------
+let focusedAt = 0;
+const reportFocus = (e) => { if (!e.isTrusted || e.timeStamp - focusedAt < 200) return; focusedAt = e.timeStamp; post({ t: "focused" }); };
+addEventListener("mousedown", reportFocus, true);
+addEventListener("focus", reportFocus);
+
 // ---------- page metadata for the sidebar ----------
 function favicon() {
   const links = [...document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")];

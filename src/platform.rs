@@ -217,6 +217,34 @@ mod mac {
         }
     }
 
+    /// Opaque CoreGraphics colour, declared so objc2 can check the `^{CGColor=}` encoding.
+    #[repr(C)]
+    pub struct CGColor {
+        _private: [u8; 0],
+    }
+    unsafe impl objc2::encode::RefEncode for CGColor {
+        const ENCODING_REF: objc2::encode::Encoding = objc2::encode::Encoding::Pointer(&objc2::encode::Encoding::Struct("CGColor", &[]));
+    }
+
+    /// A border drawn by the view's layer (follows its rounded corners); width 0 removes it.
+    pub fn set_border(wv: &WebView, width: f64, rgba: [f64; 4]) {
+        use objc2::class;
+        let v = ptr(wv);
+        unsafe {
+            let _: () = msg_send![v, setWantsLayer: true];
+            let layer: *mut AnyObject = msg_send![v, layer];
+            if layer.is_null() {
+                return;
+            }
+            if width > 0.0 {
+                let color: *mut AnyObject = msg_send![class!(NSColor), colorWithSRGBRed: rgba[0], green: rgba[1], blue: rgba[2], alpha: rgba[3]];
+                let cg: *const CGColor = msg_send![color, CGColor];
+                let _: () = msg_send![layer, setBorderColor: cg];
+            }
+            let _: () = msg_send![layer, setBorderWidth: width];
+        }
+    }
+
     pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -357,4 +385,12 @@ pub fn set_default_browser() -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     Err("set Valerie as the default browser in your system settings".into())
+}
+
+/// Outline a webview (the focused split-view pane); width 0 removes the outline.
+pub fn set_border(wv: &WebView, width: f64, rgba: [f64; 4]) {
+    #[cfg(target_os = "macos")]
+    mac::set_border(wv, width, rgba);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, width, rgba);
 }

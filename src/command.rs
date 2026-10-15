@@ -144,6 +144,10 @@ pub enum Command {
     },
     Unsplit,
     FocusNextPane,
+    /// Move focus to the split-view pane on the left/right; outside split view, go back/forward.
+    FocusPane {
+        direction: String,
+    },
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -253,6 +257,7 @@ impl Command {
                 | NextSpace
                 | PrevSpace
                 | FocusNextPane
+                | FocusPane { .. }
                 | ClosePeek
                 | ZoomIn
                 | ZoomOut
@@ -324,6 +329,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("delete_space", "{ name? }"),
     ("set_space_theme", "{ theme }"),
     ("split_view", "{ tab? }"),
+    ("focus_pane", "{ direction: left | right }  (outside split view: back / forward)"),
     ("open_little_window", "{ url }"),
     ("move_to_main_window", "{ space? }"),
     ("peek", "{ url }"),

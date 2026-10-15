@@ -47,6 +47,7 @@ pub struct Layout {
     pub bezel: f64,
     pub corner_radius: f64,
     pub split_gap: f64,
+    pub split_focus: String,
     pub pinned_style: String,
     pub animation_ms: f64,
 }
