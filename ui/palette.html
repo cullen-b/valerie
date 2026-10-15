@@ -73,12 +73,19 @@ function highlight(text, needle) {
   if (i < 0) return esc(text);
   return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + needle.length)) + "</mark>" + esc(text.slice(i + needle.length));
 }
-const KIND_WEIGHT = { password: 3, agent: 2, tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, theme: 5, import: 5 };
-const KIND_LABEL = { password: "Copy Password", agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
+const KIND_WEIGHT = { plugin: 20, customize: 1, password: 3, agent: 2, tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, theme: 5, import: 5 };
+const KIND_LABEL = { plugin: "Plugin", customize: "Customize", password: "Copy Password", agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
 
 function compute() {
   const raw = q.value.trim(), needle = raw.toLowerCase();
   let out = [];
+  // "! change" asks the user's AI assistant to change Valerie itself.
+  if (raw.startsWith("!")) {
+    const req = raw.slice(1).trim();
+    results = [{ kind: "customize", title: req ? "Customize Valerie: " + req : "Describe how Valerie should change…", sub: D.agent, icon: "✎",
+                 cmd: req ? { cmd: "customize", request: req } : null }];
+    sel = 0; return draw();
+  }
   // "> task" hands the task to a headless agent.
   if (raw.startsWith(">")) {
     const task = raw.slice(1).trim();
@@ -103,7 +110,10 @@ function compute() {
   // A strong exact title/host match beats the raw search action.
   if (head.length && out[0] && out[0].s > 120 && D.mode !== "current") out.splice(1, 0, ...head); else out = head.concat(out);
   results = out.slice(0, raw ? 59 : 8);
-  if (raw && !looksLikeUrl(raw)) results.push({ kind: "agent", title: "Ask agent: " + raw, sub: D.agent, icon: "✦", cmd: { cmd: "run_agent", prompt: raw } });
+  if (raw && !looksLikeUrl(raw)) {
+    results.push({ kind: "agent", title: "Ask agent: " + raw, sub: D.agent, icon: "✦", cmd: { cmd: "run_agent", prompt: raw } });
+    results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
+  }
   sel = 0; draw();
 }
 
@@ -137,7 +147,7 @@ function choose(r, newTab) {
   if (!r) return;
   const nt = D.mode === "current" ? !!newTab : true;
   let c;
-  if (r.kind === "agent" && !r.cmd) return;
+  if ((r.kind === "agent" || r.kind === "customize") && !r.cmd) return;
   if (r.kind === "go") c = { cmd: "go", input: r.go, new_tab: nt };
   else if (r.cmd) c = r.cmd;
   else if (r.tab != null) c = { cmd: "activate_tab", tab: r.tab };

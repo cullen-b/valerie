@@ -50,6 +50,8 @@ sidebar:
   space_switcher: true     # the space icons at the bottom
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
+escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
+                           # "press Esc to exit full screen" banner, whatever this is set to.
 
 command_bar:
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
@@ -81,6 +83,7 @@ links:
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
+  copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
   width: 960
   height: 700
 

@@ -4,9 +4,11 @@ mod blocking;
 mod command;
 mod config;
 mod import;
+mod llm_guide;
 mod mcp;
 mod passwords;
 mod platform;
+mod plugins;
 mod routing;
 mod state;
 mod sync;
@@ -22,7 +24,72 @@ USAGE:
   valerie sync-setup      create a private GitHub repo for tab sync (needs the gh CLI)
   valerie import-passwords <csv> [vault]  import a Chrome/Arc/Safari/1Password CSV export into a vault
   valerie default-config  print every config option with its default
+  valerie llm-guide       print the guide that lets an AI assistant customise Valerie
+  valerie check-config    validate config.yaml and every plugin (prints exact errors)
+  valerie call <tool> [json]  call a browser tool, e.g. valerie call list_tabs '{}'  
   valerie paths           show config and data locations";
+
+fn check_config() -> anyhow::Result<()> {
+    let mut problems = Vec::new();
+    match Config::load() {
+        Ok(c) => {
+            for (key, binding) in &c.keybindings {
+                if let Some(b) = binding {
+                    if key.parse::<muda::accelerator::Accelerator>().is_err() {
+                        problems.push(format!("keybindings: {key:?} is not a valid shortcut"));
+                    }
+                    if b.command().is_none() {
+                        problems.push(format!("keybindings: {key:?} has an unknown command {b:?}"));
+                    }
+                }
+            }
+            for s in &c.spaces {
+                if let Some(p) = &s.profile {
+                    if !c.profiles.iter().any(|x| &x.name == p) {
+                        problems.push(format!("spaces: {:?} uses profile {p:?}, which isn't in `profiles`", s.name));
+                    }
+                }
+            }
+            for r in &c.routes {
+                if !c.spaces.iter().any(|s| s.name == r.space) {
+                    problems.push(format!("routes: {:?} sends links to space {:?}, which isn't in `spaces`", r.pattern, r.space));
+                }
+            }
+        }
+        Err(e) => problems.push(format!("config.yaml: {e:#}")),
+    }
+    let (plugins, errors) = plugins::load_all();
+    problems.extend(errors.into_iter().map(|e| format!("plugin {e}")));
+    if problems.is_empty() {
+        println!("OK: config and {} plugin(s) are valid", plugins.len());
+        Ok(())
+    } else {
+        for p in &problems {
+            eprintln!("error: {p}");
+        }
+        std::process::exit(1)
+    }
+}
+
+fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
+    let arguments: serde_json::Value = serde_json::from_str(if args.trim().is_empty() { "{}" } else { args })?;
+    let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": tool, "arguments": arguments } });
+    let (status, body) = mcp::post_local(port, &mcp::load_or_create_token(), &req.to_string())
+        .map_err(|_| anyhow::anyhow!("Valerie isn't running"))?;
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| anyhow::anyhow!("HTTP {status}: {body}"))?;
+    let r = &v["result"];
+    for c in r["content"].as_array().into_iter().flatten() {
+        match c["type"].as_str() {
+            Some("text") => println!("{}", c["text"].as_str().unwrap_or("")),
+            Some("image") => println!("[{} image, {} base64 bytes]", c["mimeType"].as_str().unwrap_or(""), c["data"].as_str().map(str::len).unwrap_or(0)),
+            _ => {}
+        }
+    }
+    if r["isError"].as_bool() == Some(true) || v.get("error").is_some() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -51,6 +118,15 @@ fn main() -> anyhow::Result<()> {
             let n = passwords::import_csv(std::path::Path::new(file), &vault)?;
             println!("Imported {n} passwords into the {vault} vault. Delete the CSV now: it holds your passwords in plain text.");
             return Ok(());
+        }
+        Some("llm-guide") => {
+            print!("{}", llm_guide::guide());
+            return Ok(());
+        }
+        Some("check-config") => return check_config(),
+        Some("call") => {
+            let Some(tool) = args.get(1) else { anyhow::bail!("usage: valerie call <tool> [json]") };
+            return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));
         }
         Some("default-config") => {
             print!("{}", config::DEFAULT_YAML);

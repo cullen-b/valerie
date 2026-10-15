@@ -134,6 +134,18 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 - [x] App icon, CI on macOS/Linux/Windows, release workflow (tag `v*` → Valerie.app zip on GitHub Releases)
 - [x] Per-profile data directories on Windows/Linux
 
+### LLM-customisable browser ✅ (2026-10-15)
+- [x] Generated guide (`AGENTS.md` + `CLAUDE.md`) in the config folder: settings, commands, plugin format, browser API
+- [x] Plugins: `plugins/<name>/plugin.yaml` with commands (action macros, page JS, local scripts), shortcuts,
+      `style.css` / `script.js` for matching sites, page-load hooks; hot-reloaded; Plugins menu + command bar
+- [x] `valerie call <tool> '<json>'` so local code in any language can drive the browser
+- [x] `valerie check-config` validates config and plugins with exact errors (LLMs use it to verify their edits)
+- [x] "Customize Valerie" (`! request` in the command bar) runs the user's own Claude/Codex/OpenCode in the config
+      folder to make the change; tested end to end with OpenCode
+- [ ] Plugin UI surfaces: sidebar panels/widgets, toolbar buttons, settings pages
+- [ ] Share plugins: install from a git URL, a community index
+- [ ] Undo for customisations (snapshot config + plugins before each AI change)
+
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
 - Auto-update from GitHub Releases

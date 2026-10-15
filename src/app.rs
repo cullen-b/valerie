@@ -2,7 +2,7 @@ use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
 use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
 use crate::mcp::McpRequest;
 use crate::state::{find_folder, now, Node, State, Tab};
-use crate::{agents, blocking, import, passwords, platform, routing, sync};
+use crate::{agents, blocking, import, passwords, platform, plugins, routing, sync};
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
@@ -51,6 +51,7 @@ pub enum UserEvent {
     SyncDone(Result<Vec<sync::DeviceTabs>, String>),
     Downloaded { ok: bool },
     AgentDone(agents::Finished),
+    PluginDone { title: String, output: String, result: Result<String, String> },
     /// Blocklist JSON ready to compile (None = unchanged since last compile, so reuse WebKit's cached copy).
     BlocklistBuilt { json: Option<String>, hash: String },
     #[cfg(target_os = "macos")]
@@ -91,6 +92,7 @@ pub struct App {
     agents_running: Vec<String>,
     agent_runs: Vec<agents::Finished>,
     boosts: Vec<Boost>,
+    plugins: Vec<plugins::Plugin>,
     sidebar_peek: bool,
     /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
@@ -258,6 +260,7 @@ impl App {
             agents_running: Vec::new(),
             agent_runs: Vec::new(),
             boosts: load_boosts(),
+            plugins: plugins::load_all().0,
             sidebar_peek: false,
             fill_offers: HashMap::new(),
             pending_save: None,
@@ -308,7 +311,13 @@ impl App {
         });
         let css: serde_json::Map<String, Value> =
             self.boosts.iter().filter(|b| !b.css.is_empty()).map(|b| (b.host.clone(), json!(b.css))).collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links })
+        let plugin_css: Vec<Value> = self
+            .plugins
+            .iter()
+            .filter(|p| p.manifest.enabled && !p.css.is_empty())
+            .map(|p| json!({ "matches": p.manifest.matches, "css": p.css }))
+            .collect();
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints })
     }
 
     fn content_script(&self) -> String {
@@ -321,6 +330,19 @@ impl App {
         let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
         for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
             let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+        }
+        for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
+            if !p.js.is_empty() && plugins::matches(&p.manifest.matches, url) {
+                let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie plugin {}', e) }}", p.js, p.name));
+            }
+            for h in p.manifest.on_page_load.iter().filter(|h| plugins::matches(&h.matches, url)) {
+                let (dir, run, env) = (p.dir.clone(), h.run.clone(), vec![("VALERIE_URL", url.to_string())]);
+                std::thread::spawn(move || {
+                    if let Err(e) = plugins::run_script(&dir, &run, &env) {
+                        eprintln!("valerie: page-load hook in {}: {e:#}", dir.display());
+                    }
+                });
+            }
         }
     }
 
@@ -592,6 +614,7 @@ impl App {
                 "url": l.url, "title": l.title, "theme": self.theme_for(l.space),
                 "space": self.state.spaces.get(l.space).map(|s| s.name.clone()),
                 "picker": self.config.little_window.space_picker && self.state.spaces.len() > 1,
+                "copy_button": self.config.little_window.copy_button,
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -821,6 +844,11 @@ impl App {
             let title = format!("Import from {}{}", &src[..1].to_uppercase(), &src[1..]);
             items.push(json!({ "kind": "import", "title": title, "cmd": { "cmd": "import", "source": src } }));
         }
+        for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
+            for c in &p.manifest.commands {
+                items.push(json!({ "kind": "plugin", "title": c.title, "sub": p.name, "cmd": { "cmd": "plugin", "plugin": p.name, "command": c.title } }));
+            }
+        }
         for name in &self.agents_running {
             items.push(json!({ "kind": "agent", "title": format!("Stop agent: {name}"), "rank": 0, "cmd": { "cmd": "stop_agent", "name": name } }));
         }
@@ -993,6 +1021,11 @@ impl App {
 
     fn reload_config(&mut self) {
         self.boosts = load_boosts();
+        let (plugins, errors) = plugins::load_all();
+        self.plugins = plugins;
+        if let Some(e) = errors.first() {
+            self.toast(&format!("Plugin error: {e}"));
+        }
         match Config::load() {
             Ok(c) => {
                 let blocking_changed = serde_json::to_value(&c.content_blocking).ok() != serde_json::to_value(&self.config.content_blocking).ok();
@@ -1086,12 +1119,24 @@ impl App {
             cmds.insert(item.id().clone(), cmd);
             let _ = groups[3].append(&item);
         }
+        let plugin_menu = Submenu::new("Plugins", true);
+        for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
+            for c in &p.manifest.commands {
+                let acc = c.key.as_deref().and_then(|k| k.parse::<muda::accelerator::Accelerator>().ok());
+                let item = MenuItem::with_id(format!("plugin-{}-{}", p.name, c.title), &c.title, true, acc);
+                cmds.insert(item.id().clone(), Command::Plugin { plugin: p.name.clone(), command: c.title.clone() });
+                let _ = plugin_menu.append(&item);
+            }
+        }
         let window_menu = Submenu::new("Window", true);
         let _ = window_menu.append_items(&[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::fullscreen(None)]);
         let _ = menu.append(&app_menu);
         let _ = menu.append(&edit);
         for g in &groups {
             let _ = menu.append(g);
+        }
+        if plugin_menu.items().len() > 0 {
+            let _ = menu.append(&plugin_menu);
         }
         let _ = menu.append(&window_menu);
         // The menu is also where keyboard shortcuts live, so every platform needs it attached.
@@ -1271,7 +1316,9 @@ impl App {
         platform::fade_in(&view, self.anim_secs());
         let _ = view.focus();
         self.peek = Some(PeekView { view, url: url.to_string() });
-        let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
+        if self.config.escape_hints {
+            let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
+        }
     }
 
     fn close_peek(&mut self) {
@@ -1315,7 +1362,55 @@ impl App {
         }
     }
 
+    fn run_plugin_command(&mut self, plugin: &str, title: &str, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let Some(p) = self.plugins.iter().find(|p| p.name == plugin && p.manifest.enabled) else {
+            return self.toast(&format!("No enabled plugin named {plugin}"));
+        };
+        let Some(c) = p.manifest.commands.iter().find(|c| c.title == title).cloned() else {
+            return self.toast(&format!("{plugin} has no command {title:?}"));
+        };
+        let dir = p.dir.clone();
+        // Macros may only use built-in commands, so a plugin can't loop into itself.
+        for a in c.actions.iter().filter_map(|a| a.command()) {
+            if !matches!(a, Command::Plugin { .. } | Command::Customize { .. }) {
+                self.dispatch(a, elwt);
+            }
+        }
+        let active = self.state.active_tab();
+        if let Some(js) = &c.js {
+            if let Some(v) = active.and_then(|t| self.views.get(&t)) {
+                let p2 = self.proxy.clone();
+                let title2 = c.title.clone();
+                let wrapped = format!("(function(){{try{{var r=(function(){{\n{js}\n}})();return r==null?'':String(r)}}catch(e){{return 'Error: '+e}}}})()");
+                let _ = v.evaluate_script_with_callback(&wrapped, move |s| {
+                    let text = match decode_js(&s) {
+                        Value::String(t) => t,
+                        other => other.to_string(),
+                    };
+                    send(&p2, UserEvent::PluginDone { title: title2.clone(), output: "toast".into(), result: Ok(text) });
+                });
+            }
+        }
+        if let Some(run) = c.run.clone() {
+            let tab = active.and_then(|t| self.state.tabs.get(&t));
+            let env = vec![
+                ("VALERIE_URL", tab.map(|t| t.url.clone()).unwrap_or_default()),
+                ("VALERIE_TITLE", tab.map(|t| t.display_title().to_string()).unwrap_or_default()),
+                ("VALERIE_TAB", active.map(|t| t.to_string()).unwrap_or_default()),
+            ];
+            let p2 = self.proxy.clone();
+            std::thread::spawn(move || {
+                let result = plugins::run_script(&dir, &run, &env).map_err(|e| format!("{e:#}"));
+                send(&p2, UserEvent::PluginDone { title: c.title, output: c.output, result });
+            });
+        }
+    }
+
     fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
+        self.start_agent_with(name, prompt, agent, model, false)
+    }
+
+    fn start_agent_with(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>, customize: bool) {
         if self.agents_running.contains(&name) {
             return self.toast(&format!("{name} is already running"));
         }
@@ -1331,7 +1426,7 @@ impl App {
         self.render();
         let p = self.proxy.clone();
         let model = model.unwrap_or_else(|| self.config.agents.model.clone());
-        let run = agents::Run { name, agent, model, prompt, space };
+        let run = agents::Run { name, agent, model, prompt, space, customize };
         std::thread::spawn(move || send(&p, UserEvent::AgentDone(agents::run(run))));
     }
 
@@ -1919,6 +2014,18 @@ impl App {
                     _ => self.toast("No such agent job"),
                 }
             }
+            Command::Plugin { plugin, command } => {
+                self.close_bar();
+                self.run_plugin_command(&plugin, &command, elwt);
+            }
+            Command::Customize { request } => {
+                self.close_bar();
+                if request.trim().is_empty() {
+                    return;
+                }
+                let short: String = request.chars().take(40).collect();
+                self.start_agent_with(format!("Customize: {short}"), request, None, None, true);
+            }
             Command::StopAgent { name } => {
                 self.close_bar();
                 if agents::stop(&name) {
@@ -2224,6 +2331,10 @@ impl App {
             }
             UserEvent::AgentDone(f) => {
                 self.agents_running.retain(|n| n != &f.name);
+                if f.name.starts_with("Customize") {
+                    self.reload_config();
+                    self.build_menu();
+                }
                 self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, f.name));
                 self.agent_runs.insert(0, f);
                 self.agent_runs.truncate(30);
@@ -2256,6 +2367,18 @@ impl App {
                     self.start_blocklist();
                 }
                 Err(e) => self.toast(&format!("Content blocking failed: {e}")),
+            },
+            UserEvent::PluginDone { title, output, result } => match result {
+                Ok(text) if output == "tab" => {
+                    let enc: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>().replace('+', "%20");
+                    self.open_tab(&format!("data:text/plain;charset=utf-8,{enc}"), None, true);
+                }
+                Ok(text) if output == "toast" && !text.trim().is_empty() => {
+                    let t: String = text.trim().chars().take(200).collect();
+                    self.toast(&t);
+                }
+                Ok(_) => {}
+                Err(e) => self.toast(&format!("{title} failed: {e}")),
             },
             UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
         }
@@ -2437,7 +2560,13 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
         let mtime = || {
             let m = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
             let boosts = std::fs::read_dir(boosts_dir()).into_iter().flatten().flatten().filter_map(|e| m(&e.path()));
-            [m(&path), m(&boosts_dir())].into_iter().flatten().chain(boosts).max()
+            let plugin_dirs: Vec<PathBuf> = std::fs::read_dir(plugins::plugins_dir()).into_iter().flatten().flatten().map(|e| e.path()).collect();
+            let plugin_files: Vec<std::time::SystemTime> = plugin_dirs
+                .iter()
+                .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten().filter_map(|e| m(&e.path())))
+                .chain(plugin_dirs.iter().filter_map(|d| m(d)))
+                .collect();
+            [m(&path), m(&boosts_dir()), m(&plugins::plugins_dir())].into_iter().flatten().chain(boosts).chain(plugin_files).max()
         };
         let mut last = mtime();
         loop {
@@ -2452,6 +2581,7 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
 }
 
 pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
+    crate::llm_guide::install();
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let p = proxy.clone();

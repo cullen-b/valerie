@@ -43,6 +43,20 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 Drag tabs anywhere in the sidebar: onto the pinned tiles to pin, into folders, onto the favorites row, or onto a
 space icon. Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
 
+## Make Valerie yours with AI
+
+Valerie is built to be changed by your AI assistant. Its config folder (`~/.config/valerie/`) holds a generated
+`AGENTS.md` / `CLAUDE.md` that explains every setting, command, plugin format and browser API, so you can open
+Claude Code, Codex or OpenCode there and say "make my browser do X". Or do it from inside the browser: type
+`! hide the URL bar and make ⌃⇧G open GitHub` in the command bar (or pick "Customize Valerie" under any search).
+Your assistant edits the config or writes a plugin, checks it with `valerie check-config`, and Valerie reloads it
+instantly.
+
+**Plugins** are folders in `~/.config/valerie/plugins/` with a readable `plugin.yaml` (see `plugins/_example/`):
+command-bar commands with optional shortcuts that run built-in action macros, JavaScript in the page, or local
+scripts in any language; `style.css` / `script.js` for matching sites; and hooks when pages load. Local code drives
+the browser with `valerie call <tool> '<json>'` (for example `valerie call read_page '{}'`).
+
 ## Headless agents
 
 Your own Claude Code, Codex or OpenCode subscription can drive the browser in the background:

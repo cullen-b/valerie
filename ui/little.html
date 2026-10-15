@@ -52,6 +52,7 @@ window.little = {
     const b = document.createElement("b"); b.textContent = h; t.append(b, document.createTextNode(s.title || ""));
     document.getElementById("open").textContent = "Open in " + (s.space || "Valerie");
     document.getElementById("split").classList.toggle("picker", !!s.picker);
+    document.getElementById("copy").style.display = s.copy_button ? "" : "none";
   },
 };
 send({ t: "ready" });
