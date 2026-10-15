@@ -140,6 +140,14 @@ vim:
     "]s": next_space
     "[s": prev_space
 
+# Ad and tracker blocking: hosts-style lists compiled into WebKit content rules (cached; refreshed weekly).
+content_blocking:
+  enabled: true
+  lists:
+    - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  allow: []                # sites where blocking is off, e.g. ["example.com"] (or use "Toggle Blocking for This Site")
+  refresh_days: 7
+
 # Agents: a Model Context Protocol server built into the browser.
 # Connect with: claude mcp add --transport http valerie http://127.0.0.1:7777/mcp --header "Authorization: Bearer $(cat <data dir>/mcp-token)"
 mcp:

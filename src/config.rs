@@ -24,6 +24,7 @@ pub struct Config {
     pub mcp: McpConfig,
     pub sync: SyncConfig,
     pub agents: AgentsConfig,
+    pub content_blocking: BlockingConfig,
     pub themes: BTreeMap<String, Theme>,
 }
 
@@ -147,6 +148,14 @@ pub struct SyncConfig {
     pub repo: String,
     pub device: String,
     pub interval_minutes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockingConfig {
+    pub enabled: bool,
+    pub lists: Vec<String>,
+    pub allow: Vec<String>,
+    pub refresh_days: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

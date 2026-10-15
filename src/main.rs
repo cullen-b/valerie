@@ -1,5 +1,6 @@
 mod agents;
 mod app;
+mod blocking;
 mod command;
 mod config;
 mod import;

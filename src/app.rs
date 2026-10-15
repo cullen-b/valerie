@@ -2,7 +2,7 @@ use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
 use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
 use crate::mcp::McpRequest;
 use crate::state::{find_folder, now, Node, State, Tab};
-use crate::{agents, import, platform, routing, sync};
+use crate::{agents, blocking, import, platform, routing, sync};
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
@@ -50,6 +50,10 @@ pub enum UserEvent {
     SyncDone(Result<Vec<sync::DeviceTabs>, String>),
     Downloaded { ok: bool },
     AgentDone(agents::Finished),
+    /// Blocklist JSON ready to compile (None = unchanged since last compile, so reuse WebKit's cached copy).
+    BlocklistBuilt { json: Option<String>, hash: String },
+    #[cfg(target_os = "macos")]
+    RulesReady(Result<blocking::mac::RuleList, String>, Option<String>),
 }
 
 struct Little {
@@ -85,6 +89,8 @@ pub struct App {
     agent_runs: Vec<agents::Finished>,
     boosts: Vec<Boost>,
     sidebar_peek: bool,
+    #[cfg(target_os = "macos")]
+    rules: Option<blocking::mac::RuleList>,
     pub quit: bool,
 }
 
@@ -228,6 +234,8 @@ impl App {
             agent_runs: Vec::new(),
             boosts: load_boosts(),
             sidebar_peek: false,
+            #[cfg(target_os = "macos")]
+            rules: None,
             quit: false,
         })
     }
@@ -358,6 +366,10 @@ impl App {
                 }
                 if let Some(z) = self.zoom.get(&tab) {
                     let _ = v.zoom(*z);
+                }
+                #[cfg(target_os = "macos")]
+                if self.rules.is_some() {
+                    blocking::mac::apply(&v, self.rules.as_ref());
                 }
                 self.views.insert(tab, v);
             }
@@ -816,6 +828,10 @@ impl App {
         let (Ok(bar), Ok(view)) = (bar, view) else { return eprintln!("valerie: little window webviews failed") };
         let _ = view.focus();
         window.set_focus();
+        #[cfg(target_os = "macos")]
+        if self.rules.is_some() {
+            blocking::mac::apply(&view, self.rules.as_ref());
+        }
         self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space });
         self.focused_little = Some(id);
     }
@@ -863,6 +879,7 @@ impl App {
         match Config::load() {
             Ok(c) => {
                 let radius_changed = c.layout.corner_radius != self.config.layout.corner_radius;
+                let blocking_changed = serde_json::to_value(&c.content_blocking).ok() != serde_json::to_value(&self.config.content_blocking).ok();
                 self.config = c;
                 self.state.reconcile_spaces(&self.config);
                 if radius_changed {
@@ -871,6 +888,9 @@ impl App {
                     }
                 }
                 self.build_menu();
+                if blocking_changed {
+                    self.start_blocklist();
+                }
                 self.refresh_content_config();
                 self.layout();
                 self.render();
@@ -1017,6 +1037,41 @@ impl App {
         }
         for job in due {
             self.start_agent(job.name, job.prompt, job.agent, job.model);
+        }
+    }
+
+    /// Fetch lists and build rules off the main thread; WebKit compiles them asynchronously afterwards.
+    fn start_blocklist(&mut self) {
+        let cb = self.config.content_blocking.clone();
+        if !cb.enabled {
+            #[cfg(target_os = "macos")]
+            {
+                self.rules = None;
+                self.apply_rules();
+            }
+            return;
+        }
+        let mut allow = cb.allow.clone();
+        allow.extend(self.state.blocking_allow.iter().cloned());
+        let p = self.proxy.clone();
+        std::thread::spawn(move || match blocking::fetch(&cb.lists, cb.refresh_days) {
+            Ok(domains) => {
+                let json = blocking::rules_json(&domains, &allow);
+                let hash = blocking::hash(&json);
+                let unchanged = blocking::stored_hash().as_deref() == Some(hash.as_str());
+                send(&p, UserEvent::BlocklistBuilt { json: (!unchanged).then_some(json), hash });
+            }
+            Err(e) => eprintln!("valerie: content blocking disabled: {e:#}"),
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    fn apply_rules(&self) {
+        for v in self.views.values() {
+            blocking::mac::apply(v, self.rules.as_ref());
+        }
+        for l in self.littles.values() {
+            blocking::mac::apply(&l.view, self.rules.as_ref());
         }
     }
 
@@ -1505,6 +1560,25 @@ impl App {
                     self.open_tab(&format!("data:text/plain;charset=utf-8,{enc}"), None, true);
                 }
             }
+            Command::ToggleSiteBlocking => {
+                let host = self
+                    .state
+                    .active_tab()
+                    .and_then(|t| self.state.tabs.get(&t))
+                    .and_then(|t| url::Url::parse(&t.url).ok())
+                    .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()));
+                let Some(host) = host else { return };
+                let allowed = if let Some(i) = self.state.blocking_allow.iter().position(|h| h == &host) {
+                    self.state.blocking_allow.remove(i);
+                    false
+                } else {
+                    self.state.blocking_allow.push(host.clone());
+                    true
+                };
+                self.dirty = true;
+                self.toast(&format!("Blocking {} for {host}: reload to apply", if allowed { "off" } else { "on" }));
+                self.start_blocklist();
+            }
             Command::FindInPage { query } => {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
                     let _ = v.focus();
@@ -1704,6 +1778,34 @@ impl App {
                 self.agent_runs.truncate(30);
                 self.render();
             }
+            UserEvent::BlocklistBuilt { json, hash } => {
+                #[cfg(target_os = "macos")]
+                {
+                    let p = self.proxy.clone();
+                    match json {
+                        Some(j) => blocking::mac::compile(&j, move |r| send(&p, UserEvent::RulesReady(r, Some(hash)))),
+                        None => blocking::mac::lookup(move |r| send(&p, UserEvent::RulesReady(r, None))),
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (json, hash);
+            }
+            #[cfg(target_os = "macos")]
+            UserEvent::RulesReady(r, hash) => match r {
+                Ok(list) => {
+                    if let Some(h) = hash {
+                        blocking::store_hash(&h);
+                    }
+                    self.rules = Some(list);
+                    self.apply_rules();
+                }
+                Err(_) if hash.is_none() => {
+                    // WebKit's cached copy is gone: forget the hash and compile from scratch.
+                    let _ = std::fs::remove_file(blocking::dir().join("compiled.hash"));
+                    self.start_blocklist();
+                }
+                Err(e) => self.toast(&format!("Content blocking failed: {e}")),
+            },
             UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
         }
     }
@@ -1867,6 +1969,7 @@ impl App {
 
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
         self.build_menu();
+        self.start_blocklist();
         let a = self.state.active_space;
         self.switch_space(a);
         if !urls.is_empty() {

@@ -157,6 +157,7 @@ pub enum Command {
     ShowAgentRun {
         index: usize,
     },
+    ToggleSiteBlocking,
     FindInPage {
         #[serde(default)]
         query: Option<String>,
@@ -237,6 +238,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("dev_tools", "Developer Tools"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
+    ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("open_config", "Open Config File"),
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),

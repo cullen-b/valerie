@@ -117,6 +117,9 @@ pub struct State {
     /// Last run time of each scheduled agent job.
     #[serde(default)]
     pub agent_last: BTreeMap<String, u64>,
+    /// Sites where the user switched content blocking off.
+    #[serde(default)]
+    pub blocking_allow: Vec<String>,
 }
 
 const MAX_HISTORY: usize = 5000;
