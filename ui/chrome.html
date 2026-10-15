@@ -213,11 +213,15 @@ let S = null, prevSpace = null, prevTheme = null, pendingDir = 0, suppressClick 
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function host(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u || ""; } }
+// Favicons that failed to load: show the letter straight away on later renders instead of retrying (it flickers).
+const badIcons = new Set();
 function icon(t, cls = "ico") {
   const letter = () => el("div", "letter", (host(t.url)[0] || "•").toUpperCase());
   const src = t.favicon || (/^https?:/.test(t.url) ? new URL("/favicon.ico", t.url).href : null);
-  if (!src) return letter();
-  const img = el("img", cls); img.src = src; img.draggable = false; img.onerror = () => img.replaceWith(letter()); return img;
+  if (!src || badIcons.has(src)) return letter();
+  const img = el("img", cls); img.src = src; img.draggable = false;
+  img.onerror = () => { badIcons.add(src); img.replaceWith(letter()); };
+  return img;
 }
 const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.includes(S.active));
 const click = (fn) => (e) => { if (!suppressClick) fn(e); };
