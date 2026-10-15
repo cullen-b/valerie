@@ -197,6 +197,7 @@ pub struct VimConfig {
     pub scroll_duration_ms: f64,
     pub hold_to_accelerate: bool,
     pub block_autofocus: bool,
+    pub hold_delay_ms: f64,
     pub hold_scroll_speed: f64,
     pub hold_scroll_acceleration: f64,
     pub hold_scroll_max_speed: f64,
