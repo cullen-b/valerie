@@ -58,6 +58,12 @@ command_bar:
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
 
 
+# Find in page (⌘F or `/`).
+find:
+  minimap: true            # a strip on the right showing the whole page, every match, and where you are
+  highlight_all: true      # highlight every match, not just the current one
+
+
 # --------------------------------------------------------------------------------------------------------------
 # Tabs and windows
 # --------------------------------------------------------------------------------------------------------------

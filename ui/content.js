@@ -35,10 +35,13 @@ function ui() {
     .save p { font-size: 13px; font-weight: 500; line-height: 1.35; margin: 0 0 10px; }
     .save button { all: unset; padding: 6px 11px; margin-right: 6px; border-radius: 7px; background: rgba(255,255,255,.1); color: #fff; font-size: 12px; }
     .save button.primary { background: ${cfg.accent || "#9d8cff"}; }
-    .find { position: fixed; top: 12px; right: 16px; display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 10px;
+    .find { position: fixed; top: 12px; right: 16px; display: flex; gap: 6px; align-items: center; padding: 6px 10px 6px 8px; border-radius: 10px;
             background: rgba(24,24,32,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); pointer-events: auto; }
+    .find.with-map { right: 78px; }
     .find input { all: unset; width: 220px; padding: 4px 6px; color: #fff; font: 13px -apple-system, system-ui; }
-    .find span { color: rgba(255,255,255,.5); font-weight: 400; font-size: 11.5px; }`;
+    .find .count { color: rgba(255,255,255,.5); font-weight: 400; font-size: 11.5px; min-width: 52px; text-align: right; }
+    .minimap { position: fixed; top: 0; right: 0; width: 64px; height: 100vh; background: rgba(18,18,26,.82); pointer-events: auto;
+               box-shadow: -1px 0 0 rgba(255,255,255,.06), -8px 0 24px rgba(0,0,0,.18); cursor: pointer; }`;
   shadow.appendChild(st);
   return shadow;
 }
@@ -255,23 +258,160 @@ function activate(e, newTab) {
   e.click();
 }
 
-// ---------- find ----------
+// ---------- find: every match highlighted, a count, and a minimap of the whole page ----------
+const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0 };
+const canHighlight = typeof Highlight !== "undefined" && typeof CSS !== "undefined" && CSS.highlights;
+function findScroller() { const s = scroller(); return s === document.body ? document.scrollingElement : s; }
+function docY(rect, s) { return s === document.scrollingElement ? rect.top + s.scrollTop : rect.top - s.getBoundingClientRect().top + s.scrollTop; }
+function ensureFindStyle() {
+  if (document.getElementById("__valerie_find_style")) return;
+  const st = document.createElement("style"); st.id = "__valerie_find_style";
+  st.textContent = "::highlight(valerie-find){background-color:rgba(255,206,64,.55);color:inherit}::highlight(valerie-find-current){background-color:#ff9632;color:#000}";
+  (document.head || document.documentElement).appendChild(st);
+}
+function searchPage(q) {
+  const out = [], needle = q.toLowerCase(), s = findScroller();
+  if (!needle || !document.body) return out;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode(n) {
+    const t = n.parentElement && n.parentElement.tagName;
+    return !t || t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEXTAREA" ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+  } });
+  for (let n = walker.nextNode(); n && out.length < 3000; n = walker.nextNode()) {
+    const text = n.data.toLowerCase();
+    for (let i = text.indexOf(needle); i !== -1 && out.length < 3000; i = text.indexOf(needle, i + needle.length)) {
+      const range = document.createRange(); range.setStart(n, i); range.setEnd(n, i + needle.length);
+      const r = range.getBoundingClientRect();
+      if (r.width || r.height) out.push({ range, y: docY(r, s), h: r.height });
+    }
+  }
+  return out;
+}
+function paintHighlights() {
+  if (!canHighlight) {
+    const cur = fnd.items[fnd.cur];
+    const sel = window.getSelection(); sel.removeAllRanges(); if (cur) sel.addRange(cur.range);
+    return;
+  }
+  if (cfg.find && cfg.find.highlight_all === false) CSS.highlights.delete("valerie-find");
+  else CSS.highlights.set("valerie-find", new Highlight(...fnd.items.map((m) => m.range)));
+  const cur = fnd.items[fnd.cur];
+  if (cur) CSS.highlights.set("valerie-find-current", new Highlight(cur.range)); else CSS.highlights.delete("valerie-find-current");
+}
+function goToMatch(i) {
+  const n = fnd.items.length;
+  if (!n) { fnd.cur = -1; fnd.count.textContent = fnd.input.value ? "No results" : ""; paintHighlights(); drawMinimap(); return; }
+  fnd.cur = ((i % n) + n) % n;
+  const m = fnd.items[fnd.cur], s = findScroller();
+  const view = s === document.scrollingElement ? innerHeight : s.clientHeight;
+  if (m.y < s.scrollTop + 40 || m.y + m.h > s.scrollTop + view - 40) {
+    s.scrollTo({ top: Math.max(0, m.y - view / 2), behavior: cfg.vim.smooth_scroll === false ? "instant" : "smooth" });
+  }
+  fnd.count.textContent = (fnd.cur + 1) + " of " + n;
+  paintHighlights(); drawMinimap();
+}
+function runSearch() {
+  fnd.query = fnd.input.value;
+  fnd.items = searchPage(fnd.query);
+  // Start from the first match at or below the top of the screen, like other browsers.
+  const s = findScroller(), top = s.scrollTop;
+  const first = fnd.items.findIndex((m) => m.y >= top);
+  goToMatch(first === -1 ? 0 : first);
+}
+// The minimap: a silhouette of the page's text and images, match marks, and the visible area.
+function buildSilhouette() {
+  if (!fnd.map) return;
+  const s = findScroller(), dpr = devicePixelRatio || 1;
+  const W = fnd.map.clientWidth, H = fnd.map.clientHeight, total = Math.max(s.scrollHeight, 1);
+  fnd.k = Math.min(H / total, 0.25);
+  const kx = W / Math.max(s.scrollWidth || innerWidth, 1);
+  const off = document.createElement("canvas"); off.width = W * dpr; off.height = H * dpr;
+  const g = off.getContext("2d"); g.scale(dpr, dpr);
+  const blocks = document.body ? document.body.querySelectorAll("p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,td,th,dt,dd,img,video,figure,input,button,textarea") : [];
+  let n = 0;
+  for (const el of blocks) {
+    if (++n > 15000) break;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) continue;
+    const y = docY(r, s) * fnd.k, x = (r.left + (s === document.scrollingElement ? s.scrollLeft : 0)) * kx;
+    const media = /^(IMG|VIDEO|FIGURE|SVG)$/i.test(el.tagName), heading = /^H[1-6]$/.test(el.tagName);
+    g.fillStyle = media ? "rgba(255,255,255,.14)" : heading ? "rgba(255,255,255,.55)" : "rgba(255,255,255,.28)";
+    if (media) g.fillRect(x, y, Math.max(r.width * kx, 2), Math.max(r.height * fnd.k, 1));
+    else {
+      // Text reads as lines: one bar per line of the block, like a code minimap.
+      const lineH = Math.max(r.height * fnd.k / Math.max(1, Math.round(r.height / 22)), 0.8);
+      for (let ly = y; ly < y + r.height * fnd.k - 0.2; ly += lineH * 1.6) g.fillRect(x, ly, Math.max(r.width * kx * 0.92, 2), Math.min(lineH, 2));
+    }
+  }
+  fnd.sil = off;
+}
+function drawMinimap() {
+  if (!fnd.map) return;
+  cancelAnimationFrame(fnd.raf);
+  fnd.raf = requestAnimationFrame(() => {
+    const c = fnd.map, dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight, s = findScroller();
+    if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+    const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    if (fnd.sil) g.drawImage(fnd.sil, 0, 0, W, H);
+    const view = s === document.scrollingElement ? innerHeight : s.clientHeight;
+    g.fillStyle = "rgba(255,255,255,.10)"; g.fillRect(0, s.scrollTop * fnd.k, W, Math.max(view * fnd.k, 6));
+    g.strokeStyle = "rgba(255,255,255,.35)"; g.lineWidth = 1; g.strokeRect(0.5, s.scrollTop * fnd.k + 0.5, W - 1, Math.max(view * fnd.k, 6) - 1);
+    // Matches as slim ticks on the right (like an editor's overview ruler) so the page silhouette stays readable.
+    g.fillStyle = "rgba(255,206,64,.85)";
+    for (const m of fnd.items) g.fillRect(W * 0.55, m.y * fnd.k - 0.75, W * 0.45, 1.5);
+    const cur = fnd.items[fnd.cur];
+    if (cur) { g.fillStyle = "#ff9632"; g.fillRect(0, cur.y * fnd.k - 1.5, W, 3); }
+  });
+}
+function minimapScrollTo(e) {
+  const s = findScroller(), r = fnd.map.getBoundingClientRect();
+  const view = s === document.scrollingElement ? innerHeight : s.clientHeight;
+  s.scrollTo({ top: Math.max(0, (e.clientY - r.top) / fnd.k - view / 2), behavior: "instant" });
+}
 function openFind(initial) {
   const root = ui();
-  let bar = root.querySelector(".find");
-  if (!bar) {
-    bar = document.createElement("div"); bar.className = "find";
-    bar.innerHTML = '<input placeholder="Find in page"><span>↵ next · ⇧↵ prev · esc</span>';
-    root.appendChild(bar);
-    const inp = bar.querySelector("input");
-    inp.addEventListener("keydown", (e) => {
+  ensureFindStyle();
+  if (!fnd.bar) {
+    const minimap = !cfg.find || cfg.find.minimap !== false;
+    fnd.bar = document.createElement("div"); fnd.bar.className = "find" + (minimap ? " with-map" : "");
+    fnd.bar.innerHTML = '<input placeholder="Find in page"><span class="count"></span>';
+    fnd.input = fnd.bar.querySelector("input"); fnd.count = fnd.bar.querySelector(".count");
+    root.appendChild(fnd.bar);
+    fnd.input.addEventListener("keydown", (e) => {
       e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); if (inp.value) window.find(inp.value, false, e.shiftKey, true); }
-      if (e.key === "Escape") { bar.remove(); window.getSelection()?.removeAllRanges(); }
+      if (e.key === "Enter") {
+        e.preventDefault(); clearTimeout(fnd.timer);
+        if (fnd.query !== fnd.input.value) runSearch(); else goToMatch(fnd.cur + (e.shiftKey ? -1 : 1));
+      }
+      if (e.key === "Escape") { e.preventDefault(); closeFind(); }
     }, true);
+    fnd.input.addEventListener("input", () => { clearTimeout(fnd.timer); fnd.timer = setTimeout(runSearch, 90); });
+    if (minimap) {
+      fnd.map = document.createElement("canvas"); fnd.map.className = "minimap";
+      root.appendChild(fnd.map);
+      let dragging = false;
+      fnd.map.addEventListener("mousedown", (e) => { dragging = true; minimapScrollTo(e); e.preventDefault(); });
+      addEventListener("mousemove", (e) => { if (dragging) minimapScrollTo(e); }, true);
+      addEventListener("mouseup", () => { dragging = false; }, true);
+      // Draw the page silhouette after the find box is on screen, so typing never waits for it.
+      setTimeout(() => { buildSilhouette(); drawMinimap(); }, 30);
+    }
+    fnd.onScroll = () => drawMinimap();
+    addEventListener("scroll", fnd.onScroll, true);
+    addEventListener("resize", () => { if (fnd.bar) { buildSilhouette(); runSearch(); } });
   }
-  const inp = bar.querySelector("input"); if (initial) inp.value = initial;
-  setTimeout(() => { inp.focus(); inp.select(); }, 0);
+  if (initial) fnd.input.value = initial;
+  if (fnd.input.value) runSearch(); else drawMinimap();
+  setTimeout(() => { fnd.input.focus(); fnd.input.select(); }, 0);
+}
+function closeFind() {
+  if (!fnd.bar) return;
+  fnd.bar.remove(); if (fnd.map) fnd.map.remove();
+  removeEventListener("scroll", fnd.onScroll, true);
+  if (canHighlight) { CSS.highlights.delete("valerie-find"); CSS.highlights.delete("valerie-find-current"); }
+  // Leave the current match selected so ⌘C copies it, like other browsers.
+  const cur = fnd.items[fnd.cur];
+  if (cur) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(cur.range); }
+  Object.assign(fnd, { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, query: "" });
 }
 
 // ---------- key handling ----------
@@ -309,6 +449,8 @@ function run(action) {
 
 window.addEventListener("keydown", (e) => {
   if (!cfg.vim.enabled || e.defaultPrevented && mode !== "hints") return;
+  // Typing in Valerie's own UI (find box, prompts) lives in a closed shadow root the page can't see into.
+  if (mode !== "hints" && inOurUi(e)) return;
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.key === "Escape") {
@@ -554,6 +696,7 @@ new MutationObserver(() => { if (reportedForm || loginTimer) return; loginTimer 
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
+    closeFind,
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
