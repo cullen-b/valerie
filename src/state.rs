@@ -120,6 +120,9 @@ pub struct State {
     /// Sites where the user switched content blocking off.
     #[serde(default)]
     pub blocking_allow: Vec<String>,
+    /// Origins where the user chose "Never" save passwords.
+    #[serde(default)]
+    pub password_never: Vec<String>,
 }
 
 const MAX_HISTORY: usize = 5000;

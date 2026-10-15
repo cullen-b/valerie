@@ -25,6 +25,7 @@ pub struct Config {
     pub sync: SyncConfig,
     pub agents: AgentsConfig,
     pub content_blocking: BlockingConfig,
+    pub passwords: PasswordsConfig,
     pub themes: BTreeMap<String, Theme>,
 }
 
@@ -148,6 +149,18 @@ pub struct SyncConfig {
     pub repo: String,
     pub device: String,
     pub interval_minutes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordsConfig {
+    pub enabled: bool,
+    pub shared: Vec<SharedVault>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedVault {
+    pub name: String,
+    pub profiles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,6 +292,13 @@ impl Config {
     pub fn theme_names(&self) -> Vec<String> {
         let mut v: Vec<String> = PRESETS.iter().map(|p| p.0.to_string()).collect();
         v.extend(self.themes.keys().cloned());
+        v
+    }
+
+    /// Vaults a profile can use: its own first, then shared vaults that include it.
+    pub fn vaults_for(&self, profile: &str) -> Vec<String> {
+        let mut v = vec![profile.to_string()];
+        v.extend(self.passwords.shared.iter().filter(|s| s.profiles.iter().any(|p| p == profile)).map(|s| s.name.clone()));
         v
     }
 

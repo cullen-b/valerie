@@ -2,7 +2,7 @@ use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
 use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
 use crate::mcp::McpRequest;
 use crate::state::{find_folder, now, Node, State, Tab};
-use crate::{agents, blocking, import, platform, routing, sync};
+use crate::{agents, blocking, import, passwords, platform, routing, sync};
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
@@ -89,9 +89,22 @@ pub struct App {
     agent_runs: Vec<agents::Finished>,
     boosts: Vec<Boost>,
     sidebar_peek: bool,
+    /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
+    fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
+    pending_save: Option<PendingSave>,
     #[cfg(target_os = "macos")]
     rules: Option<blocking::mac::RuleList>,
     pub quit: bool,
+}
+
+struct PendingSave {
+    target: Target,
+    origin: String,
+    username: String,
+    password: String,
+    nonce: String,
+    at: u64,
+    reoffered: bool,
 }
 
 /// Per-site CSS/JS from `<config dir>/boosts/<host>.css|.js`; a host also matches its subdomains.
@@ -234,6 +247,8 @@ impl App {
             agent_runs: Vec::new(),
             boosts: load_boosts(),
             sidebar_peek: false,
+            fill_offers: HashMap::new(),
+            pending_save: None,
             #[cfg(target_os = "macos")]
             rules: None,
             quit: false,
@@ -759,6 +774,13 @@ impl App {
             items.push(json!({ "kind": "agent", "title": format!("Agent run: {} ({})", r.name, if r.ok { "ok" } else { "failed" }),
                                "sub": r.summary.replace('\n', " "), "cmd": { "cmd": "show_agent_run", "index": i } }));
         }
+        if self.config.passwords.enabled {
+            for e in passwords::list(&self.config.vaults_for(&self.profile_for(self.state.active_space))) {
+                let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                let cmd = json!({ "cmd": "copy_password", "vault": e.vault, "origin": e.origin, "username": e.username });
+                items.push(json!({ "kind": "password", "title": format!("Password: {host} — {}", e.username), "sub": e.vault, "cmd": cmd }));
+            }
+        }
         for b in &self.state.bookmarks {
             items.push(json!({ "kind": "bookmark", "title": b.title, "url": b.url, "sub": b.folder.join(" / ") }));
         }
@@ -990,6 +1012,124 @@ impl App {
         }
         self.menu_cmds = cmds;
         self._menu = Some(menu);
+    }
+
+    fn view_for(&self, target: Target) -> Option<&WebView> {
+        match target {
+            Target::Tab(id) => self.views.get(&id),
+            Target::Little(id) => self.littles.get(&id).map(|l| &l.view),
+        }
+    }
+
+    fn vaults_for_target(&self, target: Target) -> Vec<String> {
+        let space = match target {
+            Target::Tab(id) => self.state.space_of(id).unwrap_or(self.state.active_space),
+            Target::Little(id) => self.littles.get(&id).map(|l| l.space).unwrap_or(self.state.active_space),
+        };
+        self.config.vaults_for(&self.profile_for(space))
+    }
+
+    /// The page's real origin, read from the webview rather than trusting the page.
+    fn origin_of_target(&self, target: Target) -> Option<String> {
+        self.view_for(target).and_then(|v| v.url().ok()).and_then(|u| passwords::origin_of(&u))
+    }
+
+    fn offer_pending_save(&self) {
+        let Some(p) = &self.pending_save else { return };
+        if now().saturating_sub(p.at) > 120 || self.origin_of_target(p.target).is_none() {
+            return;
+        }
+        let host = url::Url::parse(&p.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        let args = json!([host, p.username, p.nonce, self.vaults_for_target(p.target)]);
+        if let Some(v) = self.view_for(p.target) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.offerSave(...{args})"));
+        }
+    }
+
+    fn handle_password_ipc(&mut self, target: Target, kind: &str, m: &Value) {
+        if !self.config.passwords.enabled {
+            return;
+        }
+        let Some(origin) = self.origin_of_target(target) else { return };
+        match kind {
+            "login_form" => {
+                let entries: Vec<passwords::Entry> =
+                    passwords::list(&self.vaults_for_target(target)).into_iter().filter(|e| e.origin == origin).collect();
+                if entries.is_empty() {
+                    return;
+                }
+                let nonce = crate::mcp::random_hex();
+                let list = json!(entries.iter().map(|e| json!({ "username": e.username, "vault": e.vault })).collect::<Vec<_>>());
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.accounts({list}, {})", json!(nonce)));
+                }
+                self.fill_offers.insert(target, (nonce, entries));
+            }
+            "fill" => {
+                let Some((nonce, entries)) = self.fill_offers.get(&target) else { return };
+                if m["nonce"].as_str() != Some(nonce.as_str()) {
+                    return;
+                }
+                let Some(e) = m["index"].as_u64().and_then(|i| entries.get(i as usize)).filter(|e| e.origin == origin) else { return };
+                match passwords::password(e) {
+                    Ok(Some(pw)) => {
+                        if let Some(v) = self.view_for(target) {
+                            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.fill({}, {})", json!(e.username), json!(pw)));
+                        }
+                    }
+                    Ok(None) => self.toast("That password is no longer in the keychain"),
+                    Err(err) => self.toast(&format!("Keychain: {err}")),
+                }
+            }
+            "credential" => {
+                let (Some(username), Some(password)) = (m["username"].as_str(), m["password"].as_str()) else { return };
+                if password.is_empty() || password.len() > 1024 || self.state.password_never.contains(&origin) {
+                    return;
+                }
+                let vaults = self.vaults_for_target(target);
+                let known = passwords::list(&vaults)
+                    .into_iter()
+                    .filter(|e| e.origin == origin && e.username == username)
+                    .any(|e| passwords::password(&e).ok().flatten().as_deref() == Some(password));
+                if known {
+                    return;
+                }
+                self.pending_save = Some(PendingSave {
+                    target,
+                    origin,
+                    username: username.to_string(),
+                    password: password.to_string(),
+                    nonce: crate::mcp::random_hex(),
+                    at: now(),
+                    reoffered: false,
+                });
+                self.offer_pending_save();
+            }
+            "save_password" | "never_password" | "dismiss_password" => {
+                let Some(p) = self.pending_save.take() else { return };
+                if m["nonce"].as_str() != Some(p.nonce.as_str()) || p.target != target {
+                    self.pending_save = Some(p);
+                    return;
+                }
+                if kind == "dismiss_password" {
+                    return;
+                }
+                if kind == "never_password" {
+                    self.state.password_never.push(p.origin);
+                    self.dirty = true;
+                    return;
+                }
+                let vault = m["vault"].as_str().unwrap_or_default().to_string();
+                if !self.vaults_for_target(target).contains(&vault) {
+                    return;
+                }
+                match passwords::save(&vault, &p.origin, &p.username, &p.password) {
+                    Ok(()) => self.toast(&format!("Password saved to {vault}")),
+                    Err(e) => self.toast(&format!("Could not save password: {e}")),
+                }
+            }
+            _ => {}
+        }
     }
 
     fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
@@ -1560,6 +1700,34 @@ impl App {
                     self.open_tab(&format!("data:text/plain;charset=utf-8,{enc}"), None, true);
                 }
             }
+            Command::CopyPassword { vault, origin, username } => {
+                self.close_bar();
+                let e = passwords::Entry { vault, origin, username };
+                match passwords::password(&e) {
+                    Ok(Some(pw)) => {
+                        if arboard::Clipboard::new().and_then(|mut c| c.set_text(pw.clone())).is_ok() {
+                            self.toast("Password copied: clears in 45 seconds");
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_secs(45));
+                                if let Ok(mut c) = arboard::Clipboard::new() {
+                                    if c.get_text().ok().as_deref() == Some(pw.as_str()) {
+                                        let _ = c.set_text(String::new());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    Ok(None) => self.toast("Password not found"),
+                    Err(err) => self.toast(&format!("Keychain: {err}")),
+                }
+            }
+            Command::DeletePassword { vault, origin, username } => {
+                self.close_bar();
+                match passwords::delete(&passwords::Entry { vault, origin, username }) {
+                    Ok(()) => self.toast("Password deleted"),
+                    Err(e) => self.toast(&format!("Keychain: {e}")),
+                }
+            }
             Command::ToggleSiteBlocking => {
                 let host = self
                     .state
@@ -1668,6 +1836,10 @@ impl App {
                 }
                 self.render();
             }
+            (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
+                let k = k.to_string();
+                self.handle_password_ipc(target, &k, &m);
+            }
             (Source::Page(target), "open") => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
                 // Pages can forge this message, so cap it to stop tab spam.
@@ -1708,6 +1880,13 @@ impl App {
                         self.state.record_visit(&u, &t);
                         if let Some(v) = self.views.get(&id) {
                             self.after_load(v, &u);
+                        }
+                        self.fill_offers.remove(&Target::Tab(id));
+                        // A login form that navigates on submit: show the save prompt once more on the page it lands on.
+                        let reoffer = self.pending_save.as_mut().filter(|p| p.target == Target::Tab(id) && !p.reoffered && now().saturating_sub(p.at) <= 10);
+                        if let Some(p) = reoffer {
+                            p.reoffered = true;
+                            self.offer_pending_save();
                         }
                     }
                     self.dirty = true;
@@ -1878,6 +2057,7 @@ impl App {
                 None => Err("unknown tab".into()),
             },
             "run" => match serde_json::from_value::<Command>(args) {
+                Ok(cmd) if cmd.agent_forbidden() => Err("that command is not available to agents".into()),
                 Ok(cmd) => {
                     self.dispatch(cmd, elwt);
                     Ok(json!("ok"))

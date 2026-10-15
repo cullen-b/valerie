@@ -158,6 +158,17 @@ pub enum Command {
         index: usize,
     },
     ToggleSiteBlocking,
+    /// Copy a saved password to the clipboard (cleared after 45s). Never available to pages or agents.
+    CopyPassword {
+        vault: String,
+        origin: String,
+        username: String,
+    },
+    DeletePassword {
+        vault: String,
+        origin: String,
+        username: String,
+    },
     FindInPage {
         #[serde(default)]
         query: Option<String>,
@@ -178,6 +189,11 @@ impl Command {
     /// Build a command from a name with no args, e.g. "new_tab".
     pub fn from_name(name: &str) -> Option<Command> {
         serde_json::from_value(serde_json::json!({ "cmd": name })).ok()
+    }
+
+    /// Commands that expose or destroy secrets; agents (MCP) may not run them.
+    pub fn agent_forbidden(&self) -> bool {
+        matches!(self, Command::CopyPassword { .. } | Command::DeletePassword { .. })
     }
 
     /// Commands a web page may trigger through injected vim motions. None of these can read or redirect other tabs.

@@ -19,7 +19,7 @@ pub fn token_path() -> PathBuf {
     crate::config::data_dir().join("mcp-token")
 }
 
-fn random_hex() -> String {
+pub fn random_hex() -> String {
     use std::hash::{BuildHasher, Hasher};
     // RandomState is seeded from the OS RNG; four 64-bit draws give a 256-bit token without extra crates.
     (0..4)

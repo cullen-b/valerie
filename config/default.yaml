@@ -140,6 +140,14 @@ vim:
     "]s": next_space
     "[s": prev_space
 
+# Passwords live in the macOS Keychain, one vault per profile. Shared vaults let profiles share logins.
+passwords:
+  enabled: true
+  shared: []
+  # shared:
+  #   - name: Shared
+  #     profiles: [Personal, Work]
+
 # Ad and tracker blocking: hosts-style lists compiled into WebKit content rules (cached; refreshed weekly).
 content_blocking:
   enabled: true
