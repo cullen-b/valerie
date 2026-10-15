@@ -107,6 +107,8 @@ pub struct App {
     /// The profile each tab's webview was created with (site_profiles can move a tab to another).
     view_profiles: HashMap<TabId, String>,
     pending_focus: std::cell::Cell<Option<TabId>>,
+    /// The last sidebar state sent, so unchanged states aren't redrawn.
+    last_render: std::cell::RefCell<String>,
     #[cfg(not(target_os = "macos"))]
     contexts: HashMap<String, wry::WebContext>,
     #[cfg(target_os = "macos")]
@@ -284,6 +286,7 @@ impl App {
             ready_views: Default::default(),
             view_profiles: HashMap::new(),
             pending_focus: std::cell::Cell::new(None),
+            last_render: Default::default(),
             #[cfg(not(target_os = "macos"))]
             contexts: HashMap::new(),
             #[cfg(target_os = "macos")]
@@ -693,7 +696,12 @@ impl App {
             "vim": { "enabled": self.config.vim.enabled, "bindings": self.config.vim.bindings },
             "start_page": self.config.start_page,
         });
+        let vm = vm.to_string();
+        if *self.last_render.borrow() == vm {
+            return;
+        }
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
+        *self.last_render.borrow_mut() = vm;
     }
 
     fn render_little(&self, id: WindowId) {
@@ -2380,7 +2388,10 @@ impl App {
         let Ok(m) = serde_json::from_str::<Value>(&msg) else { return };
         let kind = m["t"].as_str().unwrap_or("");
         match (from, kind) {
-            (Source::Chrome, "ready") => self.render(),
+            (Source::Chrome, "ready") => {
+                self.last_render.borrow_mut().clear();
+                self.render();
+            }
             (Source::Chrome, "unpeek") | (Source::Page(Target::Tab(_)), "unpeek") => {
                 if self.sidebar_peek {
                     self.sidebar_peek = false;
