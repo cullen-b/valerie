@@ -213,15 +213,26 @@ let S = null, prevSpace = null, prevTheme = null, pendingDir = 0, suppressClick 
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function host(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u || ""; } }
-// Favicons that failed to load: show the letter straight away on later renders instead of retrying (it flickers).
-const badIcons = new Set();
-function icon(t, cls = "ico") {
-  const letter = () => el("div", "letter", (host(t.url)[0] || "•").toUpperCase());
+// Each tab's icon element is kept and moved into the new sidebar on every render, so it never reloads or flickers.
+// Favicons that failed to load show the letter straight away instead of retrying.
+const badIcons = new Set(), iconNodes = new Map();
+let iconsUsed = new Set();
+function icon(t, cls = "ico", slot = "side") {
+  const ch = (host(t.url)[0] || "•").toUpperCase(), letter = () => el("div", "letter", ch);
   const src = t.favicon || (/^https?:/.test(t.url) ? new URL("/favicon.ico", t.url).href : null);
-  if (!src || badIcons.has(src)) return letter();
-  const img = el("img", cls); img.src = src; img.draggable = false;
-  img.onerror = () => { badIcons.add(src); img.replaceWith(letter()); };
-  return img;
+  const key = t.id + " " + cls + " " + slot, hit = iconNodes.get(key);
+  if (hit && hit.src === src && hit.ch === ch) {
+    if (iconsUsed.has(key)) return hit.node.cloneNode(true);
+    iconsUsed.add(key); return hit.node;
+  }
+  let node;
+  if (!src || badIcons.has(src)) node = letter();
+  else {
+    node = el("img", cls); node.src = src; node.draggable = false;
+    node.onerror = () => { badIcons.add(src); const l = letter(); node.replaceWith(l); const h = iconNodes.get(key); if (h && h.node === node) h.node = l; };
+  }
+  iconNodes.set(key, { src, ch, node }); iconsUsed.add(key);
+  return node;
 }
 const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.includes(S.active));
 const click = (fn) => (e) => { if (!suppressClick) fn(e); };
@@ -397,7 +408,7 @@ function slideIn(dir) {
 }
 
 function render(state) {
-  S = state;
+  S = state; iconsUsed = new Set();
   applyTheme(S.theme);
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
@@ -523,6 +534,7 @@ function render(state) {
   pendingDir = 0;
   prevSpace = S.active_space;
   renderTop();
+  for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }
 
 // The logo mark from the app icon, tinted with the space's colours.
@@ -542,7 +554,7 @@ function renderTop() {
   const all = [...S.favorites, ...flat(S.pinned), ...S.today];
   all.forEach((t) => {
     const c = el("div", "chip" + (t.id === S.active ? " active" : ""));
-    c.append(icon(t)); if (!t.pinned && !S.favorites.includes(t)) c.append(el("div", "title", t.title || host(t.url)));
+    c.append(icon(t, "ico", "top")); if (!t.pinned && !S.favorites.includes(t)) c.append(el("div", "title", t.title || host(t.url)));
     c.title = t.title; c.onclick = () => cmd({ cmd: "activate_tab", tab: t.id });
     c.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
     tabs.append(c);
