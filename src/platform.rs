@@ -2,6 +2,7 @@
 use wry::WebView;
 
 /// Stable per-profile id; on macOS it names an isolated WKWebsiteDataStore.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn profile_id(name: &str) -> [u8; 16] {
     let mut out = [0u8; 16];
     for (half, seed) in [(0usize, 0xcbf29ce484222325u64), (8, 0x84222325cbf29ce4)] {

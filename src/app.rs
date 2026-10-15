@@ -94,6 +94,8 @@ pub struct App {
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
     pending_save: Option<PendingSave>,
     peek: Option<PeekView>,
+    #[cfg(not(target_os = "macos"))]
+    contexts: HashMap<String, wry::WebContext>,
     #[cfg(target_os = "macos")]
     rules: Option<blocking::mac::RuleList>,
     pub quit: bool,
@@ -257,6 +259,8 @@ impl App {
             fill_offers: HashMap::new(),
             pending_save: None,
             peek: None,
+            #[cfg(not(target_os = "macos"))]
+            contexts: HashMap::new(),
             #[cfg(target_os = "macos")]
             rules: None,
             quit: false,
@@ -317,11 +321,29 @@ impl App {
         }
     }
 
-    fn page_builder(&self, target: Target, url: &str, profile: &str) -> WebViewBuilder<'static> {
+    /// Run `f` with a builder bound to the profile's isolated storage: a WKWebsiteDataStore on macOS,
+    /// a WebContext data directory elsewhere.
+    fn with_profile<R>(&mut self, profile: &str, f: impl FnOnce(&Self, WebViewBuilder<'_>) -> R) -> R {
+        #[cfg(target_os = "macos")]
+        {
+            use wry::WebViewBuilderExtDarwin;
+            f(self, WebViewBuilder::new().with_data_store_identifier(platform::profile_id(profile)))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let dir = config::data_dir().join("profiles").join(profile);
+            let mut ctx = self.contexts.remove(profile).unwrap_or_else(|| wry::WebContext::new(Some(dir)));
+            let r = f(self, WebViewBuilder::new_with_web_context(&mut ctx));
+            self.contexts.insert(profile.to_string(), ctx);
+            r
+        }
+    }
+
+    fn page_builder<'a>(&self, base: WebViewBuilder<'a>, target: Target, url: &str) -> WebViewBuilder<'a> {
         let p = self.proxy.clone();
         let (p1, p2, p3, p4, p5) = (p.clone(), p.clone(), p.clone(), p.clone(), p.clone());
         let downloads = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
-        let builder = WebViewBuilder::new()
+        base
             .with_url(if url.is_empty() { "about:blank" } else { url })
             .with_visible(false)
             .with_devtools(true)
@@ -364,15 +386,7 @@ impl App {
                 *path = dest;
                 true
             })
-            .with_download_completed_handler(move |_, _, ok| send(&p, UserEvent::Downloaded { ok }));
-        #[cfg(target_os = "macos")]
-        let builder = {
-            use wry::WebViewBuilderExtDarwin;
-            builder.with_data_store_identifier(platform::profile_id(profile))
-        };
-        #[cfg(not(target_os = "macos"))]
-        let _ = profile; // TODO: per-profile WebContext data dirs on Windows/Linux
-        builder
+            .with_download_completed_handler(move |_, _, ok| send(&p, UserEvent::Downloaded { ok }))
     }
 
     fn ensure_view(&mut self, tab: TabId) {
@@ -382,7 +396,9 @@ impl App {
         let Some(t) = self.state.tabs.get(&tab) else { return };
         let space = self.state.space_of(tab).unwrap_or(self.state.active_space);
         let profile = self.profile_for(space);
-        match self.page_builder(Target::Tab(tab), &t.url.clone(), &profile).build_as_child(&self.window) {
+        let url = t.url.clone();
+        let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).build_as_child(&app.window));
+        match built {
             Ok(v) => {
                 if self.config.layout.corner_radius > 0.0 {
                     platform::round_corners(&v, self.config.layout.corner_radius);
@@ -854,11 +870,14 @@ impl App {
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
             .build_as_child(&window);
-        let view = self
-            .page_builder(Target::Little(id), url, &self.profile_for(space))
-            .with_visible(true)
-            .with_bounds(rect(0.0, LITTLE_BAR, lw.width, lw.height - LITTLE_BAR))
-            .build_as_child(&window);
+        let (lw_w, lw_h) = (lw.width, lw.height);
+        let profile = self.profile_for(space);
+        let view = self.with_profile(&profile, |app, base| {
+            app.page_builder(base, Target::Little(id), url)
+                .with_visible(true)
+                .with_bounds(rect(0.0, LITTLE_BAR, lw_w, lw_h - LITTLE_BAR))
+                .build_as_child(&window)
+        });
         let (Ok(bar), Ok(view)) = (bar, view) else { return eprintln!("valerie: little window webviews failed") };
         let _ = view.focus();
         window.set_focus();
@@ -1157,7 +1176,10 @@ impl App {
         self.close_peek();
         let (x, y, w, h) = self.peek_rect();
         let profile = self.profile_for(self.state.active_space);
-        let view = match self.page_builder(Target::Peek, url, &profile).with_visible(true).with_bounds(rect(x, y, w, h)).build_as_child(&self.window) {
+        let built = self.with_profile(&profile, |app, base| {
+            app.page_builder(base, Target::Peek, url).with_visible(true).with_bounds(rect(x, y, w, h)).build_as_child(&app.window)
+        });
+        let view = match built {
             Ok(v) => v,
             Err(e) => return eprintln!("valerie: peek: {e}"),
         };
