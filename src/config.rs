@@ -1,0 +1,282 @@
+use crate::command::Command;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+pub const DEFAULT_YAML: &str = include_str!("../config/default.yaml");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub search_engine: String,
+    pub new_tab_url: String,
+    pub layout: Layout,
+    pub tabs: TabsConfig,
+    pub little_window: LittleWindowConfig,
+    pub profiles: Vec<ProfileConfig>,
+    pub spaces: Vec<SpaceConfig>,
+    pub routes: Vec<Route>,
+    pub keybindings: BTreeMap<String, Option<Binding>>,
+    pub vim: VimConfig,
+    pub mcp: McpConfig,
+    pub sync: SyncConfig,
+    pub themes: BTreeMap<String, Theme>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Layout {
+    pub tab_bar: TabBar,
+    pub sidebar_visible: bool,
+    pub sidebar_width: f64,
+    pub sidebar_position: SidebarPosition,
+    pub bezel: f64,
+    pub corner_radius: f64,
+    pub split_gap: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBar {
+    Side,
+    Top,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarPosition {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabsConfig {
+    pub archive_after_hours: f64,
+    pub unload_after_minutes: f64,
+    pub new_tab_position: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LittleWindowConfig {
+    pub enabled: bool,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileConfig {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceConfig {
+    pub name: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub theme: Option<ThemeRef>,
+    #[serde(default)]
+    pub icon: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ThemeRef {
+    Named(String),
+    Inline(Theme),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Theme {
+    #[serde(default = "dark")]
+    pub mode: String,
+    pub background: Vec<String>,
+    pub accent: String,
+    #[serde(default)]
+    pub foreground: Option<String>,
+}
+
+fn dark() -> String {
+    "dark".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Route {
+    #[serde(rename = "match")]
+    pub pattern: String,
+    pub space: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Binding {
+    Name(String),
+    Full(Command),
+}
+
+impl Binding {
+    pub fn command(&self) -> Option<Command> {
+        match self {
+            Binding::Name(n) => Command::from_name(n),
+            Binding::Full(c) => Some(c.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VimConfig {
+    pub enabled: bool,
+    pub scroll_step: f64,
+    pub excluded_hosts: Vec<String>,
+    pub bindings: BTreeMap<String, Option<serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    pub enabled: bool,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConfig {
+    pub repo: String,
+    pub device: String,
+    pub interval_minutes: f64,
+}
+
+pub fn config_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("VALERIE_CONFIG_DIR") {
+        return PathBuf::from(d);
+    }
+    dirs::home_dir().unwrap_or_default().join(".config").join("valerie")
+}
+
+pub fn data_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("VALERIE_DATA_DIR") {
+        return PathBuf::from(d);
+    }
+    dirs::data_dir().unwrap_or_default().join("Valerie")
+}
+
+pub fn config_path() -> PathBuf {
+    config_dir().join("config.yaml")
+}
+
+/// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
+fn merge(base: &mut Value, over: Value) {
+    match (base, over) {
+        (Value::Mapping(b), Value::Mapping(o)) => {
+            for (k, v) in o {
+                match b.get_mut(&k) {
+                    Some(bv @ Value::Mapping(_)) if v.is_mapping() => merge(bv, v),
+                    _ => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+        }
+        (b, o) => *b = o,
+    }
+}
+
+impl Config {
+    pub fn defaults() -> Config {
+        serde_yaml::from_str(DEFAULT_YAML).expect("default config is valid")
+    }
+
+    /// Load the user config, writing the commented defaults on first run.
+    pub fn load() -> Result<Config> {
+        let path = config_path();
+        if !path.exists() {
+            std::fs::create_dir_all(config_dir())?;
+            std::fs::write(&path, DEFAULT_YAML)?;
+        }
+        let text = std::fs::read_to_string(&path)?;
+        Self::parse(&text).with_context(|| format!("in {}", path.display()))
+    }
+
+    pub fn parse(text: &str) -> Result<Config> {
+        let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
+        let user: Value = serde_yaml::from_str(text)?;
+        if !user.is_null() {
+            merge(&mut base, user);
+        }
+        Ok(serde_yaml::from_value(base)?)
+    }
+
+    pub fn theme(&self, r: Option<&ThemeRef>) -> Theme {
+        match r {
+            Some(ThemeRef::Inline(t)) => t.clone(),
+            Some(ThemeRef::Named(n)) => self
+                .themes
+                .get(n)
+                .cloned()
+                .or_else(|| preset(n))
+                .unwrap_or_else(|| preset("midnight").unwrap()),
+            None => preset("midnight").unwrap(),
+        }
+    }
+
+    pub fn theme_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = PRESETS.iter().map(|p| p.0.to_string()).collect();
+        v.extend(self.themes.keys().cloned());
+        v
+    }
+
+    pub fn device_name(&self) -> String {
+        if !self.sync.device.is_empty() {
+            return self.sync.device.clone();
+        }
+        std::process::Command::new("hostname")
+            .arg("-s")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "device".into())
+    }
+}
+
+const PRESETS: &[(&str, &str, &[&str], &str)] = &[
+    ("midnight", "dark", &["#171a2b", "#2a1f3d"], "#9d8cff"),
+    ("rose", "dark", &["#2b1520", "#4a1f33"], "#ff7ab6"),
+    ("forest", "dark", &["#10211b", "#1d3a2c"], "#5fd39a"),
+    ("ocean", "dark", &["#0e1c2e", "#123a52"], "#4cc2ff"),
+    ("grape", "dark", &["#1d1430", "#3b1f5e"], "#c58bff"),
+    ("ember", "dark", &["#24130c", "#4a2412"], "#ff9a4c"),
+    ("sand", "light", &["#f3e9dc", "#e8d5bf"], "#c2703d"),
+    ("paper", "light", &["#f6f6f4", "#e9e9e6"], "#3d6bff"),
+];
+
+pub fn preset(name: &str) -> Option<Theme> {
+    PRESETS.iter().find(|p| p.0 == name).map(|p| Theme {
+        mode: p.1.into(),
+        background: p.2.iter().map(|s| s.to_string()).collect(),
+        accent: p.3.into(),
+        foreground: None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_parse_and_bindings_resolve() {
+        let c = Config::defaults();
+        assert!(c.keybindings.len() > 10);
+        for (k, b) in &c.keybindings {
+            assert!(b.as_ref().unwrap().command().is_some(), "binding {k}");
+        }
+    }
+
+    #[test]
+    fn user_overrides_merge() {
+        let c = Config::parse("layout: { bezel: 8 }\nkeybindings: { \"CmdOrCtrl+D\": null }\n").unwrap();
+        assert_eq!(c.layout.bezel, 8.0);
+        assert_eq!(c.layout.sidebar_width, 248.0);
+        assert!(c.keybindings["CmdOrCtrl+D"].is_none());
+        assert!(c.keybindings.contains_key("CmdOrCtrl+T"));
+    }
+}

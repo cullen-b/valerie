@@ -1,0 +1,152 @@
+# Valerie config. This file is hot-reloaded: save it and the browser updates.
+# Anything you leave out falls back to the defaults shipped in the repo (config/default.yaml).
+# Keep it in git (or put it in your sync repo) to version and share it.
+
+search_engine: "https://www.google.com/search?q=%s"
+new_tab_url: ""            # empty = open the command bar instead of a page
+
+layout:
+  tab_bar: side            # side | top
+  sidebar_visible: true
+  sidebar_width: 248
+  sidebar_position: left   # left | right
+  bezel: 0                 # space around web content. 0 = edge to edge like Safari, ~8 = Arc
+  corner_radius: 0         # rounded content corners (macOS)
+  split_gap: 2
+
+tabs:
+  archive_after_hours: 12  # unpinned "today" tabs auto-archive after this long unused (0 = never)
+  unload_after_minutes: 60 # free memory of tabs unused this long (0 = never); pinned tabs reload on click
+  new_tab_position: top    # top | bottom of the today list
+
+little_window:
+  enabled: true            # external links open in a small window, like Little Arc
+  width: 960
+  height: 700
+
+# Profiles isolate cookies, logins and site data. Spaces pick a profile.
+profiles:
+  - name: Personal
+  - name: School
+  - name: Work
+
+# Spaces in sidebar order. theme is a preset name (midnight, rose, forest, ocean, sand, grape, ember, paper)
+# or an inline theme: { mode: dark, background: ["#1b1e2b", "#2a2140"], accent: "#ff7ab6", foreground: "#e8e6f0" }
+spaces:
+  - name: Personal
+    profile: Personal
+    theme: midnight
+    icon: "✦"
+  - name: School
+    profile: School
+    theme: forest
+    icon: "✎"
+  - name: Work
+    profile: Work
+    theme: ocean
+    icon: "◆"
+
+# Air Traffic Control: links matching a pattern open in a space. Patterns match the host ("*.edu", "github.com")
+# or the full URL if they contain "://" ("https://docs.google.com/*"). First match wins.
+routes:
+  - match: "*.edu"
+    space: School
+  - match: "canvas.instructure.com"
+    space: School
+
+# Native shortcuts. Value is a command name or a full command { cmd: ..., args... }. Set to null to unbind a default.
+# Modifiers: CmdOrCtrl, Cmd, Ctrl, Alt, Shift.
+keybindings:
+  "CmdOrCtrl+T": new_tab
+  "CmdOrCtrl+D": open_command_bar
+  "CmdOrCtrl+L": { cmd: open_command_bar, mode: current }
+  "CmdOrCtrl+W": close_tab
+  "CmdOrCtrl+Shift+T": reopen_closed_tab
+  "CmdOrCtrl+Shift+C": copy_url
+  "CmdOrCtrl+S": toggle_sidebar
+  "CmdOrCtrl+Shift+D": toggle_pin
+  "CmdOrCtrl+R": reload
+  "CmdOrCtrl+[": back
+  "CmdOrCtrl+]": forward
+  "CmdOrCtrl+Alt+Down": next_tab
+  "CmdOrCtrl+Alt+Up": prev_tab
+  "Ctrl+Tab": next_tab
+  "Ctrl+Shift+Tab": prev_tab
+  "CmdOrCtrl+Alt+Right": next_space
+  "CmdOrCtrl+Alt+Left": prev_space
+  "Ctrl+1": { cmd: switch_space, index: 0 }
+  "Ctrl+2": { cmd: switch_space, index: 1 }
+  "Ctrl+3": { cmd: switch_space, index: 2 }
+  "Ctrl+4": { cmd: switch_space, index: 3 }
+  "Ctrl+5": { cmd: switch_space, index: 4 }
+  "CmdOrCtrl+1": { cmd: go_to_tab, index: 0 }
+  "CmdOrCtrl+2": { cmd: go_to_tab, index: 1 }
+  "CmdOrCtrl+3": { cmd: go_to_tab, index: 2 }
+  "CmdOrCtrl+4": { cmd: go_to_tab, index: 3 }
+  "CmdOrCtrl+5": { cmd: go_to_tab, index: 4 }
+  "CmdOrCtrl+6": { cmd: go_to_tab, index: 5 }
+  "CmdOrCtrl+7": { cmd: go_to_tab, index: 6 }
+  "CmdOrCtrl+8": { cmd: go_to_tab, index: 7 }
+  "Ctrl+Shift+Equal": split_view
+  "Ctrl+Shift+Minus": unsplit
+  "Ctrl+Shift+Right": focus_next_pane
+  "CmdOrCtrl+Equal": zoom_in
+  "CmdOrCtrl+Minus": zoom_out
+  "CmdOrCtrl+0": zoom_reset
+  "CmdOrCtrl+Alt+I": dev_tools
+  "CmdOrCtrl+O": move_to_main_window
+  "CmdOrCtrl+F": find_in_page
+  "CmdOrCtrl+Comma": open_config
+  "CmdOrCtrl+Shift+Y": sync
+
+# Vim motions inside pages (ignored while typing in a text field; press Escape to leave a field).
+# Values are page actions (scroll_down, scroll_up, scroll_left, scroll_right, half_page_down, half_page_up, top,
+# bottom, hints, hints_new_tab, insert, find, yank_url) or browser commands.
+vim:
+  enabled: true
+  scroll_step: 80
+  excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]
+  bindings:
+    "j": scroll_down
+    "k": scroll_up
+    "h": scroll_left
+    "l": scroll_right
+    "d": half_page_down
+    "u": half_page_up
+    "gg": top
+    "G": bottom
+    "f": hints
+    "F": hints_new_tab
+    "i": insert
+    "/": find
+    "yy": copy_url
+    "H": back
+    "L": forward
+    "r": reload
+    "x": close_tab
+    "X": reopen_closed_tab
+    "K": next_tab
+    "J": prev_tab
+    "gt": next_tab
+    "gT": prev_tab
+    "o": open_command_bar
+    "O": { cmd: open_command_bar, mode: current }
+    "t": new_tab
+    "s": toggle_sidebar
+    "]s": next_space
+    "[s": prev_space
+
+# Agents: a Model Context Protocol server built into the browser.
+# Connect with: claude mcp add --transport http valerie http://127.0.0.1:7777/mcp --header "Authorization: Bearer $(cat <data dir>/mcp-token)"
+mcp:
+  enabled: true
+  port: 7777
+
+# Tab sync through a private GitHub repo you own (no server). Create one with `valerie sync-setup`.
+sync:
+  repo: ""                 # e.g. git@github.com:you/valerie-sync.git
+  device: ""               # defaults to this machine's hostname
+  interval_minutes: 5
+
+# Extra themes (merged with the built-in presets).
+themes: {}
