@@ -14,13 +14,14 @@ cargo run --release              # or: cargo build --release && ./target/release
 ```
 
 On first launch Valerie writes a small `~/.config/valerie/config.yaml` (hot-reloaded) holding only your overrides;
-`valerie default-config` prints every option with comments. `valerie paths` shows where config and data live.
+`valerie default-config` prints every option with comments. Every piece of sidebar text and chrome has an on/off
+switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows where config and data live.
 
 ## Keys (all remappable in `config.yaml`)
 
 | Keys | Action |
 |---|---|
-| `⌘T` / `⌘D` | Command bar: search tabs, history, bookmarks, commands, synced tabs; enter a URL or search |
+| `⌘D` | Command bar: search tabs, history, bookmarks, commands, synced tabs; enter a URL or search |
 | `⌘L` | Edit the current URL |
 | `⌘⇧C` | Copy the current URL |
 | `⌘S` | Toggle the sidebar |

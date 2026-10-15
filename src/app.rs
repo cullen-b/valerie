@@ -85,6 +85,8 @@ pub struct App {
     last_sync: u64,
     syncing: bool,
     last_page_open: std::time::Instant,
+    /// When the sidebar was last hidden; edge reveals right after hiding are the page sliding under the mouse.
+    sidebar_hidden_at: std::time::Instant,
     user_agent: String,
     agents_running: Vec<String>,
     agent_runs: Vec<agents::Finished>,
@@ -251,6 +253,7 @@ impl App {
             last_sync: 0,
             syncing: false,
             last_page_open: std::time::Instant::now(),
+            sidebar_hidden_at: std::time::Instant::now(),
             user_agent,
             agents_running: Vec::new(),
             agent_runs: Vec::new(),
@@ -299,7 +302,7 @@ impl App {
     /// Settings the in-page script needs: vim bindings, accent, boost CSS, and whether to report the screen edge.
     fn page_config(&self) -> Value {
         let l = &self.config.layout;
-        let edge = (l.tab_bar == TabBar::Side && !l.sidebar_visible).then_some(match l.sidebar_position {
+        let edge = (l.tab_bar == TabBar::Side && !l.sidebar_visible && l.reveal_sidebar_on_edge).then_some(match l.sidebar_position {
             SidebarPosition::Left => "left",
             SidebarPosition::Right => "right",
         });
@@ -577,6 +580,8 @@ impl App {
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
             "agents": self.agents_running,
             "peek": self.sidebar_peek,
+            "sidebar": self.config.sidebar,
+            "start_page": self.config.start_page,
         });
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
     }
@@ -854,7 +859,7 @@ impl App {
             .map(|h| format!("{}{}", &h[..1].to_uppercase(), &h[1..]))
             .unwrap_or_else(|| "the web".into());
         let query = if mode == BarMode::Current { active.and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) } else { None };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "theme": self.theme_for(self.state.active_space), "items": items });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "options": self.config.command_bar, "theme": self.theme_for(self.state.active_space), "items": items });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -1053,10 +1058,27 @@ impl App {
             let _ = menu.append(g);
         }
         let _ = menu.append(&window_menu);
+        // The menu is also where keyboard shortcuts live, so every platform needs it attached.
         #[cfg(target_os = "macos")]
         {
             menu.init_for_nsapp();
             window_menu.set_as_windows_menu_for_nsapp();
+        }
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use tao::platform::windows::WindowExtWindows;
+            if let Some(old) = &self._menu {
+                let _ = old.remove_for_hwnd(self.window.hwnd());
+            }
+            let _ = menu.init_for_hwnd(self.window.hwnd());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use tao::platform::unix::WindowExtUnix;
+            if let Some(old) = &self._menu {
+                let _ = old.remove_for_gtk_window(self.window.gtk_window());
+            }
+            let _ = menu.init_for_gtk_window(self.window.gtk_window(), self.window.default_vbox());
         }
         self.menu_cmds = cmds;
         self._menu = Some(menu);
@@ -1672,6 +1694,9 @@ impl App {
             Command::ToggleSidebar => {
                 self.config.layout.sidebar_visible = !self.config.layout.sidebar_visible;
                 self.sidebar_peek = false;
+                if !self.config.layout.sidebar_visible {
+                    self.sidebar_hidden_at = std::time::Instant::now();
+                }
                 self.refresh_content_config();
                 // Pages sit above the sidebar, so growing/shrinking them over it is the whole animation.
                 let secs = self.anim_secs();
@@ -1926,7 +1951,13 @@ impl App {
             }
             (Source::Page(Target::Tab(_)), "edge") => {
                 // Mouse hit the screen edge with the sidebar hidden: slide it in until the mouse leaves it.
-                if !self.config.layout.sidebar_visible && !self.sidebar_peek && self.config.layout.tab_bar == TabBar::Side {
+                let settled = self.sidebar_hidden_at.elapsed() > std::time::Duration::from_millis(800);
+                if settled
+                    && self.config.layout.reveal_sidebar_on_edge
+                    && !self.config.layout.sidebar_visible
+                    && !self.sidebar_peek
+                    && self.config.layout.tab_bar == TabBar::Side
+                {
                     self.sidebar_peek = true;
                     let secs = self.anim_secs();
                     self.layout_anim(secs);

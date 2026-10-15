@@ -110,7 +110,10 @@ function compute() {
 function draw() {
   const needle = q.value.trim().toLowerCase();
   list.innerHTML = "";
-  if (!results.length) return;
+  if (!results.length) {
+    if (D.options && D.options.empty_hint) list.innerHTML = '<div class="section">Type to search tabs, history, bookmarks and commands</div>';
+    return;
+  }
   results.forEach((r, i) => {
     const d = document.createElement("div"); d.className = "item" + (i === sel ? " sel" : "");
     let ic;
@@ -161,6 +164,7 @@ window.palette = {
     r.style.setProperty("--accent", data.theme.accent);
     if (data.theme.mode !== "light") r.style.setProperty("--bg", "color-mix(in srgb, " + data.theme.background[0] + " 70%, #101014)");
     else r.style.removeProperty("--bg");
+    document.getElementById("foot").style.display = data.options && data.options.footer_hints === false ? "none" : "";
     q.placeholder = data.mode === "current" ? "Edit URL or search…" : "Search or enter URL…";
     q.value = data.query || "";
     compute();

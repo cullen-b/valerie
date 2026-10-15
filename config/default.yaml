@@ -1,40 +1,88 @@
-# Valerie config. This file is hot-reloaded: save it and the browser updates.
-# Anything you leave out falls back to the defaults shipped in the repo (config/default.yaml).
-# Keep it in git (or put it in your sync repo) to version and share it.
+# ==============================================================================================================
+# Valerie settings: every option with its default.
+#
+# How this file works
+#   - Your own file (~/.config/valerie/config.yaml) only needs the lines you want to change; anything missing
+#     falls back to this file. Save it and Valerie updates instantly (no restart).
+#   - Toggles are `true` / `false`. Options with a fixed set of choices list them as "one of: a | b | c".
+#   - Lists (like `spaces`) replace the default list completely. Maps (like `keybindings`) merge key by key;
+#     set a key to `null` to remove a default.
+#   - Print this file any time with `valerie default-config`.
+# ==============================================================================================================
 
-search_engine: "https://www.google.com/search?q=%s"
-new_tab_url: ""            # empty = open the command bar instead of a page
-user_agent: ""             # empty = Safari's user agent for this macOS version (sites treat Valerie like Safari)
+
+# --------------------------------------------------------------------------------------------------------------
+# General
+# --------------------------------------------------------------------------------------------------------------
+
+search_engine: "https://www.google.com/search?q=%s"   # %s is replaced by what you type
+new_tab_url: ""            # page for a new tab; empty = open the command bar instead
+user_agent: ""             # empty = Safari's user agent, so sites serve their full pages
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Look and layout
+# --------------------------------------------------------------------------------------------------------------
 
 layout:
-  tab_bar: side            # side | top
-  sidebar_visible: true
-  sidebar_width: 248
-  sidebar_position: left   # left | right
-  bezel: 0                 # space around web content. 0 = edge to edge like Safari, ~8 = Arc
+  tab_bar: side            # where tabs live. one of: side | top
+  sidebar_visible: true    # show the sidebar at launch (⌘S or `s` toggles it)
+  sidebar_width: 248       # pixels
+  sidebar_position: left   # one of: left | right
+  reveal_sidebar_on_edge: true  # when the sidebar is hidden, moving the mouse to the window edge peeks it open
+  bezel: 0                 # gap around the page in pixels. 0 = edge to edge like Safari, ~8 = Arc
   corner_radius: 16        # rounds the page where it meets the sidebar (every corner when bezel > 0); 0 = square
-  split_gap: 2
-  pinned_style: icons      # icons (Arc-style tiles) | list
-  animation_ms: 180        # sidebar / space transition length (0 = instant)
+  split_gap: 2             # pixels between split-view panes
+  pinned_style: icons      # how pinned tabs look. one of: icons (Arc-style tiles) | list
+  animation_ms: 180        # sidebar / space transition length; 0 = instant
+
+# Each piece of text or chrome in the sidebar. Set to false to hide it.
+sidebar:
+  nav_buttons: true        # back / forward / reload buttons at the top
+  url_bar: true            # the address pill (click it to edit the URL)
+  space_name: false        # the space's icon and name ("Personal", "School") above its pinned tabs
+  pinned_hint: true        # "Drag tabs here to pin them" when a space has no pinned tabs
+  new_tab_button: false    # the "+ New Tab" row
+  today_label: false       # the word "Today" on the divider above your tabs
+  clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
+  space_switcher: true     # the space icons at the bottom
+
+start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
+
+command_bar:
+  footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
+  empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Tabs and windows
+# --------------------------------------------------------------------------------------------------------------
 
 tabs:
-  archive_after_hours: 12  # unpinned "today" tabs auto-archive after this long unused (0 = never)
-  unload_after_minutes: 60 # free memory of tabs unused this long (0 = never); pinned tabs reload on click
-  new_tab_position: top    # top | bottom of the today list
+  archive_after_hours: 12  # unpinned tabs you haven't used for this long are archived; 0 = never
+  unload_after_minutes: 60 # free the memory of tabs unused this long (they reload on click); 0 = never
+  new_tab_position: top    # where new tabs appear in the list. one of: top | bottom
 
 little_window:
-  enabled: true            # external links open in a small window, like Little Arc
+  enabled: true            # links opened from other apps appear in a small window (like Little Arc)
   width: 960
   height: 700
 
-# Profiles isolate cookies, logins and site data. Spaces pick a profile.
+
+# --------------------------------------------------------------------------------------------------------------
+# Profiles, spaces and link routing
+# --------------------------------------------------------------------------------------------------------------
+
+# Profiles keep cookies, logins and site data separate. Each space uses one profile.
 profiles:
   - name: Personal
   - name: School
   - name: Work
 
-# Spaces in sidebar order. theme is a preset name (midnight, rose, forest, ocean, sand, grape, ember, paper)
-# or an inline theme: { mode: dark, background: ["#1b1e2b", "#2a2140"], accent: "#ff7ab6", foreground: "#e8e6f0" }
+# Spaces, in sidebar order.
+#   theme: a preset (midnight | rose | forest | ocean | grape | ember | sand | paper) or your own:
+#          { mode: dark, background: ["#1b1e2b", "#2a2140"], accent: "#ff7ab6", foreground: "#e8e6f0" }
+#   icon:  any emoji or symbol
 spaces:
   - name: Personal
     profile: Personal
@@ -49,19 +97,24 @@ spaces:
     theme: ocean
     icon: "◆"
 
-# Air Traffic Control: links matching a pattern open in a space. Patterns match the host ("*.edu", "github.com")
-# or the full URL if they contain "://" ("https://docs.google.com/*"). First match wins.
+# Air Traffic Control: links that match open in a space. A pattern matches the host ("*.edu", "github.com", which
+# also covers subdomains) or the whole URL if it contains "://" ("https://docs.google.com/*"). First match wins.
 routes:
   - match: "*.edu"
     space: School
   - match: "canvas.instructure.com"
     space: School
 
-# Native shortcuts. Value is a command name or a full command { cmd: ..., args... }. Set to null to unbind a default.
-# Modifiers: CmdOrCtrl, Cmd, Ctrl, Alt, Shift.
+
+# --------------------------------------------------------------------------------------------------------------
+# Keyboard
+# --------------------------------------------------------------------------------------------------------------
+
+# App shortcuts. Value: a command name, or a command with options like { cmd: switch_space, index: 0 }.
+# Modifiers: CmdOrCtrl (⌘ on Mac, Ctrl elsewhere), Cmd, Ctrl, Alt, Shift. Set a shortcut to null to turn it off.
 keybindings:
-  "CmdOrCtrl+T": new_tab
   "CmdOrCtrl+D": open_command_bar
+  # "CmdOrCtrl+T": new_tab           # off by default; uncomment to open the command bar with ⌘T as well
   "CmdOrCtrl+L": { cmd: open_command_bar, mode: current }
   "CmdOrCtrl+W": close_tab
   "CmdOrCtrl+Shift+T": reopen_closed_tab
@@ -102,13 +155,13 @@ keybindings:
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
 
-# Vim motions inside pages (ignored while typing in a text field; press Escape to leave a field).
-# Values are page actions (scroll_down, scroll_up, scroll_left, scroll_right, half_page_down, half_page_up, top,
-# bottom, hints, hints_new_tab, insert, find, yank_url) or browser commands.
+# Vim keys inside web pages. They're ignored while you type in a text field (Escape leaves the field).
+# Value: a page action (scroll_down | scroll_up | scroll_left | scroll_right | half_page_down | half_page_up | top |
+# bottom | hints | hints_new_tab | insert | find | yank_url) or any app command. Set a key to null to turn it off.
 vim:
   enabled: true
-  scroll_step: 80
-  excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]
+  scroll_step: 80          # pixels per j / k
+  excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
   bindings:
     "j": scroll_down
     "k": scroll_up
@@ -140,47 +193,63 @@ vim:
     "]s": next_space
     "[s": prev_space
 
-# Passwords live in the macOS Keychain, one vault per profile. Shared vaults let profiles share logins.
+
+# --------------------------------------------------------------------------------------------------------------
+# Privacy: passwords and ad blocking
+# --------------------------------------------------------------------------------------------------------------
+
+# Passwords live in the macOS Keychain, one vault per profile.
 passwords:
   enabled: true
-  shared: []
+  shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared
   #     profiles: [Personal, Work]
 
-# Ad and tracker blocking: hosts-style lists compiled into WebKit content rules (cached; refreshed weekly).
+# Ad and tracker blocking (lists are downloaded, cached, and refreshed every `refresh_days`).
 content_blocking:
   enabled: true
   lists:
     - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
-  allow: []                # sites where blocking is off, e.g. ["example.com"] (or use "Toggle Blocking for This Site")
+  allow: []                # sites where blocking is off, e.g. ["example.com"] (or "Toggle Ad Blocking for This Site")
   refresh_days: 7
 
-# Agents: a Model Context Protocol server built into the browser.
-# Connect with: claude mcp add --transport http valerie http://127.0.0.1:7777/mcp --header "Authorization: Bearer $(cat <data dir>/mcp-token)"
+
+# --------------------------------------------------------------------------------------------------------------
+# AI agents
+# --------------------------------------------------------------------------------------------------------------
+
+# Built-in MCP server so AI agents can use the browser. Connect Claude Code with: $(valerie mcp-config)
 mcp:
   enabled: true
   port: 7777
 
-# Tab sync through a private GitHub repo you own (no server). Create one with `valerie sync-setup`.
-sync:
-  repo: ""                 # e.g. git@github.com:you/valerie-sync.git
-  device: ""               # defaults to this machine's hostname
-  interval_minutes: 5
-
-# Headless agents: your own Claude Code, Codex or OpenCode subscription drives the browser over MCP in the
-# background. Run one from the command bar ("> do something") or schedule jobs below.
+# Headless agents run on your own Claude Code / Codex / OpenCode login. Type "> task" in the command bar, or
+# schedule jobs here.
 agents:
-  default: claude          # claude | codex | opencode
-  model: ""                # empty = the CLI's own default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
+  default: claude          # one of: claude | codex | opencode
+  model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
   space: Agents            # agents open their tabs in this space and leave yours alone
   jobs: []
   # jobs:
   #   - name: morning-brief
   #     prompt: "Open Hacker News and my GitHub notifications, then summarise what matters"
-  #     at: "08:30"        # daily at a local time, and/or
-  #     every: 6h          # every 30m / 6h / 1d
-  #     agent: claude
+  #     at: "08:30"        # every day at this local time, and/or
+  #     every: 6h          # repeat interval: 30m | 6h | 1d
+  #     agent: claude      # optional: overrides `default`
+  #     model: ""          # optional: overrides `model`
 
-# Extra themes (merged with the built-in presets).
+
+# --------------------------------------------------------------------------------------------------------------
+# Sync and themes
+# --------------------------------------------------------------------------------------------------------------
+
+# Sync pinned tabs, folders, favorites and spaces through a private GitHub repo you own. `valerie sync-setup`
+# creates one.
+sync:
+  repo: ""                 # e.g. git@github.com:you/valerie-sync.git; empty = sync off
+  device: ""               # this machine's name in the sync repo; empty = its hostname
+  interval_minutes: 5      # 0 = only when you press ⌘⇧Y
+
+# Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}

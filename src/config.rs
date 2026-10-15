@@ -14,6 +14,9 @@ pub struct Config {
     pub new_tab_url: String,
     pub user_agent: String,
     pub layout: Layout,
+    pub sidebar: SidebarConfig,
+    pub start_page: String,
+    pub command_bar: CommandBarConfig,
     pub tabs: TabsConfig,
     pub little_window: LittleWindowConfig,
     pub profiles: Vec<ProfileConfig>,
@@ -35,11 +38,31 @@ pub struct Layout {
     pub sidebar_visible: bool,
     pub sidebar_width: f64,
     pub sidebar_position: SidebarPosition,
+    pub reveal_sidebar_on_edge: bool,
     pub bezel: f64,
     pub corner_radius: f64,
     pub split_gap: f64,
     pub pinned_style: String,
     pub animation_ms: f64,
+}
+
+/// Which bits of sidebar text and chrome are shown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SidebarConfig {
+    pub nav_buttons: bool,
+    pub url_bar: bool,
+    pub space_name: bool,
+    pub pinned_hint: bool,
+    pub new_tab_button: bool,
+    pub today_label: bool,
+    pub clear_button: String,
+    pub space_switcher: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandBarConfig {
+    pub footer_hints: bool,
+    pub empty_hint: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -365,6 +388,6 @@ mod tests {
         assert_eq!(c.layout.bezel, 8.0);
         assert_eq!(c.layout.sidebar_width, 248.0);
         assert!(c.keybindings["CmdOrCtrl+D"].is_none());
-        assert!(c.keybindings.contains_key("CmdOrCtrl+T"));
+        assert!(c.keybindings.contains_key("CmdOrCtrl+L"));
     }
 }
