@@ -122,6 +122,7 @@ pub struct TabsConfig {
     pub archive_after_hours: f64,
     pub unload_after_minutes: f64,
     pub new_tab_position: String,
+    pub autoplay_in_background: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
