@@ -12,7 +12,7 @@ layout:
   sidebar_width: 248
   sidebar_position: left   # left | right
   bezel: 0                 # space around web content. 0 = edge to edge like Safari, ~8 = Arc
-  corner_radius: 0         # rounded content corners (macOS)
+  corner_radius: 16        # rounds the page where it meets the sidebar (every corner when bezel > 0); 0 = square
   split_gap: 2
   pinned_style: icons      # icons (Arc-style tiles) | list
   animation_ms: 180        # sidebar / space transition length (0 = instant)

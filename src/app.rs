@@ -400,9 +400,6 @@ impl App {
         let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).build_as_child(&app.window));
         match built {
             Ok(v) => {
-                if self.config.layout.corner_radius > 0.0 {
-                    platform::round_corners(&v, self.config.layout.corner_radius);
-                }
                 if let Some(z) = self.zoom.get(&tab) {
                     let _ = v.zoom(*z);
                 }
@@ -473,6 +470,7 @@ impl App {
         }
         for (i, id) in panes.iter().enumerate() {
             if let Some(v) = self.views.get(id) {
+                platform::round_corners(v, self.config.layout.corner_radius, self.pane_corners(i, panes.len()));
                 let px = x + i as f64 * (pw + gap);
                 if secs <= 0.0 || !platform::animate_bounds(v, px, y, pw, h, secs) {
                     let _ = v.set_bounds(rect(px, y, pw, h));
@@ -489,6 +487,28 @@ impl App {
         }
         if self.bar_open {
             platform::bring_to_front(&self.overlay);
+        }
+    }
+
+    /// Round the page corners that meet the sidebar/top bar; edges at the window border stay square
+    /// (the window clips those). With a bezel the page floats, so every corner is rounded.
+    fn pane_corners(&self, i: usize, n: usize) -> platform::Corners {
+        use platform::Corners;
+        let l = &self.config.layout;
+        if l.corner_radius <= 0.0 {
+            return Corners::None;
+        }
+        if l.bezel > 0.0 {
+            return Corners::All;
+        }
+        match l.tab_bar {
+            TabBar::Top => Corners::Top,
+            TabBar::Side if !(l.sidebar_visible || self.sidebar_peek) => Corners::None,
+            TabBar::Side => match l.sidebar_position {
+                SidebarPosition::Left if i == 0 => Corners::Left,
+                SidebarPosition::Right if i + 1 == n => Corners::Right,
+                _ => Corners::None,
+            },
         }
     }
 
@@ -934,15 +954,9 @@ impl App {
         self.boosts = load_boosts();
         match Config::load() {
             Ok(c) => {
-                let radius_changed = c.layout.corner_radius != self.config.layout.corner_radius;
                 let blocking_changed = serde_json::to_value(&c.content_blocking).ok() != serde_json::to_value(&self.config.content_blocking).ok();
                 self.config = c;
                 self.state.reconcile_spaces(&self.config);
-                if radius_changed {
-                    for v in self.views.values() {
-                        platform::round_corners(v, self.config.layout.corner_radius);
-                    }
-                }
                 self.build_menu();
                 if blocking_changed {
                     self.start_blocklist();
@@ -1186,7 +1200,7 @@ impl App {
             Ok(v) => v,
             Err(e) => return eprintln!("valerie: peek: {e}"),
         };
-        platform::round_corners(&view, 12.0);
+        platform::round_corners(&view, 12.0, platform::Corners::All);
         #[cfg(target_os = "macos")]
         if self.rules.is_some() {
             blocking::mac::apply(&view, self.rules.as_ref());

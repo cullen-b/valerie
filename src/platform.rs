@@ -63,15 +63,28 @@ mod mac {
         }
     }
 
-    pub fn round_corners(wv: &WebView, radius: f64) {
+    pub fn round_corners(wv: &WebView, radius: f64, corners: super::Corners) {
+        // CACornerMask bits: MinXMinY=1, MaxXMinY=2, MinXMaxY=4, MaxXMaxY=8.
         let v = ptr(wv);
         unsafe {
             let _: () = msg_send![v, setWantsLayer: true];
             let layer: *mut AnyObject = msg_send![v, layer];
-            if !layer.is_null() {
-                let _: () = msg_send![layer, setCornerRadius: radius];
-                let _: () = msg_send![layer, setMasksToBounds: radius > 0.0];
+            if layer.is_null() {
+                return;
             }
+            let flipped: bool = msg_send![layer, isGeometryFlipped];
+            let top = if flipped { 1usize | 2 } else { 4usize | 8 };
+            let mask = match corners {
+                super::Corners::None => 0,
+                super::Corners::All => 15,
+                super::Corners::Left => 1 | 4,
+                super::Corners::Right => 2 | 8,
+                super::Corners::Top => top,
+            };
+            let r = if mask == 0 { 0.0 } else { radius };
+            let _: () = msg_send![layer, setCornerRadius: r];
+            let _: () = msg_send![layer, setMaskedCorners: mask];
+            let _: () = msg_send![layer, setMasksToBounds: r > 0.0];
         }
     }
 
@@ -184,11 +197,22 @@ pub fn bring_to_front(wv: &WebView) {
     let _ = wv;
 }
 
-pub fn round_corners(wv: &WebView, radius: f64) {
+/// Which corners of a page to round: the ones that meet the browser's own UI, not the window edge.
+#[derive(Clone, Copy, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum Corners {
+    None,
+    All,
+    Left,
+    Right,
+    Top,
+}
+
+pub fn round_corners(wv: &WebView, radius: f64, corners: Corners) {
     #[cfg(target_os = "macos")]
-    mac::round_corners(wv, radius);
+    mac::round_corners(wv, radius, corners);
     #[cfg(not(target_os = "macos"))]
-    let _ = (wv, radius);
+    let _ = (wv, radius, corners);
 }
 
 pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
