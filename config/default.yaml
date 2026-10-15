@@ -48,6 +48,7 @@ sidebar:
   favorites: false         # a row of favorite tiles shared by every space, above the pinned tabs
   pinned_hint: true        # "Drag here to pin" when a space has no pinned tabs
   compact_pinned: folder   # pinned tabs in the icons-only sidebar. one of: folder (one icon; hover it to pick a tab) | icons (every tab shown)
+  pinned_folder_icon: pin  # what that folder icon shows. one of: pin | star | favicons (the first four sites)
   kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them (with folders)
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
