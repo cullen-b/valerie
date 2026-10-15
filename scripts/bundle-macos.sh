@@ -72,6 +72,10 @@ if [ -n "$IDENTITY" ]; then
 else
   codesign --force --sign - "$APP" >/dev/null 2>&1 || true
   echo "Signed ad-hoc (no Apple certificate found; see README > Signing)"
+  if security find-identity -p codesigning 2>/dev/null | grep -q '"Apple Development\|"Developer ID'; then
+    echo "  You have a certificate macOS doesn't trust yet: install Apple's WWDR G3 intermediate,"
+    echo "  https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer (double-click it), then run this again."
+  fi
 fi
 codesign --verify --deep --strict "$APP" && echo "Signature verified"
 
