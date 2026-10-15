@@ -83,7 +83,42 @@ pub struct App {
     user_agent: String,
     agents_running: Vec<String>,
     agent_runs: Vec<agents::Finished>,
+    boosts: Vec<Boost>,
+    sidebar_peek: bool,
     pub quit: bool,
+}
+
+/// Per-site CSS/JS from `<config dir>/boosts/<host>.css|.js`; a host also matches its subdomains.
+#[derive(Default)]
+struct Boost {
+    host: String,
+    css: String,
+    js: String,
+}
+
+fn boosts_dir() -> PathBuf {
+    config::config_dir().join("boosts")
+}
+
+fn load_boosts() -> Vec<Boost> {
+    let mut map: std::collections::BTreeMap<String, Boost> = Default::default();
+    for e in std::fs::read_dir(boosts_dir()).into_iter().flatten().flatten() {
+        let path = e.path();
+        let (Some(stem), Some(ext)) = (path.file_stem().and_then(|s| s.to_str()), path.extension().and_then(|s| s.to_str())) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let b = map.entry(stem.to_lowercase()).or_insert_with(|| Boost { host: stem.to_lowercase(), ..Default::default() });
+        match ext {
+            "css" => b.css = text,
+            "js" => b.js = text,
+            _ => {}
+        }
+    }
+    map.into_values().collect()
+}
+
+fn boost_matches(pattern: &str, host: &str) -> bool {
+    let host = host.to_lowercase();
+    host == pattern || host.ends_with(&format!(".{pattern}"))
 }
 
 fn state_path() -> PathBuf {
@@ -191,6 +226,8 @@ impl App {
             user_agent,
             agents_running: Vec::new(),
             agent_runs: Vec::new(),
+            boosts: load_boosts(),
+            sidebar_peek: false,
             quit: false,
         })
     }
@@ -224,9 +261,29 @@ impl App {
 
     // ---------------------------------------------------------------- webviews
 
+    /// Settings the in-page script needs: vim bindings, accent, boost CSS, and whether to report the screen edge.
+    fn page_config(&self) -> Value {
+        let l = &self.config.layout;
+        let edge = (l.tab_bar == TabBar::Side && !l.sidebar_visible).then_some(match l.sidebar_position {
+            SidebarPosition::Left => "left",
+            SidebarPosition::Right => "right",
+        });
+        let css: serde_json::Map<String, Value> =
+            self.boosts.iter().filter(|b| !b.css.is_empty()).map(|b| (b.host.clone(), json!(b.css))).collect();
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek })
+    }
+
     fn content_script(&self) -> String {
-        let cfg = json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent });
-        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), cfg)
+        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config())
+    }
+
+    /// After each load: refresh page settings and run matching boost scripts (native eval, so page CSP can't block it).
+    fn after_load(&self, view: &WebView, url: &str) {
+        let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config()));
+        let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
+            let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+        }
     }
 
     fn page_builder(&self, target: Target, url: &str, profile: &str) -> WebViewBuilder<'static> {
@@ -333,7 +390,7 @@ impl App {
         match l.tab_bar {
             TabBar::Top => (b, TOP_BAR, w - 2.0 * b, h - TOP_BAR - b),
             TabBar::Side => {
-                let sw = if l.sidebar_visible { l.sidebar_width } else { 0.0 };
+                let sw = if l.sidebar_visible || self.sidebar_peek { l.sidebar_width } else { 0.0 };
                 let (left, right) = match l.sidebar_position {
                     SidebarPosition::Left => (if sw > 0.0 { sw } else { b }, b),
                     SidebarPosition::Right => (b, if sw > 0.0 { sw } else { b }),
@@ -444,6 +501,7 @@ impl App {
             "split": if s.split.len() > 1 { s.split.clone() } else { vec![] },
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
             "agents": self.agents_running,
+            "peek": self.sidebar_peek,
         });
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
     }
@@ -794,13 +852,14 @@ impl App {
     // ---------------------------------------------------------------- config, menu, sync
 
     fn refresh_content_config(&self) {
-        let cfg = json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent });
+        let cfg = self.page_config();
         for v in self.views.values() {
             let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
     }
 
     fn reload_config(&mut self) {
+        self.boosts = load_boosts();
         match Config::load() {
             Ok(c) => {
                 let radius_changed = c.layout.corner_radius != self.config.layout.corner_radius;
@@ -1283,6 +1342,8 @@ impl App {
             }
             Command::ToggleSidebar => {
                 self.config.layout.sidebar_visible = !self.config.layout.sidebar_visible;
+                self.sidebar_peek = false;
+                self.refresh_content_config();
                 // Pages sit above the sidebar, so growing/shrinking them over it is the whole animation.
                 let secs = self.anim_secs();
                 self.layout_anim(secs);
@@ -1466,6 +1527,25 @@ impl App {
         let kind = m["t"].as_str().unwrap_or("");
         match (from, kind) {
             (Source::Chrome, "ready") => self.render(),
+            (Source::Chrome, "unpeek") | (Source::Page(Target::Tab(_)), "unpeek") => {
+                if self.sidebar_peek {
+                    self.sidebar_peek = false;
+                    let secs = self.anim_secs();
+                    self.layout_anim(secs);
+                    self.render();
+                    self.refresh_content_config();
+                }
+            }
+            (Source::Page(Target::Tab(_)), "edge") => {
+                // Mouse hit the screen edge with the sidebar hidden: slide it in until the mouse leaves it.
+                if !self.config.layout.sidebar_visible && !self.sidebar_peek && self.config.layout.tab_bar == TabBar::Side {
+                    self.sidebar_peek = true;
+                    let secs = self.anim_secs();
+                    self.layout_anim(secs);
+                    self.render();
+                    self.refresh_content_config();
+                }
+            }
             (Source::Chrome, "drag") => {
                 let _ = self.window.drag_window();
             }
@@ -1552,13 +1632,19 @@ impl App {
                     }
                     if let Some((u, t)) = visit {
                         self.state.record_visit(&u, &t);
+                        if let Some(v) = self.views.get(&id) {
+                            self.after_load(v, &u);
+                        }
                     }
                     self.dirty = true;
                     self.render();
                 }
                 Target::Little(id) => {
                     if let Some(l) = self.littles.get_mut(&id) {
-                        l.url = url;
+                        l.url = url.clone();
+                    }
+                    if let Some(l) = self.littles.get(&id).filter(|_| finished) {
+                        self.after_load(&l.view, &url);
                     }
                     self.render_little(id);
                 }
@@ -1704,6 +1790,22 @@ impl App {
                 }
                 None => Err("no tab (open one first)".into()),
             },
+            "screenshot" => {
+                let Some(t) = self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) else {
+                    let _ = reply.send(Err("no tab".into()));
+                    return;
+                };
+                self.ensure_view(t);
+                let Some(v) = self.views.get(&t) else {
+                    let _ = reply.send(Err("tab has no page".into()));
+                    return;
+                };
+                let width = args["width"].as_f64().unwrap_or(1024.0).clamp(200.0, 2400.0);
+                platform::snapshot(v, width, move |r| {
+                    let _ = reply.send(r.map(|png| json!({ "__image_png": crate::mcp::base64(&png) })));
+                });
+                return;
+            }
             "eval" => {
                 let Some(t) = self.target_tab(tab_arg) else {
                     let _ = reply.send(Err("no tab".into()));
@@ -1776,7 +1878,12 @@ impl App {
 fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let path = config::config_path();
-        let mtime = || std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        // Newest mtime across the config file, the boosts dir and the files in it.
+        let mtime = || {
+            let m = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+            let boosts = std::fs::read_dir(boosts_dir()).into_iter().flatten().flatten().filter_map(|e| m(&e.path()));
+            [m(&path), m(&boosts_dir())].into_iter().flatten().chain(boosts).max()
+        };
         let mut last = mtime();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(800));

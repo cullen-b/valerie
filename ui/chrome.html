@@ -305,7 +305,7 @@ function render(state) {
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
   b.className = (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + (drag && drag.active ? " dragging" : "");
-  const hidden = !S.layout.sidebar_visible;
+  const hidden = !S.layout.sidebar_visible && !S.peek;
   $("#sidebar").classList.toggle("hidden", hidden);
   const empty = $("#empty");
   empty.style.display = S.active ? "none" : "grid";
@@ -445,6 +445,7 @@ $("#back").onclick = () => cmd({ cmd: "back" });
 $("#fwd").onclick = () => cmd({ cmd: "forward" });
 $("#reload").onclick = () => cmd({ cmd: "reload" });
 $("#url").onclick = () => cmd({ cmd: "open_command_bar", mode: "current" });
+$("#sidebar").addEventListener("mouseleave", () => { if (S && S.peek) send({ t: "unpeek" }); });
 $("#drag").onmousedown = (e) => { if (e.target.id === "drag") send({ t: "drag" }); };
 $("#empty").onclick = () => cmd({ cmd: "new_tab" });
 

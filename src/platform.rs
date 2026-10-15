@@ -120,6 +120,38 @@ mod mac {
         }
     }
 
+    pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        use objc2::class;
+        let v = ptr(wv);
+        let done = std::cell::RefCell::new(Some(done));
+        let block = block2::RcBlock::new(move |image: *mut AnyObject, _error: *mut AnyObject| {
+            let Some(done) = done.borrow_mut().take() else { return };
+            if image.is_null() {
+                return done(Err("the page could not be captured (is the tab loaded?)".into()));
+            }
+            unsafe {
+                let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+                let rep: *mut AnyObject = msg_send![class!(NSBitmapImageRep), imageRepWithData: tiff];
+                let props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
+                // NSBitmapImageFileTypePNG = 4
+                let png: *mut AnyObject = msg_send![rep, representationUsingType: 4usize, properties: props];
+                if png.is_null() {
+                    return done(Err("PNG encoding failed".into()));
+                }
+                let len: usize = msg_send![png, length];
+                let bytes: *const u8 = msg_send![png, bytes];
+                done(Ok(std::slice::from_raw_parts(bytes, len).to_vec()))
+            }
+        });
+        unsafe {
+            let cfg: *mut AnyObject = msg_send![class!(WKSnapshotConfiguration), new];
+            let n: *mut AnyObject = msg_send![class!(NSNumber), numberWithDouble: width];
+            let _: () = msg_send![cfg, setSnapshotWidth: n];
+            let _: () = msg_send![v, takeSnapshotWithConfiguration: cfg, completionHandler: &*block];
+            let _: () = msg_send![cfg, release];
+        }
+    }
+
     pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -192,4 +224,15 @@ fn safari_version() -> Option<String> {
     }
     #[cfg(not(target_os = "macos"))]
     None
+}
+
+/// PNG of the visible page, `width` points wide. Calls `done` later on the main thread.
+pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::snapshot(wv, width, done);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, width);
+        done(Err("screenshots are only implemented on macOS so far".into()));
+    }
 }

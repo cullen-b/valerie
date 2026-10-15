@@ -182,6 +182,26 @@ window.addEventListener("keydown", (e) => {
   if (b[e.key] != null && !keys.some((k) => k !== e.key && k.startsWith(e.key))) { e.preventDefault(); e.stopImmediatePropagation(); run(b[e.key]); }
 }, true);
 
+// ---------- boosts (per-site CSS from the config dir; boost JS is run natively after load) ----------
+function applyBoostCss() {
+  const h = location.hostname.toLowerCase(), b = cfg.boost_css || {};
+  const css = Object.keys(b).filter((k) => h === k || h.endsWith("." + k)).map((k) => b[k]).join("\n");
+  let st = document.getElementById("__valerie_boost");
+  if (!css) { if (st) st.remove(); return; }
+  if (!st) { st = document.createElement("style"); st.id = "__valerie_boost"; (document.head || document.documentElement).appendChild(st); }
+  if (st.textContent !== css) st.textContent = css;
+}
+if (document.documentElement) applyBoostCss(); else document.addEventListener("DOMContentLoaded", applyBoostCss);
+
+// ---------- reveal the hidden sidebar when the mouse touches the screen edge ----------
+let edgeAt = 0;
+document.addEventListener("mousemove", (e) => {
+  if (cfg.peek) { if (e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
+  if (!cfg.edge || e.timeStamp - edgeAt < 300) return;
+  const hit = cfg.edge === "left" ? e.clientX <= 2 : e.clientX >= innerWidth - 3;
+  if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
+}, { passive: true });
+
 // ---------- page metadata for the sidebar ----------
 function favicon() {
   const links = [...document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")];
@@ -204,6 +224,6 @@ if (document.readyState === "loading") document.addEventListener("DOMContentLoad
 addEventListener("load", report);
 
 Object.defineProperty(window, "__valerie", {
-  value: Object.freeze({ configure: (c) => { cfg = c; }, toast, find: openFind, hints: startHints }),
+  value: Object.freeze({ configure: (c) => { cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints }),
   writable: false, configurable: false,
 });
