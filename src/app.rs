@@ -84,7 +84,7 @@ pub struct App {
     dirty: bool,
     last_sync: u64,
     syncing: bool,
-    last_page_open: std::time::Instant,
+    page_opens: Vec<std::time::Instant>,
     /// When the sidebar was last hidden; edge reveals right after hiding are the page sliding under the mouse.
     sidebar_hidden_at: std::time::Instant,
     user_agent: String,
@@ -252,7 +252,7 @@ impl App {
             dirty: false,
             last_sync: 0,
             syncing: false,
-            last_page_open: std::time::Instant::now(),
+            page_opens: Vec::new(),
             sidebar_hidden_at: std::time::Instant::now(),
             user_agent,
             agents_running: Vec::new(),
@@ -308,7 +308,7 @@ impl App {
         });
         let css: serde_json::Map<String, Value> =
             self.boosts.iter().filter(|b| !b.css.is_empty()).map(|b| (b.host.clone(), json!(b.css))).collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek })
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links })
     }
 
     fn content_script(&self) -> String {
@@ -1250,6 +1250,35 @@ impl App {
         self.focus_active();
     }
 
+    /// Open a link the way a click gesture or the link menu asked for.
+    fn open_link_as(&mut self, url: &str, mode: &str, space: usize, from: Target, elwt: &EventLoopWindowTarget<UserEvent>) {
+        match mode {
+            "peek" => self.open_peek(url),
+            "little_window" => self.open_little(url, space, elwt),
+            "new_tab" => {
+                self.close_peek();
+                self.open_tab(url, Some(space), true);
+            }
+            "split" => {
+                // Split beside the page the link came from.
+                if let Target::Tab(src) = from {
+                    if self.state.space_of(src) == Some(self.state.active_space) || self.state.favorites.contains(&src) {
+                        self.state.space_mut().active = Some(src);
+                    }
+                }
+                let id = self.state.add_tab(space, url, true);
+                self.dispatch(Command::SplitView { tab: Some(id) }, elwt);
+            }
+            _ => {
+                let id = self.state.add_tab(space, url, true);
+                self.ensure_view(id);
+                self.layout();
+                self.render();
+                self.dirty = true;
+            }
+        }
+    }
+
     fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
         if self.agents_running.contains(&name) {
             return self.toast(&format!("{name} is already running"));
@@ -2018,32 +2047,24 @@ impl App {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
-            (Source::Page(_), "peek") => {
+            (Source::Page(target), kind @ ("open" | "peek")) => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
-                if self.last_page_open.elapsed() < std::time::Duration::from_millis(400) {
+                // Pages can forge these messages, so allow a burst (middle-clicking a few links) but not a flood.
+                let now_i = std::time::Instant::now();
+                self.page_opens.retain(|t| now_i.duration_since(*t) < std::time::Duration::from_secs(3));
+                if self.page_opens.len() >= 6 {
                     return;
                 }
-                self.last_page_open = std::time::Instant::now();
+                self.page_opens.push(now_i);
+                let mode = if kind == "peek" { "peek" } else { m["mode"].as_str().unwrap_or("background_tab") };
                 let url = url.to_string();
-                self.open_peek(&url);
-            }
-            (Source::Page(target), "open") => {
-                let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
-                // Pages can forge this message, so cap it to stop tab spam.
-                if self.last_page_open.elapsed() < std::time::Duration::from_millis(400) {
-                    return;
-                }
-                self.last_page_open = std::time::Instant::now();
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
                     Target::Peek => None,
-                };
-                let id = self.state.add_tab(space.unwrap_or(self.state.active_space), url, true);
-                self.ensure_view(id);
-                self.layout();
-                self.render();
-                self.toast("Opened in background");
+                }
+                .unwrap_or(self.state.active_space);
+                self.open_link_as(&url, mode, space, target, elwt);
             }
             _ => {}
         }

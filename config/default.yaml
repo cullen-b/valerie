@@ -40,6 +40,8 @@ layout:
 sidebar:
   nav_buttons: true        # back / forward / reload buttons at the top
   url_bar: true            # the address pill (click it to edit the URL)
+  url_path: false          # show the page's path after the domain (clicking the pill always shows the full URL)
+  url_lock_icon: false     # a 🔒 before secure sites (insecure http:// sites are always marked)
   space_name: false        # the space's icon and name ("Personal", "School") above its pinned tabs
   pinned_hint: true        # "Drag tabs here to pin them" when a space has no pinned tabs
   new_tab_button: false    # the "+ New Tab" row
@@ -62,6 +64,19 @@ tabs:
   archive_after_hours: 12  # unpinned tabs you haven't used for this long are archived; 0 = never
   unload_after_minutes: 60 # free the memory of tabs unused this long (they reload on click); 0 = never
   new_tab_position: top    # where new tabs appear in the list. one of: top | bottom
+
+# What clicking a link does while holding a modifier. Each is one of:
+#   background_tab (open it, stay on this page) | new_tab (open it and switch) | split (open beside this page) |
+#   peek (preview it over this page) | little_window | default (let the page decide)
+# "cmd" is ⌘ on Mac and Ctrl elsewhere; "option" is ⌥ on Mac and Alt elsewhere.
+links:
+  middle_click: background_tab
+  cmd_click: background_tab
+  shift_click: background_tab
+  option_click: split
+  cmd_shift_click: new_tab
+  option_shift_click: peek
+  context_menu: true       # Valerie's right-click menu on links (hold shift while right-clicking for the system menu)
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)

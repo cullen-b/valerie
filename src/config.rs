@@ -17,6 +17,7 @@ pub struct Config {
     pub sidebar: SidebarConfig,
     pub start_page: String,
     pub command_bar: CommandBarConfig,
+    pub links: LinksConfig,
     pub tabs: TabsConfig,
     pub little_window: LittleWindowConfig,
     pub profiles: Vec<ProfileConfig>,
@@ -51,12 +52,26 @@ pub struct Layout {
 pub struct SidebarConfig {
     pub nav_buttons: bool,
     pub url_bar: bool,
+    pub url_path: bool,
+    pub url_lock_icon: bool,
     pub space_name: bool,
     pub pinned_hint: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
+}
+
+/// What modified clicks on links do; values are link actions (see config/default.yaml).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinksConfig {
+    pub middle_click: String,
+    pub cmd_click: String,
+    pub shift_click: String,
+    pub option_click: String,
+    pub cmd_shift_click: String,
+    pub option_shift_click: String,
+    pub context_menu: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

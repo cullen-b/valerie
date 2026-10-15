@@ -89,7 +89,9 @@ Each device pushes `devices/<hostname>.json` every few minutes (`⌘⇧Y` syncs 
 and spaces sync for real (the newest edit to a space wins). Today tabs stay on their device and show up in the
 command bar as "Synced". Nothing but GitHub is involved.
 
-Shift-click any link to **Peek** at it (`esc` closes, `⌘O` keeps it as a tab).
+**Links:** middle-, ⌘- or ⇧-click opens a background tab, ⌥-click opens it in split view, ⌥⇧-click Peeks at it
+(`esc` closes, `⌘O` keeps it as a tab), and right-click gives Valerie's link menu (⇧-right-click for the system
+menu). Each gesture is configurable under `links:`.
 
 ## Profiles, spaces and Air Traffic Control
 

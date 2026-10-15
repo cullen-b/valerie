@@ -38,8 +38,11 @@ body.right .drag { padding-left: 0; justify-content: flex-start; }
   padding: 0 11px; gap: 7px; color: var(--fg-dim); font-size: 12.5px; margin-bottom: 10px; overflow: hidden; white-space: nowrap;
 }
 #url:hover { background: var(--active); color: var(--fg); }
-#url b { color: var(--fg); font-weight: 500; }
+#url b { color: var(--fg-dim); font-weight: 500; }
+#url:hover b { color: var(--fg); }
+#url .path { opacity: .6; }
 #url .lock { font-size: 10px; opacity: .7; }
+#url .insecure { font-size: 11px; color: #ff9a6b; opacity: .85; }
 .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 10px; flex: none; }
 #favorites:empty { display: none; }
 body.dragging #favorites:empty { display: block; height: 46px; border-radius: 11px; border: 1.5px dashed var(--line); }
@@ -325,9 +328,11 @@ function render(state) {
   $("#fwd").classList.toggle("off", !S.active);
   const u = $("#url"); u.innerHTML = "";
   if (S.url) {
-    const h = host(S.url), lock = el("span", "lock", S.url.startsWith("https:") ? "🔒" : "");
-    const hb = el("b", null, h), rest = el("span", null, S.url.replace(/^https?:\/\/(www\.)?/, "").slice(h.length));
-    u.append(lock, hb, rest);
+    const h = host(S.url), secure = !S.url.startsWith("http:");
+    if (!secure) u.append(el("span", "insecure", "Not secure"));
+    else if (O.url_lock_icon) u.append(el("span", "lock", "🔒"));
+    u.append(el("b", null, h));
+    if (O.url_path) u.append(el("span", "path", S.url.replace(/^https?:\/\/(www\.)?/, "").slice(h.length)));
   } else u.append(el("span", null, "Search or enter URL…"));
 
   const fav = $("#favorites"); fav.innerHTML = "";
