@@ -33,6 +33,12 @@ pub struct Tab {
     pub playing: bool,
     #[serde(default, skip)]
     pub loading: bool,
+    /// Muted from Valerie (sidebar ♪, toggle_mute).
+    #[serde(default, skip)]
+    pub muted: bool,
+    /// The tab's last-played video/audio: "playing" | "paused" (drives the sidebar mini player).
+    #[serde(default, skip)]
+    pub media: Option<String>,
 }
 
 impl Tab {
@@ -99,6 +105,14 @@ pub struct Closed {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Download {
+    pub name: String,
+    pub path: String,
+    pub url: String,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub url: String,
     pub title: String,
@@ -142,6 +156,12 @@ pub struct State {
     pub favorites_modified: u64,
     #[serde(default)]
     pub favorites_hash: Option<String>,
+    /// Zoom level per site (host), when tabs.zoom is "site".
+    #[serde(default)]
+    pub site_zoom: BTreeMap<String, f64>,
+    /// Finished downloads, newest first.
+    #[serde(default)]
+    pub downloads: Vec<Download>,
 }
 
 const MAX_HISTORY: usize = 5000;

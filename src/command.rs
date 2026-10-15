@@ -208,6 +208,27 @@ pub enum Command {
         then: serde_json::Value,
         field: String,
     },
+    /// Switch back to the tab you were on before this one (in this space).
+    LastTab,
+    /// Mute or unmute everything a tab plays.
+    ToggleMute {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
+    /// Play or pause a tab's video/audio (the one it played last).
+    ToggleMedia {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
+    /// Show the page's article as clean, readable text (again to go back).
+    ReaderView,
+    /// Screenshot the visible page: copied to the clipboard and/or saved to Downloads (see `capture` settings).
+    CapturePage,
+    /// Open a file from the downloads list (the command bar shows them). Never available to pages or agents.
+    OpenDownload {
+        index: usize,
+    },
+    ShowDownloads,
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
     SetDefaultBrowser,
@@ -253,9 +274,9 @@ impl Command {
         serde_json::from_value(serde_json::json!({ "cmd": name })).ok()
     }
 
-    /// Commands that expose or destroy secrets; agents (MCP) may not run them.
+    /// Commands that expose or destroy secrets or open local files; agents (MCP) may not run them.
     pub fn agent_forbidden(&self) -> bool {
-        matches!(self, Command::CopyPassword { .. } | Command::DeletePassword { .. })
+        matches!(self, Command::CopyPassword { .. } | Command::DeletePassword { .. } | Command::OpenDownload { .. })
     }
 
     /// Commands a web page may trigger through injected vim motions. None of these can read or redirect other tabs.
@@ -283,6 +304,10 @@ impl Command {
                 | ZoomIn
                 | ZoomOut
                 | ZoomReset
+                | LastTab
+                | ToggleMute { tab: None }
+                | ToggleMedia { tab: None }
+                | ReaderView
         )
     }
 }
@@ -320,6 +345,12 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("dev_tools", "Developer Tools"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
+    ("last_tab", "Switch to Last Tab"),
+    ("toggle_mute", "Mute / Unmute Tab"),
+    ("toggle_media", "Play / Pause Media"),
+    ("reader_view", "Reader View"),
+    ("capture_page", "Capture Page (screenshot)"),
+    ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
     ("set_default_browser", "Make Valerie the Default Browser"),
@@ -359,6 +390,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("peek", "{ url }"),
     ("import", "{ source: arc | chrome | brave | edge | vivaldi | chromium | safari | firefox }"),
     ("find_in_page", "{ query? }"),
+    ("toggle_mute", "{ tab? }"),
+    ("toggle_media", "{ tab? }  (play / pause)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("plugin", "{ plugin, command }  (run a plugin command by its title)"),

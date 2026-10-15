@@ -54,6 +54,7 @@ sidebar:
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
   space_switcher: true     # the space icons at the bottom
+  now_playing: true        # a mini player above the space icons for video/audio playing in another tab
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
 escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
@@ -108,6 +109,19 @@ tabs:
   unload_after_minutes: 60 # free the memory of tabs unused this long (they reload on click); 0 = never
   new_tab_position: top    # where new tabs appear in the list. one of: top | bottom
   autoplay_in_background: false   # let tabs opened in the background start playing video/audio before you look at them
+  picture_in_picture_on_leave: true  # a video that's playing pops out into a floating window when you switch away from its tab
+  zoom: site               # what ⌘+ / ⌘- zoom applies to. one of: site (every tab of that site, remembered) | tab (just this tab)
+
+# Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
+reader_view:
+  font: serif              # one of: serif | sans
+  font_size: 19            # text size in pixels
+  width: 680               # column width in pixels
+
+# Capture (capture_page command, ⌘⇧2): a screenshot of the visible page.
+capture:
+  copy_to_clipboard: true  # put the image on the clipboard
+  save_to_downloads: true  # also save it as a PNG in your Downloads folder
 
 # What clicking a link does while holding a modifier. Each is one of:
 #   background_tab (open it, stay on this page) | new_tab (open it and switch) | split (open beside this page) |
@@ -195,7 +209,7 @@ keybindings:
   "CmdOrCtrl+]": forward
   "CmdOrCtrl+Alt+Down": next_tab
   "CmdOrCtrl+Alt+Up": prev_tab
-  "Ctrl+Tab": next_tab
+  "Ctrl+Tab": last_tab     # back to the tab you were just on (next_tab to go down the list instead)
   "Ctrl+Shift+Tab": prev_tab
   "CmdOrCtrl+Alt+Right": next_space
   "CmdOrCtrl+Alt+Left": prev_space
@@ -221,6 +235,9 @@ keybindings:
   "CmdOrCtrl+Alt+I": dev_tools
   "CmdOrCtrl+O": move_to_main_window
   "CmdOrCtrl+F": find_in_page
+  "CmdOrCtrl+Shift+R": reader_view
+  "CmdOrCtrl+Shift+2": capture_page
+  "CmdOrCtrl+Shift+M": toggle_mute
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
 

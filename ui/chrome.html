@@ -127,6 +127,19 @@ body.size-compact .folder.open > .kids { border-left: 2px solid var(--line); mar
 body.size-compact #bottom { flex-direction: column; gap: 4px; }
 body.size-compact .agents span { display: none; }
 body.size-compact .agents { position: static; }
+.audio { cursor: pointer; }
+.audio.muted { opacity: .5; text-decoration: line-through; }
+/* mini player for media playing in another tab */
+#nowplaying { display: flex; align-items: center; gap: 2px; margin: 6px 0 4px; padding: 4px; border-radius: 11px; background: var(--tile); flex: none; }
+#nowplaying .np-tab { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 4px 6px; border-radius: 8px; }
+#nowplaying .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.np-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--fg-dim); flex: none; }
+body.pointer .np-btn:hover, body.pointer #nowplaying .np-tab:hover { background: var(--hover); color: var(--fg); }
+.np-btn svg { width: 14px; height: 14px; }
+.np-btn svg.fill { fill: currentColor; stroke: none; }
+.np-btn svg.line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+body.size-compact #nowplaying { flex-direction: column; }
+body.size-compact #nowplaying .title { display: none; }
 /* icons-only sidebar: pinned tabs tucked into one folder tile that opens a column on hover */
 .pinfolder .mini { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; }
 .pinfolder .mini img, .pinfolder .mini .letter { width: 12px; height: 12px; border-radius: 3px; font-size: 7px; }
@@ -197,6 +210,7 @@ body.pointer #topbar .chip:hover { background: var(--hover); }
   <div id="url"></div>
   <div id="favorites" class="grid"></div>
   <div id="scroll"></div>
+  <div id="nowplaying"></div>
   <div id="bottom"></div>
   <div id="resize"></div>
 </div>
@@ -295,7 +309,7 @@ document.addEventListener("mouseup", () => {
 function tile(t, list, index) {
   const f = el("div", "tile" + (isActive(t) ? " active" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));
   f.append(icon(t)); f.title = t.title || t.url;
-  if (t.playing) f.append(el("div", "audio", "♪"));
+  if (t.playing) f.append(audio(t));
   f.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
   f.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
   f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
@@ -310,7 +324,7 @@ function tabRow(t, list, index) {
   r.classList.toggle("loading", !!t.loading);
   const medium = S.layout.sidebar_size === "medium";
   r.append(icon(t), el("div", "title", medium ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab"));
-  if (t.playing) r.append(el("div", "audio", "♪"));
+  if (t.playing) r.append(audio(t));
   const x = el("div", "x", "×"); x.title = t.pinned ? "Unload" : "Close";
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
   r.append(x);
@@ -343,9 +357,32 @@ function folderEl(n, section = "pinned") {
 let flyTimer = 0;
 const PIN = "M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z";
 const STAR = "M11.53 2.3a.53.53 0 0 1 .95 0l2.31 4.68a2.12 2.12 0 0 0 1.6 1.16l5.16.76a.53.53 0 0 1 .3.9l-3.74 3.64a2.12 2.12 0 0 0-.61 1.88l.88 5.14a.53.53 0 0 1-.77.56l-4.62-2.43a2.12 2.12 0 0 0-1.97 0L6.4 21.01a.53.53 0 0 1-.77-.56l.88-5.14a2.12 2.12 0 0 0-.61-1.88L2.16 9.8a.53.53 0 0 1 .29-.91l5.17-.75a2.12 2.12 0 0 0 1.6-1.16z";
-function glyph(d) {
+const PLAY = "M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z", PAUSE = "M6 4h4v16H6zM14 4h4v16h-4z";
+const SPEAKER = "M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z";
+const VOLUME = SPEAKER + "M16 9a5 5 0 0 1 0 6M19.4 18.4a9 9 0 0 0 0-12.8", MUTED = SPEAKER + "M22 9l-6 6M16 9l6 6";
+function glyph(d, cls = "glyph") {
   const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg"), p = document.createElementNS(ns, "path");
-  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", "glyph"); p.setAttribute("d", d); svg.append(p); return svg;
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", cls); p.setAttribute("d", d); svg.append(p); return svg;
+}
+// The ♪ on a tab that's playing: click it to mute or unmute the tab.
+function audio(t) {
+  const a = el("div", "audio" + (t.muted ? " muted" : ""), "♪"); a.title = t.muted ? "Unmute" : "Mute";
+  a.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "toggle_mute", tab: t.id }); };
+  a.onmousedown = (e) => e.stopPropagation();
+  return a;
+}
+function renderNowPlaying() {
+  const np = $("#nowplaying"), P = S.now_playing; np.replaceChildren();
+  np.style.display = P && S.layout.tab_bar !== "top" ? "" : "none";
+  if (!P) return;
+  const go = el("div", "np-tab"); go.append(icon(P, "ico", "np"), el("div", "title", P.title || host(P.url)));
+  go.title = P.title || P.url; go.onclick = () => cmd({ cmd: "activate_tab", tab: P.id });
+  const playing = P.media === "playing";
+  const pp = el("div", "np-btn"); pp.append(glyph(playing ? PAUSE : PLAY, "fill")); pp.title = playing ? "Pause" : "Play";
+  pp.onclick = () => cmd({ cmd: "toggle_media", tab: P.id });
+  const mu = el("div", "np-btn"); mu.append(glyph(P.muted ? MUTED : VOLUME, "line")); mu.title = P.muted ? "Unmute" : "Mute";
+  mu.onclick = () => cmd({ cmd: "toggle_mute", tab: P.id });
+  np.append(go, pp, mu);
 }
 function pinFolder(tabs) {
   const f = el("div", "tile pinfolder" + (tabs.some(isActive) ? " active" : "")), look = S.sidebar.pinned_folder_icon;
@@ -533,6 +570,7 @@ function render(state) {
   }
   pendingDir = 0;
   prevSpace = S.active_space;
+  renderNowPlaying();
   renderTop();
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }

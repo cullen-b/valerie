@@ -52,7 +52,9 @@ pub enum UserEvent {
     Tick,
     ConfigChanged,
     SyncDone(Result<Vec<sync::DeviceTabs>, String>),
-    Downloaded { ok: bool },
+    Downloaded { ok: bool, path: Option<PathBuf>, url: String },
+    Captured(Result<Vec<u8>, String>),
+    DownloadStarted { target: Target },
     AgentDone(agents::Finished),
     PluginDone { title: String, output: String, result: Result<String, String> },
     SiteDataCleared { message: String, reload: bool },
@@ -77,6 +79,12 @@ pub struct App {
     overlay: WebView,
     views: HashMap<TabId, WebView>,
     zoom: HashMap<TabId, f64>,
+    /// Zoom each view currently has, so it's only set when it changes.
+    zoom_applied: HashMap<TabId, f64>,
+    /// Most recently used tabs first (last_tab).
+    recent_tabs: Vec<TabId>,
+    /// The last URL each tab finished loading, restored if a navigation turns out to be a download.
+    committed_url: HashMap<TabId, String>,
     littles: HashMap<WindowId, Little>,
     focused_little: Option<WindowId>,
     config: Config,
@@ -260,6 +268,9 @@ impl App {
             overlay,
             views: HashMap::new(),
             zoom: HashMap::new(),
+            zoom_applied: HashMap::new(),
+            recent_tabs: Vec::new(),
+            committed_url: HashMap::new(),
             littles: HashMap::new(),
             focused_little: None,
             config,
@@ -349,7 +360,7 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background } })
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view })
     }
 
     fn content_script(&self) -> String {
@@ -404,6 +415,10 @@ impl App {
         let p = self.proxy.clone();
         let (p1, p2, p3, p4, p5) = (p.clone(), p.clone(), p.clone(), p.clone(), p.clone());
         let downloads = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+        // Where each download is being saved; the completed handler doesn't get the path on every platform.
+        let saving = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, PathBuf>::new()));
+        let saved = saving.clone();
+        let p6 = p.clone();
         base
             .with_url(if url.is_empty() { "about:blank" } else { url })
             .with_visible(false)
@@ -444,10 +459,15 @@ impl App {
                     dest = downloads.join(format!("{stem} ({i}){ext}"));
                     i += 1;
                 }
+                saving.lock().unwrap().insert(url, dest.clone());
+                send(&p6, UserEvent::DownloadStarted { target });
                 *path = dest;
                 true
             })
-            .with_download_completed_handler(move |_, _, ok| send(&p, UserEvent::Downloaded { ok }))
+            .with_download_completed_handler(move |url, path, ok| {
+                let path = saved.lock().unwrap().remove(&url).or(path);
+                send(&p, UserEvent::Downloaded { ok, path, url })
+            })
     }
 
     fn ensure_view(&mut self, tab: TabId) {
@@ -462,8 +482,11 @@ impl App {
         let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).build_as_child(&app.window));
         match built {
             Ok(v) => {
-                if let Some(z) = self.zoom.get(&tab) {
-                    let _ = v.zoom(*z);
+                self.zoom_applied.remove(&tab);
+                let z = self.zoom_for(tab);
+                if z != 1.0 {
+                    let _ = v.zoom(z);
+                    self.zoom_applied.insert(tab, z);
                 }
                 #[cfg(target_os = "macos")]
                 if self.rules.is_some() {
@@ -650,10 +673,71 @@ impl App {
         json!({
             "id": t.id, "url": t.url, "favicon": t.favicon,
             "title": t.custom_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone()),
-            "loaded": self.views.contains_key(&t.id), "loading": t.loading, "playing": t.playing,
+            "loaded": self.views.contains_key(&t.id), "loading": t.loading, "playing": t.playing, "muted": t.muted, "media": t.media,
             "pinned": self.state.is_pinned(t.id),
             "section": self.state.section_of(t.id),
         })
+    }
+
+    /// The sidebar mini player: media playing (or paused from Valerie) in a tab you're not looking at.
+    fn now_playing(&self) -> Value {
+        if !self.config.sidebar.now_playing {
+            return Value::Null;
+        }
+        let panes = self.panes();
+        self.state
+            .tabs
+            .values()
+            .filter(|t| t.media.is_some() && !panes.contains(&t.id) && self.views.contains_key(&t.id))
+            .max_by_key(|t| (t.media.as_deref() == Some("playing"), t.last_active))
+            .map(|t| self.tab_vm(t))
+            .unwrap_or(Value::Null)
+    }
+
+    /// The site whose zoom a tab follows (tabs.zoom: site), or None when zoom is per tab.
+    fn zoom_site(&self, tab: TabId) -> Option<String> {
+        if self.config.tabs.zoom != "site" {
+            return None;
+        }
+        let t = self.state.tabs.get(&tab)?;
+        url::Url::parse(&t.url).ok()?.host_str().map(|h| h.trim_start_matches("www.").to_string())
+    }
+
+    fn zoom_for(&self, tab: TabId) -> f64 {
+        match self.zoom_site(tab) {
+            Some(site) => self.state.site_zoom.get(&site).copied().unwrap_or(1.0),
+            None => self.zoom.get(&tab).copied().unwrap_or(1.0),
+        }
+    }
+
+    fn apply_zoom(&mut self, tab: TabId) {
+        let z = self.zoom_for(tab);
+        if self.zoom_applied.get(&tab).copied().unwrap_or(1.0) != z {
+            if let Some(v) = self.views.get(&tab) {
+                let _ = v.zoom(z);
+                self.zoom_applied.insert(tab, z);
+            }
+        }
+    }
+
+    fn captured(&mut self, r: Result<Vec<u8>, String>) {
+        let png = match r {
+            Ok(png) => png,
+            Err(e) => return self.toast(&format!("Capture failed: {e}")),
+        };
+        let c = &self.config.capture;
+        let mut done = Vec::new();
+        if c.copy_to_clipboard && platform::copy_png(&png) {
+            done.push("copied");
+        }
+        if c.save_to_downloads {
+            let dir = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+            let path = dir.join(format!("Valerie Capture {}.png", platform::local_timestamp()));
+            if std::fs::write(&path, &png).is_ok() {
+                done.push("saved to Downloads");
+            }
+        }
+        self.toast(&if done.is_empty() { "Capture failed".to_string() } else { format!("Page captured: {}", done.join(" and ")) });
     }
 
     fn node_vm(&self, n: &Node) -> Option<Value> {
@@ -695,6 +779,7 @@ impl App {
             "sidebar": self.config.sidebar,
             "vim": { "enabled": self.config.vim.enabled, "bindings": self.config.vim.bindings },
             "start_page": self.config.start_page,
+            "now_playing": self.now_playing(),
         });
         let vm = vm.to_string();
         if *self.last_render.borrow() == vm {
@@ -742,7 +827,12 @@ impl App {
             if let Some(t) = self.state.tabs.get_mut(&prev) {
                 t.last_active = now();
             }
+            self.recent_tabs.retain(|t| *t != prev);
+            self.recent_tabs.insert(0, prev);
         }
+        self.recent_tabs.retain(|t| *t != tab);
+        self.recent_tabs.insert(0, tab);
+        self.recent_tabs.truncate(64);
         if let Some(sp) = self.state.space_of(tab) {
             self.state.active_space = sp;
         }
@@ -982,6 +1072,9 @@ impl App {
         }
         for a in self.state.archive.iter().take(500) {
             items.push(json!({ "kind": "archived", "title": a.title, "url": a.url, "sub": format!("Archived from {}", a.space) }));
+        }
+        for (i, d) in self.state.downloads.iter().enumerate() {
+            items.push(json!({ "kind": "download", "title": d.name, "sub": d.path, "icon": "⤓", "cmd": { "cmd": "open_download", "index": i } }));
         }
         let engine = url::Url::parse(&self.config.search_engine.replace("%s", "x"))
             .ok()
@@ -2198,18 +2291,70 @@ impl App {
             }
             Command::ZoomIn | Command::ZoomOut | Command::ZoomReset => {
                 if let Some(t) = self.state.active_tab() {
-                    let z = self.zoom.get(&t).copied().unwrap_or(1.0);
+                    let z = self.zoom_for(t);
                     let z = match cmd {
                         Command::ZoomIn => (z + 0.1).min(3.0),
                         Command::ZoomOut => (z - 0.1).max(0.3),
                         _ => 1.0,
                     };
-                    self.zoom.insert(t, z);
-                    if let Some(v) = self.views.get(&t) {
-                        let _ = v.zoom(z);
+                    let z = (z * 10.0).round() / 10.0;
+                    match self.zoom_site(t) {
+                        Some(site) if z == 1.0 => {
+                            self.state.site_zoom.remove(&site);
+                        }
+                        Some(site) => {
+                            self.state.site_zoom.insert(site, z);
+                        }
+                        None => {
+                            self.zoom.insert(t, z);
+                        }
+                    }
+                    self.dirty = true;
+                    let ids: Vec<TabId> = self.views.keys().copied().collect();
+                    for id in ids {
+                        self.apply_zoom(id);
                     }
                     self.toast(&format!("Zoom {:.0}%", z * 100.0));
                 }
+            }
+            Command::LastTab => {
+                let (active, space) = (self.state.active_tab(), self.state.active_space);
+                let last = self.recent_tabs.iter().copied().find(|t| {
+                    Some(*t) != active
+                        && self.state.tabs.contains_key(t)
+                        && self.state.space_of(*t).map_or(self.state.favorites.contains(t), |s| s == space)
+                });
+                if let Some(t) = last {
+                    self.activate(t);
+                }
+            }
+            Command::ToggleMute { tab } | Command::ToggleMedia { tab } => {
+                let action = if matches!(cmd, Command::ToggleMute { .. }) { "mute" } else { "toggle" };
+                if let Some(v) = self.target_tab(tab).and_then(|t| self.views.get(&t)) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.media({action:?})"));
+                }
+            }
+            Command::ReaderView => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    let _ = v.evaluate_script("window.__valerie && __valerie.reader()");
+                }
+            }
+            Command::CapturePage => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    let width = v.bounds().map(|b| b.size.to_logical::<f64>(self.window.scale_factor()).width).unwrap_or(1024.0);
+                    let p = self.proxy.clone();
+                    platform::snapshot(v, width, move |r| send(&p, UserEvent::Captured(r)));
+                }
+            }
+            Command::OpenDownload { index } => {
+                match self.state.downloads.get(index).filter(|d| std::path::Path::new(&d.path).exists()) {
+                    Some(d) => platform::open_external(&d.path),
+                    None => self.toast("That file is no longer there"),
+                }
+            }
+            Command::ShowDownloads => {
+                let dir = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+                platform::open_external(&dir.to_string_lossy());
             }
             Command::DevTools => {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
@@ -2495,10 +2640,14 @@ impl App {
                         }
                     }
                     t.playing = m["playing"].as_bool().unwrap_or(false);
+                    t.muted = m["muted"].as_bool().unwrap_or(false);
+                    t.media = m["media"].as_str().filter(|s| matches!(*s, "playing" | "paused")).map(str::to_string);
                     if let Some(u) = real_url.filter(|u| !u.is_empty() && u != "about:blank") {
                         t.url = u;
                     }
+                    self.committed_url.insert(id, t.url.clone());
                 }
+                self.apply_zoom(id);
                 self.render();
             }
             (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
@@ -2558,6 +2707,9 @@ impl App {
                     if let Some(t) = self.state.tabs.get_mut(&id) {
                         if !url.is_empty() && url != "about:blank" {
                             t.url = url.clone();
+                        }
+                        if finished {
+                            self.committed_url.insert(id, t.url.clone());
                         }
                         t.loading = !finished;
                         if finished {
@@ -2720,7 +2872,29 @@ impl App {
                     }
                 }
             }
-            UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
+            UserEvent::Downloaded { ok, path, url } => match path.filter(|_| ok) {
+                Some(path) => {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.toast(&format!("Downloaded {name}"));
+                    self.state.downloads.retain(|d| d.path != path.to_string_lossy());
+                    self.state.downloads.insert(0, crate::state::Download { name, path: path.to_string_lossy().into_owned(), url, at: now() });
+                    self.state.downloads.truncate(100);
+                    self.dirty = true;
+                }
+                None => self.toast(if ok { "Download complete" } else { "Download failed" }),
+            },
+            UserEvent::Captured(r) => self.captured(r),
+            UserEvent::DownloadStarted { target } => {
+                // The link was a file, not a page: the tab stays on the page it was showing.
+                if let Target::Tab(id) = target {
+                    if let (Some(prev), Some(t)) = (self.committed_url.get(&id), self.state.tabs.get_mut(&id)) {
+                        t.url = prev.clone();
+                        t.loading = false;
+                        self.dirty = true;
+                        self.render();
+                    }
+                }
+            }
         }
     }
 

@@ -690,6 +690,46 @@ const reportFocus = (e) => { if (!e.isTrusted || e.timeStamp - focusedAt < 200) 
 addEventListener("mousedown", reportFocus, true);
 addEventListener("focus", reportFocus);
 
+// ---------- media: mute and play/pause from Valerie, and what's playing for the sidebar mini player ----------
+let tabMuted = false, lastMedia = null, pausedByUs = null;
+document.addEventListener("play", (e) => {
+  const m = e.target;
+  if (!(m instanceof HTMLMediaElement)) return;
+  if (tabMuted) m.muted = true;
+  if (!m.muted || tabMuted) lastMedia = m;
+  pausedByUs = null;
+}, true);
+document.addEventListener("volumechange", (e) => { if (tabMuted && e.target instanceof HTMLMediaElement && !e.target.muted) tabMuted = false; }, true);
+function media(action) {
+  const all = [...document.querySelectorAll("video, audio")];
+  if (action === "mute") { tabMuted = !tabMuted; for (const m of all) m.muted = tabMuted; }
+  else if (action === "toggle") {
+    const m = lastMedia && lastMedia.isConnected ? lastMedia : all.find((x) => !x.paused);
+    if (m && m.paused) m.play().catch(() => {});
+    else if (m) { pausedByUs = m; m.pause(); }
+  }
+  report();
+}
+// "paused" only when Valerie paused it, so the mini player goes away when a video ends or you pause it on the page.
+function mediaState() {
+  if (!lastMedia || !lastMedia.isConnected) return null;
+  return !lastMedia.paused ? "playing" : pausedByUs === lastMedia ? "paused" : null;
+}
+
+// ---------- a playing video pops out into picture-in-picture when you switch to another tab ----------
+let autoPip = null;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (!(cfg.tabs && cfg.tabs.picture_in_picture_on_leave)) return;
+    const v = [...document.querySelectorAll("video")].find((x) => !x.paused && !x.muted && x.readyState > 2 &&
+      x.webkitSupportsPresentationMode && x.webkitSupportsPresentationMode("picture-in-picture") && x.webkitPresentationMode === "inline");
+    if (v) { try { v.webkitSetPresentationMode("picture-in-picture"); autoPip = v; } catch (_) {} }
+  } else if (autoPip) {
+    try { if (autoPip.webkitPresentationMode === "picture-in-picture") autoPip.webkitSetPresentationMode("inline"); } catch (_) {}
+    autoPip = null;
+  }
+});
+
 // ---------- page metadata for the sidebar ----------
 function favicon() {
   const links = [...document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")];
@@ -699,7 +739,8 @@ function favicon() {
 }
 let lastMeta = "";
 function report() {
-  const m = { t: "meta", favicon: favicon(), playing: [...document.querySelectorAll("video, audio")].some((v) => !v.paused && !v.muted), url: location.href };
+  const m = { t: "meta", favicon: favicon(), playing: [...document.querySelectorAll("video, audio")].some((v) => !v.paused && (!v.muted || tabMuted)),
+    muted: tabMuted, media: mediaState(), url: location.href };
   const s = JSON.stringify(m); if (s !== lastMeta) { lastMeta = s; post(m); }
 }
 for (const fn of ["pushState", "replaceState"]) {
@@ -710,6 +751,79 @@ addEventListener("popstate", report); addEventListener("hashchange", report);
 document.addEventListener("play", report, true); document.addEventListener("pause", report, true); document.addEventListener("volumechange", report, true);
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", report); else report();
 addEventListener("load", report);
+
+// ---------- reader view: the page's article as clean text ----------
+let readerHost = null;
+function articleRoot() {
+  const a = document.querySelector("article");
+  if (a && a.textContent.trim().length > 600) return a;
+  // Otherwise the element holding the most paragraph text.
+  const score = new Map();
+  for (const p of document.querySelectorAll("p")) {
+    const n = p.textContent.trim().length;
+    if (n < 60 || !p.parentElement) continue;
+    score.set(p.parentElement, (score.get(p.parentElement) || 0) + n);
+    const gp = p.parentElement.parentElement;
+    if (gp) score.set(gp, (score.get(gp) || 0) + n / 2);
+  }
+  let best = null, top = 0;
+  for (const [el, s] of score) if (s > top) { top = s; best = el; }
+  return top > 300 ? best : null;
+}
+function readerBlocks(root) {
+  const out = [], SKIP = "nav, aside, footer, form, button, script, style, noscript, iframe, [aria-hidden=true], [role=navigation], [role=complementary]";
+  const walk = (el) => {
+    for (const c of el.children) {
+      if (c.matches(SKIP) || (c.tagName !== "IMG" && !c.getClientRects().length)) continue;
+      const tag = c.tagName;
+      if (/^H[1-6]$/.test(tag)) out.push(["h" + Math.min(4, Math.max(2, +tag[1])), c.textContent]);
+      else if (tag === "P" || tag === "BLOCKQUOTE" || tag === "PRE" || tag === "LI" || tag === "FIGCAPTION") out.push([tag.toLowerCase(), c.textContent]);
+      else if (tag === "IMG") { if (c.currentSrc || c.src) out.push(["img", c.currentSrc || c.src, c.alt]); }
+      else walk(c);
+    }
+  };
+  walk(root);
+  return out.filter(([k, t]) => k === "img" || (t && t.trim()));
+}
+function reader() {
+  if (readerHost) { readerHost.remove(); readerHost = null; return; }
+  const root = articleRoot();
+  if (!root) return toast("No article on this page");
+  const r = cfg.reader || {}, dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const host = document.createElement("valerie-reader");
+  host.style.cssText = `all: initial; position: fixed; inset: 0; z-index: 2147483646; overflow: auto; outline: none; display: block;
+    background: ${dark ? "#1d1c21" : "#fbf8f2"};`;
+  host.tabIndex = -1;
+  const sh = host.attachShadow({ mode: "closed" }), st = document.createElement("style");
+  const font = r.font === "sans" ? "-apple-system, system-ui, sans-serif" : '"New York", "Iowan Old Style", Charter, Georgia, serif';
+  st.textContent = `
+    main { max-width: ${r.width || 680}px; margin: 0 auto; padding: 56px 28px 140px; font: ${r.font_size || 19}px/1.65 ${font}; color: ${dark ? "#e6e3dc" : "#26231f"}; }
+    .site { font: 600 12px/1 -apple-system, system-ui, sans-serif; letter-spacing: .6px; text-transform: uppercase; color: ${cfg.accent || "#9d8cff"}; margin-bottom: 14px; }
+    h1 { font-size: 1.9em; line-height: 1.2; margin: 0 0 1.1em; } h2 { font-size: 1.35em; margin: 1.6em 0 .5em; } h3, h4 { font-size: 1.1em; margin: 1.4em 0 .4em; }
+    p, li { margin: 0 0 1em; } ul { padding-left: 1.2em; } img { max-width: 100%; height: auto; border-radius: 8px; margin: .6em 0; }
+    blockquote { margin: 1em 0; padding-left: 1em; border-left: 3px solid ${cfg.accent || "#9d8cff"}; opacity: .85; }
+    pre { white-space: pre-wrap; font: .8em/1.5 ui-monospace, Menlo, monospace; padding: 12px; border-radius: 8px; background: ${dark ? "#2a2930" : "#efe9de"}; }
+    .figcaption { font-size: .8em; opacity: .65; }`;
+  const col = document.createElement("main"), site = document.createElement("div"), h1 = document.createElement("h1");
+  site.className = "site"; site.textContent = location.hostname.replace(/^www\./, "");
+  h1.textContent = ((root.querySelector("h1") || document.querySelector("h1") || {}).textContent || document.title).trim();
+  col.append(site, h1);
+  let list = null;
+  for (const [k, v, alt] of readerBlocks(root)) {
+    if (k !== "li") list = null;
+    if (k === "img") { const im = document.createElement("img"); im.src = v; im.alt = alt || ""; col.append(im); continue; }
+    const text = v.trim();
+    if (/^h\d$/.test(k) && text === h1.textContent) continue;
+    if (k === "li") { if (!list) { list = document.createElement("ul"); col.append(list); } const li = document.createElement("li"); li.textContent = text; list.append(li); continue; }
+    const e = document.createElement(k === "figcaption" ? "p" : k);
+    if (k === "figcaption") e.className = "figcaption";
+    e.textContent = text; col.append(e);
+  }
+  sh.append(st, col);
+  document.documentElement.append(host);
+  readerHost = host; host.focus();
+}
+document.addEventListener("keydown", (e) => { if (readerHost && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); reader(); } }, true);
 
 // ---------- passwords: offer saved logins on focus, offer to save after submit ----------
 let accounts = [], fillNonce = null, lastField = null, reportedForm = false, menu = null;
@@ -822,7 +936,7 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind,
+    closeFind, media, reader,
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,

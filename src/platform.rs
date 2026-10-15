@@ -176,6 +176,21 @@ mod mac {
         }
     }
 
+    pub fn copy_png(png: &[u8]) -> bool {
+        use objc2::class;
+        unsafe {
+            let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+            if pb.is_null() {
+                return false;
+            }
+            let _: isize = msg_send![pb, clearContents];
+            let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: png.as_ptr().cast::<std::ffi::c_void>(), length: png.len()];
+            let ty = objc2_foundation::NSString::from_str("public.png");
+            let ok: bool = msg_send![pb, setData: data, forType: &*ty];
+            ok
+        }
+    }
+
     /// Remove cookies, caches and storage for one site from this webview's profile. Calls `done` with how many
     /// site records were cleared.
     pub fn clear_site_data(wv: &WebView, host: &str, done: impl FnOnce(usize) + 'static) {
@@ -393,4 +408,27 @@ pub fn set_border(wv: &WebView, width: f64, rgba: [f64; 4]) {
     mac::set_border(wv, width, rgba);
     #[cfg(not(target_os = "macos"))]
     let _ = (wv, width, rgba);
+}
+
+/// Put a PNG image on the clipboard. Returns false where that isn't supported.
+pub fn copy_png(png: &[u8]) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::copy_png(png);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = png;
+        false
+    }
+}
+
+/// Local date and time for file names, like "2026-10-15 at 14.03.22".
+pub fn local_timestamp() -> String {
+    #[cfg(unix)]
+    if let Ok(o) = std::process::Command::new("date").arg("+%Y-%m-%d at %H.%M.%S").output() {
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    crate::state::now().to_string()
 }

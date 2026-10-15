@@ -80,8 +80,8 @@ function highlight(text, needle) {
   if (i < 0) return esc(text);
   return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + needle.length)) + "</mark>" + esc(text.slice(i + needle.length));
 }
-const KIND_WEIGHT = { plugin: 20, customize: 1, password: 3, agent: 2, tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, theme: 5, import: 5 };
-const KIND_LABEL = { site: "Tab ⇥", plugin: "Plugin", customize: "Customize", password: "Copy Password", agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
+const KIND_WEIGHT = { plugin: 20, customize: 1, password: 3, agent: 2, tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, download: 10, theme: 5, import: 5 };
+const KIND_LABEL = { site: "Tab ⇥", plugin: "Plugin", customize: "Customize", password: "Copy Password", agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", download: "Download", theme: "Theme", import: "Import" };
 
 // ---------- site search: type "youtube", press Tab, search YouTube ----------
 let scope = null;
