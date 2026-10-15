@@ -83,6 +83,7 @@ links:
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
+  copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
   width: 960
   height: 700
 

@@ -170,6 +170,15 @@ pub enum Command {
         name: String,
     },
     ToggleSiteBlocking,
+    /// Run a command defined by a plugin in `<config dir>/plugins/<plugin>/plugin.yaml`.
+    Plugin {
+        plugin: String,
+        command: String,
+    },
+    /// Ask the user's AI assistant to change Valerie itself (edits config and plugins).
+    Customize {
+        request: String,
+    },
     /// Copy a saved password to the clipboard (cleared after 45s). Never available to pages or agents.
     CopyPassword {
         vault: String,
@@ -272,6 +281,36 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),
     ("quit", "Quit Valerie"),
+];
+
+/// Commands that take options, with their shapes (shared by the MCP tool description and the LLM guide).
+pub const WITH_ARGS: &[(&str, &str)] = &[
+    ("open_command_bar", "{ mode: new_tab | current }"),
+    ("new_tab", "{ url?, space?, background? }"),
+    ("go", "{ input, new_tab? }  (URL or search terms, like typing in the command bar)"),
+    ("navigate", "{ url, tab? }"),
+    ("close_tab", "{ tab? }"),
+    ("activate_tab", "{ tab }"),
+    ("go_to_tab", "{ index }  (0-based, favorites first)"),
+    ("toggle_pin", "{ tab? }"),
+    ("toggle_favorite", "{ tab? }"),
+    ("move_tab", "{ tab, space?, pinned?, folder?, index?, favorite? }"),
+    ("rename_tab", "{ tab, title }"),
+    ("new_folder", "{ name? }"),
+    ("switch_space", "{ index? | name? }"),
+    ("new_space", "{ name? }"),
+    ("rename_space", "{ name }"),
+    ("delete_space", "{ name? }"),
+    ("set_space_theme", "{ theme }"),
+    ("split_view", "{ tab? }"),
+    ("open_little_window", "{ url }"),
+    ("move_to_main_window", "{ space? }"),
+    ("peek", "{ url }"),
+    ("import", "{ source: arc | chrome | brave | edge | vivaldi | chromium | safari | firefox }"),
+    ("find_in_page", "{ query? }"),
+    ("run_agent", "{ name? | prompt?, agent? }"),
+    ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
+    ("plugin", "{ plugin, command }  (run a plugin command by its title)"),
 ];
 
 pub fn title_for(name: &str) -> String {

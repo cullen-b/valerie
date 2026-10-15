@@ -28,6 +28,13 @@ finds them maddening.
 - Use plain words and positive names (`url_bar: true` shows it), not double negatives.
 - Never break existing keys silently: users' files only hold overrides and are merged onto the defaults.
 
+## Keep Valerie customisable by LLMs
+
+Users change Valerie by asking an LLM, which reads the guide Valerie writes into their config folder
+(`src/llm_guide.rs`, also `valerie llm-guide`). When you add a command, setting, plugin field or MCP tool, make sure
+the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`), settings get comments in
+`config/default.yaml`, and `valerie check-config` should catch mistakes in anything new.
+
 ## Building and checking
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).

@@ -199,9 +199,17 @@ window.addEventListener("keydown", (e) => {
 }, true);
 
 // ---------- boosts (per-site CSS from the config dir; boost JS is run natively after load) ----------
+// Plugin `matches` use the same rules as routes: hosts cover subdomains; patterns with "://" match the URL.
+function globMatch(p, text) { return new RegExp("^" + p.toLowerCase().replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$").test(text.toLowerCase()); }
+function pluginMatches(patterns) {
+  if (!patterns || !patterns.length) return /^https?:/.test(location.href);
+  const h = location.hostname;
+  return patterns.some((p) => p.includes("://") ? globMatch(p, location.href) : globMatch(p, h) || globMatch("*." + p, h));
+}
 function applyBoostCss() {
   const h = location.hostname.toLowerCase(), b = cfg.boost_css || {};
-  const css = Object.keys(b).filter((k) => h === k || h.endsWith("." + k)).map((k) => b[k]).join("\n");
+  const css = Object.keys(b).filter((k) => h === k || h.endsWith("." + k)).map((k) => b[k])
+    .concat((cfg.plugin_css || []).filter((p) => pluginMatches(p.matches)).map((p) => p.css)).join("\n");
   let st = document.getElementById("__valerie_boost");
   if (!css) { if (st) st.remove(); return; }
   if (!st) { st = document.createElement("style"); st.id = "__valerie_boost"; (document.head || document.documentElement).appendChild(st); }

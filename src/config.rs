@@ -106,6 +106,7 @@ pub struct TabsConfig {
 pub struct LittleWindowConfig {
     pub enabled: bool,
     pub space_picker: bool,
+    pub copy_button: bool,
     pub width: f64,
     pub height: f64,
 }

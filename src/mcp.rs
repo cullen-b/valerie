@@ -1,7 +1,7 @@
 //! Built-in MCP server (Streamable HTTP, JSON responses) so agents can drive the browser.
 //! Binds to 127.0.0.1, requires a bearer token, and rejects browser origins and foreign Host headers.
 use crate::app::UserEvent;
-use crate::command::CATALOG;
+use crate::command::{CATALOG, WITH_ARGS};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -168,8 +168,9 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
             "inputSchema": { "type": "object", "properties": props, "required": required } })
 }
 
-fn tools() -> Vec<Value> {
+pub fn tools() -> Vec<Value> {
     let commands: Vec<&str> = CATALOG.iter().map(|c| c.0).collect();
+    let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     vec![
         tool("list_spaces", "List spaces (tab groups with their own profile and theme) and which is active.", json!({}), &[]),
         tool("list_tabs", "List tabs: favorites, pinned and today tabs, with ids, urls, titles, space and state.",
@@ -204,11 +205,9 @@ fn tools() -> Vec<Value> {
         tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited.",
              json!({ "tab": tab_prop(), "script": { "type": "string" } }), &["script"]),
         tool("run_command", &format!(
-            "Run any browser command, exactly like a keybinding would. Pass {{\"cmd\": name, ...args}}. No-arg commands: {}. \
-             With args: switch_space {{index|name}}, new_space {{name}}, set_space_theme {{theme}}, go_to_tab {{index}}, toggle_pin {{tab}}, \
-             toggle_favorite {{tab}}, move_tab {{tab, space?, pinned?, folder?, index?}}, rename_tab {{tab, title}}, split_view {{tab}}, \
-             open_command_bar {{mode: new_tab|current}}, import {{source: arc|chrome|safari|firefox|brave|edge|vivaldi}}.",
-            commands.join(", ")),
+            "Run any browser command, exactly like a keybinding would. Pass {{\"cmd\": name, ...options}}. No-option commands: {}. \
+             With options: {}.",
+            commands.join(", "), with_args.join("; ")),
              json!({ "command": { "type": "object" } }), &["command"]),
     ]
 }
