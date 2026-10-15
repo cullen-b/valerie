@@ -18,6 +18,7 @@ pub struct Config {
     pub start_page: String,
     pub escape_hints: bool,
     pub command_bar: CommandBarConfig,
+    pub find: FindConfig,
     pub links: LinksConfig,
     pub tabs: TabsConfig,
     pub little_window: LittleWindowConfig,
@@ -73,6 +74,12 @@ pub struct LinksConfig {
     pub cmd_shift_click: String,
     pub option_shift_click: String,
     pub context_menu: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindConfig {
+    pub minimap: bool,
+    pub highlight_all: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +182,9 @@ impl Binding {
 pub struct VimConfig {
     pub enabled: bool,
     pub scroll_step: f64,
+    pub smooth_scroll: bool,
+    pub scroll_duration_ms: f64,
+    pub hint_characters: String,
     pub excluded_hosts: Vec<String>,
     pub bindings: BTreeMap<String, Option<serde_json::Value>>,
 }
