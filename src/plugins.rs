@@ -19,6 +19,9 @@ pub struct Manifest {
     pub commands: Vec<PluginCommand>,
     #[serde(default)]
     pub on_page_load: Vec<Hook>,
+    /// Options for this plugin, available to `script.js` as the `settings` object.
+    #[serde(default)]
+    pub settings: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -158,6 +161,36 @@ pub fn run_script(dir: &std::path::Path, script: &str, env: &[(&str, String)]) -
     Ok(text)
 }
 
+/// Plugins that ship with Valerie. Each is installed once; after that the folder is the user's to edit or delete.
+const BUNDLED: &[(&str, &[(&str, &str)])] = &[(
+    "youtube-speed",
+    &[
+        ("plugin.yaml", include_str!("../plugins/youtube-speed/plugin.yaml")),
+        ("script.js", include_str!("../plugins/youtube-speed/script.js")),
+        ("style.css", include_str!("../plugins/youtube-speed/style.css")),
+    ],
+)];
+
+pub fn install_bundled() {
+    let dir = plugins_dir();
+    let record = dir.join(".installed");
+    let done = std::fs::read_to_string(&record).unwrap_or_default();
+    let mut installed: Vec<&str> = done.lines().collect();
+    for (name, files) in BUNDLED {
+        if installed.contains(name) || dir.join(name).exists() {
+            continue;
+        }
+        let target = dir.join(name);
+        if std::fs::create_dir_all(&target).is_ok() {
+            for (file, body) in *files {
+                let _ = std::fs::write(target.join(file), body);
+            }
+            installed.push(name);
+        }
+    }
+    let _ = std::fs::write(&record, installed.join("\n") + "\n");
+}
+
 /// A disabled example so people and LLMs can copy the format.
 pub const EXAMPLE: &str = r#"# Example plugin (disabled). Copy this folder, rename it, and set enabled: true.
 description: Shows every kind of plugin feature.
@@ -184,6 +217,10 @@ commands:
     run: 'echo "$VALERIE_TITLE — $VALERIE_URL" >> ~/reading-list.txt && echo "Saved"'
     output: toast            # one of: toast | tab | none
 
+# Options for this plugin; script.js reads them from the `settings` object (e.g. settings.greeting).
+settings:
+  greeting: "Hello from a plugin"
+
 # Scripts that run when a matching page finishes loading.
 on_page_load:
   - matches: ["arxiv.org"]
@@ -198,6 +235,9 @@ mod tests {
     fn example_manifest_parses_and_matches() {
         let m: Manifest = serde_yaml::from_str(EXAMPLE).unwrap();
         assert_eq!(m.commands.len(), 3);
+        assert_eq!(m.settings["greeting"], "Hello from a plugin");
+        let yt: Manifest = serde_yaml::from_str(BUNDLED[0].1[0].1).unwrap();
+        assert!(yt.commands.iter().all(|c| c.actions.iter().all(|a| a.command().is_some())));
         assert!(m.commands[0].actions.iter().all(|a| a.command().is_some()));
         assert!(matches(&m.matches, "https://news.ycombinator.com/item?id=1"));
         assert!(!matches(&m.matches, "https://example.com"));

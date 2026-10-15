@@ -18,6 +18,12 @@ add a setting so anyone can switch it back on or off:
 No "press Esc to exit full screen" banners, ever, and no "esc to …" reminders unless `escape_hints` is on. The owner
 finds them maddening.
 
+## Page scripts: no innerHTML
+
+Scripts that run inside web pages (`ui/content.js`, plugin `script.js`) must build DOM with `createElement` /
+`textContent`, never `innerHTML`: sites with Trusted Types (YouTube, Google) throw on it and the feature silently
+breaks there.
+
 ## Keep the settings file readable for people and LLMs
 
 `config/default.yaml` is the reference for every option; users mostly edit their own small

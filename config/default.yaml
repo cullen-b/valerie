@@ -188,6 +188,11 @@ vim:
   scroll_step: 80          # pixels per j / k
   smooth_scroll: true      # glide instead of jumping (j/k, d/U, gg/G)
   scroll_duration_ms: 150  # how long each glide takes; lower = snappier
+  hold_to_accelerate: true # holding j/k/h/l scrolls continuously and speeds up until you let go
+  block_autofocus: true    # pages can't put the cursor in a text box until you click, so vim keys keep working
+  hold_scroll_speed: 700   # starting speed while holding, pixels per second
+  hold_scroll_acceleration: 2400   # how quickly it speeds up, pixels per second, per second
+  hold_scroll_max_speed: 6000      # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
   excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
   bindings:
@@ -210,8 +215,8 @@ vim:
     "r": reload
     "x": close_tab
     "X": reopen_closed_tab
-    "K": next_tab
-    "J": prev_tab
+    "J": next_tab            # J down the sidebar, K up (like j/k)
+    "K": prev_tab
     "gt": next_tab
     "gT": prev_tab
     "o": open_command_bar

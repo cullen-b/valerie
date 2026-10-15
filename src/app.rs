@@ -98,6 +98,9 @@ pub struct App {
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
     pending_save: Option<PendingSave>,
     peek: Option<PeekView>,
+    /// Tabs whose page script has reported in (so it can handle vim keys).
+    ready_views: std::collections::HashSet<TabId>,
+    pending_focus: std::cell::Cell<Option<TabId>>,
     #[cfg(not(target_os = "macos"))]
     contexts: HashMap<String, wry::WebContext>,
     #[cfg(target_os = "macos")]
@@ -265,6 +268,8 @@ impl App {
             fill_offers: HashMap::new(),
             pending_save: None,
             peek: None,
+            ready_views: Default::default(),
+            pending_focus: std::cell::Cell::new(None),
             #[cfg(not(target_os = "macos"))]
             contexts: HashMap::new(),
             #[cfg(target_os = "macos")]
@@ -333,7 +338,11 @@ impl App {
         }
         for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
             if !p.js.is_empty() && plugins::matches(&p.manifest.matches, url) {
-                let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie plugin {}', e) }}", p.js, p.name));
+                let settings = Value::Object(p.manifest.settings.clone());
+                let _ = view.evaluate_script(&format!(
+                    "(function (settings) {{ try {{\n{}\n}} catch (e) {{ console.error('valerie plugin {}', e) }} }})({settings});",
+                    p.js, p.name
+                ));
             }
             for h in p.manifest.on_page_load.iter().filter(|h| plugins::matches(&h.matches, url)) {
                 let (dir, run, env) = (p.dir.clone(), h.run.clone(), vec![("VALERIE_URL", url.to_string())]);
@@ -440,6 +449,7 @@ impl App {
 
     fn unload(&mut self, tab: TabId) {
         self.views.remove(&tab);
+        self.ready_views.remove(&tab);
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.loading = false;
             t.playing = false;
@@ -549,8 +559,15 @@ impl App {
         if self.bar_open {
             return;
         }
-        match self.state.active_tab().and_then(|t| self.views.get(&t)) {
-            Some(v) => {
+        let active = self.state.active_tab();
+        match active.and_then(|t| self.views.get(&t).map(|v| (t, v))) {
+            // A page whose script hasn't started can't hear vim keys: let the sidebar take them until it's ready.
+            Some((t, _)) if !self.ready_views.contains(&t) => {
+                self.pending_focus.set(Some(t));
+                let _ = self.chrome.focus();
+            }
+            Some((_, v)) => {
+                self.pending_focus.set(None);
                 let _ = v.focus();
             }
             None => {
@@ -603,6 +620,7 @@ impl App {
             "agents": self.agents_running,
             "peek": self.sidebar_peek,
             "sidebar": self.config.sidebar,
+            "vim": { "enabled": self.config.vim.enabled, "bindings": self.config.vim.bindings },
             "start_page": self.config.start_page,
         });
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
@@ -2176,6 +2194,13 @@ impl App {
                 let Target::Tab(id) = target else {
                     return;
                 };
+                self.ready_views.insert(id);
+                if self.pending_focus.get() == Some(id) && self.state.active_tab() == Some(id) && !self.bar_open && self.focused_little.is_none() {
+                    self.pending_focus.set(None);
+                    if let Some(v) = self.views.get(&id) {
+                        let _ = v.focus();
+                    }
+                }
                 let real_url = self.views.get(&id).and_then(|v| v.url().ok());
                 if let Some(t) = self.state.tabs.get_mut(&id) {
                     if let Some(f) = m["favicon"].as_str() {
