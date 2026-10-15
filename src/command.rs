@@ -162,6 +162,9 @@ pub enum Command {
     ShowAgentRun {
         index: usize,
     },
+    StopAgent {
+        name: String,
+    },
     ToggleSiteBlocking,
     /// Copy a saved password to the clipboard (cleared after 45s). Never available to pages or agents.
     CopyPassword {

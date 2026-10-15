@@ -1,0 +1,22 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/bundle-macos.sh
+      - name: Zip and publish Valerie.app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd target && ditto -c -k --keepParent Valerie.app Valerie-${GITHUB_REF_NAME}-macos.zip
+          gh release create "$GITHUB_REF_NAME" "Valerie-${GITHUB_REF_NAME}-macos.zip" --generate-notes --title "Valerie $GITHUB_REF_NAME"

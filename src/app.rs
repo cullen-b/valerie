@@ -795,6 +795,9 @@ impl App {
             let title = format!("Import from {}{}", &src[..1].to_uppercase(), &src[1..]);
             items.push(json!({ "kind": "import", "title": title, "cmd": { "cmd": "import", "source": src } }));
         }
+        for name in &self.agents_running {
+            items.push(json!({ "kind": "agent", "title": format!("Stop agent: {name}"), "rank": 0, "cmd": { "cmd": "stop_agent", "name": name } }));
+        }
         for j in &self.config.agents.jobs {
             items.push(json!({ "kind": "agent", "title": format!("Run agent: {}", j.name), "sub": j.prompt, "cmd": { "cmd": "run_agent", "name": j.name } }));
         }
@@ -1810,6 +1813,14 @@ impl App {
                         self.start_agent(name.unwrap_or(short), p, agent, None)
                     }
                     _ => self.toast("No such agent job"),
+                }
+            }
+            Command::StopAgent { name } => {
+                self.close_bar();
+                if agents::stop(&name) {
+                    self.toast(&format!("Stopping {name}…"));
+                } else {
+                    self.toast(&format!("{name} isn't running"));
                 }
             }
             Command::ShowAgentRun { index } => {
