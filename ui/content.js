@@ -92,17 +92,20 @@ function scrollable(e) {
   const s = getComputedStyle(e);
   return /(auto|scroll|overlay)/.test(s.overflowY + s.overflowX) && (e.scrollHeight > e.clientHeight + 4 || e.scrollWidth > e.clientWidth + 4);
 }
+let innerScroller = null;
 function scroller() {
   for (let e = document.activeElement; e; e = e.parentElement) if (scrollable(e)) return e;
   const doc = document.scrollingElement || document.documentElement;
   if (doc.scrollHeight > innerHeight + 4) return doc;
-  // App-like pages scroll an inner element: pick the largest visible one.
+  // App-like pages scroll an inner element: pick the largest visible one (scanning is slow, so remember it).
+  if (innerScroller && innerScroller.isConnected && scrollable(innerScroller)) return innerScroller;
   let best = doc, area = 0;
   for (const e of document.querySelectorAll("div, main, section, article")) {
     if (!scrollable(e)) continue;
     const r = e.getBoundingClientRect(), a = Math.max(0, r.width) * Math.max(0, r.height);
     if (a > area) { area = a; best = e; }
   }
+  innerScroller = best === doc ? null : best;
   return best;
 }
 const step = () => cfg.vim.scroll_step || 80;
@@ -722,8 +725,8 @@ function userFieldFor(pw) {
   return best || document.querySelector("input[autocomplete=username], input[type=email]");
 }
 function checkLogin() {
-  if (reportedForm) return;
-  if (pwFields().length || document.querySelector("input[autocomplete~=username], input[type=email]")) { reportedForm = true; post({ t: "login_form" }); }
+  if (reportedForm || document.hidden) return;
+  if (pwFields().length || document.querySelector("input[autocomplete~=username], input[type=email]")) { reportedForm = true; loginWatch.disconnect(); post({ t: "login_form" }); }
 }
 function hideMenu() { if (menu) { menu.remove(); menu = null; } }
 function showAccounts(field) {
@@ -807,10 +810,15 @@ function offerSave(host, username, nonce, vaults) {
   ui().appendChild(box);
   setTimeout(() => box.remove(), 30000);
 }
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", checkLogin); else checkLogin();
+// Watch for login forms that appear later, but only while the tab is visible and until one is found.
 let loginTimer = 0;
-new MutationObserver(() => { if (reportedForm || loginTimer) return; loginTimer = setTimeout(() => { loginTimer = 0; checkLogin(); }, 500); })
-  .observe(document, { childList: true, subtree: true });
+const loginWatch = new MutationObserver(() => { if (loginTimer) return; loginTimer = setTimeout(() => { loginTimer = 0; checkLogin(); }, 500); });
+const watchLogin = () => {
+  if (reportedForm || document.hidden) return loginWatch.disconnect();
+  loginWatch.observe(document, { childList: true, subtree: true }); checkLogin();
+};
+watchLogin();
+document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({

@@ -55,6 +55,7 @@ kbd { font: 11px -apple-system, system-ui; padding: 1px 5px; border-radius: 4px;
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const q = document.getElementById("q"), list = document.getElementById("list");
 let D = { items: [] }, results = [], sel = 0;
+const badIcons = new Set(); // favicons that failed: draw the placeholder instead of retrying on every keystroke
 
 function host(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
@@ -165,10 +166,12 @@ function draw() {
   results.forEach((r, i) => {
     const d = document.createElement("div"); d.className = "item" + (i === sel ? " sel" : "");
     let ic;
-    if (r.favicon || (r.url && /^https?:/.test(r.url) && r.kind !== "go")) {
-      ic = document.createElement("img"); ic.className = "ic"; ic.src = r.favicon || new URL("/favicon.ico", r.url).href;
-      ic.onerror = () => { const s = document.createElement("div"); s.className = "ic"; s.textContent = "◦"; ic.replaceWith(s); };
-    } else { ic = document.createElement("div"); ic.className = "ic"; ic.textContent = r.icon || (r.kind === "command" ? "⌘" : r.kind === "space" ? "◆" : "◦"); }
+    const src = r.favicon || (r.url && /^https?:/.test(r.url) && r.kind !== "go" ? new URL("/favicon.ico", r.url).href : null);
+    if (src && !badIcons.has(src)) {
+      ic = document.createElement("img"); ic.className = "ic"; ic.src = src;
+      ic.onerror = () => { badIcons.add(src); const s = document.createElement("div"); s.className = "ic"; s.textContent = "◦"; ic.replaceWith(s); };
+    } else if (src) { ic = document.createElement("div"); ic.className = "ic"; ic.textContent = "◦"; }
+    else { ic = document.createElement("div"); ic.className = "ic"; ic.textContent = r.icon || (r.kind === "command" ? "⌘" : r.kind === "space" ? "◆" : "◦"); }
     const txt = document.createElement("div"); txt.className = "txt";
     const sub = r.kind === "go" ? r.sub : r.sub || (r.url ? host(r.url) || r.url : "");
     txt.innerHTML = '<span class="t">' + highlight(r.title || r.url || "", needle) + '</span><span class="u">' + esc(sub) + "</span>";
