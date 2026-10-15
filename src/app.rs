@@ -52,6 +52,7 @@ pub enum UserEvent {
     Downloaded { ok: bool },
     AgentDone(agents::Finished),
     PluginDone { title: String, output: String, result: Result<String, String> },
+    SiteDataCleared { message: String, reload: bool },
     /// Blocklist JSON ready to compile (None = unchanged since last compile, so reuse WebKit's cached copy).
     BlocklistBuilt { json: Option<String>, hash: String },
     #[cfg(target_os = "macos")]
@@ -906,7 +907,12 @@ impl App {
             .map(|h| format!("{}{}", &h[..1].to_uppercase(), &h[1..]))
             .unwrap_or_else(|| "the web".into());
         let query = if mode == BarMode::Current { active.and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) } else { None };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "options": self.config.command_bar, "theme": self.theme_for(self.state.active_space), "items": items });
+        let sites: Vec<Value> = if self.config.command_bar.site_search {
+            self.config.site_search.iter().filter_map(|(name, s)| s.as_ref().map(|s| json!({ "name": name, "keywords": s.keywords, "url": s.url }))).collect()
+        } else {
+            vec![]
+        };
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "options": self.config.command_bar, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -2089,6 +2095,25 @@ impl App {
                     Err(e) => self.toast(&format!("Keychain: {e}")),
                 }
             }
+            Command::SetDefaultBrowser => {
+                self.close_bar();
+                match platform::set_default_browser() {
+                    Ok(()) => self.toast("Confirm in the macOS dialog to finish"),
+                    Err(e) => self.toast(&format!("Couldn't set default browser: {e}")),
+                }
+            }
+            Command::ClearSiteData => {
+                self.close_bar();
+                let Some(t) = self.state.active_tab() else { return };
+                let host = self.state.tabs.get(&t).and_then(|t| url::Url::parse(&t.url).ok()).and_then(|u| u.host_str().map(str::to_string));
+                let (Some(host), Some(v)) = (host, self.views.get(&t)) else { return };
+                let p = self.proxy.clone();
+                let h = host.clone();
+                platform::clear_site_data(v, &host, move |n| {
+                    let msg = if n == 0 { format!("No saved data for {h}") } else { format!("Cleared data for {h}: reloading") };
+                    send(&p, UserEvent::SiteDataCleared { message: msg, reload: n > 0 });
+                });
+            }
             Command::ToggleSiteBlocking => {
                 let host = self
                     .state
@@ -2405,6 +2430,14 @@ impl App {
                 Ok(_) => {}
                 Err(e) => self.toast(&format!("{title} failed: {e}")),
             },
+            UserEvent::SiteDataCleared { message, reload } => {
+                self.toast(&message);
+                if reload {
+                    if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                        let _ = v.reload();
+                    }
+                }
+            }
             UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
         }
     }

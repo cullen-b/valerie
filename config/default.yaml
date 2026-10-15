@@ -54,9 +54,38 @@ escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mo
                            # "press Esc to exit full screen" banner, whatever this is set to.
 
 command_bar:
+  site_search: true        # type a site's name (e.g. "youtube"), press Tab, and search that site directly
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
 
+
+# Sites for Tab-to-search in the command bar. Type a keyword or the start of the name, press Tab, then your search.
+#   url: the site's search address with %s where your search goes.   keywords: words that pick this site.
+# Add one with a single entry in your config.yaml, e.g.
+#   site_search:
+#     Notion: { keywords: [notion], url: "https://www.notion.so/search?q=%s" }
+# Remove a built-in one with `Reddit: null`.
+site_search:
+  ChatGPT: { keywords: [chatgpt, gpt], url: "https://chatgpt.com/?q=%s" }
+  Claude: { keywords: [claude], url: "https://claude.ai/new?q=%s" }
+  Perplexity: { keywords: [perplexity, pplx], url: "https://www.perplexity.ai/search?q=%s" }
+  YouTube: { keywords: [youtube, yt], url: "https://www.youtube.com/results?search_query=%s" }
+  Google: { keywords: [google], url: "https://www.google.com/search?q=%s" }
+  Google Images: { keywords: [images, img], url: "https://www.google.com/search?tbm=isch&q=%s" }
+  Google Maps: { keywords: [maps], url: "https://www.google.com/maps/search/%s" }
+  DuckDuckGo: { keywords: [duckduckgo, ddg], url: "https://duckduckgo.com/?q=%s" }
+  Wikipedia: { keywords: [wikipedia, wiki], url: "https://en.wikipedia.org/wiki/Special:Search?search=%s" }
+  GitHub: { keywords: [github, gh], url: "https://github.com/search?q=%s" }
+  Reddit: { keywords: [reddit], url: "https://www.reddit.com/search/?q=%s" }
+  X: { keywords: [twitter], url: "https://x.com/search?q=%s" }
+  Amazon: { keywords: [amazon], url: "https://www.amazon.com/s?k=%s" }
+  Spotify: { keywords: [spotify], url: "https://open.spotify.com/search/%s" }
+  Hacker News: { keywords: [hackernews, hn], url: "https://hn.algolia.com/?q=%s" }
+  Stack Overflow: { keywords: [stackoverflow], url: "https://stackoverflow.com/search?q=%s" }
+  MDN: { keywords: [mdn], url: "https://developer.mozilla.org/en-US/search?q=%s" }
+  npm: { keywords: [npm], url: "https://www.npmjs.com/search?q=%s" }
+  crates.io: { keywords: [crates], url: "https://crates.io/search?q=%s" }
+  docs.rs: { keywords: [docsrs], url: "https://docs.rs/releases/search?query=%s" }
 
 # Find in page (⌘F or `/`).
 find:
@@ -244,7 +273,9 @@ content_blocking:
   enabled: true
   lists:
     - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
-  allow: []                # sites where blocking is off, e.g. ["example.com"] (or "Toggle Ad Blocking for This Site")
+  # Sites where blocking is off (or use "Toggle Ad Blocking for This Site"). Google's editors are listed because
+  # blockers can make Docs/Sheets fail with a "Loading issue" dialog.
+  allow: ["docs.google.com", "drive.google.com", "mail.google.com", "calendar.google.com", "meet.google.com"]
   refresh_days: 7
 
 

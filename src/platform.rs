@@ -176,6 +176,47 @@ mod mac {
         }
     }
 
+    /// Remove cookies, caches and storage for one site from this webview's profile. Calls `done` with how many
+    /// site records were cleared.
+    pub fn clear_site_data(wv: &WebView, host: &str, done: impl FnOnce(usize) + 'static) {
+        use objc2::class;
+        let v = ptr(wv);
+        let host = host.to_ascii_lowercase();
+        unsafe {
+            let config: *mut AnyObject = msg_send![v, configuration];
+            let store: *mut AnyObject = msg_send![config, websiteDataStore];
+            let _: *mut AnyObject = msg_send![store, retain];
+            let types: *mut AnyObject = msg_send![class!(WKWebsiteDataStore), allWebsiteDataTypes];
+            let _: *mut AnyObject = msg_send![types, retain];
+            let done = std::cell::RefCell::new(Some(done));
+            let fetched = block2::RcBlock::new(move |records: *mut AnyObject| {
+                let Some(done) = done.borrow_mut().take() else { return };
+                let matching: *mut AnyObject = msg_send![class!(NSMutableArray), array];
+                let n: usize = msg_send![records, count];
+                for i in 0..n {
+                    let rec: *mut AnyObject = msg_send![records, objectAtIndex: i];
+                    let name: *mut objc2_foundation::NSString = msg_send![rec, displayName];
+                    // Records are per registrable domain ("google.com"), which covers its subdomains.
+                    let name = if name.is_null() { String::new() } else { (*name).to_string().to_ascii_lowercase() };
+                    if !name.is_empty() && (host == name || host.ends_with(&format!(".{name}"))) {
+                        let _: () = msg_send![matching, addObject: rec];
+                    }
+                }
+                let count: usize = msg_send![matching, count];
+                let done = std::cell::RefCell::new(Some(done));
+                let finished = block2::RcBlock::new(move || {
+                    if let Some(d) = done.borrow_mut().take() {
+                        d(count)
+                    }
+                });
+                let _: () = msg_send![store, removeDataOfTypes: types, forDataRecords: matching, completionHandler: &*finished];
+                let _: () = msg_send![types, release];
+                let _: () = msg_send![store, release];
+            });
+            let _: () = msg_send![store, fetchDataRecordsOfTypes: types, completionHandler: &*fetched];
+        }
+    }
+
     pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -277,4 +318,43 @@ pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, Stri
         let _ = (wv, width);
         done(Err("screenshots are only implemented on macOS so far".into()));
     }
+}
+
+/// Remove one site's cookies, caches and storage from the webview's profile; `done` gets the number of records removed.
+pub fn clear_site_data(wv: &WebView, host: &str, done: impl FnOnce(usize) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::clear_site_data(wv, host, done);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, host);
+        done(0);
+    }
+}
+
+/// Ask macOS to make Valerie the default browser (macOS shows its own confirmation). Needs the bundled Valerie.app.
+pub fn set_default_browser() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        #[link(name = "CoreServices", kind = "framework")]
+        extern "C" {
+            fn LSSetDefaultHandlerForURLScheme(scheme: *const AnyObject, bundle_id: *const AnyObject) -> i32;
+        }
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
+        if id.is_null() {
+            return Err("run Valerie.app (scripts/bundle-macos.sh) to make it the default browser".into());
+        }
+        for scheme in ["http", "https"] {
+            let s = objc2_foundation::NSString::from_str(scheme);
+            let status = LSSetDefaultHandlerForURLScheme(&*s as *const _ as *const AnyObject, id);
+            if status != 0 {
+                return Err(format!("macOS refused ({status})"));
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("set Valerie as the default browser in your system settings".into())
 }

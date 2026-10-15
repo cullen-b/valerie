@@ -50,6 +50,14 @@ fn check_config() -> anyhow::Result<()> {
                     }
                 }
             }
+            for (name, site) in c.site_search.iter().filter_map(|(n, s)| s.as_ref().map(|s| (n, s))) {
+                if !site.url.contains("%s") || !site.url.starts_with("http") {
+                    problems.push(format!("site_search: {name:?} url must start with http and contain %s where the search goes"));
+                }
+                if site.keywords.iter().any(|k| k.trim().is_empty() || k.contains(' ')) {
+                    problems.push(format!("site_search: {name:?} keywords must be single words"));
+                }
+            }
             for r in &c.routes {
                 if !c.spaces.iter().any(|s| s.name == r.space) {
                     problems.push(format!("routes: {:?} sends links to space {:?}, which isn't in `spaces`", r.pattern, r.space));

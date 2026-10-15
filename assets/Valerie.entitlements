@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Entitlements for Valerie.app. Web content runs in WebKit's own processes, so the app itself needs no JIT or
+     sandbox exceptions. scripts/bundle-macos.sh adds the passkey entitlement when a provisioning profile is given. -->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

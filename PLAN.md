@@ -146,6 +146,13 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 - [ ] Share plugins: install from a git URL, a community index
 - [ ] Undo for customisations (snapshot config + plugins before each AI change)
 
+### Round 3 ✅
+- [x] Tab-to-search in the command bar (`site_search`, including ChatGPT, Claude and Perplexity)
+- [x] Clear Site Data for This Site; Google Workspace on the default ad-blocking allow list (Sheets "Loading issue")
+- [x] YouTube speed plugin uses YouTube's player API and never mutes; bundled plugins update when untouched
+- [x] Signing pipeline: Apple Development / Developer ID detection, hardened runtime, notarization, passkey
+      entitlement when a provisioning profile is supplied; "Make Valerie the Default Browser"
+
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
 - Auto-update from GitHub Releases

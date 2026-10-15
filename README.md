@@ -35,6 +35,10 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom, dev tools |
 | `⌘,` | Open config |
 
+**Tab to search a site:** type `youtube`, `claude`, `chatgpt`, `gh`, `wiki`… in the command bar, press Tab, and
+type your search (Backspace on an empty box goes back). Add any site with one line under `site_search:` in your
+config.
+
 **Vim motions inside pages** (off while typing; `Esc` leaves a field): `j/k/h/l` scroll, `d/U` half page,
 `gg/G` top/bottom (hold `j`/`k` to scroll faster and faster), `f`/`F` link hints (same/new tab), `u`/`H` back, `L` forward, `J/K` or `gt/gT` next/prev tab,
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
@@ -121,6 +125,19 @@ send matching links to a space (e.g. `*.edu` → School); other external links o
 
 Open the command bar and type "import": Arc (spaces, pinned tabs, folders, favorites), Chrome, Brave, Edge,
 Vivaldi, Safari (needs Full Disk Access) and Firefox.
+
+## Signing and passkeys (macOS)
+
+`./scripts/bundle-macos.sh` signs `Valerie.app` with the best certificate in your keychain:
+
+- **Free Apple account**: in Xcode, Settings → Accounts → your Apple ID → Manage Certificates → + → *Apple
+  Development*. The app is then signed with hardened runtime and runs on your Mac.
+- **Paid account**: a *Developer ID Application* certificate is picked automatically. Set `VALERIE_NOTARY_PROFILE`
+  (see `xcrun notarytool store-credentials`) to notarize so the app runs on other Macs.
+- **Passkeys** need Apple's `web-browser.public-key-credential` entitlement (paid account, requested from Apple).
+  Point `VALERIE_PROVISIONING_PROFILE` at the profile that carries it and the script adds the entitlement.
+
+Run "Make Valerie the Default Browser" from the command bar once the app is in /Applications.
 
 ## Develop
 

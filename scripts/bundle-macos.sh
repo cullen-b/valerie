@@ -43,5 +43,45 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# ---- Signing ---------------------------------------------------------------------------------------------------
+# Picks the best certificate in your keychain (override with VALERIE_SIGN_IDENTITY):
+#   Developer ID Application (paid account; can be notarized and shared) > Apple Development (free account; runs on
+#   your Mac) > ad-hoc (no account).
+IDENTITY="${VALERIE_SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+  IDENTITIES=$(security find-identity -v -p codesigning 2>/dev/null || true)
+  IDENTITY=$(echo "$IDENTITIES" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"' || true)
+  [ -z "$IDENTITY" ] && IDENTITY=$(echo "$IDENTITIES" | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"' || true)
+fi
+
+# Passkeys need Apple's web-browser public-key-credential entitlement, granted to paid accounts on request, plus the
+# provisioning profile that carries it. Without both, macOS refuses to launch an app claiming the entitlement, so it
+# is only added when VALERIE_PROVISIONING_PROFILE points at that profile.
+ENTITLEMENTS=$(mktemp -t valerie-entitlements).plist
+cp assets/Valerie.entitlements "$ENTITLEMENTS"
+if [ -n "${VALERIE_PROVISIONING_PROFILE:-}" ]; then
+  cp "$VALERIE_PROVISIONING_PROFILE" "$APP/Contents/embedded.provisionprofile"
+  /usr/libexec/PlistBuddy -c "Add :com.apple.developer.web-browser.public-key-credential bool true" "$ENTITLEMENTS"
+  echo "Passkeys: entitlement added (profile $VALERIE_PROVISIONING_PROFILE)"
+fi
+
+if [ -n "$IDENTITY" ]; then
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP/Contents/MacOS/valerie"
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"
+  echo "Signed with: $IDENTITY"
+else
+  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+  echo "Signed ad-hoc (no Apple certificate found; see README > Signing)"
+fi
+codesign --verify --deep --strict "$APP" && echo "Signature verified"
+
+# ---- Notarization (Developer ID only) ----------------------------------------------------------------------------
+# Store credentials once with: xcrun notarytool store-credentials valerie --apple-id you@example.com --team-id TEAMID
+if [ -n "${VALERIE_NOTARY_PROFILE:-}" ] && [[ "$IDENTITY" == Developer\ ID* ]]; then
+  ZIP=target/Valerie-notarize.zip
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  xcrun notarytool submit "$ZIP" --keychain-profile "$VALERIE_NOTARY_PROFILE" --wait
+  xcrun stapler staple "$APP"
+  rm -f "$ZIP"
+fi
 echo "Built $APP. Move it to /Applications, then pick Valerie in System Settings > Desktop & Dock > Default web browser."

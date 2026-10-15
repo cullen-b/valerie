@@ -170,6 +170,9 @@ pub enum Command {
         name: String,
     },
     ToggleSiteBlocking,
+    /// Clear cookies, caches and storage for the current site (signs you out of it).
+    ClearSiteData,
+    SetDefaultBrowser,
     /// Run a command defined by a plugin in `<config dir>/plugins/<plugin>/plugin.yaml`.
     Plugin {
         plugin: String,
@@ -277,6 +280,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
+    ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
+    ("set_default_browser", "Make Valerie the Default Browser"),
     ("open_config", "Open Config File"),
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),

@@ -18,6 +18,7 @@ pub struct Config {
     pub start_page: String,
     pub escape_hints: bool,
     pub command_bar: CommandBarConfig,
+    pub site_search: BTreeMap<String, Option<SiteSearch>>,
     pub find: FindConfig,
     pub links: LinksConfig,
     pub tabs: TabsConfig,
@@ -83,7 +84,15 @@ pub struct FindConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteSearch {
+    pub keywords: Vec<String>,
+    /// Search URL with `%s` where the query goes.
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandBarConfig {
+    pub site_search: bool,
     pub footer_hints: bool,
     pub empty_hint: bool,
 }

@@ -18,6 +18,12 @@ body.open #backdrop { opacity: 1; }
 body.open #card { opacity: 1; transform: translateX(-50%) scale(1); }
 #inputrow { display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 58px; border-bottom: 1px solid var(--line); }
 #inputrow .glyph { color: var(--accent); font-size: 18px; }
+#scope { display: none; align-items: center; gap: 6px; padding: 4px 9px 4px 7px; border-radius: 8px; flex: none;
+  background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--fg); font-size: 14px; font-weight: 600; }
+#scope img { width: 16px; height: 16px; border-radius: 3px; }
+body.scoped #scope { display: flex; }
+body.scoped #inputrow .glyph { display: none; }
+.item .tabkey { font-size: 11px; color: var(--dim); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); flex: none; }
 input { flex: 1; background: none; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 19px; caret-color: var(--accent); }
 input::placeholder { color: var(--dim); }
 #list { max-height: min(430px, 55vh); overflow-y: auto; padding: 6px; }
@@ -41,7 +47,7 @@ kbd { font: 11px -apple-system, system-ui; padding: 1px 5px; border-radius: 4px;
 <body>
 <div id="backdrop"></div>
 <div id="card">
-  <div id="inputrow"><span class="glyph">⌕</span><input id="q" spellcheck="false" autocomplete="off" placeholder="Search or enter URL…"></div>
+  <div id="inputrow"><span class="glyph">⌕</span><span id="scope"></span><input id="q" spellcheck="false" autocomplete="off" placeholder="Search or enter URL…"></div>
   <div id="list"></div>
   <div id="foot"><span><kbd>↑↓</kbd>navigate</span><span><kbd>↵</kbd>open</span><span><kbd>⇧↵</kbd>open in new tab</span><span><kbd>esc</kbd>close</span></div>
 </div>
@@ -74,11 +80,40 @@ function highlight(text, needle) {
   return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + needle.length)) + "</mark>" + esc(text.slice(i + needle.length));
 }
 const KIND_WEIGHT = { plugin: 20, customize: 1, password: 3, agent: 2, tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, theme: 5, import: 5 };
-const KIND_LABEL = { plugin: "Plugin", customize: "Customize", password: "Copy Password", agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
+const KIND_LABEL = { site: "Tab ⇥", plugin: "Plugin", customize: "Customize", password: "Copy Password", agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
+
+// ---------- site search: type "youtube", press Tab, search YouTube ----------
+let scope = null;
+function siteFor(text) {
+  const t = text.trim().toLowerCase();
+  if (!t || !D.sites || !D.sites.length) return null;
+  return D.sites.find((s) => s.keywords.some((k) => k.toLowerCase() === t))
+    || (t.length >= 2 ? D.sites.find((s) => s.name.toLowerCase().startsWith(t)) : null);
+}
+function siteIcon(site) { try { return new URL("/favicon.ico", site.url.replace("%s", "")).href; } catch { return null; } }
+function enterScope(site) {
+  scope = site;
+  const chip = document.getElementById("scope"); chip.textContent = "";
+  const icon = siteIcon(site);
+  if (icon) { const img = document.createElement("img"); img.src = icon; img.onerror = () => img.remove(); chip.append(img); }
+  chip.append(document.createTextNode(site.name));
+  document.body.classList.add("scoped");
+  q.value = ""; q.placeholder = "Search " + site.name + "…";
+  compute();
+}
+function leaveScope() {
+  scope = null; document.body.classList.remove("scoped");
+  q.placeholder = D.mode === "current" ? "Edit URL or search…" : "Search or enter URL…";
+  compute();
+}
 
 function compute() {
   const raw = q.value.trim(), needle = raw.toLowerCase();
   let out = [];
+  if (scope) {
+    results = raw ? [{ kind: "go", title: raw, sub: "Search " + scope.name, go: scope.url.replace("%s", encodeURIComponent(raw)), icon: "⌕" }] : [];
+    sel = 0; return draw();
+  }
   // "! change" asks the user's AI assistant to change Valerie itself.
   if (raw.startsWith("!")) {
     const req = raw.slice(1).trim();
@@ -110,6 +145,8 @@ function compute() {
   // A strong exact title/host match beats the raw search action.
   if (head.length && out[0] && out[0].s > 120 && D.mode !== "current") out.splice(1, 0, ...head); else out = head.concat(out);
   results = out.slice(0, raw ? 59 : 8);
+  const site = siteFor(raw);
+  if (site) results.unshift({ kind: "site", title: "Search " + site.name, sub: "", site, favicon: siteIcon(site) });
   if (raw && !looksLikeUrl(raw)) {
     results.push({ kind: "agent", title: "Ask agent: " + raw, sub: D.agent, icon: "✦", cmd: { cmd: "run_agent", prompt: raw } });
     results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
@@ -148,6 +185,7 @@ function choose(r, newTab) {
   const nt = D.mode === "current" ? !!newTab : true;
   let c;
   if ((r.kind === "agent" || r.kind === "customize") && !r.cmd) return;
+  if (r.kind === "site") return enterScope(r.site);
   if (r.kind === "go") c = { cmd: "go", input: r.go, new_tab: nt };
   else if (r.cmd) c = r.cmd;
   else if (r.tab != null) c = { cmd: "activate_tab", tab: r.tab };
@@ -159,6 +197,11 @@ function close() { send({ t: "cmd", cmd: { cmd: "close_command_bar" } }); }
 q.addEventListener("input", compute);
 q.addEventListener("keydown", (e) => {
   const k = e.key, ctl = e.ctrlKey;
+  if (k === "Tab" && !e.shiftKey && !scope) {
+    const site = siteFor(q.value);
+    if (site) { e.preventDefault(); return enterScope(site); }
+  }
+  if (k === "Backspace" && scope && !q.value) { e.preventDefault(); return leaveScope(); }
   if (k === "ArrowDown" || (ctl && (k === "n" || k === "j")) || (k === "Tab" && !e.shiftKey)) { e.preventDefault(); sel = Math.min(sel + 1, results.length - 1); mark(); }
   else if (k === "ArrowUp" || (ctl && (k === "p" || k === "k")) || (k === "Tab" && e.shiftKey)) { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(); }
   else if (k === "Enter") { e.preventDefault(); choose(results[sel], e.shiftKey); }
@@ -177,6 +220,7 @@ window.palette = {
     document.getElementById("foot").style.display = data.options && data.options.footer_hints === false ? "none" : "";
     q.placeholder = data.mode === "current" ? "Edit URL or search…" : "Search or enter URL…";
     q.value = data.query || "";
+    scope = null; document.body.classList.remove("scoped");
     compute();
     document.body.classList.add("open");
     setTimeout(() => { q.focus(); q.select(); }, 0);

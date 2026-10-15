@@ -171,24 +171,60 @@ const BUNDLED: &[(&str, &[(&str, &str)])] = &[(
     ],
 )];
 
+/// Install bundled plugins once, and keep them updated: `.installed` records a fingerprint of every file we wrote,
+/// and a file is replaced by a newer bundled version only while it still matches that fingerprint (i.e. the user
+/// hasn't edited it). Deleting a bundled plugin's folder keeps it deleted.
 pub fn install_bundled() {
     let dir = plugins_dir();
     let record = dir.join(".installed");
-    let done = std::fs::read_to_string(&record).unwrap_or_default();
-    let mut installed: Vec<&str> = done.lines().collect();
-    for (name, files) in BUNDLED {
-        if installed.contains(name) || dir.join(name).exists() {
-            continue;
-        }
-        let target = dir.join(name);
-        if std::fs::create_dir_all(&target).is_ok() {
-            for (file, body) in *files {
-                let _ = std::fs::write(target.join(file), body);
+    // Lines: "<plugin>" (installed) or "<plugin>/<file> <fingerprint>".
+    let text = std::fs::read_to_string(&record).unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    let mut prints: std::collections::BTreeMap<String, String> = Default::default();
+    for line in text.lines() {
+        match line.split_once(' ') {
+            Some((file, fp)) => {
+                prints.insert(file.to_string(), fp.to_string());
             }
-            installed.push(name);
+            None if !line.is_empty() => names.push(line.to_string()),
+            None => {}
         }
     }
-    let _ = std::fs::write(&record, installed.join("\n") + "\n");
+    for (name, files) in BUNDLED {
+        let target = dir.join(name);
+        let known = names.iter().any(|n| n == name);
+        if known && !target.exists() {
+            continue; // the user deleted it
+        }
+        if !known && target.exists() {
+            continue; // a folder of the user's own with the same name
+        }
+        if std::fs::create_dir_all(&target).is_err() {
+            continue;
+        }
+        for (file, body) in *files {
+            let key = format!("{name}/{file}");
+            let path = target.join(file);
+            let current = std::fs::read_to_string(&path).ok();
+            let untouched = match (&current, prints.get(&key)) {
+                (None, _) => true,
+                (Some(c), Some(fp)) => &crate::blocking::hash(c) == fp,
+                (Some(_), None) => false,
+            };
+            if untouched && current.as_deref() != Some(*body) {
+                let _ = std::fs::write(&path, body);
+            }
+            if untouched {
+                prints.insert(key, crate::blocking::hash(body));
+            }
+        }
+        if !known {
+            names.push(name.to_string());
+        }
+    }
+    let mut out: Vec<String> = names;
+    out.extend(prints.into_iter().map(|(k, v)| format!("{k} {v}")));
+    let _ = std::fs::write(&record, out.join("\n") + "\n");
 }
 
 /// A disabled example so people and LLMs can copy the format.
@@ -230,6 +266,33 @@ on_page_load:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_plugins_update_only_untouched_files() {
+        let tmp = std::env::temp_dir().join(format!("valerie-plugins-{}", crate::mcp::random_hex()));
+        std::env::set_var("VALERIE_CONFIG_DIR", &tmp);
+        let yt = plugins_dir().join("youtube-speed");
+        install_bundled();
+        assert!(yt.join("script.js").exists());
+        // Simulate an older bundled version the user never touched, plus a plugin.yaml the user edited.
+        std::fs::write(yt.join("script.js"), "old").unwrap();
+        std::fs::write(yt.join("plugin.yaml"), "enabled: false").unwrap();
+        let rec = plugins_dir().join(".installed");
+        let text = std::fs::read_to_string(&rec).unwrap().replace(
+            &format!("youtube-speed/script.js {}", crate::blocking::hash(BUNDLED[0].1[1].1)),
+            &format!("youtube-speed/script.js {}", crate::blocking::hash("old")),
+        );
+        std::fs::write(&rec, text).unwrap();
+        install_bundled();
+        assert_eq!(std::fs::read_to_string(yt.join("script.js")).unwrap(), BUNDLED[0].1[1].1);
+        assert_eq!(std::fs::read_to_string(yt.join("plugin.yaml")).unwrap(), "enabled: false");
+        // Deleting the plugin keeps it deleted.
+        std::fs::remove_dir_all(&yt).unwrap();
+        install_bundled();
+        assert!(!yt.exists());
+        std::env::remove_var("VALERIE_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(tmp);
+    }
 
     #[test]
     fn example_manifest_parses_and_matches() {
