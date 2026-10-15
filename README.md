@@ -134,7 +134,9 @@ Vivaldi, Safari (needs Full Disk Access) and Firefox.
 `./scripts/bundle-macos.sh` signs `Valerie.app` with the best certificate in your keychain:
 
 - **Free Apple account**: in Xcode, Settings → Accounts → your Apple ID → Manage Certificates → + → *Apple
-  Development*. The app is then signed with hardened runtime and runs on your Mac.
+  Development*. The app is then signed with hardened runtime and runs on your Mac. If the script still signs ad-hoc
+  and `security find-identity -v -p codesigning` shows 0 valid identities, install Apple's
+  [WWDR G3 intermediate](https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer) (double-click it).
 - **Paid account**: a *Developer ID Application* certificate is picked automatically. Set `VALERIE_NOTARY_PROFILE`
   (see `xcrun notarytool store-credentials`) to notarize so the app runs on other Macs.
 - **Passkeys** need Apple's `web-browser.public-key-credential` entitlement (paid account, requested from Apple).
