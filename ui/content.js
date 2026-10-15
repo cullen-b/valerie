@@ -138,7 +138,15 @@ function stopHold(coast = true) {
   // Ease to a stop rather than halting dead.
   if (carry > 1) scrollBy(carry * dx, carry * dy);
 }
-addEventListener("keyup", (e) => { if (hold.key && e.key.toLowerCase() === hold.key) stopHold(); }, true);
+let holdTimer = 0;
+const keysDown = new Set();
+addEventListener("keydown", (e) => { if (e.key.length === 1) keysDown.add(e.key.toLowerCase()); }, true);
+addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  keysDown.delete(k);
+  if (hold.key && k === hold.key) stopHold();
+}, true);
+addEventListener("blur", () => keysDown.clear());
 addEventListener("blur", () => stopHold(false));
 document.addEventListener("visibilitychange", () => stopHold(false));
 
@@ -518,10 +526,15 @@ window.addEventListener("keydown", (e) => {
   const b = cfg.vim.bindings, next = buffer + e.key;
   // Key repeat on a scroll key means it's being held: switch to accelerating continuous scrolling.
   const HOLDS = { scroll_down: [0, 1], scroll_up: [0, -1], scroll_left: [-1, 0], scroll_right: [1, 0] };
-  if (e.repeat && !buffer && HOLDS[b[e.key]]) {
+  if (!buffer && HOLDS[b[e.key]]) {
     e.preventDefault(); e.stopImmediatePropagation();
-    if (cfg.vim.hold_to_accelerate !== false) startHold(e.key.toLowerCase(), ...HOLDS[b[e.key]]);
-    else run(b[e.key]);
+    if (cfg.vim.hold_to_accelerate === false) return run(b[e.key]);
+    if (e.repeat || hold.key) return; // already gliding or holding
+    // A tap glides one step; still down after hold_delay_ms means it's being held, without waiting for key repeat.
+    run(b[e.key]);
+    const key = e.key.toLowerCase(), dir = HOLDS[b[e.key]];
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => { if (keysDown.has(key)) startHold(key, ...dir); }, cfg.vim.hold_delay_ms ?? 180);
     return;
   }
   const keys = Object.keys(b).filter((k) => b[k] != null);

@@ -221,9 +221,10 @@ vim:
   scroll_duration_ms: 150  # how long each glide takes; lower = snappier
   hold_to_accelerate: true # holding j/k/h/l scrolls continuously and speeds up until you let go
   block_autofocus: true    # pages can't put the cursor in a text box until you click, so vim keys keep working
-  hold_scroll_speed: 700   # starting speed while holding, pixels per second
-  hold_scroll_acceleration: 2400   # how quickly it speeds up, pixels per second, per second
-  hold_scroll_max_speed: 6000      # top speed while holding, pixels per second
+  hold_delay_ms: 180       # how long a key must be held before continuous scrolling starts
+  hold_scroll_speed: 1000  # starting speed while holding, pixels per second
+  hold_scroll_acceleration: 7000   # how quickly it speeds up, pixels per second, per second
+  hold_scroll_max_speed: 14000     # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
   excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
   bindings:
