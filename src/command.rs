@@ -54,6 +54,9 @@ pub enum Command {
     DuplicateTab,
     MoveTab {
         tab: TabId,
+        /// "pinned" | "kept" | "today" (overrides `pinned`).
+        #[serde(default)]
+        section: Option<String>,
         #[serde(default)]
         favorite: bool,
         #[serde(default)]
@@ -72,7 +75,17 @@ pub enum Command {
     NewFolder {
         #[serde(default)]
         name: Option<String>,
+        /// "kept" (default) or "pinned".
+        #[serde(default)]
+        section: Option<String>,
     },
+    /// Move a tab into (or out of) the Kept list under the pinned tabs.
+    ToggleKeep {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
+    /// Step the sidebar through full → medium → compact.
+    CycleSidebarSize,
     ToggleFolder {
         folder: TabId,
     },
@@ -255,6 +268,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("reopen_closed_tab", "Reopen Closed Tab"),
     ("duplicate_tab", "Duplicate Tab"),
     ("toggle_pin", "Pin / Unpin Tab"),
+    ("toggle_keep", "Keep / Unkeep Tab"),
+    ("cycle_sidebar_size", "Sidebar Size: Full / Medium / Compact"),
     ("toggle_favorite", "Add / Remove Favorite"),
     ("new_folder", "New Folder"),
     ("clear_today_tabs", "Clear Today Tabs"),
@@ -299,9 +314,10 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("go_to_tab", "{ index }  (0-based, favorites first)"),
     ("toggle_pin", "{ tab? }"),
     ("toggle_favorite", "{ tab? }"),
-    ("move_tab", "{ tab, space?, pinned?, folder?, index?, favorite? }"),
+    ("move_tab", "{ tab, section?: pinned | kept | today, space?, folder?, index?, favorite? }"),
+    ("toggle_keep", "{ tab? }"),
     ("rename_tab", "{ tab, title }"),
-    ("new_folder", "{ name? }"),
+    ("new_folder", "{ name?, section?: kept | pinned }"),
     ("switch_space", "{ index? | name? }"),
     ("new_space", "{ name? }"),
     ("rename_space", "{ name }"),

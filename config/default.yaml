@@ -27,7 +27,8 @@ user_agent: ""             # empty = Safari's user agent, so sites serve their f
 layout:
   tab_bar: side            # where tabs live. one of: side | top
   sidebar_visible: true    # show the sidebar at launch (⌘S or `s` toggles it)
-  sidebar_width: 248       # pixels
+  sidebar_width: 248       # width of the full-size sidebar, pixels (drag the sidebar's edge to resize it live)
+  sidebar_size: full       # one of: full (icon + title) | medium (icon + domain) | compact (icons only)
   sidebar_position: left   # one of: left | right
   reveal_sidebar_on_edge: true  # when the sidebar is hidden, moving the mouse to the window edge peeks it open
   bezel: 0                 # gap around the page in pixels. 0 = edge to edge like Safari, ~8 = Arc
@@ -44,6 +45,7 @@ sidebar:
   url_lock_icon: false     # a 🔒 before secure sites (insecure http:// sites are always marked)
   space_name: false        # the space's icon and name ("Personal", "School") above its pinned tabs
   pinned_hint: true        # "Drag tabs here to pin them" when a space has no pinned tabs
+  kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them (with folders)
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never

@@ -34,6 +34,8 @@ pub struct SyncedSpace {
     #[serde(default)]
     pub tree: Vec<SyncNode>,
     #[serde(default)]
+    pub kept: Vec<SyncNode>,
+    #[serde(default)]
     pub modified: u64,
 }
 

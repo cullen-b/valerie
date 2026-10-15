@@ -15,6 +15,9 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder};
 
 const TOP_BAR: f64 = 40.0;
+/// Compact leaves room for the window's traffic lights; medium fits an icon and a domain.
+const SIDEBAR_COMPACT: f64 = 78.0;
+const SIDEBAR_MEDIUM: f64 = 180.0;
 const LITTLE_BAR: f64 = 36.0;
 const MAX_UNTRUSTED_IPC: usize = 64 * 1024;
 /// URL schemes handed to other apps when a page links to them.
@@ -474,7 +477,7 @@ impl App {
         match l.tab_bar {
             TabBar::Top => (b, TOP_BAR, w - 2.0 * b, h - TOP_BAR - b),
             TabBar::Side => {
-                let sw = if l.sidebar_visible || self.sidebar_peek { l.sidebar_width } else { 0.0 };
+                let sw = if l.sidebar_visible || self.sidebar_peek { self.sidebar_width() } else { 0.0 };
                 let (left, right) = match l.sidebar_position {
                     SidebarPosition::Left => (if sw > 0.0 { sw } else { b }, b),
                     SidebarPosition::Right => (b, if sw > 0.0 { sw } else { b }),
@@ -548,6 +551,27 @@ impl App {
         }
     }
 
+    /// The sidebar's current width: what the user dragged to, else the preset for `layout.sidebar_size`.
+    fn sidebar_width(&self) -> f64 {
+        self.state.sidebar_width.unwrap_or_else(|| match self.config.layout.sidebar_size.as_str() {
+            "compact" => SIDEBAR_COMPACT,
+            "medium" => SIDEBAR_MEDIUM,
+            _ => self.config.layout.sidebar_width,
+        })
+    }
+
+    /// Compact (icons), medium (icon + domain) or full, derived from the width so dragging moves through them.
+    fn sidebar_size(&self) -> &'static str {
+        let w = self.sidebar_width();
+        if w < 120.0 {
+            "compact"
+        } else if w < 210.0 {
+            "medium"
+        } else {
+            "full"
+        }
+    }
+
     fn layout_little(&self, id: WindowId) {
         if let Some(l) = self.littles.get(&id) {
             let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
@@ -585,6 +609,7 @@ impl App {
             "title": t.custom_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone()),
             "loaded": self.views.contains_key(&t.id), "loading": t.loading, "playing": t.playing,
             "pinned": self.state.is_pinned(t.id),
+            "section": self.state.section_of(t.id),
         })
     }
 
@@ -605,13 +630,17 @@ impl App {
     fn render(&self) {
         let s = self.state.space();
         let active = self.state.active_tab();
+        let mut layout = serde_json::to_value(&self.config.layout).unwrap_or_default();
+        layout["sidebar_width"] = json!(self.sidebar_width());
+        layout["sidebar_size"] = json!(self.sidebar_size());
         let vm = json!({
             "spaces": self.state.spaces.iter().enumerate().map(|(i, sp)| json!({
                 "name": sp.name, "icon": self.space_cfg(i).and_then(|c| c.icon.clone()),
             })).collect::<Vec<_>>(),
             "active_space": self.state.active_space,
             "theme": self.theme_for(self.state.active_space),
-            "layout": self.config.layout,
+            "layout": layout,
+            "kept": s.kept.iter().filter_map(|n| self.node_vm(n)).collect::<Vec<_>>(),
             "favorites": self.state.favorites.iter().filter_map(|id| self.state.tabs.get(id)).map(|t| self.tab_vm(t)).collect::<Vec<_>>(),
             "pinned": s.pinned.iter().filter_map(|n| self.node_vm(n)).collect::<Vec<_>>(),
             "today": s.today.iter().filter_map(|id| self.state.tabs.get(id)).map(|t| self.tab_vm(t)).collect::<Vec<_>>(),
@@ -782,25 +811,30 @@ impl App {
         tab.or_else(|| self.state.active_tab())
     }
 
-    fn move_tab(&mut self, tab: TabId, space: Option<String>, folder: Option<TabId>, pinned: Option<bool>, index: Option<usize>) {
+    fn move_tab(&mut self, tab: TabId, space: Option<String>, folder: Option<TabId>, section: Option<String>, index: Option<usize>) {
         if !self.state.tabs.contains_key(&tab) {
             return;
         }
         let from = self.state.space_of(tab);
         let was_active = from.map(|s| self.state.spaces[s].active == Some(tab)).unwrap_or(false);
         let dest = space.and_then(|n| self.state.space_index(&n)).or(from).unwrap_or(self.state.active_space);
-        let pinned = pinned.unwrap_or(folder.is_some() || self.state.is_pinned(tab));
+        // Without an explicit section a tab stays in the kind of section it was in.
+        let section = section.unwrap_or_else(|| match self.state.section_of(tab) {
+            Some("pinned") => "pinned".into(),
+            Some("kept") => "kept".into(),
+            _ => "today".into(),
+        });
         self.state.detach(tab);
         let sp = &mut self.state.spaces[dest];
-        if let Some(f) = folder.and_then(|f| find_folder(&mut sp.pinned, f)) {
-            if let Node::Folder { children, open, .. } = f {
-                let i = index.unwrap_or(children.len()).min(children.len());
-                children.insert(i, Node::Tab { id: tab });
-                *open = true;
-            }
-        } else if pinned {
-            let i = index.unwrap_or(sp.pinned.len()).min(sp.pinned.len());
-            sp.pinned.insert(i, Node::Tab { id: tab });
+        let in_folder = folder.and_then(|f| find_folder(&mut sp.pinned, f).or_else(|| find_folder(&mut sp.kept, f)));
+        if let Some(Node::Folder { children, open, .. }) = in_folder {
+            let i = index.unwrap_or(children.len()).min(children.len());
+            children.insert(i, Node::Tab { id: tab });
+            *open = true;
+        } else if section == "pinned" || section == "kept" {
+            let list = if section == "pinned" { &mut sp.pinned } else { &mut sp.kept };
+            let i = index.unwrap_or(list.len()).min(list.len());
+            list.insert(i, Node::Tab { id: tab });
         } else {
             let i = index.unwrap_or(0).min(sp.today.len());
             sp.today.insert(i, tab);
@@ -1552,6 +1586,7 @@ impl App {
                         pinned: pinned_ids.iter().filter_map(tab).collect(),
                         tabs: s.today.iter().filter_map(tab).collect(),
                         tree: self.state.sync_tree(&s.pinned),
+                        kept: self.state.sync_tree(&s.kept),
                         modified: s.pinned_modified,
                     }
                 })
@@ -1796,7 +1831,10 @@ impl App {
                 self.dirty = true;
                 self.render();
             }
-            Command::MoveTab { tab, space, folder, pinned, index, .. } => self.move_tab(tab, space, folder, pinned, index),
+            Command::MoveTab { tab, section, space, folder, pinned, index, .. } => {
+                let section = section.or_else(|| pinned.map(|p| if p { "pinned".to_string() } else { "today".to_string() }));
+                self.move_tab(tab, space, folder, section, index)
+            }
             Command::RenameTab { tab, title } => {
                 if let Some(t) = self.state.tabs.get_mut(&tab) {
                     t.custom_title = Some(title).filter(|s| !s.trim().is_empty());
@@ -1804,27 +1842,48 @@ impl App {
                     self.render();
                 }
             }
-            Command::NewFolder { name } => {
+            Command::NewFolder { name, section } => {
                 let id = self.state.new_id();
                 let name = name.unwrap_or_else(|| "New Folder".into());
-                self.state.space_mut().pinned.push(Node::Folder { id, name, open: true, children: vec![] });
+                let folder = Node::Folder { id, name, open: true, children: vec![] };
+                if section.as_deref() == Some("pinned") {
+                    self.state.space_mut().pinned.push(folder);
+                } else {
+                    self.state.space_mut().kept.push(folder);
+                }
                 self.dirty = true;
                 self.render();
             }
             Command::ToggleFolder { folder } => {
-                if let Some(Node::Folder { open, .. }) = find_folder(&mut self.state.space_mut().pinned, folder) {
+                if let Some(Node::Folder { open, .. }) = self.state.folder_mut(folder) {
                     *open = !*open;
                 }
                 self.dirty = true;
                 self.render();
             }
             Command::RenameFolder { folder, name } => {
-                for s in &mut self.state.spaces {
-                    if let Some(Node::Folder { name: n, .. }) = find_folder(&mut s.pinned, folder) {
-                        *n = name.clone();
-                    }
+                if let Some(Node::Folder { name: n, .. }) = self.state.folder_mut(folder) {
+                    *n = name;
                 }
                 self.dirty = true;
+                self.render();
+            }
+            Command::ToggleKeep { tab } => {
+                if let Some(t) = self.target_tab(tab) {
+                    let to = if self.state.section_of(t) == Some("kept") { "today" } else { "kept" };
+                    self.move_tab(t, None, None, Some(to.into()), None);
+                }
+            }
+            Command::CycleSidebarSize => {
+                let next = match self.sidebar_size() {
+                    "full" => SIDEBAR_MEDIUM,
+                    "medium" => SIDEBAR_COMPACT,
+                    _ => self.config.layout.sidebar_width,
+                };
+                self.state.sidebar_width = Some(next);
+                self.dirty = true;
+                let secs = self.anim_secs();
+                self.layout_anim(secs);
                 self.render();
             }
             Command::DeleteFolder { folder } => {
@@ -2180,6 +2239,16 @@ impl App {
                     self.refresh_content_config();
                 }
             }
+            (Source::Chrome, "resize") => {
+                let w = m["width"].as_f64().unwrap_or(0.0).clamp(SIDEBAR_COMPACT, 520.0);
+                // Snap to compact when dragged into icon territory.
+                self.state.sidebar_width = Some(if w < 120.0 { SIDEBAR_COMPACT } else { w });
+                if m["done"].as_bool() == Some(true) {
+                    self.dirty = true;
+                }
+                self.layout();
+                self.render();
+            }
             (Source::Chrome, "drag") => {
                 let _ = self.window.drag_window();
             }
@@ -2470,7 +2539,8 @@ impl App {
                     }
                     let today = &self.state.spaces[i].today;
                     for id in self.state.order(i, false) {
-                        out.extend(row(&id, Some(i), if today.contains(&id) { "today" } else { "pinned" }));
+                        let section = if today.contains(&id) { "today" } else { self.state.section_of(id).unwrap_or("pinned") };
+                        out.extend(row(&id, Some(i), section));
                     }
                 }
                 Ok(json!(out))

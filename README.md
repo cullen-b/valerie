@@ -44,8 +44,11 @@ config.
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
 `s` toggle sidebar, `]s`/`[s` next/prev space.
 
-Drag tabs anywhere in the sidebar: onto the pinned tiles to pin, into folders, onto the favorites row, or onto a
-space icon. Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
+Each space has **pinned** tabs (icon tiles), **Kept** tabs (a list under them that stays until you remove it), and
+**today** tabs (archived after 12 hours unused). Folders work in pinned and Kept. Drag tabs anywhere in the sidebar:
+onto the pinned tiles, into Kept or a folder, onto the favorites row, or onto a space icon. Drag the sidebar's edge to
+resize it: narrow it to show icon + domain, narrower still for icons only (`layout.sidebar_size`, double-click the
+edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
 
 ## Make Valerie yours with AI
 
