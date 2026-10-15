@@ -104,6 +104,7 @@ pub struct TabsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LittleWindowConfig {
     pub enabled: bool,
+    pub space_picker: bool,
     pub width: f64,
     pub height: f64,
 }

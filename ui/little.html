@@ -17,17 +17,26 @@ body {
 .btn:hover { background: var(--hover); color: var(--fg); }
 #open { background: var(--accent); color: #fff; font-weight: 500; }
 #open:hover { filter: brightness(1.08); background: var(--accent); color: #fff; }
+.split { display: flex; }
+.split.picker #open { border-radius: 7px 0 0 7px; }
+#pick { display: none; background: var(--accent); color: #fff; border-radius: 0 7px 7px 0; padding: 0 8px; margin-left: 1px; font-size: 13px; }
+.split.picker #pick { display: flex; }
+#pick:hover { filter: brightness(1.12); background: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
 <div class="btn" id="back">‹</div>
 <div id="title"></div>
 <div class="btn" id="copy" title="Copy URL (⌘⇧C)">Copy link</div>
-<div class="btn" id="open" title="⌘O">Open in Valerie</div>
+<div class="split" id="split"><div class="btn" id="open" title="⌘O">Open in Valerie</div><div class="btn" id="pick" title="Open in another space">▾</div></div>
 <script>
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const cmd = (c) => send({ t: "cmd", cmd: c });
 document.getElementById("open").onclick = () => cmd({ cmd: "move_to_main_window" });
+document.getElementById("pick").onclick = (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  send({ t: "space_menu", x: r.right - 150, y: r.bottom + 4 });
+};
 document.getElementById("copy").onclick = () => cmd({ cmd: "copy_url" });
 document.getElementById("back").onclick = () => cmd({ cmd: "back" });
 document.body.onmousedown = (e) => { if (e.target === document.body || e.target.id === "title") send({ t: "drag" }); };
@@ -42,6 +51,7 @@ window.little = {
     const t = document.getElementById("title"); t.innerHTML = "";
     const b = document.createElement("b"); b.textContent = h; t.append(b, document.createTextNode(s.title || ""));
     document.getElementById("open").textContent = "Open in " + (s.space || "Valerie");
+    document.getElementById("split").classList.toggle("picker", !!s.picker);
   },
 };
 send({ t: "ready" });

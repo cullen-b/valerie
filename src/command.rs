@@ -138,7 +138,11 @@ pub enum Command {
     OpenLittleWindow {
         url: String,
     },
-    MoveToMainWindow,
+    /// Move a little window (or a Peek) into the main window, optionally into a named space.
+    MoveToMainWindow {
+        #[serde(default)]
+        space: Option<String>,
+    },
     /// Preview a link in a floating panel over the page (like Arc's Peek).
     Peek {
         url: String,
