@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+:root { --bg1: #171a2b; --bg2: #2a1f3d; --accent: #9d8cff; --fg: #ecebf5; --dim: rgba(236,235,245,.55); --hover: rgba(255,255,255,.08); }
+:root.light { --fg: #23201c; --dim: rgba(35,32,28,.5); --hover: rgba(0,0,0,.06); }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font: 12.5px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--fg); -webkit-user-select: none; user-select: none;
+  background: linear-gradient(90deg, var(--bg1), var(--bg2)); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 78px;
+}
+#title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--dim); }
+#title b { color: var(--fg); font-weight: 500; margin-right: 6px; }
+.btn { height: 24px; padding: 0 9px; border-radius: 7px; display: flex; align-items: center; gap: 5px; color: var(--dim); }
+.btn:hover { background: var(--hover); color: var(--fg); }
+#open { background: var(--accent); color: #fff; font-weight: 500; }
+#open:hover { filter: brightness(1.08); background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<div class="btn" id="back">‹</div>
+<div id="title"></div>
+<div class="btn" id="copy" title="Copy URL (⌘⇧C)">Copy link</div>
+<div class="btn" id="open" title="⌘O">Open in Valerie</div>
+<script>
+const send = (o) => window.ipc.postMessage(JSON.stringify(o));
+const cmd = (c) => send({ t: "cmd", cmd: c });
+document.getElementById("open").onclick = () => cmd({ cmd: "move_to_main_window" });
+document.getElementById("copy").onclick = () => cmd({ cmd: "copy_url" });
+document.getElementById("back").onclick = () => cmd({ cmd: "back" });
+document.body.onmousedown = (e) => { if (e.target === document.body || e.target.id === "title") send({ t: "drag" }); };
+window.little = {
+  render(s) {
+    const r = document.documentElement;
+    r.classList.toggle("light", s.theme.mode === "light");
+    r.style.setProperty("--bg1", s.theme.background[0]);
+    r.style.setProperty("--bg2", s.theme.background[1] || s.theme.background[0]);
+    r.style.setProperty("--accent", s.theme.accent);
+    let h = ""; try { h = new URL(s.url).hostname.replace(/^www\./, ""); } catch {}
+    const t = document.getElementById("title"); t.innerHTML = "";
+    const b = document.createElement("b"); b.textContent = h; t.append(b, document.createTextNode(s.title || ""));
+    document.getElementById("open").textContent = "Open in " + (s.space || "Valerie");
+  },
+};
+send({ t: "ready" });
+</script>
+</body>
+</html>

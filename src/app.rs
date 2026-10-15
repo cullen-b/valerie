@@ -1,0 +1,1689 @@
+use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
+use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
+use crate::mcp::McpRequest;
+use crate::state::{find_folder, now, Node, State, Tab};
+use crate::{import, platform, routing, sync};
+use anyhow::Result;
+use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use tao::dpi::LogicalSize;
+use tao::event::{Event, StartCause, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
+use tao::window::{Window, WindowBuilder, WindowId};
+use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder};
+
+const TOP_BAR: f64 = 40.0;
+const LITTLE_BAR: f64 = 36.0;
+const MAX_UNTRUSTED_IPC: usize = 64 * 1024;
+/// URL schemes handed to other apps when a page links to them.
+const EXTERNAL_SCHEMES: &[&str] = &[
+    "mailto", "tel", "sms", "facetime", "zoommtg", "zoomus", "msteams", "slack", "spotify", "vscode", "cursor",
+    "figma", "notion", "linear", "discord", "obsidian", "raycast", "things", "itms-apps", "maps", "music",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Target {
+    Tab(TabId),
+    Little(WindowId),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Source {
+    Chrome,
+    Overlay,
+    LittleBar(WindowId),
+    Page(Target),
+}
+
+pub enum UserEvent {
+    Ipc { from: Source, msg: String },
+    PageLoad { target: Target, url: String, finished: bool },
+    Title { target: Target, title: String },
+    NewWindow { target: Target, url: String },
+    ExternalScheme(String),
+    Menu(MenuId),
+    Mcp(McpRequest),
+    Tick,
+    ConfigChanged,
+    SyncDone(Result<Vec<sync::DeviceTabs>, String>),
+    Downloaded { ok: bool },
+}
+
+struct Little {
+    window: Window,
+    bar: WebView,
+    view: WebView,
+    url: String,
+    title: String,
+    space: usize,
+}
+
+pub struct App {
+    window: Window,
+    chrome: WebView,
+    overlay: WebView,
+    views: HashMap<TabId, WebView>,
+    zoom: HashMap<TabId, f64>,
+    littles: HashMap<WindowId, Little>,
+    focused_little: Option<WindowId>,
+    config: Config,
+    state: State,
+    proxy: EventLoopProxy<UserEvent>,
+    _menu: Option<Menu>,
+    menu_cmds: HashMap<MenuId, Command>,
+    bar_open: bool,
+    remote: Vec<sync::DeviceTabs>,
+    dirty: bool,
+    last_sync: u64,
+    syncing: bool,
+    pub quit: bool,
+}
+
+fn state_path() -> PathBuf {
+    config::data_dir().join("state.json")
+}
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
+    Rect {
+        position: wry::dpi::LogicalPosition::new(x, y).into(),
+        size: wry::dpi::LogicalSize::new(w.max(1.0), h.max(1.0)).into(),
+    }
+}
+
+/// UI files are compiled in; set VALERIE_UI_DIR to load them from disk while iterating on the design.
+fn ui(name: &str) -> String {
+    if let Ok(dir) = std::env::var("VALERIE_UI_DIR") {
+        if let Ok(s) = std::fs::read_to_string(PathBuf::from(dir).join(name)) {
+            return s;
+        }
+    }
+    match name {
+        "chrome.html" => include_str!("../ui/chrome.html"),
+        "palette.html" => include_str!("../ui/palette.html"),
+        "little.html" => include_str!("../ui/little.html"),
+        "content.js" => include_str!("../ui/content.js"),
+        _ => "",
+    }
+    .to_string()
+}
+
+/// wry hands back the JS result JSON-encoded; our scripts return JSON strings, so unwrap up to twice.
+fn decode_js(s: &str) -> Value {
+    match serde_json::from_str::<Value>(s) {
+        Ok(Value::String(inner)) => serde_json::from_str(&inner).unwrap_or(Value::String(inner)),
+        Ok(v) => v,
+        Err(_) => Value::String(s.to_string()),
+    }
+}
+
+fn scheme_of(url: &str) -> String {
+    url.split(':').next().unwrap_or("").to_ascii_lowercase()
+}
+
+fn send(proxy: &EventLoopProxy<UserEvent>, ev: UserEvent) {
+    let _ = proxy.send_event(ev);
+}
+
+fn mac_window(wb: WindowBuilder) -> WindowBuilder {
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::WindowBuilderExtMacOS;
+        wb.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true)
+    }
+    #[cfg(not(target_os = "macos"))]
+    wb
+}
+
+impl App {
+    fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
+        let window = mac_window(WindowBuilder::new())
+            .with_title("Valerie")
+            .with_inner_size(LogicalSize::new(1440.0, 920.0))
+            .with_min_inner_size(LogicalSize::new(480.0, 360.0))
+            .build(elwt)?;
+        let size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let full = rect(0.0, 0.0, size.width, size.height);
+        let p = proxy.clone();
+        let chrome = WebViewBuilder::new()
+            .with_html(ui("chrome.html"))
+            .with_bounds(full)
+            .with_accept_first_mouse(true)
+            .with_devtools(true)
+            .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Chrome, msg: r.into_body() }))
+            .build_as_child(&window)?;
+        let p = proxy.clone();
+        let overlay = WebViewBuilder::new()
+            .with_html(ui("palette.html"))
+            .with_bounds(full)
+            .with_transparent(true)
+            .with_visible(false)
+            .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
+            .build_as_child(&window)?;
+        let mut state = State::load(&state_path());
+        state.reconcile_spaces(&config);
+        Ok(App {
+            window,
+            chrome,
+            overlay,
+            views: HashMap::new(),
+            zoom: HashMap::new(),
+            littles: HashMap::new(),
+            focused_little: None,
+            config,
+            state,
+            proxy,
+            _menu: None,
+            menu_cmds: HashMap::new(),
+            bar_open: false,
+            remote: Vec::new(),
+            dirty: false,
+            last_sync: 0,
+            syncing: false,
+            quit: false,
+        })
+    }
+
+    // ---------------------------------------------------------------- spaces, themes, profiles
+
+    fn space_cfg(&self, i: usize) -> Option<&config::SpaceConfig> {
+        let name = &self.state.spaces.get(i)?.name;
+        self.config.spaces.iter().find(|s| &s.name == name)
+    }
+
+    fn theme_for(&self, i: usize) -> Theme {
+        if let Some(n) = self.state.spaces.get(i).and_then(|s| s.theme.clone()) {
+            return self.config.theme(Some(&ThemeRef::Named(n)));
+        }
+        match self.space_cfg(i).and_then(|s| s.theme.as_ref()) {
+            Some(t) => self.config.theme(Some(t)),
+            None => {
+                let names = self.config.theme_names();
+                self.config.theme(Some(&ThemeRef::Named(names[i % names.len()].clone())))
+            }
+        }
+    }
+
+    fn profile_for(&self, i: usize) -> String {
+        self.space_cfg(i)
+            .and_then(|s| s.profile.clone())
+            .or_else(|| self.config.profiles.first().map(|p| p.name.clone()))
+            .unwrap_or_else(|| "Default".into())
+    }
+
+    // ---------------------------------------------------------------- webviews
+
+    fn content_script(&self) -> String {
+        let cfg = json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent });
+        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), cfg)
+    }
+
+    fn page_builder(&self, target: Target, url: &str, profile: &str) -> WebViewBuilder<'static> {
+        let p = self.proxy.clone();
+        let (p1, p2, p3, p4, p5) = (p.clone(), p.clone(), p.clone(), p.clone(), p.clone());
+        let downloads = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+        let builder = WebViewBuilder::new()
+            .with_url(if url.is_empty() { "about:blank" } else { url })
+            .with_visible(false)
+            .with_devtools(true)
+            .with_back_forward_navigation_gestures(true)
+            .with_accept_first_mouse(true)
+            .with_initialization_script(self.content_script())
+            .with_ipc_handler(move |r| send(&p1, UserEvent::Ipc { from: Source::Page(target), msg: r.into_body() }))
+            .with_on_page_load_handler(move |ev, url| {
+                send(&p2, UserEvent::PageLoad { target, url, finished: matches!(ev, PageLoadEvent::Finished) })
+            })
+            .with_document_title_changed_handler(move |title| send(&p3, UserEvent::Title { target, title }))
+            .with_new_window_req_handler(move |url, _| {
+                send(&p4, UserEvent::NewWindow { target, url });
+                NewWindowResponse::Deny
+            })
+            .with_navigation_handler(move |url| {
+                let scheme = scheme_of(&url);
+                if matches!(scheme.as_str(), "http" | "https" | "about" | "data" | "blob" | "file") {
+                    return true;
+                }
+                send(&p5, UserEvent::ExternalScheme(url));
+                false
+            })
+            .with_download_started_handler(move |url, path| {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| url.split('?').next().and_then(|u| u.rsplit('/').next()).map(str::to_string))
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "download".into());
+                let mut dest = downloads.join(&name);
+                let mut i = 1;
+                while dest.exists() {
+                    let (stem, ext) = name.rsplit_once('.').map(|(s, e)| (s.to_string(), format!(".{e}"))).unwrap_or((name.clone(), String::new()));
+                    dest = downloads.join(format!("{stem} ({i}){ext}"));
+                    i += 1;
+                }
+                *path = dest;
+                true
+            })
+            .with_download_completed_handler(move |_, _, ok| send(&p, UserEvent::Downloaded { ok }));
+        #[cfg(target_os = "macos")]
+        let builder = {
+            use wry::WebViewBuilderExtDarwin;
+            builder.with_data_store_identifier(platform::profile_id(profile))
+        };
+        #[cfg(not(target_os = "macos"))]
+        let _ = profile; // TODO: per-profile WebContext data dirs on Windows/Linux
+        builder
+    }
+
+    fn ensure_view(&mut self, tab: TabId) {
+        if self.views.contains_key(&tab) {
+            return;
+        }
+        let Some(t) = self.state.tabs.get(&tab) else { return };
+        let space = self.state.space_of(tab).unwrap_or(self.state.active_space);
+        let profile = self.profile_for(space);
+        match self.page_builder(Target::Tab(tab), &t.url.clone(), &profile).build_as_child(&self.window) {
+            Ok(v) => {
+                if self.config.layout.corner_radius > 0.0 {
+                    platform::round_corners(&v, self.config.layout.corner_radius);
+                }
+                if let Some(z) = self.zoom.get(&tab) {
+                    let _ = v.zoom(*z);
+                }
+                self.views.insert(tab, v);
+            }
+            Err(e) => eprintln!("valerie: could not create webview: {e}"),
+        }
+    }
+
+    fn unload(&mut self, tab: TabId) {
+        self.views.remove(&tab);
+        if let Some(t) = self.state.tabs.get_mut(&tab) {
+            t.loading = false;
+            t.playing = false;
+        }
+    }
+
+    // ---------------------------------------------------------------- layout
+
+    fn panes(&self) -> Vec<TabId> {
+        let s = self.state.space();
+        match self.state.active_tab() {
+            None => vec![],
+            Some(a) if s.split.len() > 1 && s.split.contains(&a) => s.split.clone(),
+            Some(a) => vec![a],
+        }
+    }
+
+    fn content_area(&self, w: f64, h: f64) -> (f64, f64, f64, f64) {
+        let l = &self.config.layout;
+        let b = l.bezel;
+        match l.tab_bar {
+            TabBar::Top => (b, TOP_BAR, w - 2.0 * b, h - TOP_BAR - b),
+            TabBar::Side => {
+                let sw = if l.sidebar_visible { l.sidebar_width } else { 0.0 };
+                let (left, right) = match l.sidebar_position {
+                    SidebarPosition::Left => (if sw > 0.0 { sw } else { b }, b),
+                    SidebarPosition::Right => (b, if sw > 0.0 { sw } else { b }),
+                };
+                (left, b, w - left - right, h - 2.0 * b)
+            }
+        }
+    }
+
+    fn layout(&mut self) {
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let full = rect(0.0, 0.0, size.width, size.height);
+        let _ = self.chrome.set_bounds(full);
+        let _ = self.overlay.set_bounds(full);
+        let (x, y, w, h) = self.content_area(size.width, size.height);
+        let panes = self.panes();
+        let n = panes.len().max(1) as f64;
+        let gap = self.config.layout.split_gap.max(0.0);
+        let pw = (w - gap * (n - 1.0)) / n;
+        for (id, v) in &self.views {
+            if !panes.contains(id) {
+                let _ = v.set_visible(false);
+            }
+        }
+        for (i, id) in panes.iter().enumerate() {
+            if let Some(v) = self.views.get(id) {
+                let _ = v.set_bounds(rect(x + i as f64 * (pw + gap), y, pw, h));
+                let _ = v.set_visible(true);
+            }
+        }
+        let hide_lights = self.config.layout.tab_bar == TabBar::Side
+            && (!self.config.layout.sidebar_visible || self.config.layout.sidebar_position == SidebarPosition::Right);
+        platform::set_traffic_lights_hidden(&self.window, hide_lights);
+        if self.bar_open {
+            platform::bring_to_front(&self.overlay);
+        }
+    }
+
+    fn layout_little(&self, id: WindowId) {
+        if let Some(l) = self.littles.get(&id) {
+            let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+            let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR));
+            let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, s.width, s.height - LITTLE_BAR));
+        }
+    }
+
+    fn focus_active(&self) {
+        if self.bar_open {
+            return;
+        }
+        match self.state.active_tab().and_then(|t| self.views.get(&t)) {
+            Some(v) => {
+                let _ = v.focus();
+            }
+            None => {
+                let _ = self.chrome.focus();
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- rendering
+
+    fn tab_vm(&self, t: &Tab) -> Value {
+        json!({
+            "id": t.id, "url": t.url, "favicon": t.favicon,
+            "title": t.custom_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone()),
+            "loaded": self.views.contains_key(&t.id), "loading": t.loading, "playing": t.playing,
+            "pinned": self.state.is_pinned(t.id),
+        })
+    }
+
+    fn node_vm(&self, n: &Node) -> Option<Value> {
+        match n {
+            Node::Tab { id } => {
+                let mut v = self.tab_vm(self.state.tabs.get(id)?);
+                v["type"] = json!("tab");
+                Some(v)
+            }
+            Node::Folder { id, name, open, children } => Some(json!({
+                "type": "folder", "id": id, "name": name, "open": open,
+                "children": children.iter().filter_map(|c| self.node_vm(c)).collect::<Vec<_>>(),
+            })),
+        }
+    }
+
+    fn render(&self) {
+        let s = self.state.space();
+        let active = self.state.active_tab();
+        let vm = json!({
+            "spaces": self.state.spaces.iter().enumerate().map(|(i, sp)| json!({
+                "name": sp.name, "icon": self.space_cfg(i).and_then(|c| c.icon.clone()),
+            })).collect::<Vec<_>>(),
+            "active_space": self.state.active_space,
+            "theme": self.theme_for(self.state.active_space),
+            "layout": self.config.layout,
+            "favorites": self.state.favorites.iter().filter_map(|id| self.state.tabs.get(id)).map(|t| self.tab_vm(t)).collect::<Vec<_>>(),
+            "pinned": s.pinned.iter().filter_map(|n| self.node_vm(n)).collect::<Vec<_>>(),
+            "today": s.today.iter().filter_map(|id| self.state.tabs.get(id)).map(|t| self.tab_vm(t)).collect::<Vec<_>>(),
+            "active": active,
+            "split": if s.split.len() > 1 { s.split.clone() } else { vec![] },
+            "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
+        });
+        let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
+    }
+
+    fn render_little(&self, id: WindowId) {
+        if let Some(l) = self.littles.get(&id) {
+            let vm = json!({
+                "url": l.url, "title": l.title, "theme": self.theme_for(l.space),
+                "space": self.state.spaces.get(l.space).map(|s| s.name.clone()),
+            });
+            let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
+        }
+    }
+
+    fn toast(&self, msg: &str) {
+        let m = serde_json::to_string(msg).unwrap_or_default();
+        let in_page = self.state.active_tab().and_then(|t| self.views.get(&t));
+        match in_page {
+            Some(v) if self.focused_little.is_none() => {
+                let _ = v.evaluate_script(&format!("window.__valerie ? __valerie.toast({m}) : 0"));
+            }
+            _ => {
+                let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.toast({m})"));
+            }
+        }
+        if let Some(l) = self.focused_little.and_then(|id| self.littles.get(&id)) {
+            let _ = l.view.evaluate_script(&format!("window.__valerie ? __valerie.toast({m}) : 0"));
+        }
+    }
+
+    // ---------------------------------------------------------------- tab operations
+
+    fn activate(&mut self, tab: TabId) {
+        if !self.state.tabs.contains_key(&tab) {
+            return;
+        }
+        if let Some(prev) = self.state.active_tab() {
+            if let Some(t) = self.state.tabs.get_mut(&prev) {
+                t.last_active = now();
+            }
+        }
+        if let Some(sp) = self.state.space_of(tab) {
+            self.state.active_space = sp;
+        }
+        self.state.space_mut().active = Some(tab);
+        if let Some(t) = self.state.tabs.get_mut(&tab) {
+            t.last_active = now();
+        }
+        for p in self.panes() {
+            self.ensure_view(p);
+        }
+        self.layout();
+        self.focus_active();
+        self.render();
+        self.dirty = true;
+    }
+
+    fn open_tab(&mut self, url: &str, space: Option<usize>, activate: bool) -> TabId {
+        let sp = space.unwrap_or(self.state.active_space);
+        let at_top = self.config.tabs.new_tab_position != "bottom";
+        let id = self.state.add_tab(sp, url, at_top);
+        if activate {
+            self.activate(id);
+        } else {
+            self.ensure_view(id);
+            self.layout();
+            self.render();
+        }
+        self.dirty = true;
+        id
+    }
+
+    fn navigate(&mut self, tab: TabId, url: &str) {
+        if let Some(t) = self.state.tabs.get_mut(&tab) {
+            t.url = url.to_string();
+        }
+        match self.views.get(&tab) {
+            Some(v) => {
+                let _ = v.load_url(url);
+            }
+            None => self.ensure_view(tab),
+        }
+        self.layout();
+        self.render();
+    }
+
+    fn close(&mut self, tab: TabId) {
+        let pinned_or_fav = self.state.is_pinned(tab) || self.state.favorites.contains(&tab);
+        if pinned_or_fav {
+            // Like Arc: closing a pinned tab unloads it but keeps it in the sidebar.
+            let was_active = self.state.active_tab() == Some(tab);
+            self.unload(tab);
+            if was_active {
+                let order: Vec<TabId> = self.state.order(self.state.active_space, true);
+                let next = order.iter().copied().find(|t| *t != tab && self.views.contains_key(t));
+                self.state.space_mut().active = next;
+                if let Some(n) = next {
+                    return self.activate(n);
+                }
+            }
+        } else {
+            let space = self.state.space_of(tab);
+            let next = self.state.close_tab(tab);
+            self.views.remove(&tab);
+            if space == Some(self.state.active_space) || space.is_none() {
+                if let Some(n) = next {
+                    return self.activate(n);
+                }
+            }
+        }
+        let split = &mut self.state.space_mut().split;
+        if split.len() < 2 {
+            split.clear();
+        }
+        self.layout();
+        self.focus_active();
+        self.render();
+        self.dirty = true;
+    }
+
+    fn switch_space(&mut self, i: usize) {
+        if i >= self.state.spaces.len() {
+            return;
+        }
+        self.state.active_space = i;
+        for p in self.panes() {
+            self.ensure_view(p);
+        }
+        self.layout();
+        self.focus_active();
+        self.render();
+        self.refresh_content_config();
+        self.dirty = true;
+    }
+
+    fn cycle_list(&self) -> Vec<TabId> {
+        let mut v = self.state.favorites.clone();
+        v.extend(self.state.order(self.state.active_space, true));
+        v
+    }
+
+    fn target_tab(&self, tab: Option<TabId>) -> Option<TabId> {
+        tab.or_else(|| self.state.active_tab())
+    }
+
+    fn move_tab(&mut self, tab: TabId, space: Option<String>, folder: Option<TabId>, pinned: Option<bool>, index: Option<usize>) {
+        if !self.state.tabs.contains_key(&tab) {
+            return;
+        }
+        let from = self.state.space_of(tab);
+        let was_active = from.map(|s| self.state.spaces[s].active == Some(tab)).unwrap_or(false);
+        let dest = space.and_then(|n| self.state.space_index(&n)).or(from).unwrap_or(self.state.active_space);
+        let pinned = pinned.unwrap_or(folder.is_some() || self.state.is_pinned(tab));
+        self.state.detach(tab);
+        let sp = &mut self.state.spaces[dest];
+        if let Some(f) = folder.and_then(|f| find_folder(&mut sp.pinned, f)) {
+            if let Node::Folder { children, open, .. } = f {
+                let i = index.unwrap_or(children.len()).min(children.len());
+                children.insert(i, Node::Tab { id: tab });
+                *open = true;
+            }
+        } else if pinned {
+            let i = index.unwrap_or(sp.pinned.len()).min(sp.pinned.len());
+            sp.pinned.insert(i, Node::Tab { id: tab });
+        } else {
+            let i = index.unwrap_or(0).min(sp.today.len());
+            sp.today.insert(i, tab);
+        }
+        if was_active && Some(dest) == from {
+            self.state.spaces[dest].active = Some(tab);
+        } else if was_active {
+            // The tab left this space: its view must be moved to the new space's profile, so drop it.
+            self.unload(tab);
+            let next = self.state.order(from.unwrap(), true).first().copied();
+            self.state.spaces[from.unwrap()].active = next;
+            self.toast(&format!("Moved to {}", self.state.spaces[dest].name));
+        }
+        if from != Some(dest) {
+            self.unload(tab);
+        }
+        for p in self.panes() {
+            self.ensure_view(p);
+        }
+        self.layout();
+        self.render();
+        self.dirty = true;
+    }
+
+    // ---------------------------------------------------------------- command bar
+
+    fn open_bar(&mut self, mode: BarMode) {
+        let active = self.state.active_tab();
+        let mode = if mode == BarMode::Current && active.is_none() { BarMode::NewTab } else { mode };
+        let mut items: Vec<Value> = Vec::new();
+        let mut rank = 0;
+        let mut recent: Vec<&Tab> = self.state.tabs.values().collect();
+        recent.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+        for t in recent {
+            let space = self.state.space_of(t.id);
+            let kind = if self.state.favorites.contains(&t.id) {
+                "favorite"
+            } else if self.state.is_pinned(t.id) {
+                "pinned"
+            } else {
+                "tab"
+            };
+            if Some(t.id) == active {
+                continue;
+            }
+            items.push(json!({ "kind": kind, "title": t.display_title(), "url": t.url, "tab": t.id, "favicon": t.favicon, "rank": rank,
+                               "sub": space.map(|s| self.state.spaces[s].name.clone()) }));
+            rank += 1;
+        }
+        for (name, title) in CATALOG {
+            items.push(json!({ "kind": "command", "title": title, "cmd": { "cmd": name } }));
+        }
+        for (i, s) in self.state.spaces.iter().enumerate() {
+            items.push(json!({ "kind": "space", "title": format!("Switch to {}", s.name), "cmd": { "cmd": "switch_space", "index": i } }));
+        }
+        for name in self.config.theme_names() {
+            items.push(json!({ "kind": "theme", "title": format!("Space theme: {name}"), "cmd": { "cmd": "set_space_theme", "theme": name } }));
+        }
+        for src in import::available() {
+            let title = format!("Import from {}{}", &src[..1].to_uppercase(), &src[1..]);
+            items.push(json!({ "kind": "import", "title": title, "cmd": { "cmd": "import", "source": src } }));
+        }
+        for b in &self.state.bookmarks {
+            items.push(json!({ "kind": "bookmark", "title": b.title, "url": b.url, "sub": b.folder.join(" / ") }));
+        }
+        for h in self.state.history.iter().take(3000) {
+            items.push(json!({ "kind": "history", "title": h.title, "url": h.url, "visits": h.visits }));
+        }
+        for d in &self.remote {
+            for s in &d.spaces {
+                for t in s.pinned.iter().chain(&s.tabs) {
+                    items.push(json!({ "kind": "synced", "title": t.title, "url": t.url, "sub": format!("{} · {}", d.device, s.name) }));
+                }
+            }
+        }
+        for a in self.state.archive.iter().take(500) {
+            items.push(json!({ "kind": "archived", "title": a.title, "url": a.url, "sub": format!("Archived from {}", a.space) }));
+        }
+        let engine = url::Url::parse(&self.config.search_engine.replace("%s", "x"))
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").split('.').next().unwrap_or(h).to_string()))
+            .map(|h| format!("{}{}", &h[..1].to_uppercase(), &h[1..]))
+            .unwrap_or_else(|| "the web".into());
+        let query = if mode == BarMode::Current { active.and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) } else { None };
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "theme": self.theme_for(self.state.active_space), "items": items });
+        let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
+        let _ = self.overlay.set_visible(true);
+        platform::bring_to_front(&self.overlay);
+        let _ = self.overlay.focus();
+        self.bar_open = true;
+    }
+
+    fn close_bar(&mut self) {
+        if !self.bar_open {
+            return;
+        }
+        self.bar_open = false;
+        let _ = self.overlay.evaluate_script("palette.hide()");
+        let _ = self.overlay.set_visible(false);
+        self.focus_active();
+    }
+
+    // ---------------------------------------------------------------- little windows
+
+    fn open_little(&mut self, url: &str, space: usize, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let lw = &self.config.little_window;
+        let window = match mac_window(WindowBuilder::new())
+            .with_title("Valerie")
+            .with_inner_size(LogicalSize::new(lw.width, lw.height))
+            .with_min_inner_size(LogicalSize::new(360.0, 240.0))
+            .build(elwt)
+        {
+            Ok(w) => w,
+            Err(e) => return eprintln!("valerie: little window: {e}"),
+        };
+        let id = window.id();
+        let p = self.proxy.clone();
+        let bar = WebViewBuilder::new()
+            .with_html(ui("little.html"))
+            .with_bounds(rect(0.0, 0.0, lw.width, LITTLE_BAR))
+            .with_accept_first_mouse(true)
+            .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
+            .build_as_child(&window);
+        let view = self
+            .page_builder(Target::Little(id), url, &self.profile_for(space))
+            .with_visible(true)
+            .with_bounds(rect(0.0, LITTLE_BAR, lw.width, lw.height - LITTLE_BAR))
+            .build_as_child(&window);
+        let (Ok(bar), Ok(view)) = (bar, view) else { return eprintln!("valerie: little window webviews failed") };
+        let _ = view.focus();
+        window.set_focus();
+        self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space });
+        self.focused_little = Some(id);
+    }
+
+    fn little_to_main(&mut self, id: WindowId) {
+        if let Some(l) = self.littles.remove(&id) {
+            let url = l.url.clone();
+            drop(l);
+            self.focused_little = None;
+            self.open_tab(&url, Some(self.state.active_space), true);
+            self.window.set_focus();
+            self.focus_active();
+        }
+    }
+
+    /// Links from other apps: Air Traffic Control first, then a little window.
+    fn open_external(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        for url in urls {
+            let routed = routing::route(&self.config.routes, &url).and_then(|s| self.state.space_index(s));
+            match routed {
+                Some(space) => {
+                    self.open_tab(&url, Some(space), true);
+                    self.window.set_focus();
+                }
+                None if self.config.little_window.enabled => self.open_little(&url, self.state.active_space, elwt),
+                None => {
+                    self.open_tab(&url, None, true);
+                    self.window.set_focus();
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- config, menu, sync
+
+    fn refresh_content_config(&self) {
+        let cfg = json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent });
+        for v in self.views.values() {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+        }
+    }
+
+    fn reload_config(&mut self) {
+        match Config::load() {
+            Ok(c) => {
+                let radius_changed = c.layout.corner_radius != self.config.layout.corner_radius;
+                self.config = c;
+                self.state.reconcile_spaces(&self.config);
+                if radius_changed {
+                    for v in self.views.values() {
+                        platform::round_corners(v, self.config.layout.corner_radius);
+                    }
+                }
+                self.build_menu();
+                self.refresh_content_config();
+                self.layout();
+                self.render();
+                self.toast("Config reloaded");
+            }
+            Err(e) => self.toast(&format!("Config error: {e:#}")),
+        }
+    }
+
+    fn command_label(&self, cmd: &Command) -> String {
+        match cmd {
+            Command::SwitchSpace { index: Some(i), .. } => {
+                format!("Switch to {}", self.state.spaces.get(*i).map(|s| s.name.clone()).unwrap_or(format!("Space {}", i + 1)))
+            }
+            Command::GoToTab { index } => format!("Go to Tab {}", index + 1),
+            Command::OpenCommandBar { mode: BarMode::Current } => "Edit URL".into(),
+            Command::OpenCommandBar { .. } => "Command Bar".into(),
+            c => {
+                let name = serde_json::to_value(c).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)).unwrap_or_default();
+                title_for(&name)
+            }
+        }
+    }
+
+    fn build_menu(&mut self) {
+        let menu = Menu::new();
+        let mut cmds = HashMap::new();
+        let app_menu = Submenu::new("Valerie", true);
+        let settings = MenuItem::with_id("settings", "Settings…", true, None);
+        cmds.insert(settings.id().clone(), Command::OpenConfig);
+        let quit = MenuItem::with_id("quit", "Quit Valerie", true, "CmdOrCtrl+Q".parse().ok());
+        cmds.insert(quit.id().clone(), Command::Quit);
+        let _ = app_menu.append_items(&[
+            &PredefinedMenuItem::about(None, None),
+            &PredefinedMenuItem::separator(),
+            &settings,
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::services(None),
+            &PredefinedMenuItem::hide(None),
+            &PredefinedMenuItem::hide_others(None),
+            &PredefinedMenuItem::show_all(None),
+            &PredefinedMenuItem::separator(),
+            &quit,
+        ]);
+        let edit = Submenu::new("Edit", true);
+        let _ = edit.append_items(&[
+            &PredefinedMenuItem::undo(None),
+            &PredefinedMenuItem::redo(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::cut(None),
+            &PredefinedMenuItem::copy(None),
+            &PredefinedMenuItem::paste(None),
+            &PredefinedMenuItem::select_all(None),
+        ]);
+        let groups = [Submenu::new("Tabs", true), Submenu::new("Spaces", true), Submenu::new("View", true), Submenu::new("Tools", true)];
+        let mut bound: Vec<Command> = Vec::new();
+        for (i, (accel, binding)) in self.config.keybindings.iter().enumerate() {
+            let Some(cmd) = binding.as_ref().and_then(|b| b.command()) else { continue };
+            let Ok(acc) = accel.parse::<muda::accelerator::Accelerator>() else {
+                eprintln!("valerie: bad keybinding {accel:?}");
+                continue;
+            };
+            let item = MenuItem::with_id(format!("k{i}"), self.command_label(&cmd), true, Some(acc));
+            cmds.insert(item.id().clone(), cmd.clone());
+            let g = match &cmd {
+                Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => 1,
+                Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit | Command::FocusNextPane | Command::ZoomIn
+                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } => 2,
+                Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl => 3,
+                _ => 0,
+            };
+            let _ = groups[g].append(&item);
+            bound.push(cmd);
+        }
+        // Unbound catalog commands still appear in the menu so everything is discoverable.
+        for (name, title) in CATALOG {
+            let Some(cmd) = Command::from_name(name) else { continue };
+            if bound.contains(&cmd) || matches!(cmd, Command::Quit | Command::OpenConfig) {
+                continue;
+            }
+            let item = MenuItem::with_id(format!("c-{name}"), *title, true, None);
+            cmds.insert(item.id().clone(), cmd);
+            let _ = groups[3].append(&item);
+        }
+        let window_menu = Submenu::new("Window", true);
+        let _ = window_menu.append_items(&[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::fullscreen(None)]);
+        let _ = menu.append(&app_menu);
+        let _ = menu.append(&edit);
+        for g in &groups {
+            let _ = menu.append(g);
+        }
+        let _ = menu.append(&window_menu);
+        #[cfg(target_os = "macos")]
+        {
+            menu.init_for_nsapp();
+            window_menu.set_as_windows_menu_for_nsapp();
+        }
+        self.menu_cmds = cmds;
+        self._menu = Some(menu);
+    }
+
+    fn start_sync(&mut self) {
+        let repo = self.config.sync.repo.clone();
+        if repo.is_empty() {
+            return self.toast("Set sync.repo in config.yaml (or run `valerie sync-setup`)");
+        }
+        if self.syncing {
+            return;
+        }
+        self.syncing = true;
+        self.last_sync = now();
+        let me = sync::DeviceTabs {
+            device: self.config.device_name(),
+            updated: now(),
+            spaces: self
+                .state
+                .spaces
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let tab = |id: &TabId| self.state.tabs.get(id).map(|t| sync::SyncedTab { title: t.display_title().into(), url: t.url.clone() });
+                    let mut pinned_ids = Vec::new();
+                    let all = self.state.order(i, false);
+                    for id in &all {
+                        if !s.today.contains(id) {
+                            pinned_ids.push(*id);
+                        }
+                    }
+                    sync::SyncedSpace {
+                        name: s.name.clone(),
+                        pinned: pinned_ids.iter().filter_map(tab).collect(),
+                        tabs: s.today.iter().filter_map(tab).collect(),
+                    }
+                })
+                .collect(),
+        };
+        let dir = config::data_dir().join("sync");
+        let p = self.proxy.clone();
+        std::thread::spawn(move || send(&p, UserEvent::SyncDone(sync::run(&repo, &dir, &me).map_err(|e| format!("{e:#}")))));
+    }
+
+    fn save(&mut self) {
+        if let Err(e) = self.state.save(&state_path()) {
+            eprintln!("valerie: could not save state: {e}");
+        }
+        self.dirty = false;
+    }
+
+    fn tick(&mut self) {
+        let t = now();
+        let panes = self.panes();
+        let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
+        if archive_secs > 0 {
+            let stale: Vec<TabId> = self
+                .state
+                .spaces
+                .iter()
+                .flat_map(|s| s.today.iter().copied().filter(|id| s.active != Some(*id) && !s.split.contains(id)))
+                .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && t.saturating_sub(tab.last_active) > archive_secs))
+                .collect();
+            for id in stale {
+                self.state.archive_tab(id);
+                self.views.remove(&id);
+                self.dirty = true;
+            }
+        }
+        let unload_secs = (self.config.tabs.unload_after_minutes * 60.0) as u64;
+        if unload_secs > 0 {
+            let idle: Vec<TabId> = self
+                .views
+                .keys()
+                .copied()
+                .filter(|id| !panes.contains(id))
+                .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && t.saturating_sub(tab.last_active) > unload_secs))
+                .collect();
+            for id in idle {
+                self.unload(id);
+            }
+        }
+        let interval = (self.config.sync.interval_minutes * 60.0) as u64;
+        if !self.config.sync.repo.is_empty() && interval > 0 && t.saturating_sub(self.last_sync) > interval {
+            self.start_sync();
+        }
+        if self.dirty {
+            self.save();
+        }
+        self.render();
+    }
+
+    // ---------------------------------------------------------------- dispatch
+
+    pub fn dispatch(&mut self, cmd: Command, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let little = self.focused_little.filter(|id| self.littles.contains_key(id));
+        // Commands aimed at the focused little window.
+        if let Some(id) = little {
+            let l = &self.littles[&id];
+            match &cmd {
+                Command::CloseTab { tab: None } => {
+                    self.littles.remove(&id);
+                    self.focused_little = None;
+                    return;
+                }
+                Command::MoveToMainWindow => return self.little_to_main(id),
+                Command::CopyUrl => {
+                    let url = l.url.clone();
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
+                    return self.toast("Copied URL");
+                }
+                Command::Back { tab: None } => return drop(l.view.go_back()),
+                Command::Forward { tab: None } => return drop(l.view.go_forward()),
+                Command::Reload { tab: None } => return drop(l.view.reload()),
+                Command::DevTools => return l.view.open_devtools(),
+                _ => {}
+            }
+        }
+        match cmd {
+            Command::OpenCommandBar { mode } => {
+                if little.is_some() {
+                    self.window.set_focus();
+                    self.focused_little = None;
+                }
+                self.open_bar(mode)
+            }
+            Command::CloseCommandBar => self.close_bar(),
+            Command::NewTab { url, space, background } => {
+                let space = space.and_then(|s| self.state.space_index(&s));
+                let url = url.or_else(|| Some(self.config.new_tab_url.clone()).filter(|u| !u.is_empty()));
+                match url {
+                    Some(u) => {
+                        let u = routing::resolve_input(&u, &self.config.search_engine);
+                        self.open_tab(&u, space, !background);
+                    }
+                    None => {
+                        if let Some(s) = space {
+                            self.switch_space(s);
+                        }
+                        self.open_bar(BarMode::NewTab)
+                    }
+                }
+            }
+            Command::Go { input, new_tab } => {
+                self.close_bar();
+                let url = routing::resolve_input(&input, &self.config.search_engine);
+                match self.state.active_tab().filter(|_| !new_tab) {
+                    Some(t) => self.navigate(t, &url),
+                    None => {
+                        self.open_tab(&url, None, true);
+                    }
+                }
+            }
+            Command::Navigate { url, tab } => {
+                if let Some(t) = self.target_tab(tab) {
+                    let url = routing::resolve_input(&url, &self.config.search_engine);
+                    self.navigate(t, &url);
+                }
+            }
+            Command::CloseTab { tab } => {
+                if let Some(t) = self.target_tab(tab) {
+                    self.close(t);
+                }
+            }
+            Command::ReopenClosedTab => {
+                if let Some(c) = self.state.closed.pop() {
+                    let space = c.space.min(self.state.spaces.len() - 1);
+                    let id = c.tab.id;
+                    self.state.tabs.insert(id, c.tab);
+                    self.state.spaces[space].today.insert(0, id);
+                    self.activate(id);
+                }
+            }
+            Command::ActivateTab { tab } => {
+                self.close_bar();
+                self.activate(tab)
+            }
+            Command::NextTab | Command::PrevTab => {
+                let list = self.cycle_list();
+                if list.is_empty() {
+                    return;
+                }
+                let cur = self.state.active_tab().and_then(|a| list.iter().position(|t| *t == a));
+                let n = list.len();
+                let next = match (cur, matches!(cmd, Command::NextTab)) {
+                    (Some(i), true) => (i + 1) % n,
+                    (Some(i), false) => (i + n - 1) % n,
+                    (None, _) => 0,
+                };
+                self.activate(list[next]);
+            }
+            Command::GoToTab { index } => {
+                if let Some(t) = self.cycle_list().get(index).copied() {
+                    self.activate(t);
+                }
+            }
+            Command::TogglePin { tab } => {
+                if let Some(t) = self.target_tab(tab) {
+                    if self.state.is_pinned(t) {
+                        self.state.unpin(t);
+                    } else {
+                        if self.state.favorites.contains(&t) {
+                            self.state.favorites.retain(|f| *f != t);
+                        }
+                        self.state.pin(t);
+                    }
+                    self.dirty = true;
+                    self.render();
+                }
+            }
+            Command::ToggleFavorite { tab } => {
+                if let Some(t) = self.target_tab(tab) {
+                    let space = self.state.space_of(t).unwrap_or(self.state.active_space);
+                    let was_active = self.state.active_tab() == Some(t);
+                    if self.state.favorites.contains(&t) {
+                        self.state.detach(t);
+                        self.state.spaces[space].today.insert(0, t);
+                    } else {
+                        self.state.detach(t);
+                        self.state.favorites.push(t);
+                    }
+                    if was_active {
+                        self.state.space_mut().active = Some(t);
+                    }
+                    self.dirty = true;
+                    self.render();
+                }
+            }
+            Command::DuplicateTab => {
+                if let Some(url) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) {
+                    self.open_tab(&url, None, true);
+                }
+            }
+            Command::MoveTab { tab, space, folder, pinned, index } => self.move_tab(tab, space, folder, pinned, index),
+            Command::RenameTab { tab, title } => {
+                if let Some(t) = self.state.tabs.get_mut(&tab) {
+                    t.custom_title = Some(title).filter(|s| !s.trim().is_empty());
+                    self.dirty = true;
+                    self.render();
+                }
+            }
+            Command::NewFolder { name } => {
+                let id = self.state.new_id();
+                let name = name.unwrap_or_else(|| "New Folder".into());
+                self.state.space_mut().pinned.push(Node::Folder { id, name, open: true, children: vec![] });
+                self.dirty = true;
+                self.render();
+            }
+            Command::ToggleFolder { folder } => {
+                if let Some(Node::Folder { open, .. }) = find_folder(&mut self.state.space_mut().pinned, folder) {
+                    *open = !*open;
+                }
+                self.dirty = true;
+                self.render();
+            }
+            Command::RenameFolder { folder, name } => {
+                for s in &mut self.state.spaces {
+                    if let Some(Node::Folder { name: n, .. }) = find_folder(&mut s.pinned, folder) {
+                        *n = name.clone();
+                    }
+                }
+                self.dirty = true;
+                self.render();
+            }
+            Command::DeleteFolder { folder } => {
+                self.state.delete_folder(folder);
+                self.dirty = true;
+                self.render();
+            }
+            Command::ClearTodayTabs => {
+                let today = self.state.space().today.clone();
+                for id in today {
+                    self.state.archive_tab(id);
+                    self.views.remove(&id);
+                }
+                self.state.space_mut().split.clear();
+                self.dirty = true;
+                self.layout();
+                self.focus_active();
+                self.render();
+            }
+            Command::RestoreArchived { index } => {
+                if index < self.state.archive.len() {
+                    let a = self.state.archive.remove(index);
+                    self.open_tab(&a.url, self.state.space_index(&a.space), true);
+                }
+            }
+            Command::Back { tab } | Command::Forward { tab } | Command::Reload { tab } => {
+                if let Some(v) = self.target_tab(tab).and_then(|t| self.views.get(&t)) {
+                    let _ = match cmd {
+                        Command::Back { .. } => v.go_back(),
+                        Command::Forward { .. } => v.go_forward(),
+                        _ => v.reload(),
+                    };
+                } else if let Some(t) = self.target_tab(tab) {
+                    self.ensure_view(t);
+                    self.layout();
+                }
+            }
+            Command::Stop => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    let _ = v.evaluate_script("window.stop()");
+                }
+            }
+            Command::CopyUrl => {
+                if let Some(url) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) {
+                    match arboard::Clipboard::new().and_then(|mut c| c.set_text(url)) {
+                        Ok(_) => self.toast("Copied URL"),
+                        Err(e) => self.toast(&format!("Clipboard error: {e}")),
+                    }
+                }
+            }
+            Command::ToggleSidebar => {
+                self.config.layout.sidebar_visible = !self.config.layout.sidebar_visible;
+                self.layout();
+                self.render();
+            }
+            Command::ToggleTabBarPosition => {
+                self.config.layout.tab_bar = if self.config.layout.tab_bar == TabBar::Side { TabBar::Top } else { TabBar::Side };
+                self.layout();
+                self.render();
+            }
+            Command::NextSpace | Command::PrevSpace => {
+                let n = self.state.spaces.len();
+                let i = self.state.active_space;
+                self.switch_space(if matches!(cmd, Command::NextSpace) { (i + 1) % n } else { (i + n - 1) % n });
+            }
+            Command::SwitchSpace { index, name } => {
+                self.close_bar();
+                if let Some(i) = index.or_else(|| name.and_then(|n| self.state.space_index(&n))) {
+                    self.switch_space(i);
+                }
+            }
+            Command::NewSpace { name } => {
+                let name = name.unwrap_or_else(|| format!("Space {}", self.state.spaces.len() + 1));
+                if self.state.space_index(&name).is_none() {
+                    self.state.spaces.push(crate::state::Space { name, ..Default::default() });
+                }
+                let i = self.state.spaces.len() - 1;
+                self.switch_space(i);
+            }
+            Command::RenameSpace { name } => {
+                let i = self.state.active_space;
+                if self.space_cfg(i).is_some() {
+                    self.toast("This space is defined in config.yaml: rename it there");
+                } else if self.state.space_index(&name).is_none() {
+                    self.state.spaces[i].name = name;
+                    self.dirty = true;
+                    self.render();
+                }
+            }
+            Command::DeleteSpace { name } => {
+                let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+                if self.space_cfg(i).is_some() {
+                    return self.toast("This space is defined in config.yaml: remove it there");
+                }
+                if self.state.spaces.len() < 2 {
+                    return;
+                }
+                for id in self.state.order(i, false) {
+                    self.state.archive_tab(id);
+                    self.views.remove(&id);
+                }
+                self.state.spaces.remove(i);
+                self.state.active_space = self.state.active_space.min(self.state.spaces.len() - 1);
+                let a = self.state.active_space;
+                self.switch_space(a);
+            }
+            Command::SetSpaceTheme { theme } => {
+                self.close_bar();
+                self.state.space_mut().theme = Some(theme);
+                self.dirty = true;
+                self.render();
+                self.refresh_content_config();
+            }
+            Command::SplitView { tab } => {
+                let Some(a) = self.state.active_tab() else { return };
+                let other = tab.filter(|t| *t != a).or_else(|| {
+                    let list = self.state.order(self.state.active_space, true);
+                    let split = &self.state.space().split;
+                    list.iter().copied().find(|t| *t != a && !split.contains(t))
+                });
+                let Some(other) = other else { return self.toast("Open another tab to split with") };
+                let s = self.state.space_mut();
+                if !(s.split.len() > 1 && s.split.contains(&a)) {
+                    s.split = vec![a];
+                }
+                if !s.split.contains(&other) && s.split.len() < 4 {
+                    s.split.push(other);
+                }
+                self.activate(a);
+            }
+            Command::Unsplit => {
+                self.state.space_mut().split.clear();
+                self.layout();
+                self.render();
+            }
+            Command::FocusNextPane => {
+                let panes = self.panes();
+                if panes.len() > 1 {
+                    let cur = self.state.active_tab().and_then(|a| panes.iter().position(|p| *p == a)).unwrap_or(0);
+                    self.state.space_mut().active = Some(panes[(cur + 1) % panes.len()]);
+                    self.focus_active();
+                    self.render();
+                }
+            }
+            Command::ZoomIn | Command::ZoomOut | Command::ZoomReset => {
+                if let Some(t) = self.state.active_tab() {
+                    let z = self.zoom.get(&t).copied().unwrap_or(1.0);
+                    let z = match cmd {
+                        Command::ZoomIn => (z + 0.1).min(3.0),
+                        Command::ZoomOut => (z - 0.1).max(0.3),
+                        _ => 1.0,
+                    };
+                    self.zoom.insert(t, z);
+                    if let Some(v) = self.views.get(&t) {
+                        let _ = v.zoom(z);
+                    }
+                    self.toast(&format!("Zoom {:.0}%", z * 100.0));
+                }
+            }
+            Command::DevTools => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    v.open_devtools();
+                }
+            }
+            Command::OpenLittleWindow { url } => {
+                let url = routing::resolve_input(&url, &self.config.search_engine);
+                self.open_little(&url, self.state.active_space, elwt)
+            }
+            Command::MoveToMainWindow => {}
+            Command::OpenConfig => {
+                self.close_bar();
+                platform::open_text_file(&config::config_path())
+            }
+            Command::ReloadConfig => self.reload_config(),
+            Command::Sync => {
+                self.close_bar();
+                self.start_sync()
+            }
+            Command::Import { source } => {
+                self.close_bar();
+                match import::import(&source) {
+                    Ok(imp) => {
+                        let msg = self.state.apply_import(&source, imp);
+                        self.dirty = true;
+                        self.render();
+                        self.toast(&msg);
+                    }
+                    Err(e) => self.toast(&format!("Import failed: {e:#}")),
+                }
+            }
+            Command::FindInPage { query } => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    let _ = v.focus();
+                    let q = serde_json::to_string(&query).unwrap_or("null".into());
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.find({q})"));
+                }
+            }
+            Command::Quit => self.quit = true,
+        }
+    }
+
+    // ---------------------------------------------------------------- events
+
+    fn handle_ipc(&mut self, from: Source, msg: String, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let trusted = !matches!(from, Source::Page(_));
+        if !trusted && msg.len() > MAX_UNTRUSTED_IPC {
+            return;
+        }
+        let Ok(m) = serde_json::from_str::<Value>(&msg) else { return };
+        let kind = m["t"].as_str().unwrap_or("");
+        match (from, kind) {
+            (Source::Chrome, "ready") => self.render(),
+            (Source::Chrome, "drag") => {
+                let _ = self.window.drag_window();
+            }
+            (Source::LittleBar(id), "ready") => self.render_little(id),
+            (Source::LittleBar(id), "drag") => {
+                if let Some(l) = self.littles.get(&id) {
+                    let _ = l.window.drag_window();
+                }
+            }
+            (_, "cmd") => {
+                let Ok(cmd) = serde_json::from_value::<Command>(m["cmd"].clone()) else { return };
+                match from {
+                    Source::Page(_) if !cmd.page_safe() => return,
+                    Source::Page(Target::Little(id)) | Source::LittleBar(id) => self.focused_little = Some(id),
+                    Source::Page(Target::Tab(id)) => {
+                        self.focused_little = None;
+                        // A key pressed in a split pane acts on that pane.
+                        if self.panes().contains(&id) {
+                            self.state.space_mut().active = Some(id);
+                        }
+                    }
+                    Source::Chrome => self.focused_little = None,
+                    Source::Overlay => {
+                        if !matches!(cmd, Command::CloseCommandBar) {
+                            self.close_bar();
+                        }
+                    }
+                }
+                self.dispatch(cmd, elwt);
+            }
+            (Source::Page(target), "meta") => {
+                let Target::Tab(id) = target else {
+                    return;
+                };
+                let real_url = self.views.get(&id).and_then(|v| v.url().ok());
+                if let Some(t) = self.state.tabs.get_mut(&id) {
+                    if let Some(f) = m["favicon"].as_str() {
+                        if matches!(scheme_of(f).as_str(), "http" | "https" | "data") && f.len() < 8192 {
+                            t.favicon = Some(f.to_string());
+                        }
+                    }
+                    t.playing = m["playing"].as_bool().unwrap_or(false);
+                    if let Some(u) = real_url.filter(|u| !u.is_empty() && u != "about:blank") {
+                        t.url = u;
+                    }
+                }
+                self.render();
+            }
+            (Source::Page(target), "open") => {
+                let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
+                let space = match target {
+                    Target::Tab(id) => self.state.space_of(id),
+                    Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+                };
+                let id = self.state.add_tab(space.unwrap_or(self.state.active_space), url, true);
+                self.ensure_view(id);
+                self.layout();
+                self.render();
+                self.toast("Opened in background");
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle(&mut self, ev: UserEvent, elwt: &EventLoopWindowTarget<UserEvent>) {
+        match ev {
+            UserEvent::Ipc { from, msg } => self.handle_ipc(from, msg, elwt),
+            UserEvent::PageLoad { target, url, finished } => match target {
+                Target::Tab(id) => {
+                    let mut visit = None;
+                    if let Some(t) = self.state.tabs.get_mut(&id) {
+                        if !url.is_empty() && url != "about:blank" {
+                            t.url = url.clone();
+                        }
+                        t.loading = !finished;
+                        if finished {
+                            visit = Some((t.url.clone(), t.title.clone()));
+                        }
+                    }
+                    if let Some((u, t)) = visit {
+                        self.state.record_visit(&u, &t);
+                    }
+                    self.dirty = true;
+                    self.render();
+                }
+                Target::Little(id) => {
+                    if let Some(l) = self.littles.get_mut(&id) {
+                        l.url = url;
+                    }
+                    self.render_little(id);
+                }
+            },
+            UserEvent::Title { target, title } => match target {
+                Target::Tab(id) => {
+                    if let Some(t) = self.state.tabs.get_mut(&id) {
+                        t.title = title.clone();
+                        let url = t.url.clone();
+                        self.state.update_history_title(&url, &title);
+                    }
+                    self.render();
+                }
+                Target::Little(id) => {
+                    if let Some(l) = self.littles.get_mut(&id) {
+                        l.title = title;
+                    }
+                    self.render_little(id);
+                }
+            },
+            UserEvent::NewWindow { target, url } => {
+                let space = match target {
+                    Target::Tab(id) => self.state.space_of(id),
+                    Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+                };
+                self.open_tab(&url, space, true);
+                self.window.set_focus();
+            }
+            UserEvent::ExternalScheme(url) => {
+                let scheme = scheme_of(&url);
+                if EXTERNAL_SCHEMES.contains(&scheme.as_str()) {
+                    platform::open_external(&url);
+                    self.toast(&format!("Opened {scheme}: link in another app"));
+                } else {
+                    self.toast(&format!("Blocked {scheme}: link"));
+                }
+            }
+            UserEvent::Menu(id) => {
+                if let Some(cmd) = self.menu_cmds.get(&id).cloned() {
+                    self.dispatch(cmd, elwt);
+                }
+            }
+            UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
+            UserEvent::Tick => self.tick(),
+            UserEvent::ConfigChanged => self.reload_config(),
+            UserEvent::SyncDone(r) => {
+                self.syncing = false;
+                match r {
+                    Ok(devices) => self.remote = devices,
+                    Err(e) => self.toast(&format!("Sync failed: {e}")),
+                }
+            }
+            UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
+        }
+    }
+
+    fn handle_mcp(&mut self, req: McpRequest, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let McpRequest { op, args, reply } = req;
+        let tab_arg = args.get("tab").and_then(|t| t.as_u64());
+        let result: Result<Value, String> = match op.as_str() {
+            "list_spaces" => Ok(json!(self.state.spaces.iter().enumerate().map(|(i, s)| json!({
+                "index": i, "name": s.name, "profile": self.profile_for(i), "active": i == self.state.active_space,
+                "tabs": self.state.order(i, false).len(),
+            })).collect::<Vec<_>>())),
+            "list_tabs" => {
+                let filter = args.get("space").and_then(|s| s.as_str()).and_then(|s| self.state.space_index(s));
+                let active = self.state.active_tab();
+                let row = |id: &TabId, space: Option<usize>, section: &str| {
+                    self.state.tabs.get(id).map(|t| json!({
+                        "tab": t.id, "title": t.display_title(), "url": t.url, "section": section,
+                        "space": space.map(|s| self.state.spaces[s].name.clone()),
+                        "active": Some(t.id) == active, "loaded": self.views.contains_key(&t.id),
+                    }))
+                };
+                let mut out: Vec<Value> = Vec::new();
+                if filter.is_none() {
+                    out.extend(self.state.favorites.iter().filter_map(|id| row(id, None, "favorite")));
+                }
+                for i in 0..self.state.spaces.len() {
+                    if filter.is_some_and(|f| f != i) {
+                        continue;
+                    }
+                    let today = &self.state.spaces[i].today;
+                    for id in self.state.order(i, false) {
+                        out.extend(row(&id, Some(i), if today.contains(&id) { "today" } else { "pinned" }));
+                    }
+                }
+                Ok(json!(out))
+            }
+            "open_tab" => {
+                let url = routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine);
+                let space = args.get("space").and_then(|s| s.as_str()).and_then(|s| self.state.space_index(s));
+                let id = self.open_tab(&url, space, args["activate"].as_bool().unwrap_or(false));
+                Ok(json!({ "tab": id, "url": url }))
+            }
+            "open_link" => {
+                let url = args["url"].as_str().unwrap_or("").to_string();
+                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") {
+                    self.open_external(vec![url], elwt);
+                    Ok(json!("opened"))
+                } else {
+                    Err("only http(s) and file URLs".into())
+                }
+            }
+            "navigate" => match self.target_tab(tab_arg) {
+                Some(t) => {
+                    let url = routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine);
+                    self.navigate(t, &url);
+                    Ok(json!({ "tab": t, "url": url }))
+                }
+                None => Err("no tab".into()),
+            },
+            "activate_tab" | "close_tab" => match tab_arg.filter(|t| self.state.tabs.contains_key(t)) {
+                Some(t) => {
+                    if op == "activate_tab" {
+                        self.activate(t)
+                    } else {
+                        self.close(t)
+                    }
+                    Ok(json!("ok"))
+                }
+                None => Err("unknown tab".into()),
+            },
+            "run" => match serde_json::from_value::<Command>(args) {
+                Ok(cmd) => {
+                    self.dispatch(cmd, elwt);
+                    Ok(json!("ok"))
+                }
+                Err(e) => Err(format!("bad command: {e}")),
+            },
+            "ensure_loaded" => match self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) {
+                Some(t) => {
+                    self.ensure_view(t);
+                    self.layout();
+                    Ok(json!({ "tab": t }))
+                }
+                None => Err("no tab (open one first)".into()),
+            },
+            "eval" => {
+                let Some(t) = self.target_tab(tab_arg) else {
+                    let _ = reply.send(Err("no tab".into()));
+                    return;
+                };
+                self.ensure_view(t);
+                let Some(v) = self.views.get(&t) else {
+                    let _ = reply.send(Err("tab has no page".into()));
+                    return;
+                };
+                let script = args["script"].as_str().unwrap_or("");
+                let js = format!(
+                    "(function(){{try{{var __v=(function(){{\n{script}\n}})();\
+                     if(__v&&typeof __v.then==='function'){{var __id='r'+Math.random().toString(36).slice(2);window.__vres=window.__vres||{{}};\
+                     __v.then(function(x){{window.__vres[__id]={{ok:x===undefined?null:x}}}},function(e){{window.__vres[__id]={{error:String(e&&e.message||e)}}}});\
+                     return JSON.stringify({{pending:__id}})}}\
+                     return JSON.stringify({{ok:__v===undefined?null:__v}})}}catch(e){{return JSON.stringify({{error:String(e&&e.message||e)}})}}}})()"
+                );
+                let r = reply.clone();
+                if let Err(e) = v.evaluate_script_with_callback(&js, move |s| {
+                    let _ = r.send(Ok(decode_js(&s)));
+                }) {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+                return;
+            }
+            _ => Err(format!("unknown op {op}")),
+        };
+        let _ = reply.send(result);
+    }
+
+    fn window_event(&mut self, id: WindowId, ev: WindowEvent, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let _ = elwt;
+        let main = id == self.window.id();
+        match ev {
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                if main {
+                    self.layout()
+                } else {
+                    self.layout_little(id)
+                }
+            }
+            WindowEvent::CloseRequested => {
+                if main {
+                    self.quit = true;
+                } else {
+                    self.littles.remove(&id);
+                    if self.focused_little == Some(id) {
+                        self.focused_little = None;
+                    }
+                }
+            }
+            WindowEvent::Focused(true) => {
+                self.focused_little = if main { None } else { Some(id) };
+            }
+            _ => {}
+        }
+    }
+
+    fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        self.build_menu();
+        let a = self.state.active_space;
+        self.switch_space(a);
+        if !urls.is_empty() {
+            self.open_external(urls, elwt);
+        }
+    }
+}
+
+fn watch_config(proxy: EventLoopProxy<UserEvent>) {
+    std::thread::spawn(move || {
+        let path = config::config_path();
+        let mtime = || std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let mut last = mtime();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            let m = mtime();
+            if m != last {
+                last = m;
+                send(&proxy, UserEvent::ConfigChanged);
+            }
+        }
+    });
+}
+
+pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
+    let p = proxy.clone();
+    muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| send(&p, UserEvent::Menu(e.id))));
+    if config.mcp.enabled {
+        crate::mcp::spawn(config.mcp.port, crate::mcp::load_or_create_token(), proxy.clone());
+    }
+    let p = proxy.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        send(&p, UserEvent::Tick);
+    });
+    watch_config(proxy.clone());
+    let mut app = App::new(&event_loop, config, proxy)?;
+    let mut initial = Some(urls);
+    event_loop.run(move |event, elwt, control_flow| {
+        *control_flow = ControlFlow::Wait;
+        match event {
+            Event::NewEvents(StartCause::Init) => app.start(initial.take().unwrap_or_default(), elwt),
+            Event::UserEvent(ev) => app.handle(ev, elwt),
+            Event::WindowEvent { window_id, event, .. } => app.window_event(window_id, event, elwt),
+            Event::Opened { urls } => app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt),
+            Event::LoopDestroyed => app.save(),
+            _ => {}
+        }
+        if app.quit {
+            app.save();
+            *control_flow = ControlFlow::Exit;
+        }
+    });
+}
