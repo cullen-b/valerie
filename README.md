@@ -26,13 +26,15 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘⇧C` | Copy the current URL |
 | `⌘S` | Toggle the sidebar |
 | `⌘W` / `⌘⇧T` | Close tab (unloads pinned tabs) / reopen closed tab |
-| `⌘⌥↓` `⌘⌥↑`, `⌃Tab` | Next / previous tab |
+| `⌘⌥↓` `⌘⌥↑` | Next / previous tab |
+| `⌃Tab` | Back to the tab you were just on |
 | `⌘⌥→` `⌘⌥←`, `⌃1…5`, two-finger swipe on sidebar | Switch space |
 | `⌘1…8` | Jump to tab |
 | `⌘⇧D` | Pin / unpin |
 | `⌃⇧=` / `⌃⇧-` / `⌃⇧→` | Split view / close split / focus next pane |
 | `⌘O` | Move a little window into the main window |
-| `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom, dev tools |
+| `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom (remembered per site), dev tools |
+| `⌘⇧R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
 | `⌘,` | Open config |
 
 **Tab to search a site:** type `youtube`, `claude`, `chatgpt`, `gh`, `wiki`… in the command bar, press Tab, and
@@ -49,6 +51,11 @@ Each space has **pinned** tabs (icon tiles), **Kept** tabs (a list under them th
 onto the pinned tiles, into Kept or a folder, onto the favorites row, or onto a space icon. Drag the sidebar's edge to
 resize it: narrow it to show icon + domain, narrower still for icons only (`layout.sidebar_size`, double-click the
 edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
+
+**Media:** tabs opened in the background wait to play until you look at them; a playing video pops out into
+picture-in-picture when you switch away; a mini player above the space icons pauses, mutes or jumps back to whatever
+is playing in another tab; click a tab's ♪ to mute it. **Downloads** go to your Downloads folder and show up in the
+command bar (type the file name).
 
 ## Make Valerie yours with AI
 

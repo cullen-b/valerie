@@ -53,6 +53,12 @@ fn check_config() -> anyhow::Result<()> {
             if !["folder", "icons"].contains(&c.sidebar.compact_pinned.as_str()) {
                 problems.push(format!("sidebar: compact_pinned is {:?}; use folder or icons", c.sidebar.compact_pinned));
             }
+            if !["site", "tab"].contains(&c.tabs.zoom.as_str()) {
+                problems.push(format!("tabs: zoom is {:?}; use site or tab", c.tabs.zoom));
+            }
+            if !["serif", "sans"].contains(&c.reader_view.font.as_str()) {
+                problems.push(format!("reader_view: font is {:?}; use serif or sans", c.reader_view.font));
+            }
             if !["pin", "star", "favicons"].contains(&c.sidebar.pinned_folder_icon.as_str()) {
                 problems.push(format!("sidebar: pinned_folder_icon is {:?}; use pin, star or favicons", c.sidebar.pinned_folder_icon));
             }
@@ -100,7 +106,14 @@ fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
     for c in r["content"].as_array().into_iter().flatten() {
         match c["type"].as_str() {
             Some("text") => println!("{}", c["text"].as_str().unwrap_or("")),
-            Some("image") => println!("[{} image, {} base64 bytes]", c["mimeType"].as_str().unwrap_or(""), c["data"].as_str().map(str::len).unwrap_or(0)),
+            Some("image") => {
+                // Save images (screenshots) to a file so scripts and assistants can open them.
+                let path = std::env::temp_dir().join(format!("valerie-{tool}-{}.png", state::now()));
+                match mcp::unbase64(c["data"].as_str().unwrap_or("")).map(|png| std::fs::write(&path, png)) {
+                    Some(Ok(())) => println!("[image saved to {}]", path.display()),
+                    _ => println!("[{} image that could not be saved]", c["mimeType"].as_str().unwrap_or("")),
+                }
+            }
             _ => {}
         }
     }

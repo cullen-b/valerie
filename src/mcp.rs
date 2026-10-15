@@ -388,6 +388,24 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
     }
 }
 
+pub fn unbase64(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    for chunk in s.trim_end_matches('=').as_bytes().chunks(4) {
+        let v: Vec<u8> = chunk.iter().map(|c| val(*c)).collect::<Option<_>>()?;
+        let n = v.iter().enumerate().fold(0u32, |n, (i, x)| n | (*x as u32) << (18 - 6 * i));
+        out.extend_from_slice(&n.to_be_bytes()[1..v.len()]);
+    }
+    Some(out)
+}
+
 pub fn base64(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -410,6 +428,18 @@ mod tests {
         assert_eq!(super::base64(b"fo"), "Zm8=");
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
     }
+
+    #[test]
+    fn unbase64_round_trips() {
+        for s in [&b""[..], b"f", b"fo", b"foo", b"foobar", &[0, 255, 7, 128, 64]] {
+            assert_eq!(super::unbase64(&super::base64(s)).as_deref(), Some(s));
+        }
+    }
+
+    #[test]
+    fn dechunk_joins_chunks() {
+        assert_eq!(super::dechunk(b"4\r\nWiki\r\n5;x=1\r\npedia\r\n0\r\n\r\n"), b"Wikipedia");
+    }
 }
 
 /// Minimal HTTP/1.1 POST to the local MCP endpoint. Returns (status, body).
@@ -423,11 +453,28 @@ pub fn post_local(port: u16, token: &str, body: &str) -> std::io::Result<(u16, S
          Accept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
-    let mut resp = String::new();
-    s.read_to_string(&mut resp)?;
-    let status = resp.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
-    let body = resp.split_once("\r\n\r\n").map(|(_, b)| b.to_string()).unwrap_or_default();
-    Ok((status, body))
+    let mut resp = Vec::new();
+    s.read_to_end(&mut resp)?;
+    let split = resp.windows(4).position(|w| w == b"\r\n\r\n").map_or(resp.len(), |i| i + 4);
+    let head = String::from_utf8_lossy(&resp[..split]).to_ascii_lowercase();
+    let status = head.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let raw = &resp[split..];
+    let body = if head.contains("transfer-encoding: chunked") { dechunk(raw) } else { raw.to_vec() };
+    Ok((status, String::from_utf8_lossy(&body).into_owned()))
+}
+
+/// Decode an HTTP chunked body (big responses, like screenshots, arrive this way).
+fn dechunk(mut raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(eol) = raw.windows(2).position(|w| w == b"\r\n") {
+        let size = std::str::from_utf8(&raw[..eol]).ok().and_then(|l| usize::from_str_radix(l.split(';').next()?.trim(), 16).ok());
+        let Some(size) = size.filter(|n| *n > 0) else { break };
+        let start = eol + 2;
+        let end = (start + size).min(raw.len());
+        out.extend_from_slice(&raw[start..end]);
+        raw = &raw[(end + 2).min(raw.len())..];
+    }
+    out
 }
 
 /// If Valerie is already running, hand it the URLs (as external links) and return true.

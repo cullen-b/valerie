@@ -22,6 +22,8 @@ pub struct Config {
     pub find: FindConfig,
     pub links: LinksConfig,
     pub tabs: TabsConfig,
+    pub reader_view: ReaderConfig,
+    pub capture: CaptureConfig,
     pub little_window: LittleWindowConfig,
     pub profiles: Vec<ProfileConfig>,
     pub spaces: Vec<SpaceConfig>,
@@ -71,6 +73,7 @@ pub struct SidebarConfig {
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
+    pub now_playing: bool,
 }
 
 /// What modified clicks on links do; values are link actions (see config/default.yaml).
@@ -125,6 +128,21 @@ pub struct TabsConfig {
     pub unload_after_minutes: f64,
     pub new_tab_position: String,
     pub autoplay_in_background: bool,
+    pub picture_in_picture_on_leave: bool,
+    pub zoom: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReaderConfig {
+    pub font: String,
+    pub font_size: f64,
+    pub width: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureConfig {
+    pub copy_to_clipboard: bool,
+    pub save_to_downloads: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
