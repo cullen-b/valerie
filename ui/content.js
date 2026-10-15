@@ -210,11 +210,12 @@ function applyBoostCss() {
 if (document.documentElement) applyBoostCss(); else document.addEventListener("DOMContentLoaded", applyBoostCss);
 
 // ---------- reveal the hidden sidebar when the mouse touches the screen edge ----------
-let edgeAt = 0;
+// Only a deliberate push toward the edge counts: when the sidebar hides, the page slides under a resting mouse.
+let edgeAt = 0, edgeArmedAt = 0;
 document.addEventListener("mousemove", (e) => {
   if (cfg.peek) { if (e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
-  if (!cfg.edge || e.timeStamp - edgeAt < 300) return;
-  const hit = cfg.edge === "left" ? e.clientX <= 2 : e.clientX >= innerWidth - 3;
+  if (!cfg.edge || e.timeStamp - edgeAt < 300 || performance.now() < edgeArmedAt) return;
+  const hit = cfg.edge === "left" ? e.clientX <= 2 && e.movementX < 0 : e.clientX >= innerWidth - 3 && e.movementX > 0;
   if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
 }, { passive: true });
 
@@ -354,7 +355,7 @@ new MutationObserver(() => { if (reportedForm || loginTimer) return; loginTimer 
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    configure: (c) => { cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
   }),
