@@ -139,6 +139,11 @@ pub enum Command {
         url: String,
     },
     MoveToMainWindow,
+    /// Preview a link in a floating panel over the page (like Arc's Peek).
+    Peek {
+        url: String,
+    },
+    ClosePeek,
     OpenConfig,
     ReloadConfig,
     Sync,
@@ -216,6 +221,7 @@ impl Command {
                 | NextSpace
                 | PrevSpace
                 | FocusNextPane
+                | ClosePeek
                 | ZoomIn
                 | ZoomOut
                 | ZoomReset

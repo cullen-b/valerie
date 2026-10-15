@@ -27,6 +27,7 @@ const EXTERNAL_SCHEMES: &[&str] = &[
 pub enum Target {
     Tab(TabId),
     Little(WindowId),
+    Peek,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,9 +93,15 @@ pub struct App {
     /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
     pending_save: Option<PendingSave>,
+    peek: Option<PeekView>,
     #[cfg(target_os = "macos")]
     rules: Option<blocking::mac::RuleList>,
     pub quit: bool,
+}
+
+struct PeekView {
+    view: WebView,
+    url: String,
 }
 
 struct PendingSave {
@@ -249,6 +256,7 @@ impl App {
             sidebar_peek: false,
             fill_offers: HashMap::new(),
             pending_save: None,
+            peek: None,
             #[cfg(target_os = "macos")]
             rules: None,
             quit: false,
@@ -459,6 +467,10 @@ impl App {
         let hide_lights = self.config.layout.tab_bar == TabBar::Side
             && (!self.config.layout.sidebar_visible || self.config.layout.sidebar_position == SidebarPosition::Right);
         platform::set_traffic_lights_hidden(&self.window, hide_lights);
+        if let Some(p) = &self.peek {
+            let (px, py, pw, ph) = self.peek_rect();
+            let _ = p.view.set_bounds(rect(px, py, pw, ph));
+        }
         if self.bar_open {
             platform::bring_to_front(&self.overlay);
         }
@@ -1018,6 +1030,7 @@ impl App {
         match target {
             Target::Tab(id) => self.views.get(&id),
             Target::Little(id) => self.littles.get(&id).map(|l| &l.view),
+            Target::Peek => self.peek.as_ref().map(|p| &p.view),
         }
     }
 
@@ -1025,6 +1038,7 @@ impl App {
         let space = match target {
             Target::Tab(id) => self.state.space_of(id).unwrap_or(self.state.active_space),
             Target::Little(id) => self.littles.get(&id).map(|l| l.space).unwrap_or(self.state.active_space),
+            Target::Peek => self.state.active_space,
         };
         self.config.vaults_for(&self.profile_for(space))
     }
@@ -1130,6 +1144,49 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn peek_rect(&self) -> (f64, f64, f64, f64) {
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (x, y, w, h) = self.content_area(size.width, size.height);
+        let (mx, my) = ((w * 0.06).max(16.0), (h * 0.05).max(16.0));
+        (x + mx, y + my, w - 2.0 * mx, h - 2.0 * my)
+    }
+
+    fn open_peek(&mut self, url: &str) {
+        self.close_peek();
+        let (x, y, w, h) = self.peek_rect();
+        let profile = self.profile_for(self.state.active_space);
+        let view = match self.page_builder(Target::Peek, url, &profile).with_visible(true).with_bounds(rect(x, y, w, h)).build_as_child(&self.window) {
+            Ok(v) => v,
+            Err(e) => return eprintln!("valerie: peek: {e}"),
+        };
+        platform::round_corners(&view, 12.0);
+        #[cfg(target_os = "macos")]
+        if self.rules.is_some() {
+            blocking::mac::apply(&view, self.rules.as_ref());
+        }
+        for p in self.panes() {
+            if let Some(v) = self.views.get(&p) {
+                platform::set_alpha(v, 0.45, self.anim_secs());
+            }
+        }
+        platform::fade_in(&view, self.anim_secs());
+        let _ = view.focus();
+        self.peek = Some(PeekView { view, url: url.to_string() });
+        let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
+    }
+
+    fn close_peek(&mut self) {
+        if self.peek.take().is_none() {
+            return;
+        }
+        for p in self.panes() {
+            if let Some(v) = self.views.get(&p) {
+                platform::set_alpha(v, 1.0, self.anim_secs());
+            }
+        }
+        self.focus_active();
     }
 
     fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
@@ -1307,6 +1364,34 @@ impl App {
     // ---------------------------------------------------------------- dispatch
 
     pub fn dispatch(&mut self, cmd: Command, elwt: &EventLoopWindowTarget<UserEvent>) {
+        if self.peek.is_some() {
+            match &cmd {
+                Command::MoveToMainWindow => {
+                    let url = self.peek.as_ref().map(|p| p.url.clone()).unwrap_or_default();
+                    self.close_peek();
+                    self.open_tab(&url, None, true);
+                    return;
+                }
+                Command::CloseTab { tab: None } | Command::ClosePeek => return self.close_peek(),
+                Command::Back { tab: None } | Command::Forward { tab: None } | Command::Reload { tab: None } => {
+                    if let Some(p) = &self.peek {
+                        let _ = match cmd {
+                            Command::Back { .. } => p.view.go_back(),
+                            Command::Forward { .. } => p.view.go_forward(),
+                            _ => p.view.reload(),
+                        };
+                    }
+                    return;
+                }
+                Command::CopyUrl => {
+                    let url = self.peek.as_ref().map(|p| p.url.clone()).unwrap_or_default();
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
+                    return self.toast("Copied URL");
+                }
+                // Anything that changes what's on screen dismisses the preview first.
+                _ => self.close_peek(),
+            }
+        }
         let little = self.focused_little.filter(|id| self.littles.contains_key(id));
         // Commands aimed at the focused little window.
         if let Some(id) = little {
@@ -1657,7 +1742,11 @@ impl App {
                 let url = routing::resolve_input(&url, &self.config.search_engine);
                 self.open_little(&url, self.state.active_space, elwt)
             }
-            Command::MoveToMainWindow => {}
+            Command::MoveToMainWindow | Command::ClosePeek => {}
+            Command::Peek { url } => {
+                let url = routing::resolve_input(&url, &self.config.search_engine);
+                self.open_peek(&url)
+            }
             Command::OpenConfig => {
                 self.close_bar();
                 platform::open_text_file(&config::config_path())
@@ -1802,6 +1891,7 @@ impl App {
                 match from {
                     Source::Page(_) if !cmd.page_safe() => return,
                     Source::Page(Target::Little(id)) | Source::LittleBar(id) => self.focused_little = Some(id),
+                    Source::Page(Target::Peek) => self.focused_little = None,
                     Source::Page(Target::Tab(id)) => {
                         self.focused_little = None;
                         // A key pressed in a split pane acts on that pane.
@@ -1840,6 +1930,15 @@ impl App {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
+            (Source::Page(_), "peek") => {
+                let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
+                if self.last_page_open.elapsed() < std::time::Duration::from_millis(400) {
+                    return;
+                }
+                self.last_page_open = std::time::Instant::now();
+                let url = url.to_string();
+                self.open_peek(&url);
+            }
             (Source::Page(target), "open") => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
                 // Pages can forge this message, so cap it to stop tab spam.
@@ -1850,6 +1949,7 @@ impl App {
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+                    Target::Peek => None,
                 };
                 let id = self.state.add_tab(space.unwrap_or(self.state.active_space), url, true);
                 self.ensure_view(id);
@@ -1901,6 +2001,14 @@ impl App {
                     }
                     self.render_little(id);
                 }
+                Target::Peek => {
+                    if let Some(p) = self.peek.as_mut() {
+                        p.url = url.clone();
+                    }
+                    if let Some(p) = self.peek.as_ref().filter(|_| finished) {
+                        self.after_load(&p.view, &url);
+                    }
+                }
             },
             UserEvent::Title { target, title } => match target {
                 Target::Tab(id) => {
@@ -1917,12 +2025,15 @@ impl App {
                     }
                     self.render_little(id);
                 }
+                Target::Peek => {}
             },
             UserEvent::NewWindow { target, url } => {
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+                    Target::Peek => None,
                 };
+                self.close_peek();
                 self.open_tab(&url, space, true);
                 self.window.set_focus();
             }

@@ -109,6 +109,16 @@ mod mac {
         true
     }
 
+    pub fn set_alpha(wv: &WebView, alpha: f64, secs: f64) {
+        let v = ptr(wv);
+        unsafe {
+            animate(secs, || {
+                let animator: *mut AnyObject = msg_send![v, animator];
+                let _: () = msg_send![animator, setAlphaValue: alpha];
+            });
+        }
+    }
+
     pub fn fade_in(wv: &WebView, secs: f64) {
         let v = ptr(wv);
         unsafe {
@@ -196,6 +206,13 @@ pub fn animate_bounds(wv: &WebView, x: f64, y: f64, w: f64, h: f64, secs: f64) -
         let _ = (wv, x, y, w, h, secs);
         false
     }
+}
+
+pub fn set_alpha(wv: &WebView, alpha: f64, secs: f64) {
+    #[cfg(target_os = "macos")]
+    mac::set_alpha(wv, alpha, secs);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, alpha, secs);
 }
 
 pub fn fade_in(wv: &WebView, secs: f64) {
