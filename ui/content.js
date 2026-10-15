@@ -219,14 +219,70 @@ document.addEventListener("mousemove", (e) => {
   if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
 }, { passive: true });
 
-// ---------- shift-click a link to Peek at it ----------
-document.addEventListener("click", (e) => {
-  if (!e.isTrusted || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.button !== 0) return;
-  const a = e.target.closest && e.target.closest("a[href]");
-  if (!a || !/^https?:/.test(a.href)) return;
+// ---------- link gestures: middle / ⌘ / ⇧ / ⌥ clicks and Valerie's link menu ----------
+const isMac = /Mac/.test(navigator.platform);
+const linkAt = (e) => { const a = e.target.closest && e.target.closest("a[href]"); return a && /^https?:/.test(a.href) ? a : null; };
+function gesture(e) {
+  const L = cfg.links || {};
+  if (e.button === 1) return L.middle_click;
+  if (e.button !== 0 || (isMac && e.ctrlKey)) return null;
+  const cmd = isMac ? e.metaKey : e.ctrlKey;
+  const key = [cmd && "cmd", e.altKey && "option", e.shiftKey && "shift"].filter(Boolean).join("_");
+  return key ? L[key + "_click"] : null;
+}
+function onLinkClick(e) {
+  if (!e.isTrusted) return;
+  const a = linkAt(e), action = a && gesture(e);
+  if (!action || action === "default") return;
   e.preventDefault(); e.stopImmediatePropagation();
-  post({ t: "peek", url: a.href });
+  post({ t: "open", url: a.href, mode: action });
+}
+document.addEventListener("click", onLinkClick, true);
+document.addEventListener("auxclick", onLinkClick, true);
+// Middle-click autoscroll / paste would otherwise start on mousedown.
+document.addEventListener("mousedown", (e) => { if (e.isTrusted && e.button === 1 && linkAt(e) && (cfg.links || {}).middle_click !== "default") e.preventDefault(); }, true);
+
+let linkMenu = null;
+function hideLinkMenu() { if (linkMenu) { linkMenu.remove(); linkMenu = null; } }
+function copyText(text) {
+  const done = () => toast("Copied link");
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(done, () => legacyCopy(text, done));
+  legacyCopy(text, done);
+}
+function legacyCopy(text, done) {
+  const t = document.createElement("textarea"); t.value = text; t.style.cssText = "position:fixed;opacity:0";
+  document.documentElement.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (_) {} t.remove();
+}
+document.addEventListener("contextmenu", (e) => {
+  if (!e.isTrusted || e.shiftKey || !(cfg.links || {}).context_menu) return;
+  const a = linkAt(e);
+  if (!a) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  hideLinkMenu(); hideMenu();
+  const url = a.href;
+  linkMenu = document.createElement("div"); linkMenu.className = "menu";
+  const items = [
+    ["Open Link in New Tab", "new_tab"], ["Open Link in Background", "background_tab"], ["Open in Split View", "split"],
+    ["Peek", "peek"], ["Open in Little Window", "little_window"], ["Copy Link", "copy"],
+  ];
+  for (const [label, mode] of items) {
+    const d = document.createElement("div"); d.textContent = label;
+    d.addEventListener("mousedown", (ev) => {
+      if (!ev.isTrusted || ev.button !== 0) return;
+      ev.preventDefault(); hideLinkMenu();
+      if (mode === "copy") copyText(url); else post({ t: "open", url, mode });
+    });
+    linkMenu.append(d);
+  }
+  ui().appendChild(linkMenu);
+  const w = linkMenu.offsetWidth || 220, h = linkMenu.offsetHeight || 200;
+  linkMenu.style.left = Math.min(e.clientX, innerWidth - w - 6) + "px";
+  linkMenu.style.top = Math.min(e.clientY, innerHeight - h - 6) + "px";
 }, true);
+// Clicks inside our (closed) shadow UI only show the host element in the event path.
+const inOurUi = (e) => e.composedPath && e.composedPath().some((n) => n.tagName === "VALERIE-UI");
+for (const ev of ["mousedown", "scroll", "blur"]) addEventListener(ev, (e) => { if (linkMenu && !inOurUi(e)) hideLinkMenu(); }, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideLinkMenu(); }, true);
 
 // ---------- page metadata for the sidebar ----------
 function favicon() {
