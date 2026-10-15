@@ -105,6 +105,7 @@ tabs:
   archive_after_hours: 12  # unpinned tabs you haven't used for this long are archived; 0 = never
   unload_after_minutes: 60 # free the memory of tabs unused this long (they reload on click); 0 = never
   new_tab_position: top    # where new tabs appear in the list. one of: top | bottom
+  autoplay_in_background: false   # let tabs opened in the background start playing video/audio before you look at them
 
 # What clicking a link does while holding a modifier. Each is one of:
 #   background_tab (open it, stay on this page) | new_tab (open it and switch) | split (open beside this page) |

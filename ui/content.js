@@ -1,6 +1,41 @@
 // Injected into every page as (function (CFG) { ... })(config). Pages can see and call this; it only talks to the
 // browser through a whitelist of harmless messages.
 if (window.__valerie || window.top !== window) return;
+
+// ---------- tabs opened in the background don't play audio/video until you first look at them ----------
+// A tab Valerie hasn't shown yet is a hidden document. Until it becomes visible, play() is held (and resumed then);
+// after that, media behaves normally (switching away doesn't pause anything).
+(() => {
+  if (CFG.tabs && CFG.tabs.autoplay_in_background) return;
+  if (document.visibilityState === "visible") return;
+  const realPlay = HTMLMediaElement.prototype.play;
+  const waiting = new Map(); // element -> [resolve, reject] for the promise play() returned
+  HTMLMediaElement.prototype.play = function () {
+    if (document.visibilityState === "visible") return realPlay.call(this);
+    return new Promise((resolve, reject) => waiting.set(this, [resolve, reject]));
+  };
+  // Media started by the `autoplay` attribute doesn't go through play(): pause it and remember it.
+  const onPlay = (e) => {
+    const m = e.target;
+    if (document.visibilityState !== "visible" && m instanceof HTMLMediaElement && !waiting.has(m)) {
+      m.pause();
+      waiting.set(m, null);
+    }
+  };
+  document.addEventListener("play", onPlay, true);
+  const release = () => {
+    if (document.visibilityState !== "visible") return;
+    document.removeEventListener("visibilitychange", release);
+    document.removeEventListener("play", onPlay, true);
+    HTMLMediaElement.prototype.play = realPlay;
+    for (const [m, p] of waiting) {
+      const r = realPlay.call(m);
+      if (p) r.then(p[0], p[1]); else r.catch(() => {});
+    }
+    waiting.clear();
+  };
+  document.addEventListener("visibilitychange", release);
+})();
 // Capture natives before page scripts run, so pages can't intercept what we send or fill.
 const stringify = JSON.stringify;
 const ipcPost = window.ipc ? window.ipc.postMessage.bind(window.ipc) : null;
