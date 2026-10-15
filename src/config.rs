@@ -26,6 +26,8 @@ pub struct Config {
     pub profiles: Vec<ProfileConfig>,
     pub spaces: Vec<SpaceConfig>,
     pub routes: Vec<Route>,
+    /// Host pattern → profile that site always uses.
+    pub site_profiles: BTreeMap<String, Option<String>>,
     pub keybindings: BTreeMap<String, Option<Binding>>,
     pub vim: VimConfig,
     pub mcp: McpConfig,
@@ -60,6 +62,7 @@ pub struct SidebarConfig {
     pub url_path: bool,
     pub url_lock_icon: bool,
     pub space_name: bool,
+    pub favorites: bool,
     pub pinned_hint: bool,
     pub kept_section: bool,
     pub new_tab_button: bool,

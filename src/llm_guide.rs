@@ -51,6 +51,9 @@ House rules from the owner:
   `site_search` in `config.yaml`, e.g. `Notion: {{ keywords: [notion], url: "https://www.notion.so/search?q=%s" }}`.
   `%s` is where the search goes. Remove a built-in one with `Reddit: null`.
 - **Add a shortcut**: an entry under `keybindings`, e.g. `"CmdOrCtrl+Shift+G": {{ cmd: new_tab, url: "https://github.com" }}`.
+- **Keep a site on its own account** (e.g. YouTube on a different Google account): add a profile under `profiles`
+  (copy the existing list, it replaces the default) and map the site to it under `site_profiles`, e.g.
+  `site_profiles: {{ youtube.com: YouTube }}`.
 - **Send a site to a space**: an entry in `routes` (this list replaces the default list, so copy the existing routes).
 - **Restyle a site**: a CSS file in `boosts/<host>.css`.
 - **Anything with logic** (several steps, page scripts, local programs): a plugin in `plugins/<name>/`.

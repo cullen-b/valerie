@@ -120,7 +120,9 @@ menu). Each gesture is configurable under `links:`.
 
 ## Profiles, spaces and Air Traffic Control
 
-Profiles isolate cookies and site data (separate WebKit data stores). Spaces pick a profile and a theme. `routes`
+Profiles isolate cookies and site data (separate WebKit data stores). Spaces pick a profile and a theme.
+`site_profiles` pins a site to a profile wherever you open it, e.g. `youtube.com: YouTube` keeps YouTube signed in to
+one Google account while the rest of Google uses another. `routes`
 send matching links to a space (e.g. `*.edu` → School); other external links open in a little window, whose
 "Open in …" button has a ▾ to move the page into any space.
 

@@ -372,9 +372,14 @@ function render(state) {
     if (O.url_path) u.append(el("span", "path", S.url.replace(/^https?:\/\/(www\.)?/, "").slice(h.length)));
   } else u.append(el("span", null, "Search or enter URL…"));
 
+  // Favorites (a row shared by every space) are optional; when off, any existing ones show among the pinned tiles.
   const fav = $("#favorites"); fav.innerHTML = "";
-  zone(fav, { kind: "area", list: "fav", index: S.favorites.length, payload: { favorite: true } });
-  S.favorites.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); fav.append(f); });
+  const showFavRow = O.favorites === true;
+  fav.style.display = showFavRow ? "" : "none";
+  if (showFavRow) {
+    zone(fav, { kind: "area", list: "fav", index: S.favorites.length, payload: { favorite: true } });
+    S.favorites.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); fav.append(f); });
+  } else delete fav.dataset.drop;
 
   const sc = $("#scroll"), top = sc.scrollTop; sc.innerHTML = "";
   const sp = S.spaces[S.active_space];
@@ -387,9 +392,11 @@ function render(state) {
 
   const icons = S.layout.pinned_style !== "list";
   const pinnedTabs = icons ? S.pinned.map((n, i) => [n, i]).filter(([n]) => n.type !== "folder") : [];
-  if (pinnedTabs.length) {
+  const strayFavs = showFavRow ? [] : S.favorites;
+  if (pinnedTabs.length || strayFavs.length) {
     const grid = el("div", "grid");
     zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { section: "pinned" } });
+    strayFavs.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); grid.append(f); });
     pinnedTabs.forEach(([n, i]) => { const f = tile(n, "pinned", i); zone(f, { kind: "tile", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); grid.append(f); });
     sc.append(grid);
   }
@@ -399,7 +406,7 @@ function render(state) {
     const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); sc.append(r);
   });
   if (!S.pinned.length && O.pinned_hint) {
-    const e = el("div", "empty-pinned", "Drag tabs here to pin them");
+    const e = el("div", "empty-pinned", "Drag here to pin");
     zone(e, { kind: "area", list: "pinned", index: 0, payload: { section: "pinned" } }); sc.append(e);
   }
   if (O.kept_section !== false) {
@@ -409,7 +416,7 @@ function render(state) {
       if (n.type === "folder") return kept.append(folderEl(n, "kept"));
       const r = tabRow(n, "kept", i); zone(r, { kind: "row", list: "kept", index: i, payload: { section: "kept", tab: n.id } }); kept.append(r);
     });
-    if (!S.kept.length) kept.append(el("div", "kept-hint", "Drop here to keep"));
+    if (!S.kept.length) kept.append(el("div", "kept-hint", "Drag here to keep"));
     sc.append(kept);
   }
   const div = el("div", "divider");

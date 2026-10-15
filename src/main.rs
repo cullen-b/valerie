@@ -58,6 +58,11 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("site_search: {name:?} keywords must be single words"));
                 }
             }
+            for (site, profile) in c.site_profiles.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))) {
+                if !c.profiles.iter().any(|x| &x.name == profile) {
+                    problems.push(format!("site_profiles: {site:?} uses profile {profile:?}, which isn't in `profiles`"));
+                }
+            }
             for r in &c.routes {
                 if !c.spaces.iter().any(|s| s.name == r.space) {
                     problems.push(format!("routes: {:?} sends links to space {:?}, which isn't in `spaces`", r.pattern, r.space));

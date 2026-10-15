@@ -104,6 +104,8 @@ pub struct App {
     peek: Option<PeekView>,
     /// Tabs whose page script has reported in (so it can handle vim keys).
     ready_views: std::collections::HashSet<TabId>,
+    /// The profile each tab's webview was created with (site_profiles can move a tab to another).
+    view_profiles: HashMap<TabId, String>,
     pending_focus: std::cell::Cell<Option<TabId>>,
     #[cfg(not(target_os = "macos"))]
     contexts: HashMap<String, wry::WebContext>,
@@ -280,6 +282,7 @@ impl App {
             pending_save: None,
             peek: None,
             ready_views: Default::default(),
+            view_profiles: HashMap::new(),
             pending_focus: std::cell::Cell::new(None),
             #[cfg(not(target_os = "macos"))]
             contexts: HashMap::new(),
@@ -307,6 +310,16 @@ impl App {
                 self.config.theme(Some(&ThemeRef::Named(names[i % names.len()].clone())))
             }
         }
+    }
+
+    /// The profile a site is assigned to in `site_profiles`, if any.
+    fn site_profile(&self, url: &str) -> Option<String> {
+        self.config
+            .site_profiles
+            .iter()
+            .filter_map(|(pattern, p)| p.as_ref().map(|p| (pattern, p)))
+            .find(|(pattern, _)| plugins::matches(&[(*pattern).clone()], url))
+            .map(|(_, p)| p.clone())
     }
 
     fn profile_for(&self, i: usize) -> String {
@@ -440,8 +453,9 @@ impl App {
         }
         let Some(t) = self.state.tabs.get(&tab) else { return };
         let space = self.state.space_of(tab).unwrap_or(self.state.active_space);
-        let profile = self.profile_for(space);
         let url = t.url.clone();
+        let profile = self.site_profile(&url).unwrap_or_else(|| self.profile_for(space));
+        self.view_profiles.insert(tab, profile.clone());
         let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).build_as_child(&app.window));
         match built {
             Ok(v) => {
@@ -1035,7 +1049,9 @@ impl App {
         let item = |label: &str, cmd: Value| Some((label.to_string(), cmd));
         e.push(if section == "pinned" { item("Unpin", json!({ "cmd": "toggle_pin", "tab": tab })) } else { item("Pin", json!({ "cmd": "move_tab", "tab": tab, "section": "pinned" })) });
         e.push(if section == "kept" { item("Move to Today", json!({ "cmd": "toggle_keep", "tab": tab })) } else { item("Keep", json!({ "cmd": "move_tab", "tab": tab, "section": "kept" })) });
-        e.push(item(if section == "favorites" { "Remove from Favorites" } else { "Add to Favorites" }, json!({ "cmd": "toggle_favorite", "tab": tab })));
+        if self.config.sidebar.favorites || section == "favorites" {
+            e.push(item(if section == "favorites" { "Remove from Favorites" } else { "Add to Favorites" }, json!({ "cmd": "toggle_favorite", "tab": tab })));
+        }
         if keeps {
             e.push(None);
             e.push(item("Set Pinned URL to Current Page", json!({ "cmd": "set_pinned_url", "tab": tab })));
@@ -1105,7 +1121,7 @@ impl App {
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
             .build_as_child(&window);
         let (lw_w, lw_h) = (lw.width, lw.height);
-        let profile = self.profile_for(space);
+        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
         let view = self.with_profile(&profile, |app, base| {
             app.page_builder(base, Target::Little(id), url)
                 .with_visible(true)
@@ -1472,7 +1488,7 @@ impl App {
     fn open_peek(&mut self, url: &str) {
         self.close_peek();
         let (x, y, w, h) = self.peek_rect();
-        let profile = self.profile_for(self.state.active_space);
+        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(self.state.active_space));
         let built = self.with_profile(&profile, |app, base| {
             app.page_builder(base, Target::Peek, url).with_visible(true).with_bounds(rect(x, y, w, h)).build_as_child(&app.window)
         });
@@ -2512,6 +2528,20 @@ impl App {
         match ev {
             UserEvent::Ipc { from, msg } => self.handle_ipc(from, msg, elwt),
             UserEvent::PageLoad { target, url, finished } => match target {
+                Target::Tab(id) if !finished && self.site_profile(&url).is_some_and(|p| self.view_profiles.get(&id) != Some(&p)) => {
+                    // This site belongs to another profile: reopen the tab there so it sees that profile's sign-ins.
+                    self.views.remove(&id);
+                    self.ready_views.remove(&id);
+                    if let Some(t) = self.state.tabs.get_mut(&id) {
+                        t.url = url;
+                    }
+                    self.ensure_view(id);
+                    self.layout();
+                    if self.state.active_tab() == Some(id) {
+                        self.focus_active();
+                    }
+                    self.render();
+                }
                 Target::Tab(id) => {
                     let mut visit = None;
                     if let Some(t) = self.state.tabs.get_mut(&id) {
