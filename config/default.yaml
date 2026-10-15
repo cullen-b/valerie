@@ -45,7 +45,8 @@ sidebar:
   url_path: false          # show the page's path after the domain (clicking the pill always shows the full URL)
   url_lock_icon: false     # a 🔒 before secure sites (insecure http:// sites are always marked)
   space_name: false        # the space's icon and name ("Personal", "School") above its pinned tabs
-  pinned_hint: true        # "Drag tabs here to pin them" when a space has no pinned tabs
+  favorites: false         # a row of favorite tiles shared by every space, above the pinned tabs
+  pinned_hint: true        # "Drag here to pin" when a space has no pinned tabs
   kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them (with folders)
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
@@ -153,6 +154,14 @@ spaces:
     profile: Work
     theme: ocean
     icon: "◆"
+
+# Sites that always use a particular profile (its own cookies and sign-ins), whatever space they're opened in.
+# Use it to keep one site on a different account, e.g. YouTube on one Google account and the rest of Google on
+# another: add a profile for it under `profiles`, then
+#   site_profiles:
+#     youtube.com: YouTube
+# Leaving the site from that tab keeps its profile (so sign-in pages work); other sites in new tabs use the space's.
+site_profiles: {}
 
 # Air Traffic Control: links that match open in a space. A pattern matches the host ("*.edu", "github.com", which
 # also covers subdomains) or the whole URL if it contains "://" ("https://docs.google.com/*"). First match wins.
