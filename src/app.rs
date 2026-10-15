@@ -78,6 +78,7 @@ pub struct App {
     dirty: bool,
     last_sync: u64,
     syncing: bool,
+    last_page_open: std::time::Instant,
     pub quit: bool,
 }
 
@@ -181,6 +182,7 @@ impl App {
             dirty: false,
             last_sync: 0,
             syncing: false,
+            last_page_open: std::time::Instant::now(),
             quit: false,
         })
     }
@@ -1394,6 +1396,11 @@ impl App {
             }
             (Source::Page(target), "open") => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
+                // Pages can forge this message, so cap it to stop tab spam.
+                if self.last_page_open.elapsed() < std::time::Duration::from_millis(400) {
+                    return;
+                }
+                self.last_page_open = std::time::Instant::now();
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),

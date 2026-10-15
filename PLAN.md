@@ -62,25 +62,38 @@ autofill, dark mode) become **built-in features** instead: content blockers, inj
 
 ## Feature roadmap
 
-### Phase 1: working prototype (tonight)
+### Phase 1: working prototype ✅ (built 2026-10-15)
 - [x] Repo, plan, engine choice
-- [ ] Window + sidebar + content webviews, Arc-style transparent titlebar, edge-to-edge content (configurable bezel)
-- [ ] Spaces with per-space themes (gradient + accent), switching with Ctrl+1..9 / swipe of sidebar
-- [ ] Profiles: isolated data stores, spaces map to profiles
-- [ ] Tabs: pinned (with folders), today tabs, favorites row, auto-archive after N hours, archive search
-- [ ] Command bar centred on screen: Cmd+T / Cmd+D / Cmd+L, fuzzy search over tabs, history, bookmarks, commands,
-      synced tabs; URL vs search detection
-- [ ] Cmd+Shift+C copies the URL (with toast)
-- [ ] Split view (up to 4 panes), focus panes
-- [ ] Little windows: external links open in a small "baby" window; one click moves them into the main window
-- [ ] Air Traffic Control rules
-- [ ] Vim motions + link hints in pages
-- [ ] Built-in MCP server: tabs, navigation, page snapshot, click/type, JS eval, plus a generic `run_command`
-- [ ] YAML config with hot reload; keybindings remappable
-- [ ] GitHub sync (per-device files in a private repo)
-- [ ] Import from Arc / Chrome-family / Safari / Firefox
-- [ ] Sidebar or top tab bar (`layout.tab_bar: side|top`)
-- [ ] `.app` bundle script registering as an http/https handler (needed to be the default browser)
+- [x] Window + sidebar + content webviews, transparent titlebar, edge-to-edge content (configurable bezel/radius)
+- [x] Spaces with per-space themes (8 presets + custom), Ctrl+1..5, ⌘⌥←/→, two-finger swipe on the sidebar
+- [x] Profiles: isolated WKWebsiteDataStores per profile (macOS); spaces map to profiles
+- [x] Tabs: pinned (with folders), today tabs, favorites grid, auto-archive, idle unload, drag-and-drop, context menus
+- [x] Command bar (⌘T/⌘D/⌘L): fuzzy search over tabs, history, bookmarks, commands, spaces, themes, imports, synced
+      and archived tabs; URL vs search detection
+- [x] ⌘⇧C copies the URL (with toast)
+- [x] Split view (up to 4 panes), focus next pane
+- [x] Little windows for external links, ⌘O moves them to the main window
+- [x] Air Traffic Control rules
+- [x] Vim motions, link hints, find bar in pages
+- [x] Built-in MCP server (HTTP + stdio bridge): 17 tools including `run_command` for every browser command
+- [x] YAML config with hot reload; keybindings and vim bindings remappable
+- [x] GitHub sync (per-device files in a private repo) + `valerie sync-setup`
+- [x] Import from Arc / Chrome-family / Safari / Firefox
+- [x] Sidebar or top tab bar (`layout.tab_bar: side|top`), sidebar on left or right
+- [x] `scripts/bundle-macos.sh` builds Valerie.app registered for http/https
+
+**Verified:** unit tests (config merge, routing, input resolution, state ops); MCP end to end against the running app
+(open, read, snapshot, type + submit, awaited eval, spaces, Arc import, auth rejection); CLI hand-off with ATC routing
+and a little window; quit saving state; vim motions and hints on a real page; sidebar, light/dark themes and command
+bar rendered with mock state.
+**Not yet verified by eye:** the native window composition (the screen could not be captured overnight). Check the
+command bar overlay sits above pages, traffic lights line up with the sidebar, and the rounded-corner option.
+
+### Next up (Phase 1.5)
+- Agent `screenshot` tool (WKWebView `takeSnapshot`), agent action log + approval prompt for sensitive actions
+- Peek previews, hover-to-reveal sidebar when hidden, Boosts (per-site CSS/JS in the config dir)
+- Per-profile WebContext data dirs on Windows/Linux; CI builds for all three OSes
+- App icon, signing/notarisation, auto-update
 
 ### Phase 2: daily driver
 - Password manager: per-profile vaults in the OS keychain, shared vault groups across profiles, autofill script,
