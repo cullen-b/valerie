@@ -90,6 +90,11 @@ What each piece can do:
 - **style.css / script.js**: injected into pages matching `matches` (hosts like `github.com` cover subdomains;
   patterns with `://` match whole URLs). CSS updates live; script.js runs after each page load.
 - **on_page_load**: shell commands run when a matching page finishes loading.
+- **settings**: the plugin's own options. `script.js` gets them as a `settings` object, so users (or you) can tune a
+  plugin by editing its `plugin.yaml` instead of its code.
+
+Plugins that ship with Valerie (like `youtube-speed`) are copied into `plugins/` once and then belong to the user:
+edit them, disable them with `enabled: false`, or delete them.
 
 ## Controlling the browser from code
 
@@ -143,6 +148,7 @@ pub fn install() {
     let reference = dir.join("reference");
     let _ = std::fs::create_dir_all(&reference);
     let _ = std::fs::write(reference.join("default-config.yaml"), crate::config::DEFAULT_YAML);
+    crate::plugins::install_bundled();
     let example = crate::plugins::plugins_dir().join("_example");
     if !example.exists() {
         let _ = std::fs::create_dir_all(&example);

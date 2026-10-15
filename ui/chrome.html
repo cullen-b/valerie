@@ -519,6 +519,24 @@ function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
 }
+// Vim keys that act on tabs and spaces also work here (start page, sidebar focus, a tab still loading).
+const PAGE_ONLY = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find", "back", "forward", "reload"]);
+let vimBuf = "", vimTimer = 0;
+addEventListener("keydown", (e) => {
+  if (!S || !S.vim || !S.vim.enabled || e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return;
+  const a = document.activeElement;
+  if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+  const b = S.vim.bindings, next = vimBuf + e.key, keys = Object.keys(b).filter((k) => b[k] != null);
+  clearTimeout(vimTimer);
+  const fire = (v) => {
+    const c = typeof v === "string" ? { cmd: v === "yank_url" ? "copy_url" : v } : v;
+    if (!PAGE_ONLY.has(c.cmd)) cmd(c);
+  };
+  if (b[next] != null && !keys.some((k) => k !== next && k.startsWith(next))) { vimBuf = ""; e.preventDefault(); return fire(b[next]); }
+  if (keys.some((k) => k.startsWith(next))) { vimBuf = next; vimTimer = setTimeout(() => { if (b[vimBuf] != null) fire(b[vimBuf]); vimBuf = ""; }, 700); return; }
+  vimBuf = "";
+});
+
 window.valerie = { render, toast };
 send({ t: "ready" });
 </script>

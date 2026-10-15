@@ -106,6 +106,42 @@ function glideFrame(now) {
   if (Math.abs(glide.x) < 0.5 && Math.abs(glide.y) < 0.5) { glide.raf = 0; return endGlide(); }
   glide.raf = requestAnimationFrame(glideFrame);
 }
+// Holding a scroll key: continuous scrolling that starts gently and speeds up until the key is released.
+const hold = { key: null, dx: 0, dy: 0, v: 0, acc: 0, last: 0, raf: 0, el: null };
+function startHold(key, dx, dy) {
+  if (hold.key) return;
+  const el = scroller();
+  Object.assign(hold, { key, dx, dy, v: cfg.vim.hold_scroll_speed || 700, acc: 0, last: 0, el });
+  hold.saved = el.style.scrollBehavior; el.style.scrollBehavior = "auto";
+  hold.raf = requestAnimationFrame(holdFrame);
+}
+function holdFrame(now) {
+  const dt = (hold.last ? Math.max(1, Math.min(now - hold.last, 48)) : 16) / 1000; hold.last = now;
+  hold.v = Math.min(cfg.vim.hold_scroll_max_speed || 6000, hold.v + (cfg.vim.hold_scroll_acceleration || 2400) * dt);
+  hold.acc += hold.v * dt;
+  const px = Math.trunc(hold.acc);
+  if (px) {
+    const el = hold.el, bx = el.scrollLeft, by = el.scrollTop;
+    el.scrollBy({ left: px * hold.dx, top: px * hold.dy, behavior: "instant" });
+    hold.acc -= px;
+    if (el.scrollLeft === bx && el.scrollTop === by) return stopHold(false); // reached the edge
+  }
+  hold.raf = requestAnimationFrame(holdFrame);
+}
+function stopHold(coast = true) {
+  if (!hold.key) return;
+  cancelAnimationFrame(hold.raf);
+  const el = hold.el, carry = coast && cfg.vim.smooth_scroll !== false ? hold.v * 0.06 : 0;
+  if (el) el.style.scrollBehavior = hold.saved;
+  const { dx, dy } = hold;
+  Object.assign(hold, { key: null, raf: 0, el: null });
+  // Ease to a stop rather than halting dead.
+  if (carry > 1) scrollBy(carry * dx, carry * dy);
+}
+addEventListener("keyup", (e) => { if (hold.key && e.key.toLowerCase() === hold.key) stopHold(); }, true);
+addEventListener("blur", () => stopHold(false));
+document.addEventListener("visibilitychange", () => stopHold(false));
+
 function scrollToEdge(top) {
   const s = scroller();
   endGlide();
@@ -234,7 +270,11 @@ function hintKey(k) {
     const on = h.label.startsWith(typed);
     if (on) { left++; last = h; }
     if (on !== !h.hidden) { h.hidden = !on; h.d.style.display = on ? "" : "none"; }
-    if (on) h.d.innerHTML = '<span class="typed">' + typed + "</span>" + h.label.slice(typed.length);
+    if (on) {
+      // DOM building, not innerHTML: sites with Trusted Types (YouTube, Google) reject innerHTML.
+      const t = document.createElement("span"); t.className = "typed"; t.textContent = typed;
+      h.d.replaceChildren(t, h.label.slice(typed.length));
+    }
   }
   if (left === 1 && last.label === typed) { const nt = hints.newTab; stopHints(); activate(last.e, nt); }
   else if (!left) stopHints();
@@ -245,6 +285,7 @@ function activate(e, newTab) {
   if (newTab && a && /^https?:/.test(a.href)) return post({ t: "open", url: a.href });
   const tag = e.tagName;
   const textual = tag === "TEXTAREA" || e.isContentEditable || (tag === "INPUT" && !/^(button|submit|reset|checkbox|radio|file|image|color|range)$/i.test(e.type));
+  userActed = true; // choosing a hint is deliberate, so it may focus a text box
   if (textual) { e.focus(); if (e.select) try { e.select(); } catch (_) {} return; }
   if (tag === "SELECT") { e.focus(); try { e.showPicker(); } catch (_) {} return; }
   const r = e.getBoundingClientRect();
@@ -373,8 +414,9 @@ function openFind(initial) {
   if (!fnd.bar) {
     const minimap = !cfg.find || cfg.find.minimap !== false;
     fnd.bar = document.createElement("div"); fnd.bar.className = "find" + (minimap ? " with-map" : "");
-    fnd.bar.innerHTML = '<input placeholder="Find in page"><span class="count"></span>';
-    fnd.input = fnd.bar.querySelector("input"); fnd.count = fnd.bar.querySelector(".count");
+    fnd.input = document.createElement("input"); fnd.input.placeholder = "Find in page";
+    fnd.count = document.createElement("span"); fnd.count.className = "count";
+    fnd.bar.append(fnd.input, fnd.count);
     root.appendChild(fnd.bar);
     fnd.input.addEventListener("keydown", (e) => {
       e.stopPropagation();
@@ -414,6 +456,16 @@ function closeFind() {
   Object.assign(fnd, { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, query: "" });
 }
 
+// ---------- don't let pages grab focus before you've touched them (keeps vim keys working) ----------
+let userActed = false;
+addEventListener("mousedown", (e) => { if (e.isTrusted) userActed = true; }, true);
+addEventListener("touchstart", (e) => { if (e.isTrusted) userActed = true; }, true);
+document.addEventListener("focusin", (e) => {
+  if (userActed || !cfg.vim.enabled || cfg.vim.block_autofocus === false || excluded()) return;
+  const t = e.composedPath ? e.composedPath()[0] : e.target;
+  if (editable(t)) t.blur();
+}, true);
+
 // ---------- key handling ----------
 function editable(e) {
   if (!e) return false;
@@ -451,6 +503,7 @@ window.addEventListener("keydown", (e) => {
   if (!cfg.vim.enabled || e.defaultPrevented && mode !== "hints") return;
   // Typing in Valerie's own UI (find box, prompts) lives in a closed shadow root the page can't see into.
   if (mode !== "hints" && inOurUi(e)) return;
+  if (e.isTrusted && (e.key === "i" || e.key === "Tab" || e.key === "/")) userActed = true; // deliberate moves into fields
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.key === "Escape") {
@@ -463,6 +516,14 @@ window.addEventListener("keydown", (e) => {
   if (mode === "insert" || editable(deepActive()) || excluded()) return;
   if (e.key.length !== 1) return;
   const b = cfg.vim.bindings, next = buffer + e.key;
+  // Key repeat on a scroll key means it's being held: switch to accelerating continuous scrolling.
+  const HOLDS = { scroll_down: [0, 1], scroll_up: [0, -1], scroll_left: [-1, 0], scroll_right: [1, 0] };
+  if (e.repeat && !buffer && HOLDS[b[e.key]]) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (cfg.vim.hold_to_accelerate !== false) startHold(e.key.toLowerCase(), ...HOLDS[b[e.key]]);
+    else run(b[e.key]);
+    return;
+  }
   const keys = Object.keys(b).filter((k) => b[k] != null);
   clearTimeout(bufferTimer);
   if (b[next] != null && !keys.some((k) => k !== next && k.startsWith(next))) { buffer = ""; e.preventDefault(); e.stopImmediatePropagation(); return run(b[next]); }

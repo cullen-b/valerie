@@ -1,0 +1,12 @@
+/* Speed badge drawn by youtube-speed/script.js. */
+.valerie-speed {
+  position: absolute; top: 12px; right: 12px; z-index: 70; display: flex; align-items: center; gap: 2px; padding: 3px;
+  border-radius: 9px; background: rgba(15, 15, 20, 0.72); color: #fff; font: 600 13px/1 -apple-system, system-ui, sans-serif;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.valerie-speed[data-mode="always"],
+.valerie-speed.flash,
+:hover > .valerie-speed[data-mode="hover"] { opacity: 1; pointer-events: auto; }
+.valerie-speed button { all: unset; width: 24px; height: 22px; text-align: center; line-height: 22px; border-radius: 6px; cursor: pointer; font-size: 15px; }
+.valerie-speed button:hover { background: rgba(255, 255, 255, 0.16); }
+.valerie-speed span { min-width: 44px; text-align: center; cursor: pointer; }

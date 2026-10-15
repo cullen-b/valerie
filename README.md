@@ -36,7 +36,7 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘,` | Open config |
 
 **Vim motions inside pages** (off while typing; `Esc` leaves a field): `j/k/h/l` scroll, `d/U` half page,
-`gg/G` top/bottom, `f`/`F` link hints (same/new tab), `u`/`H` back, `L` forward, `K/J` or `gt/gT` next/prev tab,
+`gg/G` top/bottom (hold `j`/`k` to scroll faster and faster), `f`/`F` link hints (same/new tab), `u`/`H` back, `L` forward, `J/K` or `gt/gT` next/prev tab,
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
 `s` toggle sidebar, `]s`/`[s` next/prev space.
 
@@ -51,6 +51,10 @@ Claude Code, Codex or OpenCode there and say "make my browser do X". Or do it fr
 `! hide the URL bar and make ⌃⇧G open GitHub` in the command bar (or pick "Customize Valerie" under any search).
 Your assistant edits the config or writes a plugin, checks it with `valerie check-config`, and Valerie reloads it
 instantly.
+
+Valerie ships with a **YouTube speed** plugin: `+` / `-` change the speed (0.25 steps, up to 16×), `*` resets, Shift+scroll
+over the video works too, a badge on the player shows the speed, and your speed carries over to the next video. Tune it
+in `~/.config/valerie/plugins/youtube-speed/plugin.yaml`.
 
 **Plugins** are folders in `~/.config/valerie/plugins/` with a readable `plugin.yaml` (see `plugins/_example/`):
 command-bar commands with optional shortcuts that run built-in action macros, JavaScript in the page, or local
