@@ -1,6 +1,7 @@
 use crate::command::TabId;
 use crate::config::Config;
 use crate::import::{Bookmark, ImportedNode, ImportedTab, Imported};
+use crate::sync::{DeviceTabs, SyncNode};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,6 +24,9 @@ pub struct Tab {
     pub custom_title: Option<String>,
     #[serde(default)]
     pub favicon: Option<String>,
+    /// Where a pinned tab "lives" even after you browse away inside it; this is what syncs.
+    #[serde(default)]
+    pub pinned_url: Option<String>,
     #[serde(default)]
     pub last_active: u64,
     #[serde(default, skip)]
@@ -70,6 +74,11 @@ pub struct Space {
     pub split: Vec<TabId>,
     #[serde(default)]
     pub theme: Option<String>,
+    /// Last local edit of the pinned tree (0 = never edited here, so it never overrides another device).
+    #[serde(default)]
+    pub pinned_modified: u64,
+    #[serde(default)]
+    pub pinned_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +132,10 @@ pub struct State {
     /// Origins where the user chose "Never" save passwords.
     #[serde(default)]
     pub password_never: Vec<String>,
+    #[serde(default)]
+    pub favorites_modified: u64,
+    #[serde(default)]
+    pub favorites_hash: Option<String>,
 }
 
 const MAX_HISTORY: usize = 5000;
@@ -456,6 +469,193 @@ fn flatten(nodes: &[ImportedNode], out: &mut Vec<ImportedTab>) {
     }
 }
 
+fn tree_hash(nodes: &[SyncNode]) -> String {
+    // Titles drift as pages load, so only structure, URLs and custom names count as edits.
+    fn strip(n: &SyncNode) -> serde_json::Value {
+        match n {
+            SyncNode::Tab { url, custom_title, .. } => serde_json::json!([url, custom_title]),
+            SyncNode::Folder { name, children } => serde_json::json!([name, children.iter().map(strip).collect::<Vec<_>>()]),
+        }
+    }
+    crate::blocking::hash(&serde_json::Value::Array(nodes.iter().map(strip).collect()).to_string())
+}
+
+impl State {
+    fn sync_tab(&self, id: TabId) -> Option<SyncNode> {
+        let t = self.tabs.get(&id)?;
+        Some(SyncNode::Tab {
+            title: t.title.clone(),
+            url: t.pinned_url.clone().unwrap_or_else(|| t.url.clone()),
+            custom_title: t.custom_title.clone(),
+        })
+    }
+
+    pub fn sync_tree(&self, nodes: &[Node]) -> Vec<SyncNode> {
+        nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Tab { id } => self.sync_tab(*id),
+                Node::Folder { name, children, .. } => Some(SyncNode::Folder { name: name.clone(), children: self.sync_tree(children) }),
+            })
+            .collect()
+    }
+
+    pub fn favorites_tree(&self) -> Vec<SyncNode> {
+        self.favorites.iter().filter_map(|id| self.sync_tab(*id)).collect()
+    }
+
+    /// Note local edits to pinned trees and favorites. The first observation only records a baseline.
+    pub fn track_changes(&mut self) -> bool {
+        let mut pinned_ids = self.favorites.clone();
+        for s in &self.spaces {
+            walk(&s.pinned, &mut pinned_ids, false);
+        }
+        for id in pinned_ids {
+            if let Some(t) = self.tabs.get_mut(&id) {
+                if t.pinned_url.is_none() {
+                    t.pinned_url = Some(t.url.clone());
+                }
+            }
+        }
+        let mut changed = false;
+        for i in 0..self.spaces.len() {
+            let h = tree_hash(&self.sync_tree(&self.spaces[i].pinned));
+            let s = &mut self.spaces[i];
+            match &s.pinned_hash {
+                Some(old) if *old == h => {}
+                Some(_) => {
+                    s.pinned_hash = Some(h);
+                    s.pinned_modified = now();
+                    changed = true;
+                }
+                None => s.pinned_hash = Some(h),
+            }
+        }
+        let h = tree_hash(&self.favorites_tree());
+        match &self.favorites_hash {
+            Some(old) if *old == h => {}
+            Some(_) => {
+                self.favorites_hash = Some(h);
+                self.favorites_modified = now();
+                changed = true;
+            }
+            None => self.favorites_hash = Some(h),
+        }
+        changed
+    }
+
+    /// Rebuild nodes from a synced tree, reusing local tabs with the same URL. Returns the new nodes.
+    fn adopt(&mut self, tree: &[SyncNode], pool: &mut Vec<(String, TabId)>, folders: &[(String, bool)]) -> Vec<Node> {
+        tree.iter()
+            .map(|n| match n {
+                SyncNode::Tab { title, url, custom_title } => {
+                    let id = match pool.iter().position(|(u, _)| u == url) {
+                        Some(i) => pool.remove(i).1,
+                        None => {
+                            let id = self.new_id();
+                            self.tabs.insert(id, Tab { id, url: url.clone(), title: title.clone(), last_active: now(), ..Default::default() });
+                            id
+                        }
+                    };
+                    if let Some(t) = self.tabs.get_mut(&id) {
+                        t.pinned_url = Some(url.clone());
+                        t.custom_title = custom_title.clone();
+                    }
+                    Node::Tab { id }
+                }
+                SyncNode::Folder { name, children } => {
+                    let id = self.new_id();
+                    let open = folders.iter().any(|(n, o)| n == name && *o);
+                    Node::Folder { id, name: name.clone(), open, children: self.adopt(children, pool, folders) }
+                }
+            })
+            .collect()
+    }
+
+    fn pool_of(&self, nodes: &[Node]) -> (Vec<(String, TabId)>, Vec<(String, bool)>) {
+        fn folders(nodes: &[Node], out: &mut Vec<(String, bool)>) {
+            for n in nodes {
+                if let Node::Folder { name, open, children, .. } = n {
+                    out.push((name.clone(), *open));
+                    folders(children, out);
+                }
+            }
+        }
+        let mut ids = Vec::new();
+        walk(nodes, &mut ids, false);
+        let pool = ids.into_iter().filter_map(|id| self.tabs.get(&id).map(|t| (t.pinned_url.clone().unwrap_or_else(|| t.url.clone()), id))).collect();
+        let mut f = Vec::new();
+        folders(nodes, &mut f);
+        (pool, f)
+    }
+
+    /// Adopt any pinned tree or favorites edited more recently on another device. Returns tabs that went away.
+    pub fn apply_remote(&mut self, devices: &[DeviceTabs]) -> Vec<TabId> {
+        let mut removed = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        for d in devices {
+            for s in &d.spaces {
+                if !names.contains(&s.name) {
+                    names.push(s.name.clone());
+                }
+            }
+        }
+        for name in names {
+            let Some(best) = devices.iter().flat_map(|d| d.spaces.iter()).filter(|s| s.name == name).max_by_key(|s| s.modified) else { continue };
+            if best.modified == 0 {
+                continue;
+            }
+            let idx = match self.space_index(&name) {
+                Some(i) => i,
+                None if !best.tree.is_empty() => {
+                    self.spaces.push(Space { name: name.clone(), ..Default::default() });
+                    self.spaces.len() - 1
+                }
+                None => continue,
+            };
+            if best.modified <= self.spaces[idx].pinned_modified {
+                continue;
+            }
+            let old = std::mem::take(&mut self.spaces[idx].pinned);
+            let (mut pool, folders) = self.pool_of(&old);
+            let nodes = self.adopt(&best.tree, &mut pool, &folders);
+            self.spaces[idx].pinned = nodes;
+            let h = tree_hash(&self.sync_tree(&self.spaces[idx].pinned));
+            let s = &mut self.spaces[idx];
+            s.pinned_hash = Some(h);
+            s.pinned_modified = best.modified;
+            for (_, id) in pool {
+                if s.active == Some(id) {
+                    s.active = None;
+                }
+                s.split.retain(|t| *t != id);
+                self.tabs.remove(&id);
+                removed.push(id);
+            }
+        }
+        if let Some(best) = devices.iter().max_by_key(|d| d.favorites_modified) {
+            if best.favorites_modified > self.favorites_modified {
+                let old: Vec<Node> = self.favorites.iter().map(|id| Node::Tab { id: *id }).collect();
+                let (mut pool, _) = self.pool_of(&old);
+                let nodes = self.adopt(&best.favorites, &mut pool, &[]);
+                self.favorites = nodes.iter().filter_map(|n| if let Node::Tab { id } = n { Some(*id) } else { None }).collect();
+                self.favorites_hash = Some(tree_hash(&self.favorites_tree()));
+                self.favorites_modified = best.favorites_modified;
+                for (_, id) in pool {
+                    for s in &mut self.spaces {
+                        if s.active == Some(id) {
+                            s.active = None;
+                        }
+                    }
+                    self.tabs.remove(&id);
+                    removed.push(id);
+                }
+            }
+        }
+        removed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +676,45 @@ mod tests {
         assert_eq!(s.close_tab(b), Some(c));
         assert_eq!(s.close_tab(c), Some(a));
         assert_eq!(s.closed.len(), 2);
+    }
+
+    fn device(spaces: Vec<crate::sync::SyncedSpace>) -> DeviceTabs {
+        DeviceTabs { device: "other".into(), updated: 1, spaces, favorites: vec![], favorites_modified: 0 }
+    }
+
+    fn synced(name: &str, urls: &[&str], modified: u64) -> crate::sync::SyncedSpace {
+        crate::sync::SyncedSpace {
+            name: name.into(),
+            pinned: vec![],
+            tabs: vec![],
+            tree: urls.iter().map(|u| SyncNode::Tab { title: String::new(), url: u.to_string(), custom_title: None }).collect(),
+            modified,
+        }
+    }
+
+    #[test]
+    fn sync_newest_pinned_tree_wins_and_reuses_tabs() {
+        let mut s = state();
+        let a = s.add_tab(0, "https://a", false);
+        s.pin(a);
+        s.track_changes(); // baseline: never edited locally
+        assert_eq!(s.spaces[0].pinned_modified, 0);
+        // An untouched remote (modified 0) never overrides.
+        assert!(s.apply_remote(&[device(vec![synced("A", &[], 0)])]).is_empty());
+        assert_eq!(s.order(0, false), vec![a]);
+        // A newer remote edit replaces the tree, keeping the existing tab for a URL it still has.
+        s.apply_remote(&[device(vec![synced("A", &["https://b", "https://a"], 50), synced("New", &["https://c"], 40)])]);
+        let order = s.order(0, false);
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[1], a);
+        assert_eq!(s.spaces[0].pinned_modified, 50);
+        assert_eq!(s.space_index("New").map(|i| s.order(i, false).len()), Some(1));
+        // Browsing inside a pinned tab is not an edit; unpinning is.
+        s.tabs.get_mut(&a).unwrap().url = "https://a/deep/page".into();
+        assert!(!s.track_changes());
+        s.unpin(a);
+        assert!(s.track_changes());
+        assert!(s.spaces[0].pinned_modified > 50);
     }
 
     #[test]

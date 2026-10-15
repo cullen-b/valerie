@@ -1304,6 +1304,9 @@ impl App {
         }
         self.syncing = true;
         self.last_sync = now();
+        if self.state.track_changes() {
+            self.dirty = true;
+        }
         let me = sync::DeviceTabs {
             device: self.config.device_name(),
             updated: now(),
@@ -1325,9 +1328,13 @@ impl App {
                         name: s.name.clone(),
                         pinned: pinned_ids.iter().filter_map(tab).collect(),
                         tabs: s.today.iter().filter_map(tab).collect(),
+                        tree: self.state.sync_tree(&s.pinned),
+                        modified: s.pinned_modified,
                     }
                 })
                 .collect(),
+            favorites: self.state.favorites_tree(),
+            favorites_modified: self.state.favorites_modified,
         };
         let dir = config::data_dir().join("sync");
         let p = self.proxy.clone();
@@ -1377,6 +1384,9 @@ impl App {
             self.start_sync();
         }
         self.schedule_agents();
+        if self.state.track_changes() {
+            self.dirty = true;
+        }
         if self.dirty {
             self.save();
         }
@@ -2079,7 +2089,19 @@ impl App {
             UserEvent::SyncDone(r) => {
                 self.syncing = false;
                 match r {
-                    Ok(devices) => self.remote = devices,
+                    Ok(devices) => {
+                        for id in self.state.apply_remote(&devices) {
+                            self.views.remove(&id);
+                        }
+                        self.state.reconcile_spaces(&self.config);
+                        self.remote = devices;
+                        self.dirty = true;
+                        for p in self.panes() {
+                            self.ensure_view(p);
+                        }
+                        self.layout();
+                        self.render();
+                    }
                     Err(e) => self.toast(&format!("Sync failed: {e}")),
                 }
             }
