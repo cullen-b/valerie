@@ -40,7 +40,7 @@ type your search (Backspace on an empty box goes back). Add any site with one li
 config.
 
 **Vim motions inside pages** (off while typing; `Esc` leaves a field): `j/k/h/l` scroll, `d/U` half page,
-`gg/G` top/bottom (hold `j`/`k` to scroll faster and faster), `f`/`F` link hints (same/new tab), `u`/`H` back, `L` forward, `J/K` or `gt/gT` next/prev tab,
+`gg/G` top/bottom (hold `j`/`k` to scroll faster and faster), `f`/`F` link hints (same/new tab), `u` back, `H`/`L` back/forward (in split view: focus the pane to the left/right), `J/K` or `gt/gT` next/prev tab,
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
 `s` toggle sidebar, `]s`/`[s` next/prev space.
 

@@ -197,6 +197,13 @@ fn decode_js(s: &str) -> Value {
     }
 }
 
+/// "#9d8cff" → [r, g, b, alpha] in 0..1.
+fn hex_rgba(hex: &str) -> [f64; 4] {
+    let h = hex.trim_start_matches('#');
+    let c = |i: usize| u8::from_str_radix(h.get(i..i + 2).unwrap_or("ff"), 16).unwrap_or(255) as f64 / 255.0;
+    if h.len() >= 6 { [c(0), c(2), c(4), 0.95] } else { [0.62, 0.55, 1.0, 0.95] }
+}
+
 fn scheme_of(url: &str) -> String {
     url.split(':').next().unwrap_or("").to_ascii_lowercase()
 }
@@ -517,6 +524,7 @@ impl App {
                 let _ = v.set_visible(true);
             }
         }
+        self.highlight_panes();
         let hide_lights = self.config.layout.tab_bar == TabBar::Side
             && (!self.config.layout.sidebar_visible || self.config.layout.sidebar_position == SidebarPosition::Right);
         platform::set_traffic_lights_hidden(&self.window, hide_lights);
@@ -569,6 +577,24 @@ impl App {
             "medium"
         } else {
             "full"
+        }
+    }
+
+    /// Show which split-view pane has focus (layout.split_focus): an accent border and/or dimming the others.
+    fn highlight_panes(&self) {
+        let panes = self.panes();
+        let split = panes.len() > 1;
+        let mode = self.config.layout.split_focus.as_str();
+        let active = self.state.active_tab();
+        let accent = hex_rgba(&self.theme_for(self.state.active_space).accent);
+        for (id, v) in &self.views {
+            let focused = split && Some(*id) == active;
+            let border = focused && matches!(mode, "border" | "both");
+            platform::set_border(v, if border { 2.0 } else { 0.0 }, accent);
+            if self.peek.is_none() && panes.contains(id) {
+                let dim = split && !focused && matches!(mode, "dim" | "both");
+                platform::set_alpha(v, if dim { 0.72 } else { 1.0 }, 0.12);
+            }
         }
     }
 
@@ -1388,6 +1414,7 @@ impl App {
                 platform::set_alpha(v, 1.0, self.anim_secs());
             }
         }
+        self.highlight_panes();
         self.focus_active();
     }
 
@@ -2026,11 +2053,28 @@ impl App {
                 self.layout();
                 self.render();
             }
+            Command::FocusPane { direction } => {
+                let panes = self.panes();
+                let left = direction != "right";
+                if panes.len() < 2 {
+                    let cmd = if left { Command::Back { tab: None } } else { Command::Forward { tab: None } };
+                    return self.dispatch(cmd, elwt);
+                }
+                let cur = self.state.active_tab().and_then(|a| panes.iter().position(|p| *p == a)).unwrap_or(0);
+                let next = if left { cur.saturating_sub(1) } else { (cur + 1).min(panes.len() - 1) };
+                if next != cur {
+                    self.state.space_mut().active = Some(panes[next]);
+                    self.highlight_panes();
+                    self.focus_active();
+                    self.render();
+                }
+            }
             Command::FocusNextPane => {
                 let panes = self.panes();
                 if panes.len() > 1 {
                     let cur = self.state.active_tab().and_then(|a| panes.iter().position(|p| *p == a)).unwrap_or(0);
                     self.state.space_mut().active = Some(panes[(cur + 1) % panes.len()]);
+                    self.highlight_panes();
                     self.focus_active();
                     self.render();
                 }
@@ -2312,6 +2356,13 @@ impl App {
             (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
+            }
+            (Source::Page(Target::Tab(id)), "focused") => {
+                if self.panes().contains(&id) && self.state.active_tab() != Some(id) {
+                    self.state.space_mut().active = Some(id);
+                    self.highlight_panes();
+                    self.render();
+                }
             }
             (Source::Page(target), kind @ ("open" | "peek")) => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };

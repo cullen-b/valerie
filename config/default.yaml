@@ -34,6 +34,7 @@ layout:
   bezel: 0                 # gap around the page in pixels. 0 = edge to edge like Safari, ~8 = Arc
   corner_radius: 16        # rounds the page where it meets the sidebar (every corner when bezel > 0); 0 = square
   split_gap: 2             # pixels between split-view panes
+  split_focus: border      # how the focused split-view pane is shown. one of: border | dim (others fade) | both | none
   pinned_style: icons      # how pinned tabs look. one of: icons (Arc-style tiles) | list
   animation_ms: 180        # sidebar / space transition length; 0 = instant
 
@@ -242,8 +243,8 @@ vim:
     "i": insert
     "/": find
     "yy": copy_url
-    "H": back
-    "L": forward
+    "H": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
+    "L": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
     "r": reload
     "x": close_tab
     "X": reopen_closed_tab
