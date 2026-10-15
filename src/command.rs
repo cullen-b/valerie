@@ -55,6 +55,8 @@ pub enum Command {
     MoveTab {
         tab: TabId,
         #[serde(default)]
+        favorite: bool,
+        #[serde(default)]
         space: Option<String>,
         #[serde(default)]
         folder: Option<TabId>,
@@ -142,6 +144,18 @@ pub enum Command {
     Sync,
     Import {
         source: String,
+    },
+    /// Run a headless agent: a configured job by name, or an ad-hoc prompt.
+    RunAgent {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        prompt: Option<String>,
+        #[serde(default)]
+        agent: Option<String>,
+    },
+    ShowAgentRun {
+        index: usize,
     },
     FindInPage {
         #[serde(default)]

@@ -1,3 +1,4 @@
+mod agents;
 mod app;
 mod command;
 mod config;
@@ -17,6 +18,7 @@ USAGE:
   valerie mcp-config      print the command that connects Claude Code to the built-in MCP server
   valerie mcp-stdio       stdio <-> HTTP bridge for MCP clients that only speak stdio
   valerie sync-setup      create a private GitHub repo for tab sync (needs the gh CLI)
+  valerie default-config  print every config option with its default
   valerie paths           show config and data locations";
 
 fn main() -> anyhow::Result<()> {
@@ -38,6 +40,10 @@ fn main() -> anyhow::Result<()> {
                 "claude mcp add --transport http valerie http://127.0.0.1:{}/mcp --header \"Authorization: Bearer {token}\"",
                 config.mcp.port
             );
+            return Ok(());
+        }
+        Some("default-config") => {
+            print!("{}", config::DEFAULT_YAML);
             return Ok(());
         }
         Some("paths") => {

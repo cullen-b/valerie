@@ -6,7 +6,7 @@
 :root {
   --bg1: #171a2b; --bg2: #2a1f3d; --accent: #9d8cff; --fg: #ecebf5;
   --fg-dim: rgba(236,235,245,.55); --hover: rgba(255,255,255,.07); --active: rgba(255,255,255,.14);
-  --line: rgba(255,255,255,.08); --sw: 248px; --tile: rgba(255,255,255,.06);
+  --line: rgba(255,255,255,.08); --sw: 248px; --tile: rgba(255,255,255,.06); --ease: cubic-bezier(.2,.8,.2,1);
 }
 :root.light {
   --fg: #23201c; --fg-dim: rgba(35,32,28,.5); --hover: rgba(0,0,0,.05); --active: rgba(255,255,255,.75);
@@ -17,13 +17,15 @@ html, body { height: 100%; overflow: hidden; }
 body {
   font: 13px/1.3 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
   color: var(--fg); background: linear-gradient(160deg, var(--bg1), var(--bg2));
-  transition: background .35s ease; -webkit-user-select: none; user-select: none; cursor: default;
+  -webkit-user-select: none; user-select: none; cursor: default;
 }
 body::before { /* soft accent glow */
-  content: ""; position: fixed; inset: 0; pointer-events: none;
+  content: ""; position: fixed; inset: 0; pointer-events: none; transition: background .35s;
   background: radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
 }
-#sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; }
+.bgfade { position: fixed; inset: 0; pointer-events: none; transition: opacity .4s ease; }
+#sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; transition: opacity .12s; }
+#sidebar.hidden { opacity: 0; transition: opacity .15s .2s; }
 body.right #sidebar { right: 0; }
 body.left #sidebar { left: 0; }
 .drag { height: 40px; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-left: 76px; }
@@ -38,14 +40,17 @@ body.right .drag { padding-left: 0; justify-content: flex-start; }
 #url:hover { background: var(--active); color: var(--fg); }
 #url b { color: var(--fg); font-weight: 500; }
 #url .lock { font-size: 10px; opacity: .7; }
-#favorites { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 12px; flex: none; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 10px; flex: none; }
 #favorites:empty { display: none; }
-.fav { height: 46px; border-radius: 11px; background: var(--tile); display: grid; place-items: center; position: relative; }
-.fav:hover { background: var(--active); }
-.fav.active { background: var(--active); box-shadow: 0 0 0 1.5px var(--accent) inset; }
-.fav img, .fav .letter { width: 20px; height: 20px; }
-.fav.unloaded img { filter: grayscale(.4); opacity: .75; }
-#scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin: 0 -4px; padding: 0 4px; }
+body.dragging #favorites:empty { display: block; height: 46px; border-radius: 11px; border: 1.5px dashed var(--line); }
+body.dragging #favorites:empty::after { content: "Drop here to favorite"; display: grid; place-items: center; height: 100%; color: var(--fg-dim); font-size: 11.5px; }
+.tile { height: 46px; border-radius: 11px; background: var(--tile); display: grid; place-items: center; position: relative; transition: background .12s, transform .12s; }
+.tile:hover { background: var(--active); }
+.tile.active { background: var(--active); box-shadow: 0 0 0 1.5px var(--accent) inset; }
+.tile img, .tile .letter { width: 20px; height: 20px; }
+.tile.unloaded img, .tile.unloaded .letter { filter: grayscale(.35); opacity: .7; }
+.tile .audio { position: absolute; right: 5px; top: 3px; font-size: 9px; color: var(--accent); }
+#scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin: 0 -4px; padding: 0 4px; will-change: transform; }
 #scroll::-webkit-scrollbar { width: 0; }
 .space-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 8px; font-weight: 600; font-size: 13px; }
 .space-title .icon { color: var(--accent); }
@@ -60,12 +65,13 @@ body.right .drag { padding-left: 0; justify-content: flex-start; }
 .row.unloaded .title { color: var(--fg-dim); }
 .row .x { width: 22px; height: 22px; border-radius: 6px; display: none; place-items: center; color: var(--fg-dim); font-size: 14px; }
 .row:hover .x { display: grid; }
+body.dragging .row:hover .x { display: none; }
 .row .x:hover { background: var(--hover); color: var(--fg); }
 .row .audio { font-size: 11px; color: var(--accent); }
 .row.split::after { content: ""; position: absolute; left: 2px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
 img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .letter { display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--accent); color: #fff; }
-.loading img.ico, .loading .letter { animation: pulse 1s ease-in-out infinite; }
+.loading img.ico, .loading .letter, .tile.loading img { animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
 .folder > .row .chev { width: 16px; text-align: center; color: var(--fg-dim); font-size: 10px; transition: transform .15s; }
 .folder.open > .row .chev { transform: rotate(90deg); }
@@ -76,14 +82,25 @@ img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .divider span:hover { color: var(--fg); }
 .newtab { color: var(--fg-dim); }
 .newtab .plus { width: 16px; text-align: center; font-size: 16px; }
-.empty-pinned { color: var(--fg-dim); font-size: 11.5px; padding: 6px 10px; }
-#bottom { flex: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding-top: 8px; }
-.sp { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--fg-dim); font-size: 13px; }
+.empty-pinned { color: var(--fg-dim); font-size: 11.5px; padding: 10px; border-radius: 10px; border: 1.5px dashed var(--line); text-align: center; margin-bottom: 4px; }
+#bottom { flex: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding-top: 8px; position: relative; }
+.sp { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--fg-dim); font-size: 13px; transition: background .15s, color .15s; }
 .sp:hover { background: var(--hover); color: var(--fg); }
 .sp.active { color: var(--fg); background: var(--hover); }
-.sp.active::after { content: ""; position: absolute; }
-.dragover { box-shadow: 0 -2px 0 var(--accent); }
-.dropin { background: color-mix(in srgb, var(--accent) 25%, transparent) !important; }
+.agents { position: absolute; left: 4px; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
+.agents i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+/* drag and drop */
+.ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: .97; box-shadow: 0 10px 28px rgba(0,0,0,.35);
+  background: color-mix(in srgb, var(--bg2) 88%, #fff); border-radius: 10px; }
+.dragging-src { opacity: .3; }
+body.dragging, body.dragging * { cursor: grabbing !important; }
+.drop-before::before, .drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--accent); z-index: 2; }
+.drop-before::before { top: -1px; }
+.drop-after::after { bottom: -1px; }
+.tile.drop-before::before, .tile.drop-after::after { left: auto; right: auto; top: 6px; bottom: 6px; width: 2px; height: auto; }
+.tile.drop-before::before { left: -5px; }
+.tile.drop-after::after { right: -5px; }
+.drop-into { background: color-mix(in srgb, var(--accent) 28%, transparent) !important; }
 #menu {
   position: fixed; min-width: 190px; background: color-mix(in srgb, var(--bg1) 92%, #000); border: 1px solid var(--line);
   border-radius: 10px; padding: 5px; box-shadow: 0 12px 32px rgba(0,0,0,.4); display: none; z-index: 10; color: var(--fg);
@@ -98,7 +115,7 @@ img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 }
 body.right #toast { left: auto; right: 12px; }
 #toast.show { opacity: 1; transform: none; }
-#empty { position: fixed; top: 0; bottom: 0; right: 0; display: grid; place-items: center; text-align: center; }
+#empty { position: fixed; top: 0; bottom: 0; right: 0; display: grid; place-items: center; text-align: center; transition: left .2s var(--ease), right .2s var(--ease); }
 #empty h1 { font-size: 44px; font-weight: 700; letter-spacing: -1.5px; opacity: .9; }
 #empty h1 span { color: var(--accent); }
 #empty p { color: var(--fg-dim); margin-top: 10px; font-size: 14px; }
@@ -129,7 +146,7 @@ body.top #topbar { display: flex; }
     <div class="navbtn" id="reload" title="Reload">↻</div>
   </div>
   <div id="url"></div>
-  <div id="favorites"></div>
+  <div id="favorites" class="grid"></div>
   <div id="scroll"></div>
   <div id="bottom"></div>
 </div>
@@ -141,20 +158,87 @@ body.top #topbar { display: flex; }
 const $ = (s) => document.querySelector(s);
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const cmd = (c) => send({ t: "cmd", cmd: c });
-let S = null, dragTab = null;
+let S = null, prevSpace = null, prevTheme = null, pendingDir = 0, suppressClick = false;
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function host(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u || ""; } }
 function icon(t, cls = "ico") {
-  const letter = () => { const d = el("div", "letter", (host(t.url)[0] || "•").toUpperCase()); return d; };
+  const letter = () => el("div", "letter", (host(t.url)[0] || "•").toUpperCase());
   const src = t.favicon || (/^https?:/.test(t.url) ? new URL("/favicon.ico", t.url).href : null);
   if (!src) return letter();
-  const img = el("img", cls); img.src = src; img.onerror = () => img.replaceWith(letter()); return img;
+  const img = el("img", cls); img.src = src; img.draggable = false; img.onerror = () => img.replaceWith(letter()); return img;
 }
+const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.includes(S.active));
+const click = (fn) => (e) => { if (!suppressClick) fn(e); };
 
-function tabRow(t) {
+// ---------- drag and drop (pointer based; HTML5 DnD is unreliable inside native webviews) ----------
+// Every tab element gets a source {id, list, index}; drop zones carry {kind, list, index, payload}.
+let drag = null;
+function source(node, id, list, index) {
+  node.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.target.closest(".x")) return;
+    drag = { id, list, index, node, x: e.clientX, y: e.clientY, active: false };
+  });
+}
+function zone(node, z) { node.dataset.drop = "1"; node._drop = z; }
+function clearIndicators() { document.querySelectorAll(".drop-before,.drop-after,.drop-into").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-into")); }
+function locate(x, y) {
+  const hit = document.elementFromPoint(x, y);
+  const node = hit && hit.closest("[data-drop]");
+  if (!node) return null;
+  const z = node._drop, r = node.getBoundingClientRect();
+  if (z.kind === "into") return { node, cls: "drop-into", payload: z.payload, list: null };
+  const after = z.kind === "tile" ? x > r.left + r.width / 2 : y > r.top + r.height / 2;
+  if (z.kind === "area") return { node, cls: "drop-into", payload: { ...z.payload }, list: z.list, index: z.index };
+  return { node, cls: after ? "drop-after" : "drop-before", payload: { ...z.payload }, list: z.list, index: z.index + (after ? 1 : 0) };
+}
+document.addEventListener("mousemove", (e) => {
+  if (!drag) return;
+  if (!drag.active) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;
+    drag.active = true;
+    const r = drag.node.getBoundingClientRect();
+    drag.dx = e.clientX - r.left; drag.dy = e.clientY - r.top;
+    const g = drag.node.cloneNode(true); g.classList.add("ghost"); g.classList.remove("active", "drop-before", "drop-after");
+    g.style.width = r.width + "px"; g.style.height = r.height + "px";
+    document.body.append(g); drag.ghost = g;
+    drag.node.classList.add("dragging-src"); document.body.classList.add("dragging"); hideMenu();
+  }
+  drag.ghost.style.transform = `translate(${e.clientX - drag.dx}px, ${e.clientY - drag.dy}px) scale(1.03)`;
+  clearIndicators();
+  drag.target = locate(e.clientX, e.clientY);
+  if (drag.target) drag.target.node.classList.add(drag.target.cls);
+});
+document.addEventListener("mouseup", () => {
+  const d = drag; drag = null;
+  if (!d || !d.active) return;
+  d.ghost.remove(); d.node.classList.remove("dragging-src"); document.body.classList.remove("dragging"); clearIndicators();
+  suppressClick = true; setTimeout(() => (suppressClick = false), 0);
+  const t = d.target;
+  if (!t || (t.payload.tab === d.id)) return;
+  const { tab: _target, ...p } = t.payload;
+  if (t.index != null) {
+    // Removing the tab first shifts later positions in the same list up by one.
+    p.index = t.list === d.list && d.index < t.index ? t.index - 1 : t.index;
+    if (t.list === d.list && p.index === d.index) return;
+  }
+  cmd({ cmd: "move_tab", tab: d.id, ...p });
+});
+
+// ---------- elements ----------
+function tile(t, list, index) {
+  const f = el("div", "tile" + (isActive(t) ? " active" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));
+  f.append(icon(t)); f.title = t.title || t.url;
+  if (t.playing) f.append(el("div", "audio", "♪"));
+  f.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
+  f.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
+  f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
+  source(f, t.id, list, index);
+  return f;
+}
+function tabRow(t, list, index) {
   const r = el("div", "row");
-  r.classList.toggle("active", t.id === S.active || S.split.includes(t.id) && S.split.includes(S.active));
+  r.classList.toggle("active", isActive(t));
   r.classList.toggle("split", S.split.length > 1 && S.split.includes(t.id));
   r.classList.toggle("unloaded", !t.loaded);
   r.classList.toggle("loading", !!t.loading);
@@ -164,62 +248,65 @@ function tabRow(t) {
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
   r.append(x);
   r.title = t.url;
-  r.onclick = () => cmd({ cmd: "activate_tab", tab: t.id });
+  r.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
   r.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
   r.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
-  draggable(r, t.id);
+  source(r, t.id, list, index);
   return r;
 }
-
-function draggable(r, id) {
-  r.draggable = true;
-  r.ondragstart = (e) => { dragTab = id; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(id)); };
-  r.ondragend = () => { dragTab = null; document.querySelectorAll(".dragover,.dropin").forEach((n) => n.classList.remove("dragover", "dropin")); };
+function folderEl(n) {
+  const f = el("div", "folder" + (n.open ? " open" : ""));
+  const r = el("div", "row");
+  r.append(el("div", "chev", "▶"), el("div", "title", n.name));
+  r.onclick = click(() => cmd({ cmd: "toggle_folder", folder: n.id }));
+  r.oncontextmenu = (e) => { e.preventDefault(); folderMenu(e, n); };
+  zone(r, { kind: "into", payload: { pinned: true, folder: n.id } });
+  const kids = el("div", "kids"), list = "folder:" + n.id;
+  n.children.forEach((c, i) => {
+    if (c.type === "folder") return kids.append(folderEl(c));
+    const row = tabRow(c, list, i); zone(row, { kind: "row", list, index: i, payload: { pinned: true, folder: n.id, tab: c.id } }); kids.append(row);
+  });
+  f.append(r, kids);
+  return f;
 }
 
-// Drop onto a row inserts before it in that row's section.
-function dropTarget(node, where) {
-  node.ondragover = (e) => { if (dragTab == null) return; e.preventDefault(); node.classList.add(where.folderInto ? "dropin" : "dragover"); };
-  node.ondragleave = () => node.classList.remove("dragover", "dropin");
-  node.ondrop = (e) => {
-    e.preventDefault(); node.classList.remove("dragover", "dropin");
-    if (dragTab == null || dragTab === where.self) return;
-    if (where.favorite) return cmd({ cmd: "toggle_favorite", tab: dragTab });
-    cmd({ cmd: "move_tab", tab: dragTab, pinned: where.pinned, folder: where.folder ?? null, index: where.index ?? null });
-  };
-}
-
-function nodeEl(n, ctx) {
-  if (n.type === "folder") {
-    const f = el("div", "folder" + (n.open ? " open" : ""));
-    const r = el("div", "row");
-    r.append(el("div", "chev", "▶"), el("div", "title", n.name));
-    r.onclick = () => cmd({ cmd: "toggle_folder", folder: n.id });
-    r.oncontextmenu = (e) => { e.preventDefault(); folderMenu(e, n); };
-    dropTarget(r, { pinned: true, folder: n.id, folderInto: true });
-    const kids = el("div", "kids");
-    n.children.forEach((c, i) => kids.append(nodeEl(c, { pinned: true, folder: n.id, index: i })));
-    f.append(r, kids);
-    return f;
+// ---------- render ----------
+function applyTheme(th) {
+  const root = document.documentElement, key = JSON.stringify(th);
+  if (prevTheme && prevTheme !== key) {
+    // Crossfade: freeze the old gradient on top, then fade it out.
+    const cs = getComputedStyle(root), old = el("div", "bgfade");
+    old.style.background = `linear-gradient(160deg, ${cs.getPropertyValue("--bg1")}, ${cs.getPropertyValue("--bg2")})`;
+    document.body.prepend(old);
+    requestAnimationFrame(() => requestAnimationFrame(() => (old.style.opacity = "0")));
+    setTimeout(() => old.remove(), 450);
   }
-  const r = tabRow(n);
-  dropTarget(r, { ...ctx, self: n.id });
-  return r;
-}
-
-function render(state) {
-  S = state;
-  const root = document.documentElement, b = document.body;
-  const th = S.theme;
+  prevTheme = key;
   root.classList.toggle("light", th.mode === "light");
   root.style.setProperty("--bg1", th.background[0]);
   root.style.setProperty("--bg2", th.background[1] || th.background[0]);
   root.style.setProperty("--accent", th.accent);
   if (th.foreground) root.style.setProperty("--fg", th.foreground); else root.style.removeProperty("--fg");
+}
+
+function slideIn(dir) {
+  const sc = $("#scroll"), ms = S.layout.animation_ms;
+  if (!ms) return;
+  sc.style.transition = "none";
+  sc.style.transform = `translateX(${dir * 48}px)`; sc.style.opacity = "0";
+  sc.offsetWidth; // reflow so the transition starts from the offset
+  sc.style.transition = `transform ${ms + 60}ms var(--ease), opacity ${ms}ms ease`;
+  sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
+}
+
+function render(state) {
+  S = state;
+  applyTheme(S.theme);
+  const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
-  b.className = (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position;
+  b.className = (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + (drag && drag.active ? " dragging" : "");
   const hidden = !S.layout.sidebar_visible;
-  $("#sidebar").style.visibility = hidden ? "hidden" : "visible";
+  $("#sidebar").classList.toggle("hidden", hidden);
   const empty = $("#empty");
   empty.style.display = S.active ? "none" : "grid";
   const sw = S.layout.tab_bar === "side" && !hidden ? S.layout.sidebar_width : 0;
@@ -237,46 +324,65 @@ function render(state) {
   } else u.append(el("span", null, "Search or enter URL…"));
 
   const fav = $("#favorites"); fav.innerHTML = "";
-  S.favorites.forEach((t) => {
-    const f = el("div", "fav" + (t.id === S.active ? " active" : "") + (t.loaded ? "" : " unloaded"));
-    f.append(icon(t)); f.title = t.title || t.url;
-    f.onclick = () => cmd({ cmd: "activate_tab", tab: t.id });
-    f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
-    draggable(f, t.id); dropTarget(f, { favorite: true, self: t.id });
-    fav.append(f);
-  });
+  zone(fav, { kind: "area", list: "fav", index: S.favorites.length, payload: { favorite: true } });
+  S.favorites.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); fav.append(f); });
 
   const sc = $("#scroll"), top = sc.scrollTop; sc.innerHTML = "";
   const sp = S.spaces[S.active_space];
   const title = el("div", "space-title");
   title.append(el("span", "icon", sp.icon || "●"), el("span", null, sp.name));
   title.ondblclick = () => ask("Rename space", sp.name, (n) => cmd({ cmd: "rename_space", name: n }));
-  dropTarget(title, { favorite: true });
   sc.append(title);
-  const pinned = el("div");
-  S.pinned.forEach((n, i) => pinned.append(nodeEl(n, { pinned: true, index: i })));
-  if (!S.pinned.length) { const e = el("div", "empty-pinned", "Drag tabs here to pin them"); dropTarget(e, { pinned: true }); pinned.append(e); }
-  sc.append(pinned);
-  const div = el("div", "divider"); const clr = el("span", null, S.today.length ? "Clear" : "Today");
+
+  const icons = S.layout.pinned_style !== "list";
+  const pinnedTabs = icons ? S.pinned.map((n, i) => [n, i]).filter(([n]) => n.type !== "folder") : [];
+  if (pinnedTabs.length) {
+    const grid = el("div", "grid");
+    zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { pinned: true } });
+    pinnedTabs.forEach(([n, i]) => { const f = tile(n, "pinned", i); zone(f, { kind: "tile", list: "pinned", index: i, payload: { pinned: true, tab: n.id } }); grid.append(f); });
+    sc.append(grid);
+  }
+  S.pinned.forEach((n, i) => {
+    if (n.type === "folder") return sc.append(folderEl(n));
+    if (icons) return;
+    const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { pinned: true, tab: n.id } }); sc.append(r);
+  });
+  if (!S.pinned.length) {
+    const e = el("div", "empty-pinned", "Drag tabs here to pin them");
+    zone(e, { kind: "area", list: "pinned", index: 0, payload: { pinned: true } }); sc.append(e);
+  }
+  const div = el("div", "divider"), clr = el("span", null, S.today.length ? "Clear" : "Today");
   clr.onclick = () => cmd({ cmd: "clear_today_tabs" }); div.append(clr); sc.append(div);
-  dropTarget(div, { pinned: false, index: 0 });
+  zone(div, { kind: "area", list: "today", index: 0, payload: { pinned: false } });
   const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New Tab"));
   nt.onclick = () => cmd({ cmd: "new_tab" }); sc.append(nt);
-  S.today.forEach((t, i) => { const r = tabRow(t); dropTarget(r, { pinned: false, index: i, self: t.id }); sc.append(r); });
-  const tail = el("div"); tail.style.height = "40px"; dropTarget(tail, { pinned: false, index: S.today.length }); sc.append(tail);
+  zone(nt, { kind: "area", list: "today", index: 0, payload: { pinned: false } });
+  S.today.forEach((t, i) => { const r = tabRow(t, "today", i); zone(r, { kind: "row", list: "today", index: i, payload: { pinned: false, tab: t.id } }); sc.append(r); });
+  const tail = el("div"); tail.style.minHeight = "60px"; tail.style.flex = "1";
+  zone(tail, { kind: "area", list: "today", index: S.today.length, payload: { pinned: false } }); sc.append(tail);
   sc.scrollTop = top;
 
   const bottom = $("#bottom"); bottom.innerHTML = "";
+  if (S.agents && S.agents.length) {
+    const a = el("div", "agents"); a.append(el("i"), el("span", null, S.agents.length + " agent" + (S.agents.length > 1 ? "s" : "")));
+    a.title = "Running: " + S.agents.join(", "); bottom.append(a);
+  }
   S.spaces.forEach((s, i) => {
     const d = el("div", "sp" + (i === S.active_space ? " active" : ""), s.icon || s.name[0]);
     d.title = s.name; d.onclick = () => cmd({ cmd: "switch_space", index: i });
-    d.ondragover = (e) => { e.preventDefault(); }; d.ondrop = () => dragTab != null && cmd({ cmd: "move_tab", tab: dragTab, space: s.name });
+    zone(d, { kind: "into", payload: { space: s.name } });
     bottom.append(d);
   });
   const add = el("div", "sp", "+"); add.title = "New Space";
   add.onclick = () => ask("New space name", "", (n) => cmd({ cmd: "new_space", name: n }));
   bottom.append(add);
 
+  if (prevSpace !== null && prevSpace !== S.active_space) {
+    const dir = pendingDir || (S.active_space > prevSpace ? 1 : -1);
+    slideIn(dir);
+  }
+  pendingDir = 0;
+  prevSpace = S.active_space;
   renderTop();
 }
 
@@ -299,6 +405,7 @@ function renderTop() {
 }
 const flat = (nodes) => nodes.flatMap((n) => (n.type === "folder" ? flat(n.children) : [n]));
 
+// ---------- menus ----------
 function showMenu(e, items) {
   const m = $("#menu"); m.innerHTML = "";
   items.forEach((it) => {
@@ -341,12 +448,28 @@ $("#url").onclick = () => cmd({ cmd: "open_command_bar", mode: "current" });
 $("#drag").onmousedown = (e) => { if (e.target.id === "drag") send({ t: "drag" }); };
 $("#empty").onclick = () => cmd({ cmd: "new_tab" });
 
-// Two-finger horizontal swipe on the sidebar switches spaces, like Arc.
-let swipe = 0, swipeLock = false;
+// ---------- two-finger swipe between spaces: the list follows your fingers, then commits or springs back ----------
+const swipe = { acc: 0, timer: 0, lock: false };
+function springBack() {
+  const sc = $("#scroll");
+  sc.style.transition = "transform .25s var(--ease), opacity .2s"; sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
+}
 $("#sidebar").addEventListener("wheel", (e) => {
-  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || swipeLock) return;
-  swipe += e.deltaX;
-  if (Math.abs(swipe) > 120) { cmd({ cmd: swipe > 0 ? "next_space" : "prev_space" }); swipe = 0; swipeLock = true; setTimeout(() => (swipeLock = false), 450); }
+  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !S || S.spaces.length < 2) return;
+  if (swipe.lock) return;
+  swipe.acc += e.deltaX;
+  const sc = $("#scroll"), off = Math.max(-1, Math.min(1, swipe.acc / 160));
+  sc.style.transition = "none";
+  sc.style.transform = `translateX(${-off * 56}px)`; sc.style.opacity = String(1 - Math.abs(off) * 0.55);
+  clearTimeout(swipe.timer);
+  if (Math.abs(swipe.acc) > 160) {
+    const dir = swipe.acc > 0 ? 1 : -1;
+    swipe.acc = 0; swipe.lock = true; pendingDir = dir;
+    setTimeout(() => (swipe.lock = false), 550); // swallow trackpad momentum
+    cmd({ cmd: dir > 0 ? "next_space" : "prev_space" });
+    return;
+  }
+  swipe.timer = setTimeout(() => { swipe.acc = 0; springBack(); }, 140);
 }, { passive: true });
 
 // Inline text prompt (native JS dialogs are not available in every webview).

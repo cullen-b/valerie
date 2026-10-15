@@ -114,6 +114,9 @@ pub struct State {
     pub history: Vec<HistoryEntry>,
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    /// Last run time of each scheduled agent job.
+    #[serde(default)]
+    pub agent_last: BTreeMap<String, u64>,
 }
 
 const MAX_HISTORY: usize = 5000;

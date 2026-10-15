@@ -21,6 +21,7 @@ body.open #card { opacity: 1; transform: translateX(-50%) scale(1); }
 input { flex: 1; background: none; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 19px; caret-color: var(--accent); }
 input::placeholder { color: var(--dim); }
 #list { max-height: min(430px, 55vh); overflow-y: auto; padding: 6px; }
+#list:empty { display: none; }
 #list::-webkit-scrollbar { width: 0; }
 .item { display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 12px; border-radius: 10px; }
 .item.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
@@ -72,19 +73,26 @@ function highlight(text, needle) {
   if (i < 0) return esc(text);
   return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + needle.length)) + "</mark>" + esc(text.slice(i + needle.length));
 }
-const KIND_WEIGHT = { tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, theme: 5, import: 5 };
-const KIND_LABEL = { tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
+const KIND_WEIGHT = { agent: 2, tab: 30, command: 18, space: 18, favorite: 26, pinned: 26, bookmark: 12, history: 8, synced: 6, archived: 4, theme: 5, import: 5 };
+const KIND_LABEL = { agent: "Agent", tab: "Switch to Tab", favorite: "Favorite", pinned: "Pinned", command: "Command", space: "Space", bookmark: "Bookmark", history: "History", synced: "Synced", archived: "Archived", theme: "Theme", import: "Import" };
 
 function compute() {
   const raw = q.value.trim(), needle = raw.toLowerCase();
   let out = [];
+  // "> task" hands the task to a headless agent.
+  if (raw.startsWith(">")) {
+    const task = raw.slice(1).trim();
+    results = [{ kind: "agent", title: task ? "Ask agent: " + task : "Ask an agent to do something…", sub: D.agent, icon: "✦",
+                 cmd: task ? { cmd: "run_agent", prompt: task } : null }];
+    sel = 0; return draw();
+  }
   if (raw) {
     const url = looksLikeUrl(raw);
     out.push({ kind: "go", title: url ? raw : raw, sub: url ? "Open" : "Search " + D.engine, go: raw, icon: url ? "↗" : "⌕" });
   }
   const seen = new Set();
   for (const it of D.items) {
-    const s = needle ? Math.max(score(needle, it.title || ""), score(needle, it.url || "") - 5) : (it.kind === "tab" ? 50 - (it.rank || 0) : -1);
+    const s = needle ? Math.max(score(needle, it.title || ""), score(needle, it.url || "") - 5) : (it.rank != null && it.rank < 8 ? 50 - it.rank : -1);
     if (s < 0) continue;
     if (it.url && it.kind !== "tab" && it.kind !== "favorite" && it.kind !== "pinned") { if (seen.has(it.url)) continue; seen.add(it.url); }
     const boost = it.kind === "history" ? Math.min(Math.log2((it.visits || 1) + 1) * 3, 15) : 0;
@@ -94,13 +102,15 @@ function compute() {
   out.sort((a, b) => b.s - a.s);
   // A strong exact title/host match beats the raw search action.
   if (head.length && out[0] && out[0].s > 120 && D.mode !== "current") out.splice(1, 0, ...head); else out = head.concat(out);
-  results = out.slice(0, 60); sel = 0; draw();
+  results = out.slice(0, raw ? 59 : 8);
+  if (raw && !looksLikeUrl(raw)) results.push({ kind: "agent", title: "Ask agent: " + raw, sub: D.agent, icon: "✦", cmd: { cmd: "run_agent", prompt: raw } });
+  sel = 0; draw();
 }
 
 function draw() {
   const needle = q.value.trim().toLowerCase();
   list.innerHTML = "";
-  if (!results.length) { list.innerHTML = '<div class="section">Type to search tabs, history, bookmarks and commands</div>'; return; }
+  if (!results.length) return;
   results.forEach((r, i) => {
     const d = document.createElement("div"); d.className = "item" + (i === sel ? " sel" : "");
     let ic;
@@ -124,6 +134,7 @@ function choose(r, newTab) {
   if (!r) return;
   const nt = D.mode === "current" ? !!newTab : true;
   let c;
+  if (r.kind === "agent" && !r.cmd) return;
   if (r.kind === "go") c = { cmd: "go", input: r.go, new_tab: nt };
   else if (r.cmd) c = r.cmd;
   else if (r.tab != null) c = { cmd: "activate_tab", tab: r.tab };

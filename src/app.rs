@@ -2,7 +2,7 @@ use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
 use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
 use crate::mcp::McpRequest;
 use crate::state::{find_folder, now, Node, State, Tab};
-use crate::{import, platform, routing, sync};
+use crate::{agents, import, platform, routing, sync};
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
@@ -49,6 +49,7 @@ pub enum UserEvent {
     ConfigChanged,
     SyncDone(Result<Vec<sync::DeviceTabs>, String>),
     Downloaded { ok: bool },
+    AgentDone(agents::Finished),
 }
 
 struct Little {
@@ -79,6 +80,9 @@ pub struct App {
     last_sync: u64,
     syncing: bool,
     last_page_open: std::time::Instant,
+    user_agent: String,
+    agents_running: Vec<String>,
+    agent_runs: Vec<agents::Finished>,
     pub quit: bool,
 }
 
@@ -164,6 +168,7 @@ impl App {
             .build_as_child(&window)?;
         let mut state = State::load(&state_path());
         state.reconcile_spaces(&config);
+        let user_agent = if config.user_agent.is_empty() { platform::safari_user_agent() } else { config.user_agent.clone() };
         Ok(App {
             window,
             chrome,
@@ -183,6 +188,9 @@ impl App {
             last_sync: 0,
             syncing: false,
             last_page_open: std::time::Instant::now(),
+            user_agent,
+            agents_running: Vec::new(),
+            agent_runs: Vec::new(),
             quit: false,
         })
     }
@@ -229,6 +237,7 @@ impl App {
             .with_url(if url.is_empty() { "about:blank" } else { url })
             .with_visible(false)
             .with_devtools(true)
+            .with_user_agent(&self.user_agent)
             .with_back_forward_navigation_gestures(true)
             .with_accept_first_mouse(true)
             .with_initialization_script(self.content_script())
@@ -335,6 +344,11 @@ impl App {
     }
 
     fn layout(&mut self) {
+        self.layout_anim(0.0)
+    }
+
+    /// Lay out every view; with `secs > 0` visible panes glide to their new bounds instead of jumping.
+    fn layout_anim(&mut self, secs: f64) {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         let _ = self.chrome.set_bounds(full);
@@ -351,7 +365,10 @@ impl App {
         }
         for (i, id) in panes.iter().enumerate() {
             if let Some(v) = self.views.get(id) {
-                let _ = v.set_bounds(rect(x + i as f64 * (pw + gap), y, pw, h));
+                let px = x + i as f64 * (pw + gap);
+                if secs <= 0.0 || !platform::animate_bounds(v, px, y, pw, h, secs) {
+                    let _ = v.set_bounds(rect(px, y, pw, h));
+                }
                 let _ = v.set_visible(true);
             }
         }
@@ -426,6 +443,7 @@ impl App {
             "active": active,
             "split": if s.split.len() > 1 { s.split.clone() } else { vec![] },
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
+            "agents": self.agents_running,
         });
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
     }
@@ -546,15 +564,27 @@ impl App {
         self.dirty = true;
     }
 
+    fn anim_secs(&self) -> f64 {
+        self.config.layout.animation_ms.max(0.0) / 1000.0
+    }
+
     fn switch_space(&mut self, i: usize) {
         if i >= self.state.spaces.len() {
             return;
         }
+        let changed = i != self.state.active_space;
         self.state.active_space = i;
         for p in self.panes() {
             self.ensure_view(p);
         }
         self.layout();
+        if changed && self.anim_secs() > 0.0 {
+            for p in self.panes() {
+                if let Some(v) = self.views.get(&p) {
+                    platform::fade_in(v, self.anim_secs());
+                }
+            }
+        }
         self.focus_active();
         self.render();
         self.refresh_content_config();
@@ -652,6 +682,13 @@ impl App {
             let title = format!("Import from {}{}", &src[..1].to_uppercase(), &src[1..]);
             items.push(json!({ "kind": "import", "title": title, "cmd": { "cmd": "import", "source": src } }));
         }
+        for j in &self.config.agents.jobs {
+            items.push(json!({ "kind": "agent", "title": format!("Run agent: {}", j.name), "sub": j.prompt, "cmd": { "cmd": "run_agent", "name": j.name } }));
+        }
+        for (i, r) in self.agent_runs.iter().enumerate() {
+            items.push(json!({ "kind": "agent", "title": format!("Agent run: {} ({})", r.name, if r.ok { "ok" } else { "failed" }),
+                               "sub": r.summary.replace('\n', " "), "cmd": { "cmd": "show_agent_run", "index": i } }));
+        }
         for b in &self.state.bookmarks {
             items.push(json!({ "kind": "bookmark", "title": b.title, "url": b.url, "sub": b.folder.join(" / ") }));
         }
@@ -674,7 +711,7 @@ impl App {
             .map(|h| format!("{}{}", &h[..1].to_uppercase(), &h[1..]))
             .unwrap_or_else(|| "the web".into());
         let query = if mode == BarMode::Current { active.and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) } else { None };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "theme": self.theme_for(self.state.active_space), "items": items });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "theme": self.theme_for(self.state.active_space), "items": items });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -876,6 +913,54 @@ impl App {
         self._menu = Some(menu);
     }
 
+    fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
+        if self.agents_running.contains(&name) {
+            return self.toast(&format!("{name} is already running"));
+        }
+        let agent = agent.unwrap_or_else(|| self.config.agents.default.clone());
+        let space = self.config.agents.space.clone();
+        if self.state.space_index(&space).is_none() {
+            self.state.spaces.push(crate::state::Space { name: space.clone(), ..Default::default() });
+            self.dirty = true;
+        }
+        self.state.agent_last.insert(name.clone(), now());
+        self.agents_running.push(name.clone());
+        self.toast(&format!("Agent started: {name}"));
+        self.render();
+        let p = self.proxy.clone();
+        let model = model.unwrap_or_else(|| self.config.agents.model.clone());
+        let run = agents::Run { name, agent, model, prompt, space };
+        std::thread::spawn(move || send(&p, UserEvent::AgentDone(agents::run(run))));
+    }
+
+    fn schedule_agents(&mut self) {
+        let t = now();
+        let mut hhmm: Option<String> = None;
+        let mut due = Vec::new();
+        for job in self.config.agents.jobs.iter().filter(|j| j.enabled) {
+            let last = self.state.agent_last.get(&job.name).copied();
+            let by_interval = job.every.as_deref().and_then(config::parse_interval).is_some_and(|secs| match last {
+                Some(l) => t.saturating_sub(l) >= secs,
+                None => false,
+            });
+            let by_time = job.at.as_deref().is_some_and(|at| {
+                let now_hhmm = hhmm.get_or_insert_with(agents::local_hhmm);
+                now_hhmm == at && last.is_none_or(|l| t.saturating_sub(l) > 120)
+            });
+            if last.is_none() && job.every.is_some() {
+                // First sighting starts the clock rather than firing immediately.
+                self.state.agent_last.insert(job.name.clone(), t);
+                self.dirty = true;
+            }
+            if by_interval || by_time {
+                due.push(job.clone());
+            }
+        }
+        for job in due {
+            self.start_agent(job.name, job.prompt, job.agent, job.model);
+        }
+    }
+
     fn start_sync(&mut self) {
         let repo = self.config.sync.repo.clone();
         if repo.is_empty() {
@@ -958,6 +1043,7 @@ impl App {
         if !self.config.sync.repo.is_empty() && interval > 0 && t.saturating_sub(self.last_sync) > interval {
             self.start_sync();
         }
+        self.schedule_agents();
         if self.dirty {
             self.save();
         }
@@ -1105,7 +1191,18 @@ impl App {
                     self.open_tab(&url, None, true);
                 }
             }
-            Command::MoveTab { tab, space, folder, pinned, index } => self.move_tab(tab, space, folder, pinned, index),
+            Command::MoveTab { tab, favorite: true, index, .. } => {
+                let was_active = self.state.active_tab() == Some(tab);
+                self.state.detach(tab);
+                let i = index.unwrap_or(self.state.favorites.len()).min(self.state.favorites.len());
+                self.state.favorites.insert(i, tab);
+                if was_active {
+                    self.state.space_mut().active = Some(tab);
+                }
+                self.dirty = true;
+                self.render();
+            }
+            Command::MoveTab { tab, space, folder, pinned, index, .. } => self.move_tab(tab, space, folder, pinned, index),
             Command::RenameTab { tab, title } => {
                 if let Some(t) = self.state.tabs.get_mut(&tab) {
                     t.custom_title = Some(title).filter(|s| !s.trim().is_empty());
@@ -1186,7 +1283,9 @@ impl App {
             }
             Command::ToggleSidebar => {
                 self.config.layout.sidebar_visible = !self.config.layout.sidebar_visible;
-                self.layout();
+                // Pages sit above the sidebar, so growing/shrinking them over it is the whole animation.
+                let secs = self.anim_secs();
+                self.layout_anim(secs);
                 self.render();
             }
             Command::ToggleTabBarPosition => {
@@ -1322,6 +1421,27 @@ impl App {
                         self.toast(&msg);
                     }
                     Err(e) => self.toast(&format!("Import failed: {e:#}")),
+                }
+            }
+            Command::RunAgent { name, prompt, agent } => {
+                self.close_bar();
+                let job = name.as_ref().and_then(|n| self.config.agents.jobs.iter().find(|j| &j.name == n).cloned());
+                match (job, prompt) {
+                    (Some(j), _) => self.start_agent(j.name, j.prompt, agent.or(j.agent), j.model),
+                    (None, Some(p)) if !p.trim().is_empty() => {
+                        let short: String = p.chars().take(40).collect();
+                        self.start_agent(name.unwrap_or(short), p, agent, None)
+                    }
+                    _ => self.toast("No such agent job"),
+                }
+            }
+            Command::ShowAgentRun { index } => {
+                self.close_bar();
+                if let Some(r) = self.agent_runs.get(index) {
+                    let text = std::fs::read_to_string(&r.log).unwrap_or_else(|e| e.to_string());
+                    let text: String = text.chars().take(200_000).collect();
+                    let enc: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>().replace('+', "%20");
+                    self.open_tab(&format!("data:text/plain;charset=utf-8,{enc}"), None, true);
                 }
             }
             Command::FindInPage { query } => {
@@ -1490,6 +1610,13 @@ impl App {
                     Ok(devices) => self.remote = devices,
                     Err(e) => self.toast(&format!("Sync failed: {e}")),
                 }
+            }
+            UserEvent::AgentDone(f) => {
+                self.agents_running.retain(|n| n != &f.name);
+                self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, f.name));
+                self.agent_runs.insert(0, f);
+                self.agent_runs.truncate(30);
+                self.render();
             }
             UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
         }
