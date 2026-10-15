@@ -591,6 +591,7 @@ impl App {
             let vm = json!({
                 "url": l.url, "title": l.title, "theme": self.theme_for(l.space),
                 "space": self.state.spaces.get(l.space).map(|s| s.name.clone()),
+                "picker": self.config.little_window.space_picker && self.state.spaces.len() > 1,
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -917,14 +918,49 @@ impl App {
         self.focused_little = Some(id);
     }
 
-    fn little_to_main(&mut self, id: WindowId) {
+    fn little_to_main(&mut self, id: WindowId, space: Option<String>) {
         if let Some(l) = self.littles.remove(&id) {
             let url = l.url.clone();
+            let target = space.and_then(|s| self.state.space_index(&s)).unwrap_or(l.space);
             drop(l);
             self.focused_little = None;
-            self.open_tab(&url, Some(self.state.active_space), true);
+            self.open_tab(&url, Some(target), true);
             self.window.set_focus();
             self.focus_active();
+        }
+    }
+
+    /// Native popup listing every space; picking one moves the little window's page there.
+    fn show_space_menu(&mut self, id: WindowId, x: f64, y: f64) {
+        use muda::ContextMenu;
+        let Some(l) = self.littles.get(&id) else { return };
+        let menu = muda::Menu::new();
+        self.menu_cmds.retain(|k, _| !k.0.starts_with("little-space-"));
+        for (i, s) in self.state.spaces.iter().enumerate() {
+            let label = match self.space_cfg(i).and_then(|c| c.icon.clone()) {
+                Some(icon) => format!("{icon}  {}", s.name),
+                None => s.name.clone(),
+            };
+            let item = MenuItem::with_id(format!("little-space-{i}"), label, true, None);
+            self.menu_cmds.insert(item.id().clone(), Command::MoveToMainWindow { space: Some(s.name.clone()) });
+            let _ = menu.append(&item);
+        }
+        self.focused_little = Some(id);
+        let pos: Option<muda::dpi::Position> = Some(muda::dpi::LogicalPosition::new(x, y).into());
+        #[cfg(target_os = "macos")]
+        unsafe {
+            use tao::platform::macos::WindowExtMacOS;
+            menu.show_context_menu_for_nsview(l.window.ns_view() as _, pos);
+        }
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use tao::platform::windows::WindowExtWindows;
+            menu.show_context_menu_for_hwnd(l.window.hwnd(), pos);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use tao::platform::unix::WindowExtUnix;
+            menu.show_context_menu_for_gtk_window(l.window.gtk_window().as_ref(), pos);
         }
     }
 
@@ -1466,7 +1502,7 @@ impl App {
     pub fn dispatch(&mut self, cmd: Command, elwt: &EventLoopWindowTarget<UserEvent>) {
         if self.peek.is_some() {
             match &cmd {
-                Command::MoveToMainWindow => {
+                Command::MoveToMainWindow { .. } => {
                     let url = self.peek.as_ref().map(|p| p.url.clone()).unwrap_or_default();
                     self.close_peek();
                     self.open_tab(&url, None, true);
@@ -1502,7 +1538,7 @@ impl App {
                     self.focused_little = None;
                     return;
                 }
-                Command::MoveToMainWindow => return self.little_to_main(id),
+                Command::MoveToMainWindow { space } => return self.little_to_main(id, space.clone()),
                 Command::CopyUrl => {
                     let url = l.url.clone();
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
@@ -1845,7 +1881,7 @@ impl App {
                 let url = routing::resolve_input(&url, &self.config.search_engine);
                 self.open_little(&url, self.state.active_space, elwt)
             }
-            Command::MoveToMainWindow | Command::ClosePeek => {}
+            Command::MoveToMainWindow { .. } | Command::ClosePeek => {}
             Command::Peek { url } => {
                 let url = routing::resolve_input(&url, &self.config.search_engine);
                 self.open_peek(&url)
@@ -1998,6 +2034,10 @@ impl App {
                 let _ = self.window.drag_window();
             }
             (Source::LittleBar(id), "ready") => self.render_little(id),
+            (Source::LittleBar(id), "space_menu") => {
+                let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
+                self.show_space_menu(id, x, y);
+            }
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {
                     let _ = l.window.drag_window();

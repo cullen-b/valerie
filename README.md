@@ -96,7 +96,8 @@ menu). Each gesture is configurable under `links:`.
 ## Profiles, spaces and Air Traffic Control
 
 Profiles isolate cookies and site data (separate WebKit data stores). Spaces pick a profile and a theme. `routes`
-send matching links to a space (e.g. `*.edu` → School); other external links open in a little window.
+send matching links to a space (e.g. `*.edu` → School); other external links open in a little window, whose
+"Open in …" button has a ▾ to move the page into any space.
 
 ## Import
 
