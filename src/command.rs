@@ -55,6 +55,8 @@ pub enum Command {
     MoveTab {
         tab: TabId,
         #[serde(default)]
+        favorite: bool,
+        #[serde(default)]
         space: Option<String>,
         #[serde(default)]
         folder: Option<TabId>,
@@ -143,6 +145,30 @@ pub enum Command {
     Import {
         source: String,
     },
+    /// Run a headless agent: a configured job by name, or an ad-hoc prompt.
+    RunAgent {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        prompt: Option<String>,
+        #[serde(default)]
+        agent: Option<String>,
+    },
+    ShowAgentRun {
+        index: usize,
+    },
+    ToggleSiteBlocking,
+    /// Copy a saved password to the clipboard (cleared after 45s). Never available to pages or agents.
+    CopyPassword {
+        vault: String,
+        origin: String,
+        username: String,
+    },
+    DeletePassword {
+        vault: String,
+        origin: String,
+        username: String,
+    },
     FindInPage {
         #[serde(default)]
         query: Option<String>,
@@ -163,6 +189,11 @@ impl Command {
     /// Build a command from a name with no args, e.g. "new_tab".
     pub fn from_name(name: &str) -> Option<Command> {
         serde_json::from_value(serde_json::json!({ "cmd": name })).ok()
+    }
+
+    /// Commands that expose or destroy secrets; agents (MCP) may not run them.
+    pub fn agent_forbidden(&self) -> bool {
+        matches!(self, Command::CopyPassword { .. } | Command::DeletePassword { .. })
     }
 
     /// Commands a web page may trigger through injected vim motions. None of these can read or redirect other tabs.
@@ -223,6 +254,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("dev_tools", "Developer Tools"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
+    ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("open_config", "Open Config File"),
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),

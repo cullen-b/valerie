@@ -13,8 +13,8 @@ cargo run --release              # or: cargo build --release && ./target/release
 ./scripts/bundle-macos.sh        # builds Valerie.app (needed to set it as your default browser)
 ```
 
-On first launch Valerie writes `~/.config/valerie/config.yaml` (commented, hot-reloaded). Run `valerie paths` to
-see where config and data live.
+On first launch Valerie writes a small `~/.config/valerie/config.yaml` (hot-reloaded) holding only your overrides;
+`valerie default-config` prints every option with comments. `valerie paths` shows where config and data live.
 
 ## Keys (all remappable in `config.yaml`)
 
@@ -34,10 +34,36 @@ see where config and data live.
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom, dev tools |
 | `⌘,` | Open config |
 
-**Vim motions inside pages** (off while typing; `Esc` leaves a field): `j/k/h/l` scroll, `d/u` half page,
-`gg/G` top/bottom, `f`/`F` link hints (same/new tab), `H/L` back/forward, `K/J` or `gt/gT` next/prev tab,
+**Vim motions inside pages** (off while typing; `Esc` leaves a field): `j/k/h/l` scroll, `d/U` half page,
+`gg/G` top/bottom, `f`/`F` link hints (same/new tab), `u`/`H` back, `L` forward, `K/J` or `gt/gT` next/prev tab,
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
 `s` toggle sidebar, `]s`/`[s` next/prev space.
+
+Drag tabs anywhere in the sidebar: onto the pinned tiles to pin, into folders, onto the favorites row, or onto a
+space icon. Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
+
+## Headless agents
+
+Your own Claude Code, Codex or OpenCode subscription can drive the browser in the background:
+
+- Type `> find me flights to Tokyo in March` in the command bar (or pick "Ask agent" under any search).
+- Schedule jobs in `config.yaml` under `agents.jobs` (`every: 6h`, `at: "08:30"`).
+
+Agents open their tabs in their own space and leave yours alone. A dot in the sidebar shows running agents, and
+"Agent run: …" in the command bar opens a run's log. Agents can't read your passwords.
+
+## Passwords
+
+Each profile has its own vault in the macOS Keychain; `passwords.shared` lets several profiles share one. Valerie
+offers to save after you sign in, and shows your saved logins when you focus a login field. Search "Password:" in
+the command bar to copy one (the clipboard clears after 45s). Import an export with
+`valerie import-passwords export.csv [vault]`. Passkeys need an Apple entitlement; see PLAN.md.
+
+## Ad blocking and Boosts
+
+Ads and trackers are blocked with hosts-style lists compiled into WebKit content rules (`content_blocking`). Use
+"Toggle Ad Blocking for This Site" in the command bar when a site breaks. Drop `example.com.css` or `example.com.js`
+into `~/.config/valerie/boosts/` to restyle or script a site (CSS updates live).
 
 ## Agents (MCP)
 
@@ -48,9 +74,9 @@ $(valerie mcp-config)            # prints and runs: claude mcp add --transport h
 ```
 
 For stdio-only clients, use `valerie mcp-stdio` as the command. Tools: `list_spaces`, `list_tabs`, `open_tab`,
-`open_link`, `navigate`, `activate_tab`, `close_tab`, `history`, `read_page`, `snapshot`, `click`, `type`,
-`press_key`, `scroll`, `wait_for`, `eval_js`, and `run_command`, which runs **any** browser command the keyboard
-can.
+`open_link`, `navigate`, `activate_tab`, `close_tab`, `history`, `read_page`, `snapshot`, `screenshot`, `click`,
+`type`, `press_key`, `scroll`, `wait_for`, `eval_js`, and `run_command`, which runs any browser command the keyboard
+can (except reading passwords).
 
 ## Sync
 

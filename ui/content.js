@@ -1,7 +1,11 @@
 // Injected into every page as (function (CFG) { ... })(config). Pages can see and call this; it only talks to the
 // browser through a whitelist of harmless messages.
 if (window.__valerie || window.top !== window) return;
-const post = (o) => { try { window.ipc.postMessage(JSON.stringify(o)); } catch (_) {} };
+// Capture natives before page scripts run, so pages can't intercept what we send or fill.
+const stringify = JSON.stringify;
+const ipcPost = window.ipc ? window.ipc.postMessage.bind(window.ipc) : null;
+const post = (o) => { try { (ipcPost || ((m) => window.ipc.postMessage(m)))(stringify(o)); } catch (_) {} };
+const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
 const PAGE_ACTIONS = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find"]);
 let cfg = CFG, mode = "normal", buffer = "", bufferTimer = 0;
 
@@ -21,6 +25,16 @@ function ui() {
     .hint .typed { opacity: .45; }
     .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 9px 14px; border-radius: 10px;
              background: rgba(24,24,32,.92); color: #fff; font-size: 12.5px; font-weight: 500; transition: opacity .2s; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+    .menu { position: fixed; min-width: 220px; padding: 5px; border-radius: 10px; background: rgba(24,24,32,.97); pointer-events: auto;
+            box-shadow: 0 10px 28px rgba(0,0,0,.35); }
+    .menu div { padding: 8px 10px; border-radius: 7px; color: #fff; font-weight: 500; font-size: 12.5px; cursor: default; }
+    .menu div:hover { background: ${cfg.accent || "#9d8cff"}; }
+    .menu small { display: block; color: rgba(255,255,255,.55); font-weight: 400; margin-top: 2px; }
+    .save { position: fixed; top: 12px; right: 16px; width: 300px; padding: 14px; border-radius: 12px; background: rgba(24,24,32,.97);
+            box-shadow: 0 12px 32px rgba(0,0,0,.35); pointer-events: auto; color: #fff; }
+    .save p { font-size: 13px; font-weight: 500; line-height: 1.35; margin: 0 0 10px; }
+    .save button { all: unset; padding: 6px 11px; margin-right: 6px; border-radius: 7px; background: rgba(255,255,255,.1); color: #fff; font-size: 12px; }
+    .save button.primary { background: ${cfg.accent || "#9d8cff"}; }
     .find { position: fixed; top: 12px; right: 16px; display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 10px;
             background: rgba(24,24,32,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); pointer-events: auto; }
     .find input { all: unset; width: 220px; padding: 4px 6px; color: #fff; font: 13px -apple-system, system-ui; }
@@ -182,6 +196,26 @@ window.addEventListener("keydown", (e) => {
   if (b[e.key] != null && !keys.some((k) => k !== e.key && k.startsWith(e.key))) { e.preventDefault(); e.stopImmediatePropagation(); run(b[e.key]); }
 }, true);
 
+// ---------- boosts (per-site CSS from the config dir; boost JS is run natively after load) ----------
+function applyBoostCss() {
+  const h = location.hostname.toLowerCase(), b = cfg.boost_css || {};
+  const css = Object.keys(b).filter((k) => h === k || h.endsWith("." + k)).map((k) => b[k]).join("\n");
+  let st = document.getElementById("__valerie_boost");
+  if (!css) { if (st) st.remove(); return; }
+  if (!st) { st = document.createElement("style"); st.id = "__valerie_boost"; (document.head || document.documentElement).appendChild(st); }
+  if (st.textContent !== css) st.textContent = css;
+}
+if (document.documentElement) applyBoostCss(); else document.addEventListener("DOMContentLoaded", applyBoostCss);
+
+// ---------- reveal the hidden sidebar when the mouse touches the screen edge ----------
+let edgeAt = 0;
+document.addEventListener("mousemove", (e) => {
+  if (cfg.peek) { if (e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
+  if (!cfg.edge || e.timeStamp - edgeAt < 300) return;
+  const hit = cfg.edge === "left" ? e.clientX <= 2 : e.clientX >= innerWidth - 3;
+  if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
+}, { passive: true });
+
 // ---------- page metadata for the sidebar ----------
 function favicon() {
   const links = [...document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")];
@@ -203,7 +237,115 @@ document.addEventListener("play", report, true); document.addEventListener("paus
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", report); else report();
 addEventListener("load", report);
 
+// ---------- passwords: offer saved logins on focus, offer to save after submit ----------
+let accounts = [], fillNonce = null, lastField = null, reportedForm = false, menu = null;
+const visible = (e) => e && e.getClientRects().length > 0;
+const pwFields = () => [...document.querySelectorAll("input[type=password]")].filter(visible);
+function userFieldFor(pw) {
+  const scope = (pw && pw.form) || document;
+  let best = null;
+  for (const i of scope.querySelectorAll("input")) {
+    if (!/^(text|email|tel|)$/i.test(i.type) || !visible(i)) continue;
+    if (!pw || i.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) best = i;
+  }
+  return best || document.querySelector("input[autocomplete=username], input[type=email]");
+}
+function checkLogin() {
+  if (reportedForm) return;
+  if (pwFields().length || document.querySelector("input[autocomplete~=username], input[type=email]")) { reportedForm = true; post({ t: "login_form" }); }
+}
+function hideMenu() { if (menu) { menu.remove(); menu = null; } }
+function showAccounts(field) {
+  hideMenu();
+  if (!accounts.length) return;
+  const r = field.getBoundingClientRect();
+  menu = document.createElement("div"); menu.className = "menu";
+  menu.style.left = Math.max(r.left, 4) + "px"; menu.style.top = r.bottom + 4 + "px";
+  accounts.forEach((a, i) => {
+    const d = document.createElement("div"); d.textContent = a.username || "(no username)";
+    const sm = document.createElement("small"); sm.textContent = "Valerie · " + a.vault; d.append(sm);
+    d.addEventListener("mousedown", (e) => { if (!e.isTrusted) return; e.preventDefault(); hideMenu(); post({ t: "fill", index: i, nonce: fillNonce }); });
+    menu.append(d);
+  });
+  ui().appendChild(menu);
+}
+document.addEventListener("focusin", (e) => {
+  const f = e.target;
+  if (!(f instanceof HTMLInputElement)) return;
+  lastField = f;
+  if (!e.isTrusted || !accounts.length) return;
+  if (f.type === "password" || f === userFieldFor(pwFields()[0]) || /username|email/.test(f.autocomplete) || f.type === "email") showAccounts(f);
+}, true);
+document.addEventListener("focusout", () => setTimeout(hideMenu, 150), true);
+function setVal(el, v) {
+  if (!el || v == null) return;
+  el.focus(); valueSetter.call(el, v);
+  el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function fill(user, pw) {
+  const pwField = lastField && lastField.type === "password" ? lastField : pwFields()[0];
+  const userField = pwField ? userFieldFor(pwField) : lastField;
+  if (userField && userField !== pwField) setVal(userField, user);
+  if (pwField) setVal(pwField, pw);
+}
+// Multi-step logins ask for the username on one page and the password on the next.
+document.addEventListener("input", (e) => {
+  const f = e.target;
+  if (e.isTrusted && f instanceof HTMLInputElement && f.type !== "password" && (f === userFieldFor(pwFields()[0]) || /username|email/.test(f.autocomplete) || f.type === "email")) {
+    try { sessionStorage.setItem("__valerie_user", f.value); } catch (_) {}
+  }
+}, true);
+let lastSent = "";
+function captureCredential(scope) {
+  const pw = [...((scope && scope.querySelectorAll) ? scope.querySelectorAll("input[type=password]") : pwFields())].find((p) => p.value);
+  if (!pw) return;
+  const uf = userFieldFor(pw);
+  let username = uf && uf.value;
+  if (!username) try { username = sessionStorage.getItem("__valerie_user") || ""; } catch (_) { username = ""; }
+  const key = username + "\u0000" + pw.value;
+  if (key === lastSent) return;
+  lastSent = key;
+  post({ t: "credential", username, password: pw.value });
+}
+document.addEventListener("submit", (e) => captureCredential(e.target), true);
+document.addEventListener("click", (e) => {
+  if (!e.isTrusted) return;
+  const b = e.target.closest && e.target.closest("button, input[type=submit], [role=button]");
+  if (b && pwFields().some((p) => p.value)) captureCredential(b.form || document);
+}, true);
+document.addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (e.key === "Enter" && t instanceof HTMLInputElement && t.type === "password" && t.value) captureCredential(t.form || document);
+}, true);
+let offered = null;
+function offerSave(host, username, nonce, vaults) {
+  if (offered === nonce) return;
+  offered = nonce;
+  const box = document.createElement("div"); box.className = "save";
+  const p = document.createElement("p"); p.textContent = "Save password" + (username ? " for " + username : "") + " on " + host + "?";
+  box.append(p);
+  const button = (label, cls, msg) => {
+    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    b.addEventListener("click", (e) => { if (!e.isTrusted) return; box.remove(); if (msg) post(msg); });
+    box.append(b);
+  };
+  button("Save", "primary", { t: "save_password", nonce, vault: vaults[0] });
+  vaults.slice(1).forEach((v) => button("Save to " + v, "", { t: "save_password", nonce, vault: v }));
+  button("Never", "", { t: "never_password", nonce });
+  button("Not now", "", { t: "dismiss_password", nonce });
+  ui().appendChild(box);
+  setTimeout(() => box.remove(), 30000);
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", checkLogin); else checkLogin();
+let loginTimer = 0;
+new MutationObserver(() => { if (reportedForm || loginTimer) return; loginTimer = setTimeout(() => { loginTimer = 0; checkLogin(); }, 500); })
+  .observe(document, { childList: true, subtree: true });
+
 Object.defineProperty(window, "__valerie", {
-  value: Object.freeze({ configure: (c) => { cfg = c; }, toast, find: openFind, hints: startHints }),
+  value: Object.freeze({
+    configure: (c) => { cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints,
+    accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
+    fill, offerSave,
+  }),
   writable: false, configurable: false,
 });

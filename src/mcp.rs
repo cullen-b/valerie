@@ -19,7 +19,7 @@ pub fn token_path() -> PathBuf {
     crate::config::data_dir().join("mcp-token")
 }
 
-fn random_hex() -> String {
+pub fn random_hex() -> String {
     use std::hash::{BuildHasher, Hasher};
     // RandomState is seeded from the OS RNG; four 64-bit draws give a 256-bit token without extra crates.
     (0..4)
@@ -137,6 +137,9 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>) -> Option<Value> {
             let name = params["name"].as_str().unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             Ok(match call_tool(name, args, proxy) {
+                Ok(v) if v.get("__image_png").is_some() => {
+                    json!({ "content": [{ "type": "image", "data": v["__image_png"], "mimeType": "image/png" }], "isError": false })
+                }
                 Ok(v) => json!({ "content": [{ "type": "text", "text": text(&v) }], "isError": false }),
                 Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
             })
@@ -196,6 +199,8 @@ fn tools() -> Vec<Value> {
             "tab": tab_prop(), "direction": { "type": "string", "enum": ["up", "down", "top", "bottom"] }, "ref": { "type": "string" } }), &[]),
         tool("wait_for", "Wait until a selector or text appears (and the page has loaded).", json!({
             "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
+        tool("screenshot", "Capture what the tab looks like as a PNG image (the visible viewport).",
+             json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024)" } }), &[]),
         tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited.",
              json!({ "tab": tab_prop(), "script": { "type": "string" } }), &["script"]),
         tool("run_command", &format!(
@@ -372,11 +377,39 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
+        "screenshot" => {
+            let tab = wait_ready(proxy, tab)?;
+            call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width") }))
+        }
         "eval_js" => {
             let tab = wait_ready(proxy, tab)?;
             eval(proxy, tab, a["script"].as_str().unwrap_or(""))
         }
         _ => Err(format!("unknown tool {name}")),
+    }
+}
+
+pub fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn base64_matches_rfc4648() {
+        assert_eq!(super::base64(b""), "");
+        assert_eq!(super::base64(b"f"), "Zg==");
+        assert_eq!(super::base64(b"fo"), "Zm8=");
+        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
     }
 }
 

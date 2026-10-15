@@ -74,6 +74,84 @@ mod mac {
         }
     }
 
+    /// Run `f` inside an NSAnimationContext group so `animator` property changes ease over `secs`.
+    unsafe fn animate(secs: f64, f: impl FnOnce()) {
+        use objc2::class;
+        let ctx_cls = class!(NSAnimationContext);
+        let _: () = msg_send![ctx_cls, beginGrouping];
+        let ctx: *mut AnyObject = msg_send![ctx_cls, currentContext];
+        let _: () = msg_send![ctx, setDuration: secs];
+        let name = objc2_foundation::NSString::from_str("easeInEaseOut");
+        let tf: *mut AnyObject = msg_send![class!(CAMediaTimingFunction), functionWithName: &*name];
+        let _: () = msg_send![ctx, setTimingFunction: tf];
+        f();
+        let _: () = msg_send![ctx_cls, endGrouping];
+    }
+
+    /// Same coordinate maths as wry's set_bounds, but through the view's animator.
+    pub fn animate_bounds(wv: &WebView, x: f64, y: f64, w: f64, h: f64, secs: f64) -> bool {
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+        let v = ptr(wv);
+        unsafe {
+            let sup: *mut AnyObject = msg_send![v, superview];
+            if sup.is_null() {
+                return false;
+            }
+            let flipped: bool = msg_send![sup, isFlipped];
+            let frame: NSRect = msg_send![sup, frame];
+            let oy = if flipped { y } else { frame.size.height - y - h };
+            let target = NSRect::new(NSPoint::new(x, oy), NSSize::new(w.round(), h.round()));
+            animate(secs, || {
+                let animator: *mut AnyObject = msg_send![v, animator];
+                let _: () = msg_send![animator, setFrame: target];
+            });
+        }
+        true
+    }
+
+    pub fn fade_in(wv: &WebView, secs: f64) {
+        let v = ptr(wv);
+        unsafe {
+            let _: () = msg_send![v, setAlphaValue: 0.0f64];
+            animate(secs, || {
+                let animator: *mut AnyObject = msg_send![v, animator];
+                let _: () = msg_send![animator, setAlphaValue: 1.0f64];
+            });
+        }
+    }
+
+    pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        use objc2::class;
+        let v = ptr(wv);
+        let done = std::cell::RefCell::new(Some(done));
+        let block = block2::RcBlock::new(move |image: *mut AnyObject, _error: *mut AnyObject| {
+            let Some(done) = done.borrow_mut().take() else { return };
+            if image.is_null() {
+                return done(Err("the page could not be captured (is the tab loaded?)".into()));
+            }
+            unsafe {
+                let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+                let rep: *mut AnyObject = msg_send![class!(NSBitmapImageRep), imageRepWithData: tiff];
+                let props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
+                // NSBitmapImageFileTypePNG = 4
+                let png: *mut AnyObject = msg_send![rep, representationUsingType: 4usize, properties: props];
+                if png.is_null() {
+                    return done(Err("PNG encoding failed".into()));
+                }
+                let len: usize = msg_send![png, length];
+                let bytes: *const u8 = msg_send![png, bytes];
+                done(Ok(std::slice::from_raw_parts(bytes, len).to_vec()))
+            }
+        });
+        unsafe {
+            let cfg: *mut AnyObject = msg_send![class!(WKSnapshotConfiguration), new];
+            let n: *mut AnyObject = msg_send![class!(NSNumber), numberWithDouble: width];
+            let _: () = msg_send![cfg, setSnapshotWidth: n];
+            let _: () = msg_send![v, takeSnapshotWithConfiguration: cfg, completionHandler: &*block];
+            let _: () = msg_send![cfg, release];
+        }
+    }
+
     pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -107,4 +185,54 @@ pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
     mac::set_traffic_lights_hidden(window, hidden);
     #[cfg(not(target_os = "macos"))]
     let _ = (window, hidden);
+}
+
+/// Animate a child webview to new bounds. Returns false when the platform can't, so the caller sets them directly.
+pub fn animate_bounds(wv: &WebView, x: f64, y: f64, w: f64, h: f64, secs: f64) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::animate_bounds(wv, x, y, w, h, secs);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, x, y, w, h, secs);
+        false
+    }
+}
+
+pub fn fade_in(wv: &WebView, secs: f64) {
+    #[cfg(target_os = "macos")]
+    mac::fade_in(wv, secs);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, secs);
+}
+
+/// Safari's user agent for this OS version, so sites serve their full modern pages.
+pub fn safari_user_agent() -> String {
+    let version = safari_version().unwrap_or_else(|| "18.0".into());
+    format!(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15"
+    )
+}
+
+fn safari_version() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let v = plist::Value::from_file("/Applications/Safari.app/Contents/Info.plist").ok()?;
+        let s = v.as_dictionary()?.get("CFBundleShortVersionString")?.as_string()?.to_string();
+        let mut parts = s.split('.');
+        let major = parts.next()?;
+        Some(format!("{major}.{}", parts.next().unwrap_or("0")))
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// PNG of the visible page, `width` points wide. Calls `done` later on the main thread.
+pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::snapshot(wv, width, done);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, width);
+        done(Err("screenshots are only implemented on macOS so far".into()));
+    }
 }

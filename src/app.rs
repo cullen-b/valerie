@@ -2,7 +2,7 @@ use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
 use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
 use crate::mcp::McpRequest;
 use crate::state::{find_folder, now, Node, State, Tab};
-use crate::{import, platform, routing, sync};
+use crate::{agents, blocking, import, passwords, platform, routing, sync};
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
@@ -49,6 +49,11 @@ pub enum UserEvent {
     ConfigChanged,
     SyncDone(Result<Vec<sync::DeviceTabs>, String>),
     Downloaded { ok: bool },
+    AgentDone(agents::Finished),
+    /// Blocklist JSON ready to compile (None = unchanged since last compile, so reuse WebKit's cached copy).
+    BlocklistBuilt { json: Option<String>, hash: String },
+    #[cfg(target_os = "macos")]
+    RulesReady(Result<blocking::mac::RuleList, String>, Option<String>),
 }
 
 struct Little {
@@ -79,7 +84,60 @@ pub struct App {
     last_sync: u64,
     syncing: bool,
     last_page_open: std::time::Instant,
+    user_agent: String,
+    agents_running: Vec<String>,
+    agent_runs: Vec<agents::Finished>,
+    boosts: Vec<Boost>,
+    sidebar_peek: bool,
+    /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
+    fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
+    pending_save: Option<PendingSave>,
+    #[cfg(target_os = "macos")]
+    rules: Option<blocking::mac::RuleList>,
     pub quit: bool,
+}
+
+struct PendingSave {
+    target: Target,
+    origin: String,
+    username: String,
+    password: String,
+    nonce: String,
+    at: u64,
+    reoffered: bool,
+}
+
+/// Per-site CSS/JS from `<config dir>/boosts/<host>.css|.js`; a host also matches its subdomains.
+#[derive(Default)]
+struct Boost {
+    host: String,
+    css: String,
+    js: String,
+}
+
+fn boosts_dir() -> PathBuf {
+    config::config_dir().join("boosts")
+}
+
+fn load_boosts() -> Vec<Boost> {
+    let mut map: std::collections::BTreeMap<String, Boost> = Default::default();
+    for e in std::fs::read_dir(boosts_dir()).into_iter().flatten().flatten() {
+        let path = e.path();
+        let (Some(stem), Some(ext)) = (path.file_stem().and_then(|s| s.to_str()), path.extension().and_then(|s| s.to_str())) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let b = map.entry(stem.to_lowercase()).or_insert_with(|| Boost { host: stem.to_lowercase(), ..Default::default() });
+        match ext {
+            "css" => b.css = text,
+            "js" => b.js = text,
+            _ => {}
+        }
+    }
+    map.into_values().collect()
+}
+
+fn boost_matches(pattern: &str, host: &str) -> bool {
+    let host = host.to_lowercase();
+    host == pattern || host.ends_with(&format!(".{pattern}"))
 }
 
 fn state_path() -> PathBuf {
@@ -164,6 +222,7 @@ impl App {
             .build_as_child(&window)?;
         let mut state = State::load(&state_path());
         state.reconcile_spaces(&config);
+        let user_agent = if config.user_agent.is_empty() { platform::safari_user_agent() } else { config.user_agent.clone() };
         Ok(App {
             window,
             chrome,
@@ -183,6 +242,15 @@ impl App {
             last_sync: 0,
             syncing: false,
             last_page_open: std::time::Instant::now(),
+            user_agent,
+            agents_running: Vec::new(),
+            agent_runs: Vec::new(),
+            boosts: load_boosts(),
+            sidebar_peek: false,
+            fill_offers: HashMap::new(),
+            pending_save: None,
+            #[cfg(target_os = "macos")]
+            rules: None,
             quit: false,
         })
     }
@@ -216,9 +284,29 @@ impl App {
 
     // ---------------------------------------------------------------- webviews
 
+    /// Settings the in-page script needs: vim bindings, accent, boost CSS, and whether to report the screen edge.
+    fn page_config(&self) -> Value {
+        let l = &self.config.layout;
+        let edge = (l.tab_bar == TabBar::Side && !l.sidebar_visible).then_some(match l.sidebar_position {
+            SidebarPosition::Left => "left",
+            SidebarPosition::Right => "right",
+        });
+        let css: serde_json::Map<String, Value> =
+            self.boosts.iter().filter(|b| !b.css.is_empty()).map(|b| (b.host.clone(), json!(b.css))).collect();
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "edge": edge, "peek": self.sidebar_peek })
+    }
+
     fn content_script(&self) -> String {
-        let cfg = json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent });
-        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), cfg)
+        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config())
+    }
+
+    /// After each load: refresh page settings and run matching boost scripts (native eval, so page CSP can't block it).
+    fn after_load(&self, view: &WebView, url: &str) {
+        let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config()));
+        let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
+            let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+        }
     }
 
     fn page_builder(&self, target: Target, url: &str, profile: &str) -> WebViewBuilder<'static> {
@@ -229,6 +317,7 @@ impl App {
             .with_url(if url.is_empty() { "about:blank" } else { url })
             .with_visible(false)
             .with_devtools(true)
+            .with_user_agent(&self.user_agent)
             .with_back_forward_navigation_gestures(true)
             .with_accept_first_mouse(true)
             .with_initialization_script(self.content_script())
@@ -293,6 +382,10 @@ impl App {
                 if let Some(z) = self.zoom.get(&tab) {
                     let _ = v.zoom(*z);
                 }
+                #[cfg(target_os = "macos")]
+                if self.rules.is_some() {
+                    blocking::mac::apply(&v, self.rules.as_ref());
+                }
                 self.views.insert(tab, v);
             }
             Err(e) => eprintln!("valerie: could not create webview: {e}"),
@@ -324,7 +417,7 @@ impl App {
         match l.tab_bar {
             TabBar::Top => (b, TOP_BAR, w - 2.0 * b, h - TOP_BAR - b),
             TabBar::Side => {
-                let sw = if l.sidebar_visible { l.sidebar_width } else { 0.0 };
+                let sw = if l.sidebar_visible || self.sidebar_peek { l.sidebar_width } else { 0.0 };
                 let (left, right) = match l.sidebar_position {
                     SidebarPosition::Left => (if sw > 0.0 { sw } else { b }, b),
                     SidebarPosition::Right => (b, if sw > 0.0 { sw } else { b }),
@@ -335,6 +428,11 @@ impl App {
     }
 
     fn layout(&mut self) {
+        self.layout_anim(0.0)
+    }
+
+    /// Lay out every view; with `secs > 0` visible panes glide to their new bounds instead of jumping.
+    fn layout_anim(&mut self, secs: f64) {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         let _ = self.chrome.set_bounds(full);
@@ -351,7 +449,10 @@ impl App {
         }
         for (i, id) in panes.iter().enumerate() {
             if let Some(v) = self.views.get(id) {
-                let _ = v.set_bounds(rect(x + i as f64 * (pw + gap), y, pw, h));
+                let px = x + i as f64 * (pw + gap);
+                if secs <= 0.0 || !platform::animate_bounds(v, px, y, pw, h, secs) {
+                    let _ = v.set_bounds(rect(px, y, pw, h));
+                }
                 let _ = v.set_visible(true);
             }
         }
@@ -426,6 +527,8 @@ impl App {
             "active": active,
             "split": if s.split.len() > 1 { s.split.clone() } else { vec![] },
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
+            "agents": self.agents_running,
+            "peek": self.sidebar_peek,
         });
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
     }
@@ -546,15 +649,27 @@ impl App {
         self.dirty = true;
     }
 
+    fn anim_secs(&self) -> f64 {
+        self.config.layout.animation_ms.max(0.0) / 1000.0
+    }
+
     fn switch_space(&mut self, i: usize) {
         if i >= self.state.spaces.len() {
             return;
         }
+        let changed = i != self.state.active_space;
         self.state.active_space = i;
         for p in self.panes() {
             self.ensure_view(p);
         }
         self.layout();
+        if changed && self.anim_secs() > 0.0 {
+            for p in self.panes() {
+                if let Some(v) = self.views.get(&p) {
+                    platform::fade_in(v, self.anim_secs());
+                }
+            }
+        }
         self.focus_active();
         self.render();
         self.refresh_content_config();
@@ -652,6 +767,20 @@ impl App {
             let title = format!("Import from {}{}", &src[..1].to_uppercase(), &src[1..]);
             items.push(json!({ "kind": "import", "title": title, "cmd": { "cmd": "import", "source": src } }));
         }
+        for j in &self.config.agents.jobs {
+            items.push(json!({ "kind": "agent", "title": format!("Run agent: {}", j.name), "sub": j.prompt, "cmd": { "cmd": "run_agent", "name": j.name } }));
+        }
+        for (i, r) in self.agent_runs.iter().enumerate() {
+            items.push(json!({ "kind": "agent", "title": format!("Agent run: {} ({})", r.name, if r.ok { "ok" } else { "failed" }),
+                               "sub": r.summary.replace('\n', " "), "cmd": { "cmd": "show_agent_run", "index": i } }));
+        }
+        if self.config.passwords.enabled {
+            for e in passwords::list(&self.config.vaults_for(&self.profile_for(self.state.active_space))) {
+                let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                let cmd = json!({ "cmd": "copy_password", "vault": e.vault, "origin": e.origin, "username": e.username });
+                items.push(json!({ "kind": "password", "title": format!("Password: {host} — {}", e.username), "sub": e.vault, "cmd": cmd }));
+            }
+        }
         for b in &self.state.bookmarks {
             items.push(json!({ "kind": "bookmark", "title": b.title, "url": b.url, "sub": b.folder.join(" / ") }));
         }
@@ -674,7 +803,7 @@ impl App {
             .map(|h| format!("{}{}", &h[..1].to_uppercase(), &h[1..]))
             .unwrap_or_else(|| "the web".into());
         let query = if mode == BarMode::Current { active.and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) } else { None };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "theme": self.theme_for(self.state.active_space), "items": items });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "theme": self.theme_for(self.state.active_space), "items": items });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -721,6 +850,10 @@ impl App {
         let (Ok(bar), Ok(view)) = (bar, view) else { return eprintln!("valerie: little window webviews failed") };
         let _ = view.focus();
         window.set_focus();
+        #[cfg(target_os = "macos")]
+        if self.rules.is_some() {
+            blocking::mac::apply(&view, self.rules.as_ref());
+        }
         self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space });
         self.focused_little = Some(id);
     }
@@ -757,16 +890,18 @@ impl App {
     // ---------------------------------------------------------------- config, menu, sync
 
     fn refresh_content_config(&self) {
-        let cfg = json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent });
+        let cfg = self.page_config();
         for v in self.views.values() {
             let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
     }
 
     fn reload_config(&mut self) {
+        self.boosts = load_boosts();
         match Config::load() {
             Ok(c) => {
                 let radius_changed = c.layout.corner_radius != self.config.layout.corner_radius;
+                let blocking_changed = serde_json::to_value(&c.content_blocking).ok() != serde_json::to_value(&self.config.content_blocking).ok();
                 self.config = c;
                 self.state.reconcile_spaces(&self.config);
                 if radius_changed {
@@ -775,6 +910,9 @@ impl App {
                     }
                 }
                 self.build_menu();
+                if blocking_changed {
+                    self.start_blocklist();
+                }
                 self.refresh_content_config();
                 self.layout();
                 self.render();
@@ -876,6 +1014,207 @@ impl App {
         self._menu = Some(menu);
     }
 
+    fn view_for(&self, target: Target) -> Option<&WebView> {
+        match target {
+            Target::Tab(id) => self.views.get(&id),
+            Target::Little(id) => self.littles.get(&id).map(|l| &l.view),
+        }
+    }
+
+    fn vaults_for_target(&self, target: Target) -> Vec<String> {
+        let space = match target {
+            Target::Tab(id) => self.state.space_of(id).unwrap_or(self.state.active_space),
+            Target::Little(id) => self.littles.get(&id).map(|l| l.space).unwrap_or(self.state.active_space),
+        };
+        self.config.vaults_for(&self.profile_for(space))
+    }
+
+    /// The page's real origin, read from the webview rather than trusting the page.
+    fn origin_of_target(&self, target: Target) -> Option<String> {
+        self.view_for(target).and_then(|v| v.url().ok()).and_then(|u| passwords::origin_of(&u))
+    }
+
+    fn offer_pending_save(&self) {
+        let Some(p) = &self.pending_save else { return };
+        if now().saturating_sub(p.at) > 120 || self.origin_of_target(p.target).is_none() {
+            return;
+        }
+        let host = url::Url::parse(&p.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        let args = json!([host, p.username, p.nonce, self.vaults_for_target(p.target)]);
+        if let Some(v) = self.view_for(p.target) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.offerSave(...{args})"));
+        }
+    }
+
+    fn handle_password_ipc(&mut self, target: Target, kind: &str, m: &Value) {
+        if !self.config.passwords.enabled {
+            return;
+        }
+        let Some(origin) = self.origin_of_target(target) else { return };
+        match kind {
+            "login_form" => {
+                let entries: Vec<passwords::Entry> =
+                    passwords::list(&self.vaults_for_target(target)).into_iter().filter(|e| e.origin == origin).collect();
+                if entries.is_empty() {
+                    return;
+                }
+                let nonce = crate::mcp::random_hex();
+                let list = json!(entries.iter().map(|e| json!({ "username": e.username, "vault": e.vault })).collect::<Vec<_>>());
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.accounts({list}, {})", json!(nonce)));
+                }
+                self.fill_offers.insert(target, (nonce, entries));
+            }
+            "fill" => {
+                let Some((nonce, entries)) = self.fill_offers.get(&target) else { return };
+                if m["nonce"].as_str() != Some(nonce.as_str()) {
+                    return;
+                }
+                let Some(e) = m["index"].as_u64().and_then(|i| entries.get(i as usize)).filter(|e| e.origin == origin) else { return };
+                match passwords::password(e) {
+                    Ok(Some(pw)) => {
+                        if let Some(v) = self.view_for(target) {
+                            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.fill({}, {})", json!(e.username), json!(pw)));
+                        }
+                    }
+                    Ok(None) => self.toast("That password is no longer in the keychain"),
+                    Err(err) => self.toast(&format!("Keychain: {err}")),
+                }
+            }
+            "credential" => {
+                let (Some(username), Some(password)) = (m["username"].as_str(), m["password"].as_str()) else { return };
+                if password.is_empty() || password.len() > 1024 || self.state.password_never.contains(&origin) {
+                    return;
+                }
+                let vaults = self.vaults_for_target(target);
+                let known = passwords::list(&vaults)
+                    .into_iter()
+                    .filter(|e| e.origin == origin && e.username == username)
+                    .any(|e| passwords::password(&e).ok().flatten().as_deref() == Some(password));
+                if known {
+                    return;
+                }
+                self.pending_save = Some(PendingSave {
+                    target,
+                    origin,
+                    username: username.to_string(),
+                    password: password.to_string(),
+                    nonce: crate::mcp::random_hex(),
+                    at: now(),
+                    reoffered: false,
+                });
+                self.offer_pending_save();
+            }
+            "save_password" | "never_password" | "dismiss_password" => {
+                let Some(p) = self.pending_save.take() else { return };
+                if m["nonce"].as_str() != Some(p.nonce.as_str()) || p.target != target {
+                    self.pending_save = Some(p);
+                    return;
+                }
+                if kind == "dismiss_password" {
+                    return;
+                }
+                if kind == "never_password" {
+                    self.state.password_never.push(p.origin);
+                    self.dirty = true;
+                    return;
+                }
+                let vault = m["vault"].as_str().unwrap_or_default().to_string();
+                if !self.vaults_for_target(target).contains(&vault) {
+                    return;
+                }
+                match passwords::save(&vault, &p.origin, &p.username, &p.password) {
+                    Ok(()) => self.toast(&format!("Password saved to {vault}")),
+                    Err(e) => self.toast(&format!("Could not save password: {e}")),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
+        if self.agents_running.contains(&name) {
+            return self.toast(&format!("{name} is already running"));
+        }
+        let agent = agent.unwrap_or_else(|| self.config.agents.default.clone());
+        let space = self.config.agents.space.clone();
+        if self.state.space_index(&space).is_none() {
+            self.state.spaces.push(crate::state::Space { name: space.clone(), ..Default::default() });
+            self.dirty = true;
+        }
+        self.state.agent_last.insert(name.clone(), now());
+        self.agents_running.push(name.clone());
+        self.toast(&format!("Agent started: {name}"));
+        self.render();
+        let p = self.proxy.clone();
+        let model = model.unwrap_or_else(|| self.config.agents.model.clone());
+        let run = agents::Run { name, agent, model, prompt, space };
+        std::thread::spawn(move || send(&p, UserEvent::AgentDone(agents::run(run))));
+    }
+
+    fn schedule_agents(&mut self) {
+        let t = now();
+        let mut hhmm: Option<String> = None;
+        let mut due = Vec::new();
+        for job in self.config.agents.jobs.iter().filter(|j| j.enabled) {
+            let last = self.state.agent_last.get(&job.name).copied();
+            let by_interval = job.every.as_deref().and_then(config::parse_interval).is_some_and(|secs| match last {
+                Some(l) => t.saturating_sub(l) >= secs,
+                None => false,
+            });
+            let by_time = job.at.as_deref().is_some_and(|at| {
+                let now_hhmm = hhmm.get_or_insert_with(agents::local_hhmm);
+                now_hhmm == at && last.is_none_or(|l| t.saturating_sub(l) > 120)
+            });
+            if last.is_none() && job.every.is_some() {
+                // First sighting starts the clock rather than firing immediately.
+                self.state.agent_last.insert(job.name.clone(), t);
+                self.dirty = true;
+            }
+            if by_interval || by_time {
+                due.push(job.clone());
+            }
+        }
+        for job in due {
+            self.start_agent(job.name, job.prompt, job.agent, job.model);
+        }
+    }
+
+    /// Fetch lists and build rules off the main thread; WebKit compiles them asynchronously afterwards.
+    fn start_blocklist(&mut self) {
+        let cb = self.config.content_blocking.clone();
+        if !cb.enabled {
+            #[cfg(target_os = "macos")]
+            {
+                self.rules = None;
+                self.apply_rules();
+            }
+            return;
+        }
+        let mut allow = cb.allow.clone();
+        allow.extend(self.state.blocking_allow.iter().cloned());
+        let p = self.proxy.clone();
+        std::thread::spawn(move || match blocking::fetch(&cb.lists, cb.refresh_days) {
+            Ok(domains) => {
+                let json = blocking::rules_json(&domains, &allow);
+                let hash = blocking::hash(&json);
+                let unchanged = blocking::stored_hash().as_deref() == Some(hash.as_str());
+                send(&p, UserEvent::BlocklistBuilt { json: (!unchanged).then_some(json), hash });
+            }
+            Err(e) => eprintln!("valerie: content blocking disabled: {e:#}"),
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    fn apply_rules(&self) {
+        for v in self.views.values() {
+            blocking::mac::apply(v, self.rules.as_ref());
+        }
+        for l in self.littles.values() {
+            blocking::mac::apply(&l.view, self.rules.as_ref());
+        }
+    }
+
     fn start_sync(&mut self) {
         let repo = self.config.sync.repo.clone();
         if repo.is_empty() {
@@ -958,6 +1297,7 @@ impl App {
         if !self.config.sync.repo.is_empty() && interval > 0 && t.saturating_sub(self.last_sync) > interval {
             self.start_sync();
         }
+        self.schedule_agents();
         if self.dirty {
             self.save();
         }
@@ -1105,7 +1445,18 @@ impl App {
                     self.open_tab(&url, None, true);
                 }
             }
-            Command::MoveTab { tab, space, folder, pinned, index } => self.move_tab(tab, space, folder, pinned, index),
+            Command::MoveTab { tab, favorite: true, index, .. } => {
+                let was_active = self.state.active_tab() == Some(tab);
+                self.state.detach(tab);
+                let i = index.unwrap_or(self.state.favorites.len()).min(self.state.favorites.len());
+                self.state.favorites.insert(i, tab);
+                if was_active {
+                    self.state.space_mut().active = Some(tab);
+                }
+                self.dirty = true;
+                self.render();
+            }
+            Command::MoveTab { tab, space, folder, pinned, index, .. } => self.move_tab(tab, space, folder, pinned, index),
             Command::RenameTab { tab, title } => {
                 if let Some(t) = self.state.tabs.get_mut(&tab) {
                     t.custom_title = Some(title).filter(|s| !s.trim().is_empty());
@@ -1186,7 +1537,11 @@ impl App {
             }
             Command::ToggleSidebar => {
                 self.config.layout.sidebar_visible = !self.config.layout.sidebar_visible;
-                self.layout();
+                self.sidebar_peek = false;
+                self.refresh_content_config();
+                // Pages sit above the sidebar, so growing/shrinking them over it is the whole animation.
+                let secs = self.anim_secs();
+                self.layout_anim(secs);
                 self.render();
             }
             Command::ToggleTabBarPosition => {
@@ -1324,6 +1679,74 @@ impl App {
                     Err(e) => self.toast(&format!("Import failed: {e:#}")),
                 }
             }
+            Command::RunAgent { name, prompt, agent } => {
+                self.close_bar();
+                let job = name.as_ref().and_then(|n| self.config.agents.jobs.iter().find(|j| &j.name == n).cloned());
+                match (job, prompt) {
+                    (Some(j), _) => self.start_agent(j.name, j.prompt, agent.or(j.agent), j.model),
+                    (None, Some(p)) if !p.trim().is_empty() => {
+                        let short: String = p.chars().take(40).collect();
+                        self.start_agent(name.unwrap_or(short), p, agent, None)
+                    }
+                    _ => self.toast("No such agent job"),
+                }
+            }
+            Command::ShowAgentRun { index } => {
+                self.close_bar();
+                if let Some(r) = self.agent_runs.get(index) {
+                    let text = std::fs::read_to_string(&r.log).unwrap_or_else(|e| e.to_string());
+                    let text: String = text.chars().take(200_000).collect();
+                    let enc: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>().replace('+', "%20");
+                    self.open_tab(&format!("data:text/plain;charset=utf-8,{enc}"), None, true);
+                }
+            }
+            Command::CopyPassword { vault, origin, username } => {
+                self.close_bar();
+                let e = passwords::Entry { vault, origin, username };
+                match passwords::password(&e) {
+                    Ok(Some(pw)) => {
+                        if arboard::Clipboard::new().and_then(|mut c| c.set_text(pw.clone())).is_ok() {
+                            self.toast("Password copied: clears in 45 seconds");
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_secs(45));
+                                if let Ok(mut c) = arboard::Clipboard::new() {
+                                    if c.get_text().ok().as_deref() == Some(pw.as_str()) {
+                                        let _ = c.set_text(String::new());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    Ok(None) => self.toast("Password not found"),
+                    Err(err) => self.toast(&format!("Keychain: {err}")),
+                }
+            }
+            Command::DeletePassword { vault, origin, username } => {
+                self.close_bar();
+                match passwords::delete(&passwords::Entry { vault, origin, username }) {
+                    Ok(()) => self.toast("Password deleted"),
+                    Err(e) => self.toast(&format!("Keychain: {e}")),
+                }
+            }
+            Command::ToggleSiteBlocking => {
+                let host = self
+                    .state
+                    .active_tab()
+                    .and_then(|t| self.state.tabs.get(&t))
+                    .and_then(|t| url::Url::parse(&t.url).ok())
+                    .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()));
+                let Some(host) = host else { return };
+                let allowed = if let Some(i) = self.state.blocking_allow.iter().position(|h| h == &host) {
+                    self.state.blocking_allow.remove(i);
+                    false
+                } else {
+                    self.state.blocking_allow.push(host.clone());
+                    true
+                };
+                self.dirty = true;
+                self.toast(&format!("Blocking {} for {host}: reload to apply", if allowed { "off" } else { "on" }));
+                self.start_blocklist();
+            }
             Command::FindInPage { query } => {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
                     let _ = v.focus();
@@ -1346,6 +1769,25 @@ impl App {
         let kind = m["t"].as_str().unwrap_or("");
         match (from, kind) {
             (Source::Chrome, "ready") => self.render(),
+            (Source::Chrome, "unpeek") | (Source::Page(Target::Tab(_)), "unpeek") => {
+                if self.sidebar_peek {
+                    self.sidebar_peek = false;
+                    let secs = self.anim_secs();
+                    self.layout_anim(secs);
+                    self.render();
+                    self.refresh_content_config();
+                }
+            }
+            (Source::Page(Target::Tab(_)), "edge") => {
+                // Mouse hit the screen edge with the sidebar hidden: slide it in until the mouse leaves it.
+                if !self.config.layout.sidebar_visible && !self.sidebar_peek && self.config.layout.tab_bar == TabBar::Side {
+                    self.sidebar_peek = true;
+                    let secs = self.anim_secs();
+                    self.layout_anim(secs);
+                    self.render();
+                    self.refresh_content_config();
+                }
+            }
             (Source::Chrome, "drag") => {
                 let _ = self.window.drag_window();
             }
@@ -1394,6 +1836,10 @@ impl App {
                 }
                 self.render();
             }
+            (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
+                let k = k.to_string();
+                self.handle_password_ipc(target, &k, &m);
+            }
             (Source::Page(target), "open") => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
                 // Pages can forge this message, so cap it to stop tab spam.
@@ -1432,13 +1878,26 @@ impl App {
                     }
                     if let Some((u, t)) = visit {
                         self.state.record_visit(&u, &t);
+                        if let Some(v) = self.views.get(&id) {
+                            self.after_load(v, &u);
+                        }
+                        self.fill_offers.remove(&Target::Tab(id));
+                        // A login form that navigates on submit: show the save prompt once more on the page it lands on.
+                        let reoffer = self.pending_save.as_mut().filter(|p| p.target == Target::Tab(id) && !p.reoffered && now().saturating_sub(p.at) <= 10);
+                        if let Some(p) = reoffer {
+                            p.reoffered = true;
+                            self.offer_pending_save();
+                        }
                     }
                     self.dirty = true;
                     self.render();
                 }
                 Target::Little(id) => {
                     if let Some(l) = self.littles.get_mut(&id) {
-                        l.url = url;
+                        l.url = url.clone();
+                    }
+                    if let Some(l) = self.littles.get(&id).filter(|_| finished) {
+                        self.after_load(&l.view, &url);
                     }
                     self.render_little(id);
                 }
@@ -1491,6 +1950,41 @@ impl App {
                     Err(e) => self.toast(&format!("Sync failed: {e}")),
                 }
             }
+            UserEvent::AgentDone(f) => {
+                self.agents_running.retain(|n| n != &f.name);
+                self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, f.name));
+                self.agent_runs.insert(0, f);
+                self.agent_runs.truncate(30);
+                self.render();
+            }
+            UserEvent::BlocklistBuilt { json, hash } => {
+                #[cfg(target_os = "macos")]
+                {
+                    let p = self.proxy.clone();
+                    match json {
+                        Some(j) => blocking::mac::compile(&j, move |r| send(&p, UserEvent::RulesReady(r, Some(hash)))),
+                        None => blocking::mac::lookup(move |r| send(&p, UserEvent::RulesReady(r, None))),
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (json, hash);
+            }
+            #[cfg(target_os = "macos")]
+            UserEvent::RulesReady(r, hash) => match r {
+                Ok(list) => {
+                    if let Some(h) = hash {
+                        blocking::store_hash(&h);
+                    }
+                    self.rules = Some(list);
+                    self.apply_rules();
+                }
+                Err(_) if hash.is_none() => {
+                    // WebKit's cached copy is gone: forget the hash and compile from scratch.
+                    let _ = std::fs::remove_file(blocking::dir().join("compiled.hash"));
+                    self.start_blocklist();
+                }
+                Err(e) => self.toast(&format!("Content blocking failed: {e}")),
+            },
             UserEvent::Downloaded { ok } => self.toast(if ok { "Download complete" } else { "Download failed" }),
         }
     }
@@ -1563,6 +2057,7 @@ impl App {
                 None => Err("unknown tab".into()),
             },
             "run" => match serde_json::from_value::<Command>(args) {
+                Ok(cmd) if cmd.agent_forbidden() => Err("that command is not available to agents".into()),
                 Ok(cmd) => {
                     self.dispatch(cmd, elwt);
                     Ok(json!("ok"))
@@ -1577,6 +2072,22 @@ impl App {
                 }
                 None => Err("no tab (open one first)".into()),
             },
+            "screenshot" => {
+                let Some(t) = self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) else {
+                    let _ = reply.send(Err("no tab".into()));
+                    return;
+                };
+                self.ensure_view(t);
+                let Some(v) = self.views.get(&t) else {
+                    let _ = reply.send(Err("tab has no page".into()));
+                    return;
+                };
+                let width = args["width"].as_f64().unwrap_or(1024.0).clamp(200.0, 2400.0);
+                platform::snapshot(v, width, move |r| {
+                    let _ = reply.send(r.map(|png| json!({ "__image_png": crate::mcp::base64(&png) })));
+                });
+                return;
+            }
             "eval" => {
                 let Some(t) = self.target_tab(tab_arg) else {
                     let _ = reply.send(Err("no tab".into()));
@@ -1638,6 +2149,7 @@ impl App {
 
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
         self.build_menu();
+        self.start_blocklist();
         let a = self.state.active_space;
         self.switch_space(a);
         if !urls.is_empty() {
@@ -1649,7 +2161,12 @@ impl App {
 fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let path = config::config_path();
-        let mtime = || std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        // Newest mtime across the config file, the boosts dir and the files in it.
+        let mtime = || {
+            let m = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+            let boosts = std::fs::read_dir(boosts_dir()).into_iter().flatten().flatten().filter_map(|e| m(&e.path()));
+            [m(&path), m(&boosts_dir())].into_iter().flatten().chain(boosts).max()
+        };
         let mut last = mtime();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(800));

@@ -1,0 +1,25 @@
+# Valerie config: hot-reloaded on save, safe to keep in git.
+# Only put what you want to change here; everything else uses the defaults that ship with Valerie.
+# See every option with comments: `valerie default-config` (or config/default.yaml in the repo).
+
+profiles:
+  - name: Personal
+  - name: School
+  - name: Work
+
+spaces:
+  - { name: Personal, profile: Personal, theme: midnight, icon: "✦" }
+  - { name: School, profile: School, theme: forest, icon: "✎" }
+  - { name: Work, profile: Work, theme: ocean, icon: "◆" }
+
+routes:
+  - { match: "*.edu", space: School }
+
+# layout:
+#   bezel: 0
+#   pinned_style: icons
+# keybindings:
+#   "CmdOrCtrl+D": open_command_bar
+# vim:
+#   bindings:
+#     "u": back

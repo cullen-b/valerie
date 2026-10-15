@@ -4,6 +4,7 @@
 
 search_engine: "https://www.google.com/search?q=%s"
 new_tab_url: ""            # empty = open the command bar instead of a page
+user_agent: ""             # empty = Safari's user agent for this macOS version (sites treat Valerie like Safari)
 
 layout:
   tab_bar: side            # side | top
@@ -13,6 +14,8 @@ layout:
   bezel: 0                 # space around web content. 0 = edge to edge like Safari, ~8 = Arc
   corner_radius: 0         # rounded content corners (macOS)
   split_gap: 2
+  pinned_style: icons      # icons (Arc-style tiles) | list
+  animation_ms: 180        # sidebar / space transition length (0 = instant)
 
 tabs:
   archive_after_hours: 12  # unpinned "today" tabs auto-archive after this long unused (0 = never)
@@ -112,7 +115,8 @@ vim:
     "h": scroll_left
     "l": scroll_right
     "d": half_page_down
-    "u": half_page_up
+    "U": half_page_up
+    "u": back
     "gg": top
     "G": bottom
     "f": hints
@@ -136,6 +140,22 @@ vim:
     "]s": next_space
     "[s": prev_space
 
+# Passwords live in the macOS Keychain, one vault per profile. Shared vaults let profiles share logins.
+passwords:
+  enabled: true
+  shared: []
+  # shared:
+  #   - name: Shared
+  #     profiles: [Personal, Work]
+
+# Ad and tracker blocking: hosts-style lists compiled into WebKit content rules (cached; refreshed weekly).
+content_blocking:
+  enabled: true
+  lists:
+    - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  allow: []                # sites where blocking is off, e.g. ["example.com"] (or use "Toggle Blocking for This Site")
+  refresh_days: 7
+
 # Agents: a Model Context Protocol server built into the browser.
 # Connect with: claude mcp add --transport http valerie http://127.0.0.1:7777/mcp --header "Authorization: Bearer $(cat <data dir>/mcp-token)"
 mcp:
@@ -147,6 +167,20 @@ sync:
   repo: ""                 # e.g. git@github.com:you/valerie-sync.git
   device: ""               # defaults to this machine's hostname
   interval_minutes: 5
+
+# Headless agents: your own Claude Code, Codex or OpenCode subscription drives the browser over MCP in the
+# background. Run one from the command bar ("> do something") or schedule jobs below.
+agents:
+  default: claude          # claude | codex | opencode
+  model: ""                # empty = the CLI's own default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
+  space: Agents            # agents open their tabs in this space and leave yours alone
+  jobs: []
+  # jobs:
+  #   - name: morning-brief
+  #     prompt: "Open Hacker News and my GitHub notifications, then summarise what matters"
+  #     at: "08:30"        # daily at a local time, and/or
+  #     every: 6h          # every 30m / 6h / 1d
+  #     agent: claude
 
 # Extra themes (merged with the built-in presets).
 themes: {}

@@ -114,6 +114,15 @@ pub struct State {
     pub history: Vec<HistoryEntry>,
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    /// Last run time of each scheduled agent job.
+    #[serde(default)]
+    pub agent_last: BTreeMap<String, u64>,
+    /// Sites where the user switched content blocking off.
+    #[serde(default)]
+    pub blocking_allow: Vec<String>,
+    /// Origins where the user chose "Never" save passwords.
+    #[serde(default)]
+    pub password_never: Vec<String>,
 }
 
 const MAX_HISTORY: usize = 5000;

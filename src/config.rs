@@ -6,11 +6,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const DEFAULT_YAML: &str = include_str!("../config/default.yaml");
+pub const STARTER_YAML: &str = include_str!("../config/starter.yaml");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub search_engine: String,
     pub new_tab_url: String,
+    pub user_agent: String,
     pub layout: Layout,
     pub tabs: TabsConfig,
     pub little_window: LittleWindowConfig,
@@ -21,6 +23,9 @@ pub struct Config {
     pub vim: VimConfig,
     pub mcp: McpConfig,
     pub sync: SyncConfig,
+    pub agents: AgentsConfig,
+    pub content_blocking: BlockingConfig,
+    pub passwords: PasswordsConfig,
     pub themes: BTreeMap<String, Theme>,
 }
 
@@ -33,6 +38,8 @@ pub struct Layout {
     pub bezel: f64,
     pub corner_radius: f64,
     pub split_gap: f64,
+    pub pinned_style: String,
+    pub animation_ms: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -144,6 +151,71 @@ pub struct SyncConfig {
     pub interval_minutes: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordsConfig {
+    pub enabled: bool,
+    pub shared: Vec<SharedVault>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedVault {
+    pub name: String,
+    pub profiles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockingConfig {
+    pub enabled: bool,
+    pub lists: Vec<String>,
+    pub allow: Vec<String>,
+    pub refresh_days: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentsConfig {
+    pub default: String,
+    /// Model passed to the agent CLI; empty = the CLI's own default.
+    pub model: String,
+    pub space: String,
+    pub jobs: Vec<AgentJob>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentJob {
+    pub name: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Interval like "30m", "6h", "1d".
+    #[serde(default)]
+    pub every: Option<String>,
+    /// Daily local time "HH:MM".
+    #[serde(default)]
+    pub at: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Parse "90s", "30m", "6h", "1d" into seconds.
+pub fn parse_interval(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit())?);
+    let n: u64 = num.parse().ok()?;
+    Some(n * match unit.trim() {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        _ => return None,
+    })
+}
+
 pub fn config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("VALERIE_CONFIG_DIR") {
         return PathBuf::from(d);
@@ -184,12 +256,12 @@ impl Config {
         serde_yaml::from_str(DEFAULT_YAML).expect("default config is valid")
     }
 
-    /// Load the user config, writing the commented defaults on first run.
+    /// Load the user config, writing a small starter file on first run (defaults fill in the rest).
     pub fn load() -> Result<Config> {
         let path = config_path();
         if !path.exists() {
             std::fs::create_dir_all(config_dir())?;
-            std::fs::write(&path, DEFAULT_YAML)?;
+            std::fs::write(&path, STARTER_YAML)?;
         }
         let text = std::fs::read_to_string(&path)?;
         Self::parse(&text).with_context(|| format!("in {}", path.display()))
@@ -220,6 +292,13 @@ impl Config {
     pub fn theme_names(&self) -> Vec<String> {
         let mut v: Vec<String> = PRESETS.iter().map(|p| p.0.to_string()).collect();
         v.extend(self.themes.keys().cloned());
+        v
+    }
+
+    /// Vaults a profile can use: its own first, then shared vaults that include it.
+    pub fn vaults_for(&self, profile: &str) -> Vec<String> {
+        let mut v = vec![profile.to_string()];
+        v.extend(self.passwords.shared.iter().filter(|s| s.profiles.iter().any(|p| p == profile)).map(|s| s.name.clone()));
         v
     }
 
@@ -269,6 +348,15 @@ mod tests {
         for (k, b) in &c.keybindings {
             assert!(b.as_ref().unwrap().command().is_some(), "binding {k}");
         }
+    }
+
+    #[test]
+    fn starter_parses_and_intervals() {
+        let c = Config::parse(STARTER_YAML).unwrap();
+        assert_eq!(c.spaces.len(), 3);
+        assert_eq!(parse_interval("30m"), Some(1800));
+        assert_eq!(parse_interval("1d"), Some(86400));
+        assert_eq!(parse_interval("x"), None);
     }
 
     #[test]

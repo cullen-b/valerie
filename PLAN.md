@@ -89,11 +89,41 @@ bar rendered with mock state.
 **Not yet verified by eye:** the native window composition (the screen could not be captured overnight). Check the
 command bar overlay sits above pages, traffic lights line up with the sidebar, and the rounded-corner option.
 
-### Next up (Phase 1.5)
-- Agent `screenshot` tool (WKWebView `takeSnapshot`), agent action log + approval prompt for sensitive actions
-- Peek previews, hover-to-reveal sidebar when hidden, Boosts (per-site CSS/JS in the config dir)
-- Per-profile WebContext data dirs on Windows/Linux; CI builds for all three OSes
-- App icon, signing/notarisation, auto-update
+### Feedback round 1 ✅ (2026-10-15)
+- [x] Safari user agent so Google/YouTube serve full pages (`user_agent` overrides it)
+- [x] `u` goes back (half-page-up moved to `U`)
+- [x] Drag and drop rebuilt on pointer events: pin, unpin, reorder, favorite, into folders, onto a space
+- [x] Pinned tabs as Arc-style icon tiles (`layout.pinned_style: icons|list`)
+- [x] Sidebar toggle animates the page natively instead of jumping; `layout.animation_ms`
+- [x] Space switches: sidebar slides and follows the two-finger swipe, theme crossfades, page fades in
+- [x] Command bar: no hint text, recent tabs when empty
+- [x] Starter config on first run (only your overrides), `valerie default-config` prints every option
+
+### Headless agents ✅ MVP
+Agents run on the user's **own** Claude Code / Codex / OpenCode subscription: Valerie launches the CLI headless
+(`claude -p`, `codex exec`, `opencode run`) and wires it to the browser through the `valerie mcp-stdio` bridge.
+- [x] Ad hoc from the command bar: type `> task`, or pick "Ask agent" under any search
+- [x] Scheduled jobs in config (`agents.jobs`: `every: 6h` and/or `at: "08:30"`), "Run agent: name" in the bar
+- [x] Agents work in their own space (`agents.space`) and leave your tabs alone; a pulsing sidebar dot shows runs
+- [x] Logs per run (`<data dir>/agents/*.log`), "Agent run: …" in the bar opens one; toast when done
+- [x] Claude Code restricted to Valerie's tools (`--strict-mcp-config --allowedTools mcp__valerie`), Codex read-only sandbox
+- [ ] Truly headless window (off-screen webviews) so agents never share the visible window's process budget
+- [ ] Approval prompts for sensitive actions (purchases, sending messages, form submits on new domains)
+- [ ] Per-agent action log in the sidebar, cancel button, result notifications via macOS Notification Center
+- [ ] `screenshot` MCP tool so agents can see pages, not just read the DOM
+
+### Passkeys (blocked on Apple)
+WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
+`com.apple.developer.web-browser.public-key-credential` entitlement, which needs a paid Apple Developer account
+(Account Holder role), a request to Apple, and a provisioning-profile-signed build. Plan:
+1. Enrol in the Apple Developer Program and request the entitlement (form: "macOS Web Browser Public Key Credential")
+2. Sign `Valerie.app` with a Developer ID + the entitlement in `scripts/bundle-macos.sh`
+3. Until then: passkey-only sites fall back to password/2FA; the Chromium (CEF) backend would also solve it
+
+### Next up
+- Agent `screenshot` tool, Boosts (per-site CSS/JS), hover-to-reveal sidebar, Peek previews
+- App icon, CI builds for macOS/Linux/Windows, signing/notarisation, auto-update
+- Per-profile WebContext data dirs on Windows/Linux
 
 ### Phase 2: daily driver
 - Password manager: per-profile vaults in the OS keychain, shared vault groups across profiles, autofill script,
