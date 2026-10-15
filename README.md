@@ -84,8 +84,11 @@ can (except reading passwords).
 valerie sync-setup               # creates a private <you>/valerie-sync repo with gh and writes it into config.yaml
 ```
 
-Each device pushes `devices/<hostname>.json` every few minutes (`⌘⇧Y` syncs now). Other devices' tabs show up in
-the command bar as "Synced". Nothing but GitHub is involved.
+Each device pushes `devices/<hostname>.json` every few minutes (`⌘⇧Y` syncs now). Pinned tabs, folders, favorites
+and spaces sync for real (the newest edit to a space wins). Today tabs stay on their device and show up in the
+command bar as "Synced". Nothing but GitHub is involved.
+
+Shift-click any link to **Peek** at it (`esc` closes, `⌘O` keeps it as a tab).
 
 ## Profiles, spaces and Air Traffic Control
 

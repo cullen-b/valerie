@@ -109,8 +109,9 @@ Agents run on the user's **own** Claude Code / Codex / OpenCode subscription: Va
 - [x] Claude Code restricted to Valerie's tools (`--strict-mcp-config --allowedTools mcp__valerie`), Codex read-only sandbox
 - [ ] Truly headless window (off-screen webviews) so agents never share the visible window's process budget
 - [ ] Approval prompts for sensitive actions (purchases, sending messages, form submits on new domains)
-- [ ] Per-agent action log in the sidebar, cancel button, result notifications via macOS Notification Center
-- [ ] `screenshot` MCP tool so agents can see pages, not just read the DOM
+- [x] Stop a running agent from the command bar ("Stop agent: …")
+- [x] `screenshot` MCP tool (native WKWebView snapshot) so agents can see pages
+- [ ] Per-agent action log in the sidebar, result notifications via macOS Notification Center
 
 ### Passkeys (blocked on Apple)
 WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
@@ -120,20 +121,31 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 2. Sign `Valerie.app` with a Developer ID + the entitlement in `scripts/bundle-macos.sh`
 3. Until then: passkey-only sites fall back to password/2FA; the Chromium (CEF) backend would also solve it
 
+### Round 2 ✅ (2026-10-15)
+- [x] Password manager: per-profile Keychain vaults, shared vaults (`passwords.shared`), save prompt after login,
+      account picker on login fields (fills only after a real click; pages can't forge it), copy from the command
+      bar (clipboard clears in 45s), `valerie import-passwords export.csv`. Agents can never read passwords.
+- [x] Ad/tracker blocking: hosts lists compiled into WebKit content rules (cached), cosmetic hiding, per-site toggle
+- [x] Boosts: `~/.config/valerie/boosts/<host>.css|.js`, CSS live-reloads
+- [x] Peek: shift-click a link to preview it over the page; esc closes, ⌘O opens as a tab
+- [x] Hover-to-reveal sidebar when hidden
+- [x] Real sync of pinned tabs, folders, favorites and spaces (newest edit per space wins; stable pinned URLs;
+      untouched devices never overwrite). Today tabs stay per-device and show up as "Synced" in the command bar.
+- [x] App icon, CI on macOS/Linux/Windows, release workflow (tag `v*` → Valerie.app zip on GitHub Releases)
+- [x] Per-profile data directories on Windows/Linux
+
 ### Next up
-- Agent `screenshot` tool, Boosts (per-site CSS/JS), hover-to-reveal sidebar, Peek previews
-- App icon, CI builds for macOS/Linux/Windows, signing/notarisation, auto-update
-- Per-profile WebContext data dirs on Windows/Linux
+- Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
+- Auto-update from GitHub Releases
+- Agent approvals for sensitive actions, action log, Notification Center results
+- Download manager panel, history page, site permissions UI
 
 ### Phase 2: daily driver
-- Password manager: per-profile vaults in the OS keychain, shared vault groups across profiles, autofill script,
-  import from Chrome/Arc CSV
-- Content blocking (WKContentRuleList, EasyList-compiled rules) and per-site settings
-- Find in page, downloads panel, history page, permissions UI, print
-- Peek (preview a link in an overlay), Boosts (per-site CSS/JS from the config dir)
-- Drag-and-drop everywhere, tab previews on hover, media controls in sidebar
-- Session restore across crashes, closed-tab stack per space
-- Smarter sync: pinned tabs/spaces merge (CRDT-ish, last-writer-wins per item), config sync
+- Password generator, TOTP codes, Keychain-backed vaults on Windows/Linux (Credential Manager / Secret Service)
+- EasyList-syntax filters (cosmetic + network) beyond hosts lists, per-site settings page
+- Downloads panel, history page, permissions UI, print
+- Tab previews on hover, media controls in sidebar
+- Config sync through the same repo
 
 ### Phase 3: everywhere
 - Windows/Linux polish (WebView2 profiles, WebKitGTK data dirs), CI release builds for all three

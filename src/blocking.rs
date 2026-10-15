@@ -3,6 +3,7 @@ use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const IDENTIFIER: &str = "valerie-blocklist";
 /// WebKit rejects rule lists above 150k rules.
 const MAX_RULES: usize = 145_000;
@@ -103,6 +104,7 @@ pub fn stored_hash() -> Option<String> {
     std::fs::read_to_string(dir().join("compiled.hash")).ok()
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn store_hash(h: &str) {
     let _ = std::fs::write(dir().join("compiled.hash"), h);
 }

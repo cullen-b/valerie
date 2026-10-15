@@ -7,6 +7,19 @@ use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
+/// Running agent processes by run name, so they can be stopped from the command bar.
+static RUNNING: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+
+pub fn stop(name: &str) -> bool {
+    let pid = RUNNING.lock().ok().and_then(|r| r.iter().find(|(n, _)| n == name).map(|(_, p)| *p));
+    let Some(pid) = pid else { return false };
+    #[cfg(unix)]
+    let ok = Command::new("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
+    #[cfg(windows)]
+    let ok = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
+    ok
+}
+
 pub struct Run {
     pub name: String,
     pub agent: String,
@@ -83,6 +96,7 @@ pub fn run(r: Run) -> Finished {
     let _ = std::fs::create_dir_all(&work);
     let log = dir.join(format!("{}-{}.log", crate::state::now(), r.name.replace(|c: char| !c.is_ascii_alphanumeric(), "-")));
     let finished = |ok: bool, summary: String| Finished { name: r.name.clone(), ok, log: log.clone(), summary };
+    let r_name = r.name.clone();
     let result = (|| -> Result<bool> {
         let exe = std::env::current_exe()?;
         let path = search_path();
@@ -91,13 +105,23 @@ pub fn run(r: Run) -> Finished {
         use std::io::Write;
         writeln!(&file, "# {} ({})\n# {}\n", r.name, r.agent, r.prompt)?;
         let mut child = cmd.current_dir(&work).stdin(Stdio::null()).stdout(file.try_clone()?).stderr(file).spawn()?;
+        if let Ok(mut r) = RUNNING.lock() {
+            r.push((r_name.clone(), child.id()));
+        }
+        let forget = || {
+            if let Ok(mut r) = RUNNING.lock() {
+                r.retain(|(n, _)| n != &r_name);
+            }
+        };
         let start = Instant::now();
         loop {
             if let Some(status) = child.try_wait()? {
+                forget();
                 return Ok(status.success());
             }
             if start.elapsed() > TIMEOUT {
                 let _ = child.kill();
+                forget();
                 bail!("timed out after {} minutes", TIMEOUT.as_secs() / 60);
             }
             std::thread::sleep(Duration::from_millis(500));

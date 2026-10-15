@@ -10,11 +10,31 @@ pub struct SyncedTab {
     pub url: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SyncNode {
+    Tab {
+        title: String,
+        url: String,
+        #[serde(default)]
+        custom_title: Option<String>,
+    },
+    Folder {
+        name: String,
+        children: Vec<SyncNode>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncedSpace {
     pub name: String,
     pub pinned: Vec<SyncedTab>,
     pub tabs: Vec<SyncedTab>,
+    /// The pinned tree and when it was last edited; the newest edit across devices wins.
+    #[serde(default)]
+    pub tree: Vec<SyncNode>,
+    #[serde(default)]
+    pub modified: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +42,10 @@ pub struct DeviceTabs {
     pub device: String,
     pub updated: u64,
     pub spaces: Vec<SyncedSpace>,
+    #[serde(default)]
+    pub favorites: Vec<SyncNode>,
+    #[serde(default)]
+    pub favorites_modified: u64,
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {

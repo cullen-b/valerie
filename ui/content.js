@@ -177,8 +177,10 @@ window.addEventListener("keydown", (e) => {
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.key === "Escape") {
+    const a = deepActive();
     if (mode === "insert") { mode = "normal"; toast("-- NORMAL --"); }
-    const a = deepActive(); if (editable(a)) a.blur();
+    else if (!editable(a) && !buffer) post({ t: "cmd", cmd: { cmd: "close_peek" } });
+    if (editable(a)) a.blur();
     buffer = ""; return;
   }
   if (mode === "insert" || editable(deepActive()) || excluded()) return;
@@ -215,6 +217,15 @@ document.addEventListener("mousemove", (e) => {
   const hit = cfg.edge === "left" ? e.clientX <= 2 : e.clientX >= innerWidth - 3;
   if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
 }, { passive: true });
+
+// ---------- shift-click a link to Peek at it ----------
+document.addEventListener("click", (e) => {
+  if (!e.isTrusted || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.button !== 0) return;
+  const a = e.target.closest && e.target.closest("a[href]");
+  if (!a || !/^https?:/.test(a.href)) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  post({ t: "peek", url: a.href });
+}, true);
 
 // ---------- page metadata for the sidebar ----------
 function favicon() {

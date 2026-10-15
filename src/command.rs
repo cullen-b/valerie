@@ -139,6 +139,11 @@ pub enum Command {
         url: String,
     },
     MoveToMainWindow,
+    /// Preview a link in a floating panel over the page (like Arc's Peek).
+    Peek {
+        url: String,
+    },
+    ClosePeek,
     OpenConfig,
     ReloadConfig,
     Sync,
@@ -156,6 +161,9 @@ pub enum Command {
     },
     ShowAgentRun {
         index: usize,
+    },
+    StopAgent {
+        name: String,
     },
     ToggleSiteBlocking,
     /// Copy a saved password to the clipboard (cleared after 45s). Never available to pages or agents.
@@ -216,6 +224,7 @@ impl Command {
                 | NextSpace
                 | PrevSpace
                 | FocusNextPane
+                | ClosePeek
                 | ZoomIn
                 | ZoomOut
                 | ZoomReset
