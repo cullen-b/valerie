@@ -180,6 +180,9 @@ keybindings:
 vim:
   enabled: true
   scroll_step: 80          # pixels per j / k
+  smooth_scroll: true      # glide instead of jumping (j/k, d/U, gg/G)
+  scroll_duration_ms: 150  # how long each glide takes; lower = snappier
+  hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
   excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
   bindings:
     "j": scroll_down

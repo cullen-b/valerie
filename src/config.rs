@@ -175,6 +175,9 @@ impl Binding {
 pub struct VimConfig {
     pub enabled: bool,
     pub scroll_step: f64,
+    pub smooth_scroll: bool,
+    pub scroll_duration_ms: f64,
+    pub hint_characters: String,
     pub excluded_hosts: Vec<String>,
     pub bindings: BTreeMap<String, Option<serde_json::Value>>,
 }

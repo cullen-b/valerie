@@ -20,7 +20,7 @@ function ui() {
   const st = document.createElement("style");
   st.textContent = `
     * { font: 600 11px/1 -apple-system, system-ui, sans-serif; }
-    .hint { position: fixed; padding: 2px 4px; border-radius: 4px; background: ${cfg.accent || "#9d8cff"}; color: #fff;
+    .hint { position: fixed; left: 0; top: 0; will-change: transform; padding: 2px 4px; border-radius: 4px; background: ${cfg.accent || "#9d8cff"}; color: #fff;
             letter-spacing: .5px; box-shadow: 0 2px 6px rgba(0,0,0,.35); text-transform: uppercase; }
     .hint .typed { opacity: .45; }
     .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 9px 14px; border-radius: 10px;
@@ -68,55 +68,190 @@ function scroller() {
   return best;
 }
 const step = () => cfg.vim.scroll_step || 80;
-const scrollBy = (x, y) => scroller().scrollBy({ left: x, top: y, behavior: "instant" });
+// Smooth scrolling: each key press adds to a target and the page eases toward it, so holding j glides.
+const glide = { el: null, x: 0, y: 0, raf: 0, last: 0 };
+function scrollBy(x, y) {
+  const el = scroller();
+  if (cfg.vim.smooth_scroll === false) return el.scrollBy({ left: x, top: y, behavior: "instant" });
+  if (glide.el !== el) { endGlide(); glide.el = el; }
+  glide.x += x; glide.y += y;
+  if (!glide.raf) {
+    // Pages with `scroll-behavior: smooth` would make each step async; we animate, so steps must be instant.
+    glide.saved = el.style.scrollBehavior; el.style.scrollBehavior = "auto";
+    glide.last = 0; glide.raf = requestAnimationFrame(glideFrame);
+  }
+}
+function endGlide() {
+  if (glide.raf) cancelAnimationFrame(glide.raf);
+  if (glide.el && glide.saved !== undefined) glide.el.style.scrollBehavior = glide.saved;
+  glide.x = glide.y = 0; glide.raf = 0; glide.saved = undefined;
+}
+function glideFrame(now) {
+  // Frame timestamps can predate the key press, so treat the first frame as one normal frame.
+  const dt = glide.last ? Math.max(1, Math.min(now - glide.last, 48)) : 16; glide.last = now;
+  const f = 1 - Math.pow(0.002, dt / (cfg.vim.scroll_duration_ms || 150));
+  const el = glide.el;
+  // Whole-pixel steps (at least 1px), finishing exactly on the remaining distance.
+  const step = (v) => Math.abs(v) <= 1.5 ? Math.round(v) : Math.round(v * f) || Math.sign(v);
+  const dx = step(glide.x), dy = step(glide.y);
+  const bx = el.scrollLeft, by = el.scrollTop;
+  el.scrollBy({ left: dx, top: dy, behavior: "instant" });
+  // Count what actually moved (browsers drop fractions); no movement at all means we hit an edge.
+  const mx = el.scrollLeft - bx, my = el.scrollTop - by;
+  glide.x = dx && !mx ? 0 : glide.x - mx;
+  glide.y = dy && !my ? 0 : glide.y - my;
+  if (Math.abs(glide.x) < 0.5 && Math.abs(glide.y) < 0.5) { glide.raf = 0; return endGlide(); }
+  glide.raf = requestAnimationFrame(glideFrame);
+}
+function scrollToEdge(top) {
+  const s = scroller();
+  endGlide();
+  s.scrollTo({ top: top ? 0 : s.scrollHeight, behavior: cfg.vim.smooth_scroll === false ? "instant" : "smooth" });
+}
 
 // ---------- link hints ----------
+// One pass over every element (including open shadow roots) reading only geometry, so the page lays out once;
+// style and hit-test checks then run only for the few hundred candidates actually on screen.
 let hints = null;
-const CLICKABLE = "a[href], button, input:not([type=hidden]), select, textarea, summary, label[for], [role=button], [role=link], [role=tab], [role=menuitem], [role=checkbox], [onclick], [contenteditable=true], [tabindex]:not([tabindex='-1'])";
-function visibleRect(e) {
-  const r = e.getClientRects()[0];
-  if (!r || r.width < 3 || r.height < 3 || r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return null;
-  const s = getComputedStyle(e);
-  if (s.visibility === "hidden" || s.opacity === "0") return null;
-  const hit = document.elementFromPoint(Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1), Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1));
-  if (hit && hit !== e && !e.contains(hit) && !hit.contains(e)) return null;
-  return r;
+const CLICK_ROLES = new Set(["button", "link", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "checkbox", "radio", "switch",
+  "option", "treeitem", "combobox", "textbox", "searchbox", "slider", "spinbutton", "gridcell", "row"]);
+const FORM_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+function clickableKind(el) {
+  const tag = el.tagName;
+  if (el.disabled || el.getAttribute("aria-disabled") === "true") return 0;
+  if (tag === "A") return el.hasAttribute("href") || el.hasAttribute("onclick") ? 2 : 0;
+  if (tag === "INPUT") return el.type === "hidden" ? 0 : 2;
+  if (tag === "BUTTON" || tag === "SELECT" || tag === "TEXTAREA" || tag === "SUMMARY" || tag === "AREA") return 2;
+  if (tag === "LABEL") return el.control ? 2 : 0;
+  if ((tag === "VIDEO" || tag === "AUDIO") && el.controls) return 2;
+  if (el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable)) return 2;
+  const role = el.getAttribute("role");
+  if (role && CLICK_ROLES.has(role)) return 2;
+  if (el.hasAttribute("onclick") || el.hasAttribute("onmousedown") || el.hasAttribute("jsaction") || el.hasAttribute("aria-haspopup")) return 2;
+  const ti = el.getAttribute("tabindex");
+  if (ti !== null && +ti >= 0) return 2;
+  return 1; // maybe: decided by `cursor: pointer` below
+}
+function hitsElement(el, r) {
+  // Sample a few points: an overlay covering the centre (a play icon on a thumbnail) shouldn't hide the element.
+  const root = el.getRootNode && el.getRootNode().elementFromPoint ? el.getRootNode() : document;
+  const pts = [[r.left + r.width / 2, r.top + r.height / 2], [r.left + 3, r.top + 3], [r.right - 3, r.bottom - 3], [r.left + r.width / 2, r.top + 3]];
+  for (const [x, y] of pts) {
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+    const hit = root.elementFromPoint(x, y);
+    if (!hit) continue;
+    if (hit === el || el.contains(hit) || hit.contains(el)) return true;
+    // A shadow host returned from the document: look inside it.
+    if (hit.shadowRoot && hit.contains(el.getRootNode().host || el)) return true;
+  }
+  return false;
+}
+function collectHintables() {
+  const vw = innerWidth, vh = innerHeight, found = [], seen = new Set();
+  const onScreen = (r) => r.width >= 3 && r.height >= 3 && r.bottom >= 1 && r.right >= 1 && r.top <= vh - 1 && r.left <= vw - 1;
+  // 1. Real controls (links, buttons, inputs, roles…): cheap tag/attribute test first, geometry only for matches.
+  const roots = [document];
+  for (let i = 0; i < roots.length; i++) {
+    for (const el of roots[i].querySelectorAll("*")) {
+      if (el.shadowRoot) roots.push(el.shadowRoot);
+      if (clickableKind(el) !== 2) continue;
+      const r = el.getBoundingClientRect();
+      if (onScreen(r)) { found.push({ el, r, kind: 2 }); seen.add(el); }
+    }
+  }
+  // 2. Things that only look clickable (cursor: pointer). Walk the tree but skip whole subtrees that are off-screen,
+  //    so huge pages cost about as much as what's visible.
+  const walk = (el) => {
+    const r = el.getBoundingClientRect();
+    const off = r.height > 0 && r.width > 0 && (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw);
+    if (off && getComputedStyle(el).position === "static") return;
+    if (!seen.has(el) && onScreen(r) && clickableKind(el) === 1) found.push({ el, r, kind: 1 });
+    for (let c = el.firstElementChild; c; c = c.nextElementSibling) walk(c);
+    if (el.shadowRoot) for (let c = el.shadowRoot.firstElementChild; c; c = c.nextElementSibling) walk(c);
+  };
+  if (document.body) walk(document.body);
+  const chosen = new Set(), out = [], styles = new Map();
+  const style = (el) => { let s = styles.get(el); if (!s) { s = getComputedStyle(el); styles.set(el, s); } return s; };
+  found.sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  for (const c of found) {
+    const s = style(c.el);
+    if (s.visibility !== "visible" || +s.opacity < 0.05 || s.pointerEvents === "none") continue;
+    if (c.kind === 1) {
+      // The outermost `cursor: pointer` element that isn't a giant wrapper.
+      if (s.cursor !== "pointer") continue;
+      const p = c.el.parentElement;
+      if (p && style(p).cursor === "pointer") continue;
+      if (c.r.width * c.r.height > vw * vh * 0.4) continue;
+    }
+    // One hint per target: skip things nested inside an already-hinted link/button (form fields excepted).
+    let dup = false;
+    for (let a = c.el.parentElement, n = 0; a && n < 6; a = a.parentElement, n++) {
+      if (chosen.has(a) && !FORM_TAGS.has(c.el.tagName)) { dup = true; break; }
+    }
+    if (dup || !hitsElement(c.el, c.r)) continue;
+    chosen.add(c.el);
+    out.push(c);
+  }
+  return out;
 }
 function labels(n) {
-  const chars = "asdfghjklqweruiopzxcvbnm";
+  const chars = (cfg.vim.hint_characters || "sadfjklewcmpgh").toLowerCase();
   let out = [""];
-  while (out.length < n) { const prefix = out.shift(); for (const c of chars) out.push(prefix + c); }
-  return out.slice(0, n).sort();
+  while (out.length < n || (out.length === 1 && out[0] === "")) {
+    const prefix = out.shift();
+    for (const c of chars) out.push(prefix + c);
+  }
+  return out.slice(0, n);
 }
 function startHints(newTab) {
-  const els = [...document.querySelectorAll(CLICKABLE)].map((e) => [e, visibleRect(e)]).filter((x) => x[1]);
-  if (!els.length) return toast("No links");
-  const root = ui(), ls = labels(els.length);
-  hints = { newTab, typed: "", items: els.map(([e, r], i) => {
+  const t0 = performance.now();
+  const items = collectHintables();
+  if (!items.length) return toast("Nothing to click");
+  // Reading order: top to bottom, then left to right, so nearby things get similar labels.
+  items.sort((a, b) => Math.round(a.r.top / 8) - Math.round(b.r.top / 8) || a.r.left - b.r.left);
+  const root = ui(), ls = labels(items.length), frag = document.createDocumentFragment();
+  hints = { newTab, typed: "", items: items.map(({ el, r }, i) => {
     const d = document.createElement("div"); d.className = "hint"; d.textContent = ls[i];
-    d.style.left = Math.max(r.left - 2, 0) + "px"; d.style.top = Math.max(r.top - 2, 0) + "px";
-    root.appendChild(d); return { e, label: ls[i], d };
-  }) };
+    d.style.transform = `translate(${Math.max(r.left - 2, 0)}px, ${Math.max(r.top - 2, 0)}px)`;
+    frag.appendChild(d);
+    return { e: el, label: ls[i], d };
+  }), ms: performance.now() - t0 };
+  root.appendChild(frag);
   mode = "hints";
 }
-function stopHints() { if (hints) hints.items.forEach((h) => h.d.remove()); hints = null; mode = "normal"; }
+function stopHints() { if (hints) for (const h of hints.items) h.d.remove(); hints = null; mode = "normal"; }
 function hintKey(k) {
   if (k === "Escape") return stopHints();
   if (k === "Backspace") hints.typed = hints.typed.slice(0, -1);
   else if (k.length === 1) hints.typed += k.toLowerCase();
-  const left = hints.items.filter((h) => h.label.startsWith(hints.typed));
-  hints.items.forEach((h) => {
-    const on = h.label.startsWith(hints.typed); h.d.style.display = on ? "" : "none";
-    if (on) h.d.innerHTML = '<span class="typed">' + hints.typed + "</span>" + h.label.slice(hints.typed.length);
-  });
-  if (left.length === 1 && left[0].label === hints.typed) { const { e } = left[0]; const nt = hints.newTab; stopHints(); activate(e, nt); }
-  else if (!left.length) stopHints();
+  else return;
+  const typed = hints.typed;
+  let left = 0, last = null;
+  for (const h of hints.items) {
+    const on = h.label.startsWith(typed);
+    if (on) { left++; last = h; }
+    if (on !== !h.hidden) { h.hidden = !on; h.d.style.display = on ? "" : "none"; }
+    if (on) h.d.innerHTML = '<span class="typed">' + typed + "</span>" + h.label.slice(typed.length);
+  }
+  if (left === 1 && last.label === typed) { const nt = hints.newTab; stopHints(); activate(last.e, nt); }
+  else if (!left) stopHints();
 }
+// A real-looking click: frameworks (React, YouTube's Polymer, menus) often act on pointer/mouse down, not click.
 function activate(e, newTab) {
   const a = e.closest("a[href]");
   if (newTab && a && /^https?:/.test(a.href)) return post({ t: "open", url: a.href });
-  if (e.matches("input, textarea, select, [contenteditable=true]")) { e.focus(); if (e.select) try { e.select(); } catch (_) {} return; }
-  e.focus({ preventScroll: true });
+  const tag = e.tagName;
+  const textual = tag === "TEXTAREA" || e.isContentEditable || (tag === "INPUT" && !/^(button|submit|reset|checkbox|radio|file|image|color|range)$/i.test(e.type));
+  if (textual) { e.focus(); if (e.select) try { e.select(); } catch (_) {} return; }
+  if (tag === "SELECT") { e.focus(); try { e.showPicker(); } catch (_) {} return; }
+  const r = e.getBoundingClientRect();
+  const x = r.left + Math.min(r.width / 2, 40), y = r.top + r.height / 2;
+  const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
+  const ptr = { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true };
+  e.dispatchEvent(new PointerEvent("pointerover", ptr)); e.dispatchEvent(new MouseEvent("mouseover", base));
+  e.dispatchEvent(new PointerEvent("pointerdown", { ...ptr, buttons: 1 })); e.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+  try { e.focus({ preventScroll: true }); } catch (_) {}
+  e.dispatchEvent(new PointerEvent("pointerup", ptr)); e.dispatchEvent(new MouseEvent("mouseup", base));
   e.click();
 }
 
@@ -160,8 +295,8 @@ function run(action) {
       case "scroll_right": return scrollBy(step(), 0);
       case "half_page_down": return scrollBy(0, h / 2);
       case "half_page_up": return scrollBy(0, -h / 2);
-      case "top": { const s = scroller(); return s.scrollTo({ top: 0, behavior: "instant" }); }
-      case "bottom": { const s = scroller(); return s.scrollTo({ top: s.scrollHeight, behavior: "instant" }); }
+      case "top": return scrollToEdge(true);
+      case "bottom": return scrollToEdge(false);
       case "hints": return startHints(false);
       case "hints_new_tab": return startHints(true);
       case "insert": mode = "insert"; return toast(cfg.escape_hints ? "-- INSERT -- (esc to leave)" : "-- INSERT --");
