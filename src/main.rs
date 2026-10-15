@@ -53,6 +53,9 @@ fn check_config() -> anyhow::Result<()> {
             if !["folder", "icons"].contains(&c.sidebar.compact_pinned.as_str()) {
                 problems.push(format!("sidebar: compact_pinned is {:?}; use folder or icons", c.sidebar.compact_pinned));
             }
+            if !["pin", "star", "favicons"].contains(&c.sidebar.pinned_folder_icon.as_str()) {
+                problems.push(format!("sidebar: pinned_folder_icon is {:?}; use pin, star or favicons", c.sidebar.pinned_folder_icon));
+            }
             for (name, site) in c.site_search.iter().filter_map(|(n, s)| s.as_ref().map(|s| (n, s))) {
                 if !site.url.contains("%s") || !site.url.starts_with("http") {
                     problems.push(format!("site_search: {name:?} url must start with http and contain %s where the search goes"));

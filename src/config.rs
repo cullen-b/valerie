@@ -65,6 +65,7 @@ pub struct SidebarConfig {
     pub favorites: bool,
     pub pinned_hint: bool,
     pub compact_pinned: String,
+    pub pinned_folder_icon: String,
     pub kept_section: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
