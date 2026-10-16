@@ -58,6 +58,14 @@ House rules from the owner:
 - **Restyle a site**: a CSS file in `boosts/<host>.css`.
 - **Anything with logic** (several steps, page scripts, local programs): a plugin in `plugins/<name>/`.
 
+## Sync between machines
+
+If `sync.repo` is set, this folder is a git checkout of the user's private sync repo and Valerie commits, pulls and
+pushes it by itself a few seconds after any change: don't run git here yourself unless asked. To set sync up, run
+`"{exe}" sync-setup` (signs in to GitHub, creates the repo, fills in `sync.repo`) or the "Set Up Sync" command.
+To move the user's setup to a new machine: quit Valerie, move this folder aside, `git clone <repo URL> "{dir}"`,
+start Valerie. Device-specific files (`AGENTS.md`, `reference/`) are regenerated and not synced.
+
 ## Settings
 
 All options live in `reference/default-config.yaml` (also `"{exe}" default-config`). Read it before editing: every
@@ -71,6 +79,7 @@ command as its name (`toggle_sidebar`) or with options (`{{ cmd: switch_space, n
 Without options:
 "#,
         config = config_path().display(),
+        dir = config_dir().display(),
     );
     for (name, title) in CATALOG {
         let _ = writeln!(g, "- `{name}`: {title}");

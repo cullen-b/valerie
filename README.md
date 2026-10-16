@@ -120,13 +120,19 @@ can (except reading passwords).
 
 ## Sync
 
-```sh
-valerie sync-setup               # creates a private <you>/valerie-sync repo with gh and writes it into config.yaml
-```
+Run **Set Up Sync** from the command bar (or `valerie sync-setup`). It signs you in to GitHub (through the GitHub
+CLI, or Valerie's own sign-in if `sync.github_client_id` is set), creates a private `<you>/valerie-sync` repo, and
+from then on syncs a few seconds after every change. Your **config folder is the repo**: settings, boosts, plugins and
+every device's tabs (`devices/<hostname>.json`). Files Valerie regenerates per machine (`AGENTS.md`, `reference/`) and
+anything secret-looking (`*.csv`, `.env`) stay out.
 
-Each device pushes `devices/<hostname>.json` every few minutes (`⌘⇧Y` syncs now). Pinned tabs, folders, favorites
-and spaces sync for real (the newest edit to a space wins). Today tabs stay on their device and show up in the
-command bar as "Synced". Nothing but GitHub is involved.
+**New machine:** install Valerie, run Set Up Sync, done: it finds your repo and pulls everything down (your old
+`config.yaml` is kept as `config.before-sync.yaml`). Or have your assistant clone the repo into the config folder
+(`valerie paths` prints where that is) before first launch.
+
+Pinned tabs, folders, favorites and spaces sync for real (the newest edit to a space wins). Today tabs stay on their
+device and show up in the command bar as "Synced". If two machines change the same line of a setting, the one that
+syncs last wins. `⌘⇧Y` syncs now. Nothing but GitHub is involved.
 
 **Links:** middle-, ⌘- or ⇧-click opens a background tab, ⌥-click opens it in split view, ⌥⇧-click Peeks at it
 (`esc` closes, `⌘O` keeps it as a tab), and right-click gives Valerie's link menu (⇧-right-click for the system
