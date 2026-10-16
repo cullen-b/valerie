@@ -105,6 +105,16 @@ pub struct Closed {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Watch {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub condition: String,
+    #[serde(default)]
+    pub last: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Download {
     pub name: String,
     pub path: String,
@@ -165,6 +175,9 @@ pub struct State {
     /// How much history, archive and closed tabs to keep (from the `history` settings; not saved).
     #[serde(skip)]
     pub limits: Limits,
+    /// Pages an agent checks in the background (Watch This Page…).
+    #[serde(default)]
+    pub watches: Vec<Watch>,
     /// Finished downloads, newest first.
     #[serde(default)]
     pub downloads: Vec<Download>,

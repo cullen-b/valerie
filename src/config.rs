@@ -31,6 +31,8 @@ pub struct Config {
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
     pub chats: ChatsConfig,
+    pub ai_actions: BTreeMap<String, Option<AiAction>>,
+    pub watch: WatchConfig,
     pub permissions: PermissionsConfig,
     pub pages: PagesConfig,
     pub translate: TranslateConfig,
@@ -186,6 +188,23 @@ pub struct AgentDef {
     pub cli: String,
     pub model: String,
     pub command: Vec<String>,
+}
+
+/// A one-click job for an agent (`ai_actions`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiAction {
+    /// "page": answered under the find bar from the page alone (no tools). "chat": opens in Chats and can use the browser.
+    pub mode: String,
+    pub prompt: String,
+    /// Which agent (a name under agents.available); empty = the one for that mode's job.
+    pub agent: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchConfig {
+    pub every_minutes: f64,
+    pub notify: bool,
 }
 
 /// Which agent (by name) does each job; empty = agents.default.
@@ -504,7 +523,7 @@ pub fn config_path() -> PathBuf {
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
-const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available"];
+const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "ai_actions"];
 
 /// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
 /// ignored), each with the closest real key when there is one.

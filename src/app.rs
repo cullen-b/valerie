@@ -57,6 +57,8 @@ pub enum UserEvent {
     ChatDone { chat: String },
     PageAnswer { tab: TabId, ev: crate::ai::Ev },
     PageAnswerDone { tab: TabId },
+    /// A chat-mode AI action whose {selection} has been read from the page.
+    AiActionReady { prompt: String, agent: Option<String> },
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -1261,6 +1263,13 @@ impl App {
         for a in self.state.archive.iter().take(500) {
             items.push(json!({ "kind": "archived", "title": a.title, "url": a.url, "sub": format!("Archived from {}", a.space) }));
         }
+        for (name, a) in self.config.ai_actions.iter().filter_map(|(n, a)| a.as_ref().map(|a| (n, a))) {
+            let sub = if a.mode == "chat" { "AI · opens in Chats" } else { "AI · answers on the page" };
+            items.push(json!({ "kind": "ai", "title": name, "sub": sub, "icon": "✦", "cmd": { "cmd": "ai_action", "name": name } }));
+        }
+        for w in &self.state.watches {
+            items.push(json!({ "kind": "watch", "title": format!("Stop watching: {}", w.title), "sub": w.condition, "icon": "◉", "cmd": { "cmd": "stop_watching", "id": w.id } }));
+        }
         for c in self.chats.iter().filter(|c| !c.messages.is_empty()).take(200) {
             items.push(json!({ "kind": "chat", "title": c.title, "sub": format!("Chat with {}", c.agent), "icon": "✦", "cmd": { "cmd": "activate_chat", "chat": c.id } }));
         }
@@ -1932,7 +1941,9 @@ impl App {
         }
         self.state.agent_last.insert(name.clone(), now());
         self.agents_running.push(name.clone());
-        self.toast(&format!("Agent started: {name}"));
+        if !name.starts_with("Watch: ") {
+            self.toast(&format!("Agent started: {name}"));
+        }
         self.render();
         let p = self.proxy.clone();
         let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
@@ -2111,6 +2122,7 @@ impl App {
             self.start_sync();
         }
         self.schedule_agents();
+        self.check_watches();
         if self.state.track_changes() {
             self.dirty = true;
         }
@@ -2610,6 +2622,25 @@ impl App {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
                     platform::print(v);
                 }
+            }
+            Command::AiAction { name, input } => self.ai_action(name, input, elwt),
+            Command::WatchPage { condition } => {
+                let Some(t) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).filter(|t| t.url.starts_with("http")).cloned() else {
+                    return self.toast("Open the page to watch first");
+                };
+                let Some(condition) = condition.filter(|c| !c.trim().is_empty()) else {
+                    let then = json!({ "cmd": "watch_page" });
+                    return self.dispatch(Command::Prompt { label: "Tell me when… (e.g. the price drops below $500)".into(), value: String::new(), then, field: "condition".into() }, elwt);
+                };
+                let w = crate::state::Watch { id: crate::mcp::random_hex()[..8].to_string(), url: t.url.clone(), title: t.display_title().to_string(), condition: condition.trim().to_string(), last: 0 };
+                self.toast(&format!("Watching {}: checks every {} minutes", w.title, self.config.watch.every_minutes));
+                self.state.watches.push(w);
+                self.dirty = true;
+            }
+            Command::StopWatching { id } => {
+                self.state.watches.retain(|w| w.id != id);
+                self.dirty = true;
+                self.toast("Stopped watching");
             }
             Command::OpenChats => self.open_chats(),
             Command::NewChat { prompt, agent } => {
@@ -3259,6 +3290,11 @@ impl App {
             }
             UserEvent::AgentDone(f) => {
                 self.agents_running.retain(|n| n != &f.name);
+                if f.name.starts_with("Watch: ") {
+                    self.watch_done(&f);
+                    self.render();
+                    return;
+                }
                 if f.name.starts_with("Customize") {
                     self.reload_config();
                     self.build_menu();
@@ -3329,6 +3365,7 @@ impl App {
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
+            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt),
             UserEvent::ChatDone { chat } => {
                 self.chat_running.remove(&chat);
                 if let Some(c) = self.chats.iter().find(|c| c.id == chat) {
@@ -3881,5 +3918,95 @@ impl App {
         self.active_chat = Some(c.id.clone());
         self.chats.insert(0, c);
         self.open_chats();
+    }
+}
+
+// ---------------------------------------------------------------- AI actions and watched pages
+
+impl App {
+    fn ai_action(&mut self, name: String, input: Option<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let Some(a) = self.config.ai_actions.get(&name).cloned().flatten() else {
+            return self.toast(&format!("No AI action called \"{name}\" (see ai_actions in the config)"));
+        };
+        if a.prompt.contains("{input}") && input.as_deref().is_none_or(|i| i.trim().is_empty()) {
+            let then = json!({ "cmd": "ai_action", "name": name });
+            return self.dispatch(Command::Prompt { label: name.trim_end_matches('…').to_string(), value: String::new(), then, field: "input".into() }, elwt);
+        }
+        let tab = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).cloned();
+        let (title, url) = tab.as_ref().map(|t| (t.display_title().to_string(), t.url.clone())).unwrap_or_default();
+        let prompt = a.prompt.replace("{title}", &title).replace("{url}", &url).replace("{input}", input.as_deref().unwrap_or("").trim());
+        let agent = Some(a.agent.clone()).filter(|a| !a.is_empty());
+        let view = tab.and_then(|t| self.views.get(&t.id));
+        if a.mode == "chat" {
+            if !prompt.contains("{selection}") {
+                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt);
+            }
+            let Some(v) = view else { return self.toast("Open a page and select some text first") };
+            let p = self.proxy.clone();
+            let _ = v.evaluate_script_with_callback("String(getSelection() || '').slice(0, 4000)", move |s| {
+                let sel = serde_json::from_str::<String>(&s).unwrap_or_default();
+                send(&p, UserEvent::AiActionReady { prompt: prompt.replace("{selection}", sel.trim()), agent: agent.clone() });
+            });
+            return;
+        }
+        // Page mode: the page fills in {selection} and shows the answer under the find bar.
+        match view {
+            Some(v) => {
+                let _ = v.evaluate_script(&format!("window.__valerie && __valerie.askAction({}, {})", json!(name), json!(prompt)));
+            }
+            None => self.toast("Open a page first"),
+        }
+    }
+
+    /// Run the watched pages that are due.
+    fn check_watches(&mut self) {
+        let t = now();
+        let every = (self.config.watch.every_minutes.max(1.0) * 60.0) as u64;
+        let due: Vec<crate::state::Watch> = self
+            .state
+            .watches
+            .iter()
+            .filter(|w| t.saturating_sub(w.last) >= every && !self.agents_running.iter().any(|n| n.ends_with(&format!("[{}]", w.id))))
+            .cloned()
+            .collect();
+        for w in due {
+            if let Some(x) = self.state.watches.iter_mut().find(|x| x.id == w.id) {
+                x.last = t;
+            }
+            self.dirty = true;
+            let prompt = format!(
+                "Open {} in a background tab and check whether this is true right now: \"{}\". Close that tab when you're \
+                 done. The first line of your reply must be exactly MET or NOT YET; then one short sentence saying what you saw.",
+                w.url, w.condition
+            );
+            self.start_agent(format!("Watch: {} [{}]", w.title, w.id), prompt, None, None);
+        }
+    }
+
+    fn watch_done(&mut self, f: &agents::Finished) {
+        let Some(id) = f.name.rsplit_once('[').and_then(|(_, r)| r.strip_suffix(']')).map(str::to_string) else { return };
+        // The log starts with the prompt ("# …" lines, which mention both answers); the reply's first line decides.
+        let log = std::fs::read_to_string(&f.log).unwrap_or_default();
+        let reply: Vec<&str> = log.lines().filter(|l| !l.starts_with("# ") && !l.trim().is_empty()).collect();
+        let met = reply.first().is_some_and(|l| l.trim().trim_matches(|c: char| !c.is_alphanumeric() && c != ' ').eq_ignore_ascii_case("MET"));
+        if !f.ok || !met {
+            return;
+        }
+        let text = reply[1..].join(" ");
+        let Some(pos) = self.state.watches.iter().position(|w| w.id == id) else { return };
+        let w = self.state.watches.remove(pos);
+        self.dirty = true;
+        let detail = text.trim().to_string();
+        let mut c = crate::ai::Chat::new(&self.config.agent_for("tasks").0);
+        c.title = format!("{}: {}", w.title, w.condition).chars().take(60).collect();
+        let t = now();
+        c.messages.push(crate::ai::Msg { role: "user".into(), text: format!("Tell me when {} ({}): {}", w.title, w.url, w.condition), at: t, ..Default::default() });
+        c.messages.push(crate::ai::Msg { role: "assistant".into(), text: format!("It happened. {detail}"), agent: c.agent.clone(), at: t, ..Default::default() });
+        crate::ai::save_chat(&chats_dir(&self.config), &c);
+        self.chats.insert(0, c);
+        self.toast(&format!("◉ {}: it happened", w.title));
+        if self.config.watch.notify {
+            platform::notify("Valerie", &format!("{}: {}", w.title, w.condition));
+        }
     }
 }

@@ -84,6 +84,13 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   command), `agents.use` picks one for chat, find, scheduled tasks and customizing: e.g. a strong model to chat and a
   fast one for find.
 
+- **AI actions** (`ai_actions`): one-click jobs in the command bar, bindable to keys: Summarize this page, Explain
+  the selection, Key facts and dates, Tidy my tabs, Short tab titles, Find related reading, and anything you add in
+  YAML (`{title}`, `{url}`, `{selection}`, `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use
+  the browser).
+- **Watch This Page…:** "tell me when the price drops below $500" / "when checks pass on this PR". An agent checks in
+  the background every 30 minutes (`watch.every_minutes`), notifies you once it happens, and leaves the details in Chats.
+
 ## Make Valerie yours with AI
 
 Valerie is built to be changed by your AI assistant. Its config folder (`~/.config/valerie/`) holds a generated

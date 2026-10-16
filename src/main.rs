@@ -83,6 +83,14 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("agents: {job} uses {name:?}, which isn't under agents.available"));
                 }
             }
+            for (name, a) in c.ai_actions.iter().filter_map(|(n, a)| a.as_ref().map(|a| (n, a))) {
+                if !["page", "chat"].contains(&a.mode.as_str()) {
+                    problems.push(format!("ai_actions.{name}: mode is {:?}; use page or chat", a.mode));
+                }
+                if !a.agent.is_empty() && !c.agents.available.get(&a.agent).is_some_and(Option::is_some) && ai::kind(&a.agent).is_none() {
+                    problems.push(format!("ai_actions.{name}: agent {:?} isn't under agents.available", a.agent));
+                }
+            }
             let (_, find) = c.agent_for("find");
             if matches!(find.cli.as_str(), "codex" | "cursor" | "hermes") {
                 problems.push(format!("agents.use.find: {} can't run without tools, so it can't answer questions about pages; use claude, pi or opencode", find.cli));
