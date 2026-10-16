@@ -65,6 +65,7 @@ command_bar:
   site_search: true        # type a site's name (e.g. "youtube"), press Tab, and search that site directly
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
+  calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
 
 
 # Sites for Tab-to-search in the command bar. Type a keyword or the start of the name, press Tab, then your search.
@@ -119,6 +120,24 @@ reader_view:
   font_size: 19            # text size in pixels
   width: 680               # column width in pixels
 
+# Privacy
+privacy:
+  strip_tracking: true     # remove tracking junk from links you open or copy (the parameters below)
+  tracking_params: [utm_*, fbclid, gclid, dclid, gbraid, wbraid, msclkid, yclid, twclid, ttclid, igshid, mc_cid, mc_eid,
+                    _hsenc, _hsmi, mkt_tok, oly_anon_id, oly_enc_id, vero_id, rb_clickid, li_fat_id, s_cid]
+                           # query parameters to remove; a trailing * matches any ending (utm_* = utm_source, utm_medium …)
+  cookie_banners: reject   # cookie pop-ups. one of: reject (click "Reject all" when possible, otherwise hide) | hide | off
+
+# How web pages look
+pages:
+  dark_mode: off           # make light websites dark. one of: off | system (when your computer is in dark mode) | always
+                           # (sites that are already dark are left alone; toggle_dark_page flips it for one site)
+
+# Translate page (translate_page command)
+translate:
+  language: en             # language to translate pages into (a code like en, es, fr, de, ja)
+  service: "https://translate.google.com/translate?sl=auto&tl=%l&u=%u"   # %l = language, %u = the page's address
+
 # Capture (capture_page command, ⌘⇧2): a screenshot of the visible page.
 capture:
   copy_to_clipboard: true  # put the image on the clipboard
@@ -136,6 +155,7 @@ links:
   cmd_shift_click: new_tab
   option_shift_click: peek
   context_menu: true       # Valerie's right-click menu on links (hold shift while right-clicking for the system menu)
+  show_url_on_hover: true  # show where a link goes in the bottom corner while you hover it
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
@@ -239,6 +259,8 @@ keybindings:
   "CmdOrCtrl+Shift+R": reader_view
   "CmdOrCtrl+Shift+2": capture_page
   "CmdOrCtrl+Shift+M": toggle_mute
+  "CmdOrCtrl+Shift+V": paste_and_go
+  "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
 

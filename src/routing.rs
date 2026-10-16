@@ -94,3 +94,34 @@ mod tests {
         assert_eq!(resolve_input("v1.2", se), "https://s/?q=v1.2");
     }
 }
+
+/// Remove tracking parameters (`utm_*`, `fbclid`, …) from a URL's query. Returns the URL unchanged when none match.
+pub fn strip_tracking(url: &str, params: &[String]) -> String {
+    let Ok(mut u) = url::Url::parse(url) else { return url.to_string() };
+    if u.query().is_none() || params.is_empty() {
+        return url.to_string();
+    }
+    let hit = |k: &str| params.iter().any(|p| p.strip_suffix('*').map_or(p.eq_ignore_ascii_case(k), |pre| k.to_ascii_lowercase().starts_with(&pre.to_ascii_lowercase())));
+    let pairs: Vec<(String, String)> = u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+    if !pairs.iter().any(|(k, _)| hit(k)) {
+        return url.to_string();
+    }
+    let keep: Vec<_> = pairs.into_iter().filter(|(k, _)| !hit(k)).collect();
+    if keep.is_empty() {
+        u.set_query(None);
+    } else {
+        u.query_pairs_mut().clear().extend_pairs(keep);
+    }
+    u.to_string()
+}
+
+#[cfg(test)]
+mod tracking_tests {
+    #[test]
+    fn strips_only_tracking_params() {
+        let p = vec!["utm_*".to_string(), "fbclid".to_string()];
+        assert_eq!(super::strip_tracking("https://a.com/x?utm_source=t&id=3&fbclid=9", &p), "https://a.com/x?id=3");
+        assert_eq!(super::strip_tracking("https://a.com/x?utm_medium=e", &p), "https://a.com/x");
+        assert_eq!(super::strip_tracking("https://a.com/x?q=a+b&page=2", &p), "https://a.com/x?q=a+b&page=2");
+    }
+}

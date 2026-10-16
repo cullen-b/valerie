@@ -159,6 +159,9 @@ pub struct State {
     /// Zoom level per site (host), when tabs.zoom is "site".
     #[serde(default)]
     pub site_zoom: BTreeMap<String, f64>,
+    /// Sites where the user turned Valerie's dark mode on (true) or off (false), overriding pages.dark_mode.
+    #[serde(default)]
+    pub dark_sites: BTreeMap<String, bool>,
     /// Finished downloads, newest first.
     #[serde(default)]
     pub downloads: Vec<Download>,
@@ -167,6 +170,13 @@ pub struct State {
 const MAX_HISTORY: usize = 5000;
 const MAX_ARCHIVE: usize = 1000;
 const MAX_CLOSED: usize = 50;
+
+/// Every tab id in a tree, folders included.
+pub fn flat_ids(nodes: &[Node]) -> Vec<TabId> {
+    let mut out = Vec::new();
+    walk(nodes, &mut out, false);
+    out
+}
 
 fn walk(nodes: &[Node], out: &mut Vec<TabId>, only_open: bool) {
     for n in nodes {
