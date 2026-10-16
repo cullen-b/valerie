@@ -134,8 +134,9 @@ pub struct App {
     /// Set while handling an event that should show the window (done once the borrow ends).
     pending_reveal: Option<&'static str>,
     reveal_when_chrome_ready: bool,
-    /// Tabs loaded early because the pointer rested on them in the sidebar (and when).
-    preloaded: HashMap<TabId, u64>,
+    /// Tabs loaded early because the pointer rested on them in the sidebar, until they're clicked: when, and how the
+    /// sidebar showed them then (a preload stays invisible, so they keep looking exactly like that).
+    preloaded: HashMap<TabId, Preloaded>,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
     /// Sites asked about notifications this session (a site gets asked once).
@@ -206,6 +207,13 @@ struct Boost {
     host: String,
     css: String,
     js: String,
+}
+
+/// A tab loaded in the background ahead of a click, and how it looked before.
+struct Preloaded {
+    at: u64,
+    title: String,
+    favicon: Option<String>,
 }
 
 /// With VALERIE_TRACE set, print how long after launch each startup step happens.
@@ -888,6 +896,13 @@ impl App {
     // ---------------------------------------------------------------- rendering
 
     fn tab_vm(&self, t: &Tab) -> Value {
+        // A tab preloaded on hover looks exactly as it did until it's clicked.
+        if let Some(p) = self.preloaded.get(&t.id) {
+            return json!({
+                "id": t.id, "url": t.url, "favicon": p.favicon, "title": p.title, "loaded": false, "loading": false,
+                "playing": false, "muted": false, "media": null, "pinned": self.state.is_pinned(t.id), "section": self.state.section_of(t.id),
+            });
+        }
         json!({
             "id": t.id, "url": t.url, "favicon": t.favicon,
             "title": t.custom_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| t.title.clone()),
@@ -906,7 +921,7 @@ impl App {
         self.state
             .tabs
             .values()
-            .filter(|t| t.media.is_some() && !panes.contains(&t.id) && self.views.contains_key(&t.id))
+            .filter(|t| t.media.is_some() && !panes.contains(&t.id) && self.views.contains_key(&t.id) && !self.preloaded.contains_key(&t.id))
             .max_by_key(|t| (t.media.as_deref() == Some("playing"), t.last_active))
             .map(|t| self.tab_vm(t))
             .unwrap_or(Value::Null)
@@ -1141,6 +1156,8 @@ impl App {
             return;
         }
         self.chats_open = false;
+        // A tab preloaded on hover becomes a normal one now (and its visit counts from here).
+        let was_preloaded = self.preloaded.remove(&tab).is_some();
         if let Some(prev) = self.state.active_tab() {
             if let Some(t) = self.state.tabs.get_mut(&prev) {
                 t.last_active = now();
@@ -1157,6 +1174,11 @@ impl App {
         self.state.space_mut().active = Some(tab);
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.last_active = now();
+        }
+        if was_preloaded {
+            if let Some((u, ti)) = self.state.tabs.get(&tab).map(|t| (t.url.clone(), t.title.clone())) {
+                self.state.record_visit(&u, &ti);
+            }
         }
         for p in self.panes() {
             self.ensure_view(p);
@@ -2220,7 +2242,7 @@ impl App {
                 .keys()
                 .copied()
                 .filter(|id| !panes.contains(id))
-                .filter(|id| self.preloaded.get(id).is_none_or(|at| t.saturating_sub(*at) > unload_secs))
+                .filter(|id| self.preloaded.get(id).is_none_or(|p| t.saturating_sub(p.at) > unload_secs))
                 .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && t.saturating_sub(tab.last_active) > unload_secs))
                 .collect();
             for id in idle {
@@ -3357,7 +3379,9 @@ impl App {
                 // The pointer is resting on a tab in the sidebar: start loading it now, so the click is instant.
                 if let Some(t) = m["tab"].as_u64().filter(|t| self.config.sidebar.preload_on_hover && self.state.tabs.contains_key(t)) {
                     if !self.views.contains_key(&t) {
-                        self.preloaded.insert(t, now());
+                        let tab = &self.state.tabs[&t];
+                        let look = Preloaded { at: now(), title: tab.display_title().to_string(), favicon: tab.favicon.clone() };
+                        self.preloaded.insert(t, look);
                         self.ensure_view(t);
                         self.layout();
                     }
@@ -3426,7 +3450,7 @@ impl App {
                             visit = Some((t.url.clone(), t.title.clone()));
                         }
                     }
-                    if let Some((u, t)) = visit {
+                    if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id)) {
                         self.state.record_visit(&u, &t);
                         if let Some(v) = self.views.get(&id) {
                             self.after_load(v, &u);
@@ -4883,7 +4907,8 @@ impl App {
     /// and at most 12 a minute per site.
     fn site_notification(&mut self, tab: TabId, m: &Value) {
         let Some(site) = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)) else { return };
-        if self.notify_state(&site) != "granted" {
+        // A tab preloaded on hover stays silent until it's actually opened.
+        if self.notify_state(&site) != "granted" || self.preloaded.contains_key(&tab) {
             return;
         }
         let now_i = std::time::Instant::now();
