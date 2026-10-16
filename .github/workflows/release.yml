@@ -1,22 +1,151 @@
 name: Release
+# Every push to main becomes a release: tested, built for macOS (signed with Valerie's release key), Linux and
+# Windows, and published with latest.json, which installed copies of Valerie read to update themselves.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths-ignore: ["**.md", "site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+# A newer push replaces a release still being built.
+concurrency:
+  group: release
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: v
+        # Same rule as scripts/bundle-macos.sh: major.minor from Cargo.toml, then the commit count.
+        run: echo "version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2 | cut -d. -f1-2).$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+
   macos:
+    needs: version
     runs-on: macos-latest
+    env:
+      VALERIE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - name: Signing key
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then echo "No MACOS_SIGNING_P12 secret: this build is signed ad-hoc and installed copies won't take it as an update."; exit 0; fi
+          KC="$RUNNER_TEMP/signing.keychain-db"; KP=$(openssl rand -hex 16)
+          security create-keychain -p "$KP" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KP" "$KC"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/release.p12"
+          security import "$RUNNER_TEMP/release.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KP" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # The key is Valerie's own (not Apple's), so this machine is told to trust it for code signing.
+          security find-certificate -c "Valerie Release" -p "$KC" > "$RUNNER_TEMP/release.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/release.pem"
+          rm -f "$RUNNER_TEMP/release.p12"
+          echo "VALERIE_SIGN_IDENTITY=Valerie Release" >> "$GITHUB_ENV"
+      - name: Build Valerie.app (Apple silicon + Intel)
+        run: VALERIE_UNIVERSAL=1 ./scripts/bundle-macos.sh
+      - name: Check the signature updates are checked against
+        run: |
+          codesign -d -r- target/Valerie.app 2>&1 | grep designated
+          if [ -n "${VALERIE_SIGN_IDENTITY:-}" ]; then
+            REQ=$(grep -o 'identifier "dev.valerie.browser" and certificate leaf = H"[0-9A-F]*"' src/update.rs | head -1)
+            codesign --verify --test-requirement="=$REQ" target/Valerie.app
+          fi
+      - name: Package
+        run: |
+          cd target
+          ditto -c -k --keepParent Valerie.app Valerie-macos.zip
+          mkdir -p dmg && cp -R Valerie.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname Valerie -srcfolder dmg -ov -format UDZO Valerie.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            target/Valerie-macos.zip
+            target/Valerie.dmg
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VALERIE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: ./scripts/bundle-macos.sh
-      - name: Zip and publish Valerie.app
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: tar -C target/release -czf valerie-linux-x86_64.tar.gz valerie
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: valerie-linux-x86_64.tar.gz }
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VALERIE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: Compress-Archive -Path target/release/valerie.exe -DestinationPath valerie-windows-x86_64.zip
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: valerie-windows-x86_64.zip }
+
+  publish:
+    needs: [version, macos, linux, windows]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Release notes (commits since the last release)
         run: |
-          cd target && ditto -c -k --keepParent Valerie.app Valerie-${GITHUB_REF_NAME}-macos.zip
-          gh release create "$GITHUB_REF_NAME" "Valerie-${GITHUB_REF_NAME}-macos.zip" --generate-notes --title "Valerie $GITHUB_REF_NAME"
+          PREV=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          { echo "## What's new"; git log --no-merges --format='- %s' ${PREV:+$PREV..}HEAD | head -40 | cut -c1-300; } > notes.md
+          cat notes.md
+      - name: latest.json (what installed copies update from)
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          v, repo = os.environ["VERSION"], os.environ["GITHUB_REPOSITORY"]
+          base = f"https://github.com/{repo}/releases/download/v{v}"
+          def asset(name):
+              return {"url": f"{base}/{name}", "sha256": hashlib.sha256(open(f"dist/{name}", "rb").read()).hexdigest()}
+          json.dump({"version": v, "commit": os.environ["GITHUB_SHA"][:7],
+                     "page": f"https://github.com/{repo}/releases/tag/v{v}",
+                     "assets": {"macos": asset("Valerie-macos.zip"), "linux": asset("valerie-linux-x86_64.tar.gz"),
+                                "windows": asset("valerie-windows-x86_64.zip")}},
+                    open("dist/latest.json", "w"), indent=2)
+          PY
+          cat dist/latest.json
+      - name: Publish
+        run: |
+          gh release create "v$VERSION" dist/Valerie-macos.zip dist/Valerie.dmg dist/valerie-linux-x86_64.tar.gz \
+            dist/valerie-windows-x86_64.zip dist/latest.json --title "Valerie $VERSION" --notes-file notes.md --target "$GITHUB_SHA" --latest

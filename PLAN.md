@@ -155,9 +155,10 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
-- Auto-update from GitHub Releases (the goal): CI builds and notarizes a signed release (needs a paid Developer ID),
-  Valerie checks GitHub Releases, downloads and swaps itself in, then offers a restart. For now
-  `scripts/install-macos.sh` installs local builds and tells the running app to restart.
+- Updates: done. Every push to main is a release (website, Homebrew tap `cullen-b/homebrew-valerie`, GitHub
+  Releases, `site/install.sh`) and installed copies update themselves. Still to do: a Developer ID ($99/year,
+  individual account is enough) to notarize releases, so downloads and Homebrew open without "Open Anyway"; switching
+  keys means one release whose `RELEASE_REQUIREMENTS` lists both.
 - Passkeys on Mac: WebKit only does them for a browser Apple grants `com.apple.developer.web-browser.public-key-credential`
   (requested by the Account Holder of an organization developer account, at developer.apple.com/contact/request/
   macos-browsers-passkeys, with a downloadable release). Then embed the provisioning profile and add the entitlement in

@@ -4,13 +4,24 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # Each build carries the commit it came from (shown in "Valerie updated" and `valerie --version`).
 export VALERIE_BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)$(git diff --quiet 2>/dev/null || echo +)"
-cargo build --release
+# The version's last number counts commits, so every build from main is newer than the one before (the updater
+# compares these). CI checks out the whole history so the count matches a local build of the same commit.
+BASE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2 | cut -d. -f1-2)
+export VALERIE_VERSION="${VALERIE_VERSION:-$BASE.$(git rev-list --count HEAD 2>/dev/null || echo 0)}"
+VERSION="$VALERIE_VERSION"
 APP=target/Valerie.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/valerie "$APP/Contents/MacOS/valerie"
+if [ -n "${VALERIE_UNIVERSAL:-}" ]; then
+  # One app for Apple silicon and Intel Macs (releases).
+  cargo build --release --locked --target aarch64-apple-darwin
+  cargo build --release --locked --target x86_64-apple-darwin
+  lipo -create -output "$APP/Contents/MacOS/valerie" target/aarch64-apple-darwin/release/valerie target/x86_64-apple-darwin/release/valerie
+else
+  cargo build --release
+  cp target/release/valerie "$APP/Contents/MacOS/valerie"
+fi
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,13 +62,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 # ---- Signing ---------------------------------------------------------------------------------------------------
 # Picks the best certificate in your keychain (override with VALERIE_SIGN_IDENTITY):
-#   Developer ID Application (paid account; can be notarized and shared) > Apple Development (free account; runs on
-#   your Mac) > ad-hoc (no account).
+#   Developer ID Application (paid account; can be notarized and shared) > Valerie Release (the key releases are
+#   signed with, so updates keep camera, microphone and keychain permissions; trusted for code signing once) >
+#   Apple Development (free account; runs on your Mac) > ad-hoc (no account).
 IDENTITY="${VALERIE_SIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then
   IDENTITIES=$(security find-identity -v -p codesigning 2>/dev/null || true)
   IDENTITY=$(echo "$IDENTITIES" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"' || true)
+  [ -z "$IDENTITY" ] && IDENTITY=$(echo "$IDENTITIES" | grep -o '"Valerie Release"' | head -1 | tr -d '"' || true)
   [ -z "$IDENTITY" ] && IDENTITY=$(echo "$IDENTITIES" | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"' || true)
+fi
+# Apple's certificates get a secure timestamp; Valerie's own release key pins its requirement to that one certificate
+# (the updater checks updates against it, see src/update.rs).
+SIGN_ARGS=(--timestamp)
+if [ -n "$IDENTITY" ] && [[ "$IDENTITY" != Developer\ ID* ]] && [[ "$IDENTITY" != Apple\ Development* ]]; then
+  HASH=$(security find-certificate -c "$IDENTITY" -Z 2>/dev/null | awk '/SHA-1 hash:/ {print $3; exit}')
+  SIGN_ARGS=(--timestamp=none --requirements="=designated => identifier \"dev.valerie.browser\" and certificate leaf = H\"$HASH\"")
 fi
 
 # Passkeys need Apple's web-browser public-key-credential entitlement, granted to paid accounts on request, plus the
@@ -72,8 +92,8 @@ if [ -n "${VALERIE_PROVISIONING_PROFILE:-}" ]; then
 fi
 
 if [ -n "$IDENTITY" ]; then
-  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP/Contents/MacOS/valerie"
-  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"
+  codesign --force --options runtime "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP/Contents/MacOS/valerie"
+  codesign --force --options runtime "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"
   echo "Signed with: $IDENTITY"
 else
   codesign --force --sign - "$APP" >/dev/null 2>&1 || true

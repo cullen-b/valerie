@@ -65,6 +65,7 @@ changed in plain words. Some translations:
 | "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
+| "Don't update by yourself" / "ask before updating" | `updates.install: ask` (or `off` to only be told) |
 | "Open my settings in VS Code" / "in vim" | `editor: "Visual Studio Code"` (any app's name), or `editor: vim` with `terminal: Ghostty` (or Terminal, iTerm, WezTerm, kitty, Alacritty) |
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |

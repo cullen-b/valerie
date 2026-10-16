@@ -1,6 +1,8 @@
 name: CI
+# Branches and pull requests; main is tested and built by release.yml.
 on:
   push:
+    branches-ignore: [main]
   pull_request:
 
 jobs:

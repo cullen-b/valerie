@@ -44,8 +44,16 @@ the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`),
 ## Building and checking
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).
-- After merging a change the owner should get, run `scripts/install-macos.sh`: it builds, signs, installs
-  `/Applications/Valerie.app` and tells a running Valerie that an update is ready (it doesn't restart it).
+- Every push to `main` is a release (`.github/workflows/release.yml`): tested, built for macOS, Linux and Windows,
+  signed with Valerie's release key and published with `latest.json`. Installed copies update themselves from it
+  (`src/update.rs`, `updates:` settings), so merging is shipping. `scripts/install-macos.sh` is only for trying a build
+  before it's pushed.
+- The release key (`assets/release-signing.pem`; private half in the repo's `MACOS_SIGNING_P12` secret and the owner's
+  keychain) must not change: macOS ties camera, microphone and keychain permissions to it, and the updater only
+  accepts builds signed with it (`RELEASE_REQUIREMENTS`, also `site/install.sh`). Changing keys takes one release that
+  lists both.
+- Test instances never update themselves (unless `VALERIE_UPDATE_TEST=1`, which updates that instance's own copy of
+  the app); "Restart Valerie" keeps the instance's `VALERIE_*` folders.
 - Run the app as the `.app`, not the bare `target/*/valerie` binary: WebKit keeps the bare binary's logins in a
   separate store (`~/Library/WebKit/valerie` vs `~/Library/WebKit/dev.valerie.browser`).
 - UI is plain HTML/JS in `ui/`; `VALERIE_UI_DIR=ui cargo run` reloads it from disk.

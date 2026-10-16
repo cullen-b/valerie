@@ -586,5 +586,15 @@ sync:
   github_client_id: ""     # a GitHub OAuth app's client ID for signing in without the GitHub CLI (device flow);
                            # empty = sign in through the GitHub CLI (`gh`)
 
+# Updates: Valerie looks for a newer version now and then and installs it quietly; it starts the next time you open
+# Valerie (or right away with "Restart Valerie"). Updates must be signed with Valerie's release key.
+updates:
+  check: true              # look for a newer Valerie by itself (you can always run "Check for Updates")
+  every_hours: 6           # how often to look, in hours
+  install: auto            # one of: auto (download and install it quietly) | ask (say there's one; "Check for Updates"
+                           # installs it) | off (only say there's one)
+  feed: "https://github.com/cullen-b/valerie/releases/latest/download/latest.json"   # where releases are described
+                           # (a fork can point this at its own releases)
+
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}

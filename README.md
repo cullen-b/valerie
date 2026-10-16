@@ -6,6 +6,18 @@ view) on top of the system web engine, so on macOS you get Safari's engine and i
 
 See [PLAN.md](PLAN.md) for the architecture, the engine decision and the roadmap.
 
+## Install
+
+- **Terminal** (smoothest): `curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash`
+- **Homebrew**: `brew install --cask cullen-b/valerie/valerie`
+- **Download**: [Valerie.dmg](https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg), or Linux and
+  Windows builds from [Releases](https://github.com/cullen-b/valerie/releases/latest). Website:
+  https://cullen-b.github.io/valerie/
+
+Valerie updates itself (`updates:` in the settings; "Check for Updates" in the command bar). Every push to `main`
+becomes a release. Until releases are notarized, the first open of a downloaded or Homebrew copy needs System
+Settings › Privacy & Security › Open Anyway, once.
+
 ## Run it
 
 ```sh
