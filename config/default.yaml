@@ -85,6 +85,7 @@ sidebar:
   swipe_between_spaces: true   # two-finger swipe sideways on the sidebar switches spaces
   preload_on_hover: true   # start loading a tab when the pointer rests on it in the sidebar, so clicking it is instant
   preload_delay_ms: 90     # how long the pointer rests before that, milliseconds
+  preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank

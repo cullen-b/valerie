@@ -281,9 +281,25 @@ document.addEventListener("click", (e) => {
   if (a) { e.preventDefault(); cmd({ cmd: "new_tab", url: a.href }); }
 });
 
+const upd = new Set();
+function flushUpdates() {
+  upd.raf = 0;
+  if (!D || !D.chat) return upd.clear();
+  const follow = atBottom();
+  for (const i of upd) {
+    const m = D.chat.messages[i], old = document.querySelector(`.msg[data-i="${i}"]`);
+    if (!m) continue;
+    const fresh = msgEl(m, i, D.running && i === D.chat.messages.length - 1);
+    if (old) old.replaceWith(fresh); else { renderLog(); break; }
+  }
+  upd.clear();
+  if (follow) toBottom();
+}
+
 window.chat = {
   render(d) {
     D = d;
+    upd.clear();
     const r = document.documentElement;
     r.classList.toggle("light", d.theme.mode === "light");
     r.style.setProperty("--accent", d.theme.accent);
@@ -291,14 +307,13 @@ window.chat = {
     document.body.style.fontFamily = d.font ? `${d.font}, -apple-system, system-ui, sans-serif` : "";
     renderAll();
   },
-  // One message changed while streaming: redraw just that one, keep following the bottom if we were there.
+  // One message changed while streaming: redraw just that one, at most once a frame (tokens arrive faster than
+  // that, and each redraw re-reads the whole message), and keep following the bottom if we were there.
   update(i, m, running) {
     if (!D || !D.chat) return;
     D.chat.messages[i] = m; D.running = running;
-    const follow = atBottom(), old = document.querySelector(`.msg[data-i="${i}"]`);
-    const fresh = msgEl(m, i, running && i === D.chat.messages.length - 1);
-    if (old) old.replaceWith(fresh); else renderLog();
-    if (follow) toBottom();
+    upd.add(i);
+    if (!upd.raf) upd.raf = requestAnimationFrame(flushUpdates);
   },
   focus() { $("#input").focus(); },
 };

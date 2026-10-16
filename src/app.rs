@@ -77,6 +77,8 @@ pub enum UserEvent {
     SafariSignedIn { tab: TabId, bring: bool },
     /// "Sign In with Safari" was picked from a site's passkey offer.
     SafariSignIn { tab: TabId },
+    /// A message from work done off the main thread.
+    Toast(String),
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -141,6 +143,7 @@ pub struct App {
     /// Tabs loaded early because the pointer rested on them in the sidebar, until they're clicked: when, and how the
     /// sidebar showed them then (a preload stays invisible, so they keep looking exactly like that).
     preloaded: HashMap<TabId, Preloaded>,
+    preload_seq: u64,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
     /// Sites asked about notifications this session (a site gets asked once).
@@ -218,6 +221,8 @@ struct Boost {
 /// A tab loaded in the background ahead of a click, and how it looked before.
 struct Preloaded {
     at: u64,
+    /// Order preloads started in, so the oldest is let go first.
+    seq: u64,
     title: String,
     favicon: Option<String>,
 }
@@ -392,7 +397,8 @@ fn mac_window(wb: WindowBuilder) -> WindowBuilder {
 impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
         // Last session's size and place (if it still fits a screen), else the configured size, else most of the screen.
-        let saved = if config.window.remember { State::load(&state_path()).window_frame } else { None };
+        let mut state = State::load(&state_path());
+        let saved = if config.window.remember { state.window_frame } else { None };
         let screen = elwt.primary_monitor().map(|m| {
             let s = m.size().to_logical::<f64>(m.scale_factor());
             let p = m.position().to_logical::<f64>(m.scale_factor());
@@ -450,7 +456,6 @@ impl App {
             .build_as_child(&window)?;
         trace("  command bar view");
         platform::install_page_dialogs(&chrome);
-        let mut state = State::load(&state_path());
         trace("  state loaded");
         state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
         state.reconcile_spaces(&config);
@@ -484,6 +489,7 @@ impl App {
             pending_reveal: None,
             reveal_when_chrome_ready: false,
             preloaded: HashMap::new(),
+            preload_seq: 0,
             window_focused: true,
             notify_asked: Default::default(),
             passkey_offered: Default::default(),
@@ -755,6 +761,7 @@ impl App {
 
     fn unload(&mut self, tab: TabId) {
         self.views.remove(&tab);
+        self.preloaded.remove(&tab);
         self.ready_views.remove(&tab);
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.loading = false;
@@ -1166,7 +1173,8 @@ impl App {
             "toast_seconds": self.config.toast_seconds,
             "chats": {
                 "enabled": self.config.chats.enabled, "open": self.chats_open, "active": self.active_chat,
-                "list": self.chats.iter().map(|c| json!({
+                // Only drawn while Chats is open; leaving it out otherwise keeps chat activity from redrawing the sidebar.
+                "list": self.chats.iter().filter(|_| self.chats_open).map(|c| json!({
                     "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "pinned": c.pinned,
                     "running": self.chat_running.contains(&c.id), "started": self.chat_started.get(&c.id), "updated": c.updated,
                     "agent": c.agent, "settled": c.settled, "snoozed": c.snoozed_until > now(), "unread": c.unread,
@@ -1737,6 +1745,14 @@ impl App {
     fn refresh_content_config(&self) {
         let cfg = self.page_config();
         for v in self.views.values() {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+        }
+    }
+
+    /// Page settings for just the pages on screen (the sidebar peeking only matters to them; others catch up on load).
+    fn refresh_pane_config(&self) {
+        let cfg = self.page_config();
+        for v in self.panes().iter().filter_map(|t| self.views.get(t)) {
             let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
     }
@@ -3114,9 +3130,13 @@ impl App {
             }
             Command::OpenConfig => {
                 self.close_bar();
-                if let Err(e) = platform::open_in_editor(&config::config_path(), &self.config.editor, &self.config.terminal) {
-                    self.toast(&format!("Couldn't open your settings with {}: {e}", self.config.editor));
-                }
+                // A terminal app can take seconds to start (or ask for permission first): never wait for it here.
+                let (editor, terminal, p) = (self.config.editor.clone(), self.config.terminal.clone(), self.proxy.clone());
+                std::thread::spawn(move || {
+                    if let Err(e) = platform::open_in_editor(&config::config_path(), &editor, &terminal) {
+                        send(&p, UserEvent::Toast(format!("Couldn't open your settings with {editor}: {e}")));
+                    }
+                });
             }
             Command::ReloadConfig => self.reload_config(),
             Command::Sync => {
@@ -3303,7 +3323,7 @@ impl App {
                     let secs = self.anim_secs();
                     self.layout_anim(secs);
                     self.render();
-                    self.refresh_content_config();
+                    self.refresh_pane_config();
                 }
             }
             (Source::Page(Target::Tab(_)), "edge") => {
@@ -3319,7 +3339,7 @@ impl App {
                     let secs = self.anim_secs();
                     self.layout_anim(secs);
                     self.render();
-                    self.refresh_content_config();
+                    self.refresh_pane_config();
                 }
             }
             (Source::Chrome, "tab_menu") => {
@@ -3477,8 +3497,16 @@ impl App {
                 // The pointer is resting on a tab in the sidebar: start loading it now, so the click is instant.
                 if let Some(t) = m["tab"].as_u64().filter(|t| self.config.sidebar.preload_on_hover && self.state.tabs.contains_key(t)) {
                     if !self.views.contains_key(&t) {
+                        // Sweeping the pointer down the sidebar shouldn't load every tab it passes: let the oldest go.
+                        let limit = self.config.sidebar.preload_at_most.max(1.0) as usize;
+                        while self.preloaded.len() >= limit {
+                            let Some(old) = self.preloaded.iter().min_by_key(|(_, p)| p.seq).map(|(id, _)| *id) else { break };
+                            self.preloaded.remove(&old);
+                            self.unload(old);
+                        }
+                        self.preload_seq += 1;
                         let tab = &self.state.tabs[&t];
-                        let look = Preloaded { at: now(), title: tab.display_title().to_string(), favicon: tab.favicon.clone() };
+                        let look = Preloaded { at: now(), seq: self.preload_seq, title: tab.display_title().to_string(), favicon: tab.favicon.clone() };
                         self.preloaded.insert(t, look);
                         self.ensure_view(t);
                         self.layout();
@@ -3727,6 +3755,7 @@ impl App {
                 Err(e) => self.toast(&format!("{title} failed: {e}")),
             },
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
+            UserEvent::Toast(msg) => self.toast(&msg),
             UserEvent::SafariSignedIn { tab, bring } => {
                 if bring {
                     self.bring_login_from_safari(tab);
