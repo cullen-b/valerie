@@ -102,6 +102,15 @@ pushes it by itself a few seconds after any change: don't run git here yourself 
 To move the user's setup to a new machine: quit Valerie, move this folder aside, `git clone <repo URL> "{dir}"`,
 start Valerie. Device-specific files (`AGENTS.md`, `reference/`) are regenerated and not synced.
 
+## AI agents
+
+Valerie runs the agent CLIs installed on this computer (Claude Code, Codex, OpenCode, Pi, Cursor, Hermes) with the
+user's own sign-ins. Name as many as you like under `agents.available` (same CLI with different models, or any
+`command` that prints an answer) and pick one per job under `agents.use` (`chat`, `find`, `tasks`, `customize`),
+e.g. a strong model for chat and a fast one for find. "Set Up <name>" in the command bar installs a CLI and signs in.
+Chats are JSON files in `chats/` here (they sync when `chats.sync` is on). Settings for the Chats space and asking
+questions from find are under `chats`.
+
 ## Settings
 
 All options live in `reference/default-config.yaml` (also `"{exe}" default-config`). Read it before editing: every

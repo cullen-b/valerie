@@ -1,0 +1,560 @@
+//! AI in Valerie: the agent CLIs already on the user's computer (Claude Code, Codex, OpenCode, Pi, Cursor, Hermes, or
+//! any command), run headless. They chat in the Chats space with full control of the browser, answer questions
+//! about a page from find (with no tools at all), and stream their answers back as they write them.
+use crate::config::AgentDef;
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// A CLI Valerie knows how to drive.
+pub struct Kind {
+    pub id: &'static str,
+    pub title: &'static str,
+    /// Executable names to look for, in order.
+    pub bins: &'static [&'static str],
+    /// Shell command that installs it (run in a terminal when it's missing).
+    pub install: &'static str,
+    /// Shell command that signs in.
+    pub login: &'static str,
+}
+
+pub const KINDS: &[Kind] = &[
+    Kind { id: "claude", title: "Claude Code", bins: &["claude"], install: "curl -fsSL https://claude.ai/install.sh | bash", login: "claude auth login" },
+    Kind { id: "codex", title: "Codex", bins: &["codex"], install: "npm install -g @openai/codex", login: "codex login" },
+    Kind { id: "opencode", title: "OpenCode", bins: &["opencode"], install: "curl -fsSL https://opencode.ai/install | bash", login: "opencode auth login" },
+    Kind {
+        id: "pi",
+        title: "Pi",
+        bins: &["pi"],
+        install: "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+        login: "echo 'Type /login, pick your provider and sign in, then /quit.'; pi",
+    },
+    Kind { id: "cursor", title: "Cursor", bins: &["cursor-agent", "agent"], install: "curl https://cursor.com/install -fsS | bash", login: "cursor-agent login" },
+    Kind {
+        id: "hermes",
+        title: "Hermes",
+        bins: &["hermes"],
+        install: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+        login: "hermes setup",
+    },
+];
+
+pub fn kind(id: &str) -> Option<&'static Kind> {
+    KINDS.iter().find(|k| k.id == id)
+}
+
+/// What the agent may do.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Mode {
+    /// Full control of the browser (Valerie's MCP tools, or `valerie call` for CLIs without MCP).
+    Browser,
+    /// Answer from the text it's given: no tools at all (the question may come from a web page).
+    PageOnly,
+    /// Edit Valerie's config folder.
+    Customize,
+}
+
+/// How the CLI's output is laid out.
+#[derive(Clone, Copy)]
+pub enum Format {
+    Claude,
+    Codex,
+    OpenCode,
+    Cursor,
+    Pi,
+    Text,
+}
+
+/// One piece of an agent's answer as it arrives.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Ev {
+    /// Text to append.
+    Delta { text: String },
+    /// A whole paragraph or message to append (separated from what came before).
+    Block { text: String },
+    /// The complete answer, used only if nothing streamed.
+    Final { text: String },
+    /// The agent used a tool ("open_tab", "Ran ls"…).
+    Tool { text: String },
+    /// Session id for continuing the conversation next turn.
+    Session { id: String },
+    Error { text: String },
+}
+
+/// GUI apps get a minimal PATH, so look where CLIs are usually installed too.
+pub fn search_path() -> String {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    for extra in [".local/bin", ".bun/bin", ".npm-global/bin", ".cargo/bin", ".opencode/bin", ".hermes/bin"] {
+        dirs.push(home.join(extra));
+    }
+    if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+        dirs.push(d); // so agents and scripts can run `valerie …`
+    }
+    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
+    std::env::join_paths(dirs).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+pub fn find_bin(kind: &Kind, path: &str) -> Option<PathBuf> {
+    kind.bins.iter().find_map(|b| std::env::split_paths(path).map(|d| d.join(b)).find(|p| p.is_file()))
+}
+
+/// How an agent without MCP support drives the browser: Valerie's own command line.
+fn cli_tools_note(exe: &str) -> String {
+    let tools: Vec<String> = crate::mcp::tools().iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect();
+    format!(
+        "Control the browser by running shell commands of the form `\"{exe}\" call <tool> '<json arguments>'` (it prints \
+         the result). Tools: {}. Start with `\"{exe}\" call list_tabs '{{}}'`.",
+        tools.join(", ")
+    )
+}
+
+/// Build the command for one turn. `session` continues an earlier conversation where the CLI supports it.
+pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, session: Option<&str>, stream: bool, work: &Path) -> Result<(Command, Format)> {
+    let path = search_path();
+    let exe = std::env::current_exe()?.to_string_lossy().to_string();
+    let model = if def.model.is_empty() { default_model } else { &def.model };
+    if !def.command.is_empty() {
+        // Any program: `{prompt}` and `{model}` in its arguments are filled in; it prints the answer.
+        let mut c = Command::new(&def.command[0]);
+        c.args(def.command[1..].iter().map(|a| a.replace("{prompt}", prompt).replace("{model}", model)));
+        c.env("PATH", &path).current_dir(work);
+        return Ok((c, Format::Text));
+    }
+    let k = kind(&def.cli).with_context(|| format!("unknown agent CLI `{}` (use claude, codex, opencode, pi, cursor or hermes, or `command`)", def.cli))?;
+    let bin = find_bin(k, &path).with_context(|| format!("{} isn't installed: run \"Set Up {}\" from the command bar", k.title, k.title))?;
+    let mut c = Command::new(bin);
+    let mcp_json = || json!({ "mcpServers": { "valerie": { "command": exe, "args": ["mcp-stdio"] } } });
+    let format = match k.id {
+        "claude" => {
+            c.args(["-p", prompt]);
+            if stream {
+                c.args(["--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+            }
+            match mode {
+                Mode::Browser => {
+                    c.args(["--mcp-config", &mcp_json().to_string(), "--strict-mcp-config", "--allowedTools", "mcp__valerie"]);
+                }
+                Mode::PageOnly => {
+                    c.args(["--tools", "", "--strict-mcp-config"]);
+                }
+                Mode::Customize => {
+                    let check = format!("Bash({exe} check-config)");
+                    let call = format!("Bash({exe} call:*)");
+                    c.args(["--mcp-config", &mcp_json().to_string(), "--strict-mcp-config", "--permission-mode", "acceptEdits"]);
+                    c.args(["--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", &check, &call, "mcp__valerie"]);
+                }
+            }
+            if let Some(s) = session {
+                c.args(["--resume", s]);
+            }
+            if !model.is_empty() {
+                c.args(["--model", model]);
+            }
+            Format::Claude
+        }
+        "codex" => {
+            if mode == Mode::PageOnly {
+                bail!("Codex can't run without tools, so it can't answer questions from web pages: set agents.use.find to claude, pi or opencode");
+            }
+            c.arg("exec");
+            if stream {
+                c.arg("--json");
+            }
+            c.args(["--skip-git-repo-check", "-s", if mode == Mode::Customize { "workspace-write" } else { "read-only" }]);
+            c.args(["-c", &format!("mcp_servers.valerie.command={}", serde_json::to_string(&exe)?), "-c", r#"mcp_servers.valerie.args=["mcp-stdio"]"#]);
+            if !model.is_empty() {
+                c.args(["-m", model]);
+            }
+            match session {
+                Some(s) => c.args(["resume", s, prompt]),
+                None => c.arg(prompt),
+            };
+            Format::Codex
+        }
+        "opencode" => {
+            c.args(["run", prompt]);
+            if stream {
+                c.args(["--format", "json"]);
+            }
+            let cfg = match mode {
+                Mode::PageOnly => json!({ "mcp": {}, "tools": { "*": false } }),
+                _ => json!({ "mcp": { "valerie": { "type": "local", "command": [exe, "mcp-stdio"], "enabled": true } } }),
+            };
+            c.env("OPENCODE_CONFIG_CONTENT", cfg.to_string());
+            if let Some(s) = session {
+                c.args(["--session", s]);
+            }
+            if !model.is_empty() {
+                c.args(["-m", model]);
+            }
+            Format::OpenCode
+        }
+        "cursor" => {
+            if mode == Mode::PageOnly {
+                bail!("Cursor can't run without tools, so it can't answer questions from web pages: set agents.use.find to claude, pi or opencode");
+            }
+            c.args(["-p", "--trust", "--approve-mcps"]);
+            if stream {
+                c.args(["--output-format", "stream-json", "--stream-partial-output"]);
+            }
+            // Cursor reads MCP servers from the workspace folder.
+            let dir = work.join(".cursor");
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("mcp.json"), mcp_json().to_string())?;
+            if let Some(s) = session {
+                c.args(["--resume", s]);
+            }
+            if !model.is_empty() {
+                c.args(["--model", model]);
+            }
+            c.arg(prompt);
+            Format::Cursor
+        }
+        "pi" => {
+            c.args(["-p"]);
+            if stream {
+                c.args(["--mode", "json"]);
+            }
+            if mode == Mode::PageOnly {
+                c.arg("--no-tools");
+            }
+            if !model.is_empty() {
+                c.args(["--model", model]);
+            }
+            c.arg(prompt);
+            if stream { Format::Pi } else { Format::Text }
+        }
+        "hermes" => {
+            if mode == Mode::PageOnly {
+                bail!("Hermes can't run without tools, so it can't answer questions from web pages: set agents.use.find to claude, pi or opencode");
+            }
+            if !model.is_empty() {
+                c.args(["-m", model]);
+            }
+            c.args(["-z", prompt]);
+            Format::Text
+        }
+        _ => unreachable!(),
+    };
+    c.env("PATH", &path).current_dir(work);
+    Ok((c, format))
+}
+
+/// How this agent reaches the browser: MCP tools, or Valerie's command line for CLIs without per-run MCP.
+pub fn control_note(def: &AgentDef) -> String {
+    let exe = std::env::current_exe().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|_| "valerie".into());
+    if matches!(def.cli.as_str(), "pi" | "hermes") || !def.command.is_empty() {
+        cli_tools_note(&exe)
+    } else {
+        "Use the `valerie` MCP tools to see and control the browser.".to_string()
+    }
+}
+
+/// The prompt preamble for an agent with browser control.
+pub fn browser_preamble(def: &AgentDef, context: &str) -> String {
+    let how = control_note(def);
+    format!(
+        "You are the assistant built into the user's Valerie web browser. You can see and control their browser. {how} \
+         Open any tabs you need in the background and don't close or change the user's tabs unless they ask. Never submit \
+         purchases, payments or other irreversible forms without the user saying so in this conversation; stop and ask \
+         instead. Answer in plain, short Markdown.\n\n{context}"
+    )
+}
+
+/// Turn one line of CLI output into answer pieces.
+pub fn parse(format: Format, line: &str) -> Vec<Ev> {
+    let line = line.trim_end();
+    if line.is_empty() {
+        return vec![];
+    }
+    if let Format::Text = format {
+        return vec![Ev::Delta { text: format!("{line}\n") }];
+    }
+    let Ok(v) = serde_json::from_str::<Value>(line) else { return vec![] };
+    let s = |p: &Value| p.as_str().map(str::to_string);
+    let mut out = Vec::new();
+    match format {
+        Format::Claude => match v["type"].as_str() {
+            Some("system") if v["subtype"] == "init" => out.extend(s(&v["session_id"]).map(|id| Ev::Session { id })),
+            Some("stream_event") => {
+                let e = &v["event"];
+                if e["type"] == "content_block_delta" && e["delta"]["type"] == "text_delta" {
+                    out.extend(s(&e["delta"]["text"]).map(|text| Ev::Delta { text }));
+                } else if e["type"] == "content_block_start" && e["content_block"]["type"] == "tool_use" {
+                    // ToolSearch is Claude loading tool definitions, not something it did.
+                    let name = s(&e["content_block"]["name"]).filter(|n| n != "ToolSearch");
+                    out.extend(name.map(|n| Ev::Tool { text: n.trim_start_matches("mcp__valerie__").to_string() }));
+                } else if e["type"] == "message_start" {
+                    // A new message after tool use: keep paragraphs apart.
+                    out.push(Ev::Block { text: String::new() });
+                }
+            }
+            Some("result") => {
+                if v["is_error"] == true {
+                    out.push(Ev::Error { text: s(&v["result"]).unwrap_or_else(|| "the agent failed".into()) });
+                } else {
+                    out.extend(s(&v["result"]).map(|text| Ev::Final { text }));
+                }
+            }
+            _ => {}
+        },
+        Format::Cursor => match v["type"].as_str() {
+            Some("system") => out.extend(s(&v["session_id"]).map(|id| Ev::Session { id })),
+            // With partial output each delta carries a timestamp; the closing whole message doesn't.
+            Some("assistant") if v.get("timestamp_ms").is_some() => {
+                for c in v["message"]["content"].as_array().into_iter().flatten() {
+                    out.extend(s(&c["text"]).map(|text| Ev::Delta { text }));
+                }
+            }
+            Some("tool_call") if v["subtype"] == "started" => {
+                let name = v["tool_call"].as_object().and_then(|o| o.keys().next().cloned()).unwrap_or_else(|| "tool".into());
+                out.push(Ev::Tool { text: name.trim_end_matches("ToolCall").to_string() });
+            }
+            Some("result") => {
+                if v["is_error"] == true {
+                    out.push(Ev::Error { text: s(&v["result"]).unwrap_or_else(|| "the agent failed".into()) });
+                } else {
+                    out.extend(s(&v["result"]).map(|text| Ev::Final { text }));
+                }
+            }
+            _ => {}
+        },
+        Format::Codex => match v["type"].as_str() {
+            Some("thread.started") => out.extend(s(&v["thread_id"]).map(|id| Ev::Session { id })),
+            Some("item.started") => match v["item"]["type"].as_str() {
+                Some("mcp_tool_call") => out.extend(s(&v["item"]["tool"]).map(|text| Ev::Tool { text })),
+                Some("command_execution") => out.extend(s(&v["item"]["command"]).map(|c| Ev::Tool { text: format!("Ran {c}") })),
+                Some("web_search") => out.push(Ev::Tool { text: "Searched the web".into() }),
+                _ => {}
+            },
+            Some("item.completed") if v["item"]["type"] == "agent_message" => out.extend(s(&v["item"]["text"]).map(|text| Ev::Block { text })),
+            Some("error") | Some("turn.failed") => {
+                let raw = s(&v["message"]).or_else(|| s(&v["error"]["message"])).unwrap_or_else(|| "the agent failed".into());
+                // Codex wraps API errors as JSON inside the message.
+                let msg = serde_json::from_str::<Value>(&raw).ok().and_then(|e| s(&e["error"]["message"])).unwrap_or(raw);
+                out.push(Ev::Error { text: msg });
+            }
+            _ => {}
+        },
+        Format::OpenCode => {
+            out.extend(s(&v["sessionID"]).map(|id| Ev::Session { id }));
+            match v["type"].as_str() {
+                Some("text") => out.extend(s(&v["part"]["text"]).map(|text| Ev::Block { text })),
+                Some("tool_use") => out.extend(s(&v["part"]["tool"]).map(|t| Ev::Tool { text: t.trim_start_matches("valerie_").to_string() })),
+                Some("error") => out.push(Ev::Error {
+                    text: s(&v["error"]["data"]["message"]).or_else(|| s(&v["error"]["message"])).unwrap_or_else(|| "the agent failed".into()),
+                }),
+                _ => {}
+            }
+        }
+        Format::Pi => match v["type"].as_str() {
+            Some("message_update") => {
+                let e = &v["assistantMessageEvent"];
+                if e["type"] == "text_delta" {
+                    out.extend(s(&e["delta"]).map(|text| Ev::Delta { text }));
+                }
+            }
+            Some("tool_execution_start") => out.extend(s(&v["toolName"]).map(|text| Ev::Tool { text })),
+            _ => {}
+        },
+        Format::Text => {}
+    }
+    out
+}
+
+/// Running agent processes by run id (a chat id, or "page:<tab>"), so they can be stopped.
+static RUNNING: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+
+pub fn stop(run: &str) -> bool {
+    let pid = RUNNING.lock().ok().and_then(|r| r.iter().find(|(n, _)| n == run).map(|(_, p)| *p));
+    let Some(pid) = pid else { return false };
+    #[cfg(unix)]
+    let ok = Command::new("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
+    #[cfg(windows)]
+    let ok = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
+    ok
+}
+
+/// Run one turn to the end (blocking), handing each piece of the answer to `on` as it arrives.
+pub fn stream(run: &str, mut cmd: Command, format: Format, timeout: Duration, on: &dyn Fn(Ev)) -> Result<()> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("couldn't start the agent")?;
+    if let Ok(mut r) = RUNNING.lock() {
+        r.push((run.to_string(), child.id()));
+    }
+    let mut err = child.stderr.take();
+    let errs = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(e) = err.as_mut() {
+            let _ = e.read_to_string(&mut s);
+        }
+        s
+    });
+    let start = Instant::now();
+    let mut got = false;
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            for ev in parse(format, &line) {
+                got |= matches!(ev, Ev::Delta { .. } | Ev::Block { .. } | Ev::Final { .. });
+                on(ev);
+            }
+            if start.elapsed() > timeout {
+                let _ = child.kill();
+                on(Ev::Error { text: format!("stopped after {} minutes", timeout.as_secs() / 60) });
+                break;
+            }
+        }
+    }
+    let status = child.wait();
+    if let Ok(mut r) = RUNNING.lock() {
+        r.retain(|(n, _)| n != run);
+    }
+    let stderr = errs.join().unwrap_or_default();
+    if !status.is_ok_and(|s| s.success()) && !got {
+        let tail: String = stderr.lines().rev().filter(|l| !l.trim().is_empty()).take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+        on(Ev::Error { text: if tail.is_empty() { "the agent stopped without answering".into() } else { tail } });
+    }
+    Ok(())
+}
+
+/// Open a terminal that installs the CLI if it's missing, then signs in: the one step a user does per agent.
+pub fn set_up(k: &Kind) -> Result<()> {
+    let path = search_path();
+    let mut script = format!("export PATH=\"{path}\"\necho 'Setting up {} for Valerie'\n", k.title);
+    if find_bin(k, &path).is_none() {
+        script.push_str(&format!("echo 'Installing {}…'\n{}\n", k.title, k.install));
+    }
+    script.push_str(&format!("{}\necho\necho 'All set: you can close this window and go back to Valerie.'\n", k.login));
+    #[cfg(target_os = "macos")]
+    {
+        let file = std::env::temp_dir().join(format!("valerie-set-up-{}.command", k.id));
+        std::fs::write(&file, format!("#!/bin/bash\n{script}"))?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+        Command::new("open").args(["-a", "Terminal"]).arg(&file).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let file = std::env::temp_dir().join(format!("valerie-set-up-{}.sh", k.id));
+        std::fs::write(&file, format!("#!/bin/bash\n{script}\nread -p 'Press Enter to close'"))?;
+        Command::new("x-terminal-emulator").args(["-e", "bash"]).arg(&file).spawn()?;
+    }
+    #[cfg(windows)]
+    {
+        Command::new("cmd").args(["/C", "start", "cmd", "/K", k.login]).spawn()?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- chats
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Msg {
+    pub role: String,
+    #[serde(default)]
+    pub text: String,
+    /// Tools the agent used while writing this message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Which agent wrote it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
+    #[serde(default)]
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Chat {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    /// The agent this chat talks to (a name under agents.available).
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub created: u64,
+    #[serde(default)]
+    pub updated: u64,
+    /// Each agent's own conversation id, so follow-ups continue where it left off.
+    #[serde(default)]
+    pub sessions: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub messages: Vec<Msg>,
+}
+
+impl Chat {
+    pub fn new(agent: &str) -> Chat {
+        let now = crate::state::now();
+        let id = format!("{now}-{}", &crate::mcp::random_hex()[..6]);
+        Chat { id, agent: agent.into(), created: now, updated: now, ..Default::default() }
+    }
+
+    /// Earlier turns as plain text, for agents that can't continue a session themselves.
+    pub fn transcript(&self, max_chars: usize) -> String {
+        let mut out = String::new();
+        for m in self.messages.iter().rev().skip(2) {
+            let line = format!("{}: {}\n\n", if m.role == "user" { "User" } else { "Assistant" }, m.text.trim());
+            if out.len() + line.len() > max_chars {
+                break;
+            }
+            out.insert_str(0, &line);
+        }
+        out
+    }
+}
+
+pub fn load_chats(dir: &Path) -> Vec<Chat> {
+    let mut chats: Vec<Chat> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok().and_then(|s| serde_json::from_str(&s).ok()))
+        .collect();
+    chats.sort_by(|a, b| b.updated.cmp(&a.updated));
+    chats
+}
+
+pub fn save_chat(dir: &Path, c: &Chat) {
+    let _ = std::fs::create_dir_all(dir);
+    if let Ok(s) = serde_json::to_string_pretty(c) {
+        let _ = std::fs::write(dir.join(format!("{}.json", c.id)), s);
+    }
+}
+
+/// Closing a chat moves it aside (it still syncs, and can be brought back by hand).
+pub fn close_chat(dir: &Path, id: &str) {
+    let closed = dir.join("closed");
+    let _ = std::fs::create_dir_all(&closed);
+    let _ = std::fs::rename(dir.join(format!("{id}.json")), closed.join(format!("{id}.json")));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_each_cli() {
+        let claude = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}"#;
+        assert!(matches!(&parse(Format::Claude, claude)[..], [Ev::Delta { text }] if text == "hi"));
+        let codex = r#"{"type":"item.completed","item":{"type":"agent_message","text":"done"}}"#;
+        assert!(matches!(&parse(Format::Codex, codex)[..], [Ev::Block { text }] if text == "done"));
+        let err = r#"{"type":"error","message":"{\"error\":{\"message\":\"bad model\"}}"}"#;
+        assert!(matches!(&parse(Format::Codex, err)[..], [Ev::Error { text }] if text == "bad model"));
+        let oc = r#"{"type":"text","sessionID":"s1","part":{"type":"text","text":"yo"}}"#;
+        assert!(matches!(&parse(Format::OpenCode, oc)[..], [Ev::Session { .. }, Ev::Block { text }] if text == "yo"));
+        let cursor = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]},"timestamp_ms":1}"#;
+        assert!(matches!(&parse(Format::Cursor, cursor)[..], [Ev::Delta { text }] if text == "a"));
+        let cursor_whole = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}"#;
+        assert!(parse(Format::Cursor, cursor_whole).is_empty());
+    }
+}

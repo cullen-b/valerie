@@ -13,6 +13,7 @@ mod routing;
 mod state;
 mod sync;
 mod github;
+mod ai;
 
 use config::Config;
 
@@ -70,6 +71,21 @@ fn check_config() -> anyhow::Result<()> {
                 if !["ask", "allow", "deny"].contains(&v.as_str()) {
                     problems.push(format!("permissions: {name} is {v:?}; use ask, allow or deny"));
                 }
+            }
+            for (name, def) in c.agents.available.iter().filter_map(|(n, d)| d.as_ref().map(|d| (n, d))) {
+                if def.command.is_empty() && ai::kind(if def.cli.is_empty() { name } else { &def.cli }).is_none() {
+                    problems.push(format!("agents.available.{name}: cli {:?} isn't one Valerie knows (claude, codex, opencode, pi, cursor, hermes); use `command` for anything else", def.cli));
+                }
+            }
+            let u = &c.agents.use_for;
+            for (job, name) in [("default", &c.agents.default), ("chat", &u.chat), ("find", &u.find), ("tasks", &u.tasks), ("customize", &u.customize)] {
+                if !name.is_empty() && !c.agents.available.get(name).is_some_and(Option::is_some) && ai::kind(name).is_none() {
+                    problems.push(format!("agents: {job} uses {name:?}, which isn't under agents.available"));
+                }
+            }
+            let (_, find) = c.agent_for("find");
+            if matches!(find.cli.as_str(), "codex" | "cursor" | "hermes") {
+                problems.push(format!("agents.use.find: {} can't run without tools, so it can't answer questions about pages; use claude, pi or opencode", find.cli));
             }
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
