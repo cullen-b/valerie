@@ -14,10 +14,6 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWi
 use tao::window::{Window, WindowBuilder, WindowId};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder};
 
-const TOP_BAR: f64 = 40.0;
-/// Compact leaves room for the window's traffic lights; medium fits an icon and a domain.
-const SIDEBAR_COMPACT: f64 = 78.0;
-const SIDEBAR_MEDIUM: f64 = 180.0;
 const LITTLE_BAR: f64 = 36.0;
 const MAX_UNTRUSTED_IPC: usize = 64 * 1024;
 /// URL schemes handed to other apps when a page links to them.
@@ -254,8 +250,8 @@ impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
         let window = mac_window(WindowBuilder::new())
             .with_title("Valerie")
-            .with_inner_size(LogicalSize::new(1440.0, 920.0))
-            .with_min_inner_size(LogicalSize::new(480.0, 360.0))
+            .with_inner_size(LogicalSize::new(config.window.width.max(320.0), config.window.height.max(240.0)))
+            .with_min_inner_size(LogicalSize::new(config.window.min_width.max(200.0), config.window.min_height.max(150.0)))
             .build(elwt)?;
         let size = window.inner_size().to_logical::<f64>(window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
@@ -276,6 +272,7 @@ impl App {
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
             .build_as_child(&window)?;
         let mut state = State::load(&state_path());
+        state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
         state.reconcile_spaces(&config);
         let user_agent = if config.user_agent.is_empty() { platform::safari_user_agent() } else { config.user_agent.clone() };
         Ok(App {
@@ -379,7 +376,8 @@ impl App {
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css }))
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
-            "privacy": self.config.privacy, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites } })
+            "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
+            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites } })
     }
 
     fn content_script(&self) -> String {
@@ -433,7 +431,7 @@ impl App {
     fn page_builder<'a>(&self, base: WebViewBuilder<'a>, target: Target, url: &str) -> WebViewBuilder<'a> {
         let p = self.proxy.clone();
         let (p1, p2, p3, p4, p5) = (p.clone(), p.clone(), p.clone(), p.clone(), p.clone());
-        let downloads = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+        let downloads = self.config.downloads.dir();
         // Where each download is being saved; the completed handler doesn't get the path on every platform.
         let saving = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, PathBuf>::new()));
         let saved = saving.clone();
@@ -541,7 +539,7 @@ impl App {
         let l = &self.config.layout;
         let b = l.bezel;
         match l.tab_bar {
-            TabBar::Top => (b, TOP_BAR, w - 2.0 * b, h - TOP_BAR - b),
+            TabBar::Top => (b, self.config.layout.top_bar_height, w - 2.0 * b, h - self.config.layout.top_bar_height - b),
             TabBar::Side => {
                 let sw = if l.sidebar_visible || self.sidebar_peek { self.sidebar_width() } else { 0.0 };
                 let (left, right) = match l.sidebar_position {
@@ -621,18 +619,19 @@ impl App {
     /// The sidebar's current width: what the user dragged to, else the preset for `layout.sidebar_size`.
     fn sidebar_width(&self) -> f64 {
         self.state.sidebar_width.unwrap_or_else(|| match self.config.layout.sidebar_size.as_str() {
-            "compact" => SIDEBAR_COMPACT,
-            "medium" => SIDEBAR_MEDIUM,
+            "compact" => self.config.sidebar.compact_width,
+            "medium" => self.config.sidebar.medium_width,
             _ => self.config.layout.sidebar_width,
         })
     }
 
-    /// Compact (icons), medium (icon + domain) or full, derived from the width so dragging moves through them.
+    /// Compact (icons), medium (icon + domain) or full, derived from the width so dragging moves through them:
+    /// each size starts halfway between the preset widths.
     fn sidebar_size(&self) -> &'static str {
-        let w = self.sidebar_width();
-        if w < 120.0 {
+        let (w, s) = (self.sidebar_width(), &self.config.sidebar);
+        if w < (s.compact_width + s.medium_width) / 2.0 {
             "compact"
-        } else if w < 210.0 {
+        } else if w < (s.medium_width + self.config.layout.sidebar_width) / 2.0 {
             "medium"
         } else {
             "full"
@@ -649,10 +648,10 @@ impl App {
         for (id, v) in &self.views {
             let focused = split && Some(*id) == active;
             let border = focused && matches!(mode, "border" | "both");
-            platform::set_border(v, if border { 2.0 } else { 0.0 }, accent);
+            platform::set_border(v, if border { self.config.layout.split_border_width } else { 0.0 }, accent);
             if self.peek.is_none() && panes.contains(id) {
                 let dim = split && !focused && matches!(mode, "dim" | "both");
-                platform::set_alpha(v, if dim { 0.72 } else { 1.0 }, 0.12);
+                platform::set_alpha(v, if dim { self.config.layout.split_unfocused_opacity.clamp(0.05, 1.0) } else { 1.0 }, 0.12);
             }
         }
     }
@@ -722,10 +721,14 @@ impl App {
         url::Url::parse(&t.url).ok()?.host_str().map(|h| h.trim_start_matches("www.").to_string())
     }
 
+    fn default_zoom(&self) -> f64 {
+        (self.config.tabs.default_zoom / 100.0).clamp(0.25, 5.0)
+    }
+
     fn zoom_for(&self, tab: TabId) -> f64 {
         match self.zoom_site(tab) {
-            Some(site) => self.state.site_zoom.get(&site).copied().unwrap_or(1.0),
-            None => self.zoom.get(&tab).copied().unwrap_or(1.0),
+            Some(site) => self.state.site_zoom.get(&site).copied().unwrap_or_else(|| self.default_zoom()),
+            None => self.zoom.get(&tab).copied().unwrap_or_else(|| self.default_zoom()),
         }
     }
 
@@ -829,12 +832,13 @@ impl App {
             Err(e) => return self.toast(&format!("Capture failed: {e}")),
         };
         let c = &self.config.capture;
+        let c_dir = self.config.downloads.dir();
         let mut done = Vec::new();
         if c.copy_to_clipboard && platform::copy_png(&png) {
             done.push("copied");
         }
         if c.save_to_downloads {
-            let dir = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+            let dir = c_dir;
             let path = dir.join(format!("Valerie Capture {}.png", platform::local_timestamp()));
             if std::fs::write(&path, &png).is_ok() {
                 done.push("saved to Downloads");
@@ -880,8 +884,9 @@ impl App {
             "agents": self.agents_running,
             "peek": self.sidebar_peek,
             "sidebar": self.config.sidebar,
-            "vim": { "enabled": self.config.vim.enabled, "bindings": self.config.vim.bindings },
+            "vim": { "enabled": self.config.vim.enabled, "bindings": self.config.vim.bindings, "key_timeout_ms": self.config.vim.key_timeout_ms },
             "start_page": self.config.start_page,
+            "toast_seconds": self.config.toast_seconds,
             "now_playing": self.now_playing(),
         });
         let vm = vm.to_string();
@@ -899,6 +904,7 @@ impl App {
                 "space": self.state.spaces.get(l.space).map(|s| s.name.clone()),
                 "picker": self.config.little_window.space_picker && self.state.spaces.len() > 1,
                 "copy_button": self.config.little_window.copy_button,
+                "font": self.config.layout.font,
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -1190,7 +1196,7 @@ impl App {
         } else {
             vec![]
         };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "options": self.config.command_bar, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agents.default, "options": self.config.command_bar, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -1201,7 +1207,7 @@ impl App {
     /// One line of text in the command bar overlay (shown above everything, whatever the sidebar's size).
     fn open_prompt(&mut self, label: &str, value: &str, then: Value, field: &str) {
         let data = json!({ "mode": "prompt", "prompt": { "label": label, "value": value, "then": then, "field": field },
-                           "theme": self.theme_for(self.state.active_space), "items": [], "options": self.config.command_bar });
+                           "theme": self.theme_for(self.state.active_space), "items": [], "options": self.config.command_bar, "font": self.config.layout.font });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -1432,6 +1438,7 @@ impl App {
         }
         match Config::load() {
             Ok(c) => {
+                self.state.limits = crate::state::Limits { history: c.history.max_pages, archive: c.history.max_archived_tabs, closed: c.history.max_closed_tabs };
                 let blocking_changed = serde_json::to_value(&c.content_blocking).ok() != serde_json::to_value(&self.config.content_blocking).ok();
                 self.config = c;
                 self.state.reconcile_spaces(&self.config);
@@ -1442,7 +1449,10 @@ impl App {
                 self.refresh_content_config();
                 self.layout();
                 self.render();
-                self.toast("Config reloaded");
+                match config::unknown_keys(&std::fs::read_to_string(config::config_path()).unwrap_or_default()).first() {
+                    Some(problem) => self.toast(&format!("Config reloaded, but {problem}")),
+                    None => self.toast("Config reloaded"),
+                }
             }
             Err(e) => self.toast(&format!("Config error: {e:#}")),
         }
@@ -1692,7 +1702,8 @@ impl App {
     fn peek_rect(&self) -> (f64, f64, f64, f64) {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let (x, y, w, h) = self.content_area(size.width, size.height);
-        let (mx, my) = ((w * 0.06).max(16.0), (h * 0.05).max(16.0));
+        let m = self.config.peek.margin.clamp(0.0, 40.0) / 100.0;
+        let (mx, my) = ((w * m).max(16.0), (h * m * 0.85).max(16.0));
         (x + mx, y + my, w - 2.0 * mx, h - 2.0 * my)
     }
 
@@ -1707,14 +1718,14 @@ impl App {
             Ok(v) => v,
             Err(e) => return eprintln!("valerie: peek: {e}"),
         };
-        platform::round_corners(&view, 12.0, platform::Corners::All);
+        platform::round_corners(&view, self.config.peek.corner_radius, platform::Corners::All);
         #[cfg(target_os = "macos")]
         if self.rules.is_some() {
             blocking::mac::apply(&view, self.rules.as_ref());
         }
         for p in self.panes() {
             if let Some(v) = self.views.get(&p) {
-                platform::set_alpha(v, 0.45, self.anim_secs());
+                platform::set_alpha(v, self.config.peek.dim.clamp(0.0, 1.0), self.anim_secs());
             }
         }
         platform::fade_in(&view, self.anim_secs());
@@ -1831,7 +1842,8 @@ impl App {
         self.render();
         let p = self.proxy.clone();
         let model = model.unwrap_or_else(|| self.config.agents.model.clone());
-        let run = agents::Run { name, agent, model, prompt, space, customize };
+        let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
+        let run = agents::Run { name, agent, model, prompt, space, customize, timeout };
         std::thread::spawn(move || send(&p, UserEvent::AgentDone(agents::run(run))));
     }
 
@@ -2240,8 +2252,8 @@ impl App {
             }
             Command::CycleSidebarSize => {
                 let next = match self.sidebar_size() {
-                    "full" => SIDEBAR_MEDIUM,
-                    "medium" => SIDEBAR_COMPACT,
+                    "full" => self.config.sidebar.medium_width,
+                    "medium" => self.config.sidebar.compact_width,
                     _ => self.config.layout.sidebar_width,
                 };
                 self.state.sidebar_width = Some(next);
@@ -2378,7 +2390,7 @@ impl App {
                 if !(s.split.len() > 1 && s.split.contains(&a)) {
                     s.split = vec![a];
                 }
-                if !s.split.contains(&other) && s.split.len() < 4 {
+                if !s.split.contains(&other) && s.split.len() < self.config.layout.split_max_panes.max(2) {
                     s.split.push(other);
                 }
                 self.activate(a);
@@ -2417,14 +2429,16 @@ impl App {
             Command::ZoomIn | Command::ZoomOut | Command::ZoomReset => {
                 if let Some(t) = self.state.active_tab() {
                     let z = self.zoom_for(t);
+                    let tc = &self.config.tabs;
+                    let (step, lo, hi) = (tc.zoom_step.max(1.0) / 100.0, tc.zoom_min.max(10.0) / 100.0, tc.zoom_max.max(tc.zoom_min) / 100.0);
                     let z = match cmd {
-                        Command::ZoomIn => (z + 0.1).min(3.0),
-                        Command::ZoomOut => (z - 0.1).max(0.3),
-                        _ => 1.0,
+                        Command::ZoomIn => (z + step).min(hi),
+                        Command::ZoomOut => (z - step).max(lo),
+                        _ => self.default_zoom(),
                     };
-                    let z = (z * 10.0).round() / 10.0;
+                    let z = (z * 100.0).round() / 100.0;
                     match self.zoom_site(t) {
-                        Some(site) if z == 1.0 => {
+                        Some(site) if z == self.default_zoom() => {
                             self.state.site_zoom.remove(&site);
                         }
                         Some(site) => {
@@ -2478,8 +2492,7 @@ impl App {
                 }
             }
             Command::ShowDownloads => {
-                let dir = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
-                platform::open_external(&dir.to_string_lossy());
+                platform::open_external(&self.config.downloads.dir().to_string_lossy());
             }
             Command::SetUpSync => {
                 self.toast("Signing in to GitHub…");
@@ -2786,9 +2799,10 @@ impl App {
                 let _ = self.chrome.evaluate_script("window.valerie && valerie.pointerOut && valerie.pointerOut()");
             }
             (Source::Chrome, "resize") => {
-                let w = m["width"].as_f64().unwrap_or(0.0).clamp(SIDEBAR_COMPACT, 520.0);
+                let s = &self.config.sidebar;
+                let w = m["width"].as_f64().unwrap_or(0.0).clamp(s.compact_width, s.max_width.max(s.compact_width));
                 // Snap to compact when dragged into icon territory.
-                self.state.sidebar_width = Some(if w < 120.0 { SIDEBAR_COMPACT } else { w });
+                self.state.sidebar_width = Some(if w < (s.compact_width + s.medium_width) / 2.0 { s.compact_width } else { w });
                 if m["done"].as_bool() == Some(true) {
                     self.dirty = true;
                 }
@@ -3113,7 +3127,7 @@ impl App {
                     self.toast(&format!("Downloaded {name}"));
                     self.state.downloads.retain(|d| d.path != path.to_string_lossy());
                     self.state.downloads.insert(0, crate::state::Download { name, path: path.to_string_lossy().into_owned(), url, at: now() });
-                    self.state.downloads.truncate(100);
+                    self.state.downloads.truncate(self.config.downloads.keep_in_list);
                     self.dirty = true;
                 }
                 None => self.toast(if ok { "Download complete" } else { "Download failed" }),

@@ -8,9 +8,9 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: transparent; overflow: hidden; }
 body { font: 14px/1.35 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; color: var(--fg); -webkit-user-select: none; user-select: none; }
-#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.22); opacity: 0; transition: opacity .12s; }
+#backdrop { position: fixed; inset: 0; background: rgba(0,0,0,var(--dim, .22)); opacity: 0; transition: opacity .12s; }
 #card {
-  position: fixed; left: 50%; top: 18vh; width: min(680px, calc(100vw - 48px)); transform: translateX(-50%) scale(.98);
+  position: fixed; left: 50%; top: var(--top, 18vh); width: min(var(--width, 680px), calc(100vw - 48px)); transform: translateX(-50%) scale(.98);
   background: var(--bg); border-radius: 16px; overflow: hidden; opacity: 0; transition: opacity .12s, transform .12s;
   box-shadow: 0 0 0 1px var(--line), 0 24px 70px rgba(0,0,0,.45), 0 4px 16px rgba(0,0,0,.2);
 }
@@ -24,12 +24,12 @@ body.open #card { opacity: 1; transform: translateX(-50%) scale(1); }
 body.scoped #scope { display: flex; }
 body.scoped #inputrow .glyph { display: none; }
 .item .tabkey { font-size: 11px; color: var(--dim); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); flex: none; }
-input { flex: 1; background: none; border: 0; outline: none; color: var(--fg); font: inherit; font-size: 19px; caret-color: var(--accent); }
+input { flex: 1; background: none; border: 0; outline: none; color: var(--fg); font: inherit; font-size: var(--input-size, 19px); caret-color: var(--accent); }
 input::placeholder { color: var(--dim); }
 #list { max-height: min(430px, 55vh); overflow-y: auto; padding: 6px; }
 #list:empty { display: none; }
 #list::-webkit-scrollbar { width: 0; }
-.item { display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 12px; border-radius: 10px; }
+.item { display: flex; align-items: center; gap: 12px; height: calc(var(--input-size, 19px) * 2.2); padding: 0 12px; border-radius: 10px; }
 .item.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
 .item .ic { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 4px; font-size: 13px; color: var(--dim); }
 .item img.ic { object-fit: contain; }
@@ -197,13 +197,13 @@ function compute() {
     if (s < 0) continue;
     if (it.url && it.kind !== "tab" && it.kind !== "favorite" && it.kind !== "pinned") { if (seen.has(it.url)) continue; seen.add(it.url); }
     const boost = it.kind === "history" ? Math.min(Math.log2((it.visits || 1) + 1) * 3, 15) : 0;
-    out.push({ ...it, s: s + (KIND_WEIGHT[it.kind] || 0) + boost });
+    out.push({ ...it, s: s + (((D.options || {}).result_weights || KIND_WEIGHT)[it.kind] ?? KIND_WEIGHT[it.kind] ?? 0) + boost });
   }
   const head = out[0] && out[0].kind === "go" ? [out.shift()] : [];
   out.sort((a, b) => b.s - a.s);
   // A strong exact title/host match beats the raw search action.
   if (head.length && out[0] && out[0].s > 120 && D.mode !== "current") out.splice(1, 0, ...head); else out = head.concat(out);
-  results = out.slice(0, raw ? 59 : 8);
+  results = out.slice(0, raw ? Math.max(1, ((D.options || {}).max_results || 60) - 1) : 8);
   const site = siteFor(raw);
   if (site) results.unshift({ kind: "site", title: "Search " + site.name, sub: "", site, favicon: siteIcon(site) });
   if (raw && !looksLikeUrl(raw)) {
@@ -284,6 +284,12 @@ window.palette = {
     if (data.theme.mode !== "light") r.style.setProperty("--bg", "color-mix(in srgb, " + data.theme.background[0] + " 70%, #101014)");
     else r.style.removeProperty("--bg");
     document.getElementById("foot").style.display = data.options && data.options.footer_hints === false ? "none" : "";
+    const o = data.options || {};
+    if (o.width) r.style.setProperty("--width", o.width + "px");
+    if (o.top != null) r.style.setProperty("--top", o.top + "vh");
+    if (o.font_size) r.style.setProperty("--input-size", o.font_size + "px");
+    if (o.dim_background != null) r.style.setProperty("--dim", o.dim_background);
+    document.body.style.fontFamily = data.font ? `${data.font}, -apple-system, system-ui, sans-serif` : "";
     q.placeholder = data.mode === "current" ? "Edit URL or search…" : "Search or enter URL…";
     q.value = data.mode === "prompt" ? data.prompt.value || "" : data.query || "";
     if (data.mode === "prompt") q.placeholder = data.prompt.label + "…";

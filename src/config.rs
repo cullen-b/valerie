@@ -22,6 +22,11 @@ pub struct Config {
     pub find: FindConfig,
     pub links: LinksConfig,
     pub tabs: TabsConfig,
+    pub window: WindowConfig,
+    pub peek: PeekConfig,
+    pub history: HistoryConfig,
+    pub downloads: DownloadsConfig,
+    pub toast_seconds: f64,
     pub reader_view: ReaderConfig,
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
@@ -57,6 +62,11 @@ pub struct Layout {
     pub split_focus: String,
     pub pinned_style: String,
     pub animation_ms: f64,
+    pub top_bar_height: f64,
+    pub font: String,
+    pub split_max_panes: usize,
+    pub split_unfocused_opacity: f64,
+    pub split_border_width: f64,
 }
 
 /// Which bits of sidebar text and chrome are shown.
@@ -78,6 +88,13 @@ pub struct SidebarConfig {
     pub space_switcher: bool,
     pub tab_height: f64,
     pub now_playing: bool,
+    pub compact_width: f64,
+    pub medium_width: f64,
+    pub max_width: f64,
+    pub pinned_columns: u32,
+    pub pinned_tile_height: f64,
+    pub swipe_between_spaces: bool,
+    pub double_click_edge: bool,
 }
 
 /// What modified clicks on links do; values are link actions (see config/default.yaml).
@@ -97,6 +114,8 @@ pub struct LinksConfig {
 pub struct FindConfig {
     pub minimap: bool,
     pub highlight_all: bool,
+    pub highlight_color: String,
+    pub current_color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +131,12 @@ pub struct CommandBarConfig {
     pub footer_hints: bool,
     pub empty_hint: bool,
     pub calculator: bool,
+    pub width: f64,
+    pub top: f64,
+    pub font_size: f64,
+    pub max_results: usize,
+    pub dim_background: f64,
+    pub result_weights: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -136,13 +161,60 @@ pub struct TabsConfig {
     pub autoplay_in_background: bool,
     pub picture_in_picture_on_leave: bool,
     pub zoom: String,
+    pub default_zoom: f64,
+    pub zoom_step: f64,
+    pub zoom_min: f64,
+    pub zoom_max: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReaderConfig {
+    pub theme: String,
     pub font: String,
     pub font_size: f64,
     pub width: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowConfig {
+    pub width: f64,
+    pub height: f64,
+    pub min_width: f64,
+    pub min_height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeekConfig {
+    pub margin: f64,
+    pub dim: f64,
+    pub corner_radius: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    pub max_pages: usize,
+    pub max_archived_tabs: usize,
+    pub max_closed_tabs: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadsConfig {
+    pub folder: String,
+    pub keep_in_list: usize,
+}
+
+impl DownloadsConfig {
+    /// Where downloads and captures go: `folder` (~ allowed), else the system Downloads folder.
+    pub fn dir(&self) -> PathBuf {
+        let f = self.folder.trim();
+        if f.is_empty() {
+            return dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+        }
+        match f.strip_prefix("~/") {
+            Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
+            None => PathBuf::from(f),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,6 +313,7 @@ impl Binding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VimConfig {
     pub enabled: bool,
+    pub key_timeout_ms: f64,
     pub scroll_step: f64,
     pub smooth_scroll: bool,
     pub scroll_duration_ms: f64,
@@ -275,6 +348,7 @@ pub struct SyncConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordsConfig {
     pub enabled: bool,
+    pub save_prompt_seconds: f64,
     pub shared: Vec<SharedVault>,
 }
 
@@ -294,6 +368,7 @@ pub struct BlockingConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentsConfig {
+    pub timeout_minutes: f64,
     pub default: String,
     /// Model passed to the agent CLI; empty = the CLI's own default.
     pub model: String,
@@ -356,6 +431,52 @@ pub fn config_path() -> PathBuf {
 }
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
+/// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
+const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights"];
+
+/// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
+/// ignored), each with the closest real key when there is one.
+pub fn unknown_keys(user_text: &str) -> Vec<String> {
+    fn distance(a: &str, b: &str) -> usize {
+        let b: Vec<char> = b.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.chars().enumerate() {
+            let mut prev = row[0];
+            row[0] = i + 1;
+            for j in 0..b.len() {
+                let cur = row[j + 1];
+                row[j + 1] = (prev + usize::from(ca != b[j])).min(row[j] + 1).min(cur + 1);
+                prev = cur;
+            }
+        }
+        row[b.len()]
+    }
+    fn walk(path: &str, user: &Value, def: &Value, out: &mut Vec<String>) {
+        let (Value::Mapping(u), Value::Mapping(d)) = (user, def) else { return };
+        if FREE_FORM.contains(&path) {
+            return;
+        }
+        for (k, v) in u {
+            let Some(key) = k.as_str() else { continue };
+            let full = if path.is_empty() { key.to_string() } else { format!("{path}.{key}") };
+            match d.get(k) {
+                Some(dv) => walk(&full, v, dv, out),
+                None => {
+                    let close = d.keys().filter_map(Value::as_str).map(|c| (distance(key, c), c)).filter(|(n, _)| *n <= 3).min();
+                    out.push(match close {
+                        Some((_, c)) => format!("`{full}` isn't a setting (did you mean `{c}`?)"),
+                        None => format!("`{full}` isn't a setting"),
+                    });
+                }
+            }
+        }
+    }
+    let (Ok(user), Ok(def)) = (serde_yaml::from_str::<Value>(user_text), serde_yaml::from_str::<Value>(DEFAULT_YAML)) else { return vec![] };
+    let mut out = Vec::new();
+    walk("", &user, &def, &mut out);
+    out
+}
+
 fn merge(base: &mut Value, over: Value) {
     match (base, over) {
         (Value::Mapping(b), Value::Mapping(o)) => {

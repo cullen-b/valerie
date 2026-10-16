@@ -88,7 +88,7 @@ function ui() {
 
 function toast(msg) {
   const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; ui().appendChild(t);
-  setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 250); }, 1500);
+  setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 250); }, (cfg.toast_seconds || 1.5) * 1000);
 }
 
 // ---------- scrolling ----------
@@ -358,7 +358,8 @@ function docY(rect, s) { return s === document.scrollingElement ? rect.top + s.s
 function ensureFindStyle() {
   if (document.getElementById("__valerie_find_style")) return;
   const st = document.createElement("style"); st.id = "__valerie_find_style";
-  st.textContent = "::highlight(valerie-find){background-color:rgba(255,206,64,.55);color:inherit}::highlight(valerie-find-current){background-color:#ff9632;color:#000}";
+  const f = cfg.find || {};
+  st.textContent = `::highlight(valerie-find){background-color:${f.highlight_color || "rgba(255,206,64,.55)"};color:inherit}::highlight(valerie-find-current){background-color:${f.current_color || "#ff9632"};color:#000}`;
   (document.head || document.documentElement).appendChild(st);
 }
 function searchPage(q) {
@@ -448,10 +449,10 @@ function drawMinimap() {
     g.fillStyle = "rgba(255,255,255,.10)"; g.fillRect(0, s.scrollTop * fnd.k, W, Math.max(view * fnd.k, 6));
     g.strokeStyle = "rgba(255,255,255,.35)"; g.lineWidth = 1; g.strokeRect(0.5, s.scrollTop * fnd.k + 0.5, W - 1, Math.max(view * fnd.k, 6) - 1);
     // Matches as slim ticks on the right (like an editor's overview ruler) so the page silhouette stays readable.
-    g.fillStyle = "rgba(255,206,64,.85)";
+    g.fillStyle = (cfg.find || {}).highlight_color || "rgba(255,206,64,.85)";
     for (const m of fnd.items) g.fillRect(W * 0.55, m.y * fnd.k - 0.75, W * 0.45, 1.5);
     const cur = fnd.items[fnd.cur];
-    if (cur) { g.fillStyle = "#ff9632"; g.fillRect(0, cur.y * fnd.k - 1.5, W, 3); }
+    if (cur) { g.fillStyle = (cfg.find || {}).current_color || "#ff9632"; g.fillRect(0, cur.y * fnd.k - 1.5, W, 3); }
   });
 }
 function minimapScrollTo(e) {
@@ -585,7 +586,7 @@ window.addEventListener("keydown", (e) => {
   if (b[next] != null && !keys.some((k) => k !== next && k.startsWith(next))) { buffer = ""; e.preventDefault(); e.stopImmediatePropagation(); return run(b[next]); }
   if (keys.some((k) => k.startsWith(next))) {
     buffer = next; e.preventDefault(); e.stopImmediatePropagation();
-    bufferTimer = setTimeout(() => { if (b[buffer] != null) run(b[buffer]); buffer = ""; }, 700);
+    bufferTimer = setTimeout(() => { if (b[buffer] != null) run(b[buffer]); buffer = ""; }, cfg.vim.key_timeout_ms || 700);
     return;
   }
   buffer = "";
@@ -978,15 +979,16 @@ function reader() {
   if (readerHost) { readerHost.remove(); readerHost = null; return; }
   const root = articleRoot();
   if (!root) return toast("No article on this page");
-  const r = cfg.reader || {}, dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const r = cfg.reader || {}, theme = r.theme && r.theme !== "auto" ? r.theme : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  const dark = theme === "dark", sepia = theme === "sepia";
   const host = document.createElement("valerie-reader");
   host.style.cssText = `all: initial; position: fixed; inset: 0; z-index: 2147483646; overflow: auto; outline: none; display: block;
-    background: ${dark ? "#1d1c21" : "#fbf8f2"};`;
+    background: ${dark ? "#1d1c21" : sepia ? "#f4ecd8" : "#fbf8f2"};`;
   host.tabIndex = -1;
   const sh = host.attachShadow({ mode: "closed" }), st = document.createElement("style");
   const font = r.font === "sans" ? "-apple-system, system-ui, sans-serif" : '"New York", "Iowan Old Style", Charter, Georgia, serif';
   st.textContent = `
-    main { max-width: ${r.width || 680}px; margin: 0 auto; padding: 56px 28px 140px; font: ${r.font_size || 19}px/1.65 ${font}; color: ${dark ? "#e6e3dc" : "#26231f"}; }
+    main { max-width: ${r.width || 680}px; margin: 0 auto; padding: 56px 28px 140px; font: ${r.font_size || 19}px/1.65 ${font}; color: ${dark ? "#e6e3dc" : sepia ? "#5b4636" : "#26231f"}; }
     .site { font: 600 12px/1 -apple-system, system-ui, sans-serif; letter-spacing: .6px; text-transform: uppercase; color: ${cfg.accent || "#9d8cff"}; margin-bottom: 14px; }
     h1 { font-size: 1.9em; line-height: 1.2; margin: 0 0 1.1em; } h2 { font-size: 1.35em; margin: 1.6em 0 .5em; } h3, h4 { font-size: 1.1em; margin: 1.4em 0 .4em; }
     p, li { margin: 0 0 1em; } ul { padding-left: 1.2em; } img { max-width: 100%; height: auto; border-radius: 8px; margin: .6em 0; }
@@ -1111,7 +1113,7 @@ function offerSave(host, username, nonce, vaults) {
   button("Never", "", { t: "never_password", nonce });
   button("Not now", "", { t: "dismiss_password", nonce });
   ui().appendChild(box);
-  setTimeout(() => box.remove(), 30000);
+  setTimeout(() => box.remove(), (cfg.save_prompt_seconds || 30) * 1000);
 }
 // Watch for login forms that appear later, but only while the tab is visible and until one is found.
 let loginTimer = 0;

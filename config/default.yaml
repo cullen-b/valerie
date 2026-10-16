@@ -37,6 +37,20 @@ layout:
   split_focus: border      # how the focused split-view pane is shown. one of: border | dim (others fade) | both | none
   pinned_style: icons      # how pinned tabs look. one of: icons (Arc-style tiles) | list
   animation_ms: 180        # sidebar / space transition length; 0 = instant
+  top_bar_height: 40       # height of the tab bar when tab_bar is top, pixels
+  font: ""                 # font for Valerie's own sidebar, command bar and windows (a CSS font family, e.g.
+                           # "Georgia" or "Comic Sans MS"); empty = the system font
+  split_max_panes: 4       # most pages side by side in split view
+  split_unfocused_opacity: 0.72   # how see-through the other panes get when split_focus is dim or both (0–1)
+  split_border_width: 2    # thickness of the focused pane's border when split_focus is border or both, pixels
+
+window:
+  width: 1440              # size of the window when Valerie first opens, pixels
+  height: 920
+  min_width: 480           # the window can't be made smaller than this
+  min_height: 360
+
+toast_seconds: 1.8         # how long the little messages ("Copied URL", "Zoom 110%") stay up
 
 # Each piece of text or chrome in the sidebar. Set to false to hide it.
 sidebar:
@@ -56,6 +70,13 @@ sidebar:
   space_switcher: true     # the space icons at the bottom
   tab_height: 38           # height of each tab in the list, in pixels (16 tiny … 120 huge); text and icons scale with it
   now_playing: true        # a mini player above the space icons for video/audio playing in another tab
+  compact_width: 78        # sidebar width in its icons-only size, pixels (leave room for the window buttons)
+  medium_width: 180        # sidebar width in its icon + domain size, pixels
+  max_width: 520           # widest you can drag the sidebar, pixels
+  pinned_columns: 4        # pinned icon tiles per row (full and medium sizes)
+  pinned_tile_height: 46   # height of each pinned icon tile, pixels
+  swipe_between_spaces: true   # two-finger swipe sideways on the sidebar switches spaces
+  double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
 escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
@@ -66,6 +87,28 @@ command_bar:
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
+  width: 680               # command bar width, pixels
+  top: 18                  # how far down the window it opens, percent of the window height
+  font_size: 19            # size of the text you type, pixels (results scale with it)
+  max_results: 60          # most results listed while typing
+  dim_background: 0.22     # how much the page darkens behind the command bar (0 = not at all, 1 = black)
+  result_weights:          # how strongly each kind of result ranks (higher = nearer the top)
+    tab: 30
+    favorite: 26
+    pinned: 26
+    plugin: 20
+    command: 18
+    space: 18
+    bookmark: 12
+    download: 10
+    history: 8
+    synced: 6
+    theme: 5
+    import: 5
+    archived: 4
+    password: 3
+    agent: 2
+    customize: 1
 
 
 # Sites for Tab-to-search in the command bar. Type a keyword or the start of the name, press Tab, then your search.
@@ -100,6 +143,8 @@ site_search:
 find:
   minimap: true            # a strip on the right showing the whole page, every match, and where you are
   highlight_all: true      # highlight every match, not just the current one
+  highlight_color: "rgba(255,206,64,.55)"   # colour behind every match (any CSS colour)
+  current_color: "#ff9632" # colour behind the match you're on
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -113,9 +158,30 @@ tabs:
   autoplay_in_background: false   # let tabs opened in the background start playing video/audio before you look at them
   picture_in_picture_on_leave: true  # a video that's playing pops out into a floating window when you switch away from its tab
   zoom: site               # what ⌘+ / ⌘- zoom applies to. one of: site (every tab of that site, remembered) | tab (just this tab)
+  default_zoom: 100        # zoom for every page you haven't zoomed yourself, percent (e.g. 125 for bigger text everywhere)
+  zoom_step: 10            # how much each ⌘+ / ⌘- changes the zoom, percent
+  zoom_min: 30             # smallest zoom, percent
+  zoom_max: 300            # largest zoom, percent
+
+# Peek (⌥⇧-click a link): a preview floating over the page.
+peek:
+  margin: 6                # space around the preview, percent of the window
+  dim: 0.45                # how see-through the page behind gets (0 = invisible, 1 = not dimmed)
+  corner_radius: 12        # rounding of the preview's corners, pixels
+
+# What Valerie remembers.
+history:
+  max_pages: 5000          # pages kept in history (the command bar searches them)
+  max_archived_tabs: 1000  # auto-archived tabs kept (searchable in the command bar)
+  max_closed_tabs: 50      # closed tabs ⌘⇧T can bring back
+
+downloads:
+  folder: ""               # where downloads and page captures go (e.g. "~/Desktop"); empty = your Downloads folder
+  keep_in_list: 100        # finished downloads listed in the command bar
 
 # Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
 reader_view:
+  theme: auto              # one of: auto (follows your computer's light/dark mode) | light | dark | sepia
   font: serif              # one of: serif | sans
   font_size: 19            # text size in pixels
   width: 680               # column width in pixels
@@ -269,6 +335,7 @@ keybindings:
 # bottom | hints | hints_new_tab | insert | find | yank_url) or any app command. Set a key to null to turn it off.
 vim:
   enabled: true
+  key_timeout_ms: 700      # how long Valerie waits for the next key of a two-key command like gg or yy
   scroll_step: 80          # pixels per j / k
   smooth_scroll: true      # glide instead of jumping (j/k, d/U, gg/G)
   scroll_duration_ms: 150  # how long each glide takes; lower = snappier
@@ -319,6 +386,7 @@ vim:
 # Passwords live in the macOS Keychain, one vault per profile.
 passwords:
   enabled: true
+  save_prompt_seconds: 30  # how long "Save password?" stays up before going away by itself
   shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared
@@ -348,6 +416,7 @@ mcp:
 # schedule jobs here.
 agents:
   default: claude          # one of: claude | codex | opencode
+  timeout_minutes: 20      # stop an agent that's still running after this long
   model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
   space: Agents            # agents open their tabs in this space and leave yours alone
   jobs: []

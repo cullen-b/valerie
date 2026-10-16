@@ -162,14 +162,28 @@ pub struct State {
     /// Sites where the user turned Valerie's dark mode on (true) or off (false), overriding pages.dark_mode.
     #[serde(default)]
     pub dark_sites: BTreeMap<String, bool>,
+    /// How much history, archive and closed tabs to keep (from the `history` settings; not saved).
+    #[serde(skip)]
+    pub limits: Limits,
     /// Finished downloads, newest first.
     #[serde(default)]
     pub downloads: Vec<Download>,
 }
 
-const MAX_HISTORY: usize = 5000;
-const MAX_ARCHIVE: usize = 1000;
-const MAX_CLOSED: usize = 50;
+
+/// How many history pages, archived tabs and closed tabs to keep.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    pub history: usize,
+    pub archive: usize,
+    pub closed: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits { history: 5000, archive: 1000, closed: 50 }
+    }
+}
 
 /// Every tab id in a tree, folders included.
 pub fn flat_ids(nodes: &[Node]) -> Vec<TabId> {
@@ -387,7 +401,7 @@ impl State {
         self.detach(tab);
         if let Some(t) = self.tabs.remove(&tab) {
             self.closed.push(Closed { tab: t, space });
-            if self.closed.len() > MAX_CLOSED {
+            if self.closed.len() > self.limits.closed {
                 self.closed.remove(0);
             }
         }
@@ -408,7 +422,7 @@ impl State {
                 0,
                 Archived { url: t.url.clone(), title: t.display_title().to_string(), space, archived_at: now() },
             );
-            self.archive.truncate(MAX_ARCHIVE);
+            self.archive.truncate(self.limits.archive);
         }
     }
 
@@ -458,7 +472,7 @@ impl State {
                 0,
                 HistoryEntry { url: url.into(), title: title.into(), visits: 1, last: now() },
             );
-            self.history.truncate(MAX_HISTORY);
+            self.history.truncate(self.limits.history);
         }
     }
 

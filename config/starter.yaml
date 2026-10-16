@@ -1,6 +1,9 @@
 # Valerie config: hot-reloaded on save, safe to keep in git.
 # Only put what you want to change here; everything else uses the defaults that ship with Valerie.
-# See every option with comments: `valerie default-config` (or config/default.yaml in the repo).
+# See every option with comments: `valerie default-config` (also reference/default-config.yaml next to this file).
+# `valerie effective-config` shows what's in effect now; `valerie check-config` catches mistakes and misspellings.
+# Easiest of all: describe what you want to an AI assistant in this folder (it reads AGENTS.md), or type
+# "! make the text bigger" in Valerie's command bar.
 
 profiles:
   - name: Personal

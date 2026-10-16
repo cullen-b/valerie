@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 /// Running agent processes by run name, so they can be stopped from the command bar.
 static RUNNING: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
@@ -28,6 +27,8 @@ pub struct Run {
     pub space: String,
     /// Edit Valerie's own config and plugins instead of browsing.
     pub customize: bool,
+    /// Give up after this long.
+    pub timeout: Duration,
 }
 
 #[derive(Clone)]
@@ -120,6 +121,7 @@ pub fn run(r: Run) -> Finished {
     let log = dir.join(format!("{}-{}.log", crate::state::now(), r.name.replace(|c: char| !c.is_ascii_alphanumeric(), "-")));
     let finished = |ok: bool, summary: String| Finished { name: r.name.clone(), ok, log: log.clone(), summary };
     let r_name = r.name.clone();
+    let timeout = r.timeout;
     let result = (|| -> Result<bool> {
         let exe = std::env::current_exe()?;
         let path = search_path();
@@ -144,10 +146,10 @@ pub fn run(r: Run) -> Finished {
                 forget();
                 return Ok(status.success());
             }
-            if start.elapsed() > TIMEOUT {
+            if start.elapsed() > timeout {
                 let _ = child.kill();
                 forget();
-                bail!("timed out after {} minutes", TIMEOUT.as_secs() / 60);
+                bail!("timed out after {} minutes", timeout.as_secs() / 60);
             }
             std::thread::sleep(Duration::from_millis(500));
         }
