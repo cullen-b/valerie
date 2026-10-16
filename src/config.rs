@@ -427,8 +427,10 @@ pub struct ChatsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowConfig {
+    pub remember: bool,
     pub width: f64,
     pub height: f64,
+    pub screen_fraction: f64,
     pub min_width: f64,
     pub min_height: f64,
 }

@@ -370,13 +370,40 @@ fn mac_window(wb: WindowBuilder) -> WindowBuilder {
 
 impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
-        let window = mac_window(WindowBuilder::new())
+        // Last session's size and place (if it still fits a screen), else the configured size, else most of the screen.
+        let saved = if config.window.remember { State::load(&state_path()).window_frame } else { None };
+        let screen = elwt.primary_monitor().map(|m| {
+            let s = m.size().to_logical::<f64>(m.scale_factor());
+            let p = m.position().to_logical::<f64>(m.scale_factor());
+            (p.x, p.y, s.width, s.height)
+        });
+        let on_screen = |(x, y, w, _): (f64, f64, f64, f64)| {
+            elwt.available_monitors().any(|m| {
+                let s = m.size().to_logical::<f64>(m.scale_factor());
+                let p = m.position().to_logical::<f64>(m.scale_factor());
+                x + w > p.x + 40.0 && x < p.x + s.width - 40.0 && y + 20.0 > p.y && y < p.y + s.height - 40.0
+            })
+        };
+        let frame = saved.filter(|f| f.2 >= 200.0 && f.3 >= 150.0 && on_screen(*f)).or_else(|| {
+            let (sx, sy, sw, sh) = screen?;
+            let k = config.window.screen_fraction.clamp(0.5, 1.0);
+            let w = if config.window.width > 0.0 { config.window.width.min(sw) } else { (sw * k).round() };
+            let h = if config.window.height > 0.0 { config.window.height.min(sh) } else { (sh * k).round() };
+            Some((sx + ((sw - w) / 2.0).max(0.0), sy + ((sh - h) / 2.0).max(0.0), w, h))
+        });
+        let (fw, fh) = frame.map_or((1440.0, 920.0), |f| (f.2, f.3));
+        trace(&format!("window frame {frame:?} (saved: {})", saved.is_some()));
+        let mut builder = mac_window(WindowBuilder::new())
             .with_title("Valerie")
             // Shown once the active space is on screen (reveal), so the first thing you see is your tabs.
             .with_visible(false)
-            .with_inner_size(LogicalSize::new(config.window.width.max(320.0), config.window.height.max(240.0)))
+            .with_inner_size(LogicalSize::new(fw.max(320.0), fh.max(240.0)))
             .with_min_inner_size(LogicalSize::new(config.window.min_width.max(200.0), config.window.min_height.max(150.0)))
-            .build(elwt)?;
+            ;
+        if let Some((x, y, _, _)) = frame {
+            builder = builder.with_position(tao::dpi::LogicalPosition::new(x, y));
+        }
+        let window = builder.build(elwt)?;
         trace("  window");
         let size = window.inner_size().to_logical::<f64>(window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
@@ -3896,11 +3923,13 @@ impl App {
             WindowEvent::Focused(f) if main => self.window_focused = f,
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 if main {
-                    self.layout()
+                    self.layout();
+                    self.remember_frame();
                 } else {
                     self.layout_little(id)
                 }
             }
+            WindowEvent::Moved(_) if main => self.remember_frame(),
             WindowEvent::CloseRequested => {
                 if main {
                     self.quit = true;
@@ -3937,6 +3966,21 @@ impl App {
         if self.state.active_tab().is_none() {
             // Nothing to load: show as soon as the sidebar has drawn.
             self.reveal_when_chrome_ready = true;
+        }
+    }
+
+    /// Keep the window's size and place for next launch (not while it's full screen or hidden).
+    fn remember_frame(&mut self) {
+        if !self.revealed || !self.config.window.remember || self.window.fullscreen().is_some() || self.window.is_minimized() {
+            return;
+        }
+        let k = self.window.scale_factor();
+        let (Ok(p), s) = (self.window.outer_position(), self.window.inner_size()) else { return };
+        let (p, s) = (p.to_logical::<f64>(k), s.to_logical::<f64>(k));
+        let f = Some((p.x, p.y, s.width, s.height));
+        if self.state.window_frame != f {
+            self.state.window_frame = f;
+            self.dirty = true;
         }
     }
 
@@ -4034,6 +4078,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
             _ => {}
         }
         if app.quit {
+            app.remember_frame();
             app.save();
             *control_flow = ControlFlow::Exit;
         }

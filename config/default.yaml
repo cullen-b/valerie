@@ -45,8 +45,10 @@ layout:
   split_border_width: 2    # thickness of the focused pane's border when split_focus is border or both, pixels
 
 window:
-  width: 1440              # size of the window when Valerie first opens, pixels
-  height: 920
+  remember: true           # reopen at the size and place you left it
+  width: 0                 # size of the window the first time it opens, pixels; 0 = fill most of the screen
+  height: 0
+  screen_fraction: 0.92    # with width/height at 0: how much of the screen the window covers (0.5 – 1)
   min_width: 480           # the window can't be made smaller than this
   min_height: 360
 
