@@ -12,6 +12,7 @@ mod plugins;
 mod routing;
 mod state;
 mod sync;
+mod github;
 
 use config::Config;
 

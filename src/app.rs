@@ -55,6 +55,9 @@ pub enum UserEvent {
     Downloaded { ok: bool, path: Option<PathBuf>, url: String },
     Captured(Result<Vec<u8>, String>),
     DownloadStarted { target: Target },
+    SyncSetup(crate::github::Step),
+    /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
+    SyncDue(u64),
     AgentDone(agents::Finished),
     PluginDone { title: String, output: String, result: Result<String, String> },
     SiteDataCleared { message: String, reload: bool },
@@ -87,6 +90,8 @@ pub struct App {
     committed_url: HashMap<TabId, String>,
     /// A question Valerie asked a page (selected text, an element to hide…): (tab, nonce, kind).
     page_request: Option<(TabId, String, &'static str)>,
+    /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
+    sync_gen: u64,
     littles: HashMap<WindowId, Little>,
     focused_little: Option<WindowId>,
     config: Config,
@@ -283,6 +288,7 @@ impl App {
             recent_tabs: Vec::new(),
             committed_url: HashMap::new(),
             page_request: None,
+            sync_gen: 0,
             littles: HashMap::new(),
             focused_little: None,
             config,
@@ -1895,7 +1901,7 @@ impl App {
     fn start_sync(&mut self) {
         let repo = self.config.sync.repo.clone();
         if repo.is_empty() {
-            return self.toast("Set sync.repo in config.yaml (or run `valerie sync-setup`)");
+            return self.toast("Sync isn't set up yet: run \"Set Up Sync\" from the command bar");
         }
         if self.syncing {
             return;
@@ -1935,9 +1941,25 @@ impl App {
             favorites: self.state.favorites_tree(),
             favorites_modified: self.state.favorites_modified,
         };
-        let dir = config::data_dir().join("sync");
+        let dir = config::config_dir();
         let p = self.proxy.clone();
-        std::thread::spawn(move || send(&p, UserEvent::SyncDone(sync::run(&repo, &dir, &me).map_err(|e| format!("{e:#}")))));
+        std::thread::spawn(move || {
+            let token = repo.contains("github.com").then(crate::github::token).flatten();
+            send(&p, UserEvent::SyncDone(sync::run(&repo, &dir, &me, token.as_deref()).map_err(|e| format!("{e:#}"))))
+        });
+    }
+
+    /// Sync a little after a change (sync.on_change), so a burst of edits goes up as one commit.
+    fn schedule_sync(&mut self) {
+        if self.config.sync.repo.is_empty() || !self.config.sync.on_change {
+            return;
+        }
+        self.sync_gen += 1;
+        let (g, p, secs) = (self.sync_gen, self.proxy.clone(), self.config.sync.delay_seconds.max(1.0));
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+            send(&p, UserEvent::SyncDue(g));
+        });
     }
 
     fn save(&mut self) {
@@ -1945,6 +1967,7 @@ impl App {
             eprintln!("valerie: could not save state: {e}");
         }
         self.dirty = false;
+        self.schedule_sync();
     }
 
     fn tick(&mut self) {
@@ -2457,6 +2480,15 @@ impl App {
             Command::ShowDownloads => {
                 let dir = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
                 platform::open_external(&dir.to_string_lossy());
+            }
+            Command::SetUpSync => {
+                self.toast("Signing in to GitHub…");
+                let (p, id, name) = (self.proxy.clone(), self.config.sync.github_client_id.clone(), self.config.sync.repo_name.clone());
+                std::thread::spawn(move || {
+                    let notify = |s: crate::github::Step| send(&p, UserEvent::SyncSetup(s));
+                    let done = crate::github::set_up(&id, &name, &notify);
+                    notify(done);
+                });
             }
             Command::HideElement => self.ask_page("hide_element"),
             Command::SearchSelection => self.ask_page("selection"),
@@ -2972,7 +3004,31 @@ impl App {
             }
             UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
             UserEvent::Tick => self.tick(),
-            UserEvent::ConfigChanged => self.reload_config(),
+            UserEvent::ConfigChanged => {
+                self.reload_config();
+                self.schedule_sync();
+            }
+            UserEvent::SyncDue(g) => {
+                if g == self.sync_gen {
+                    self.start_sync();
+                }
+            }
+            UserEvent::SyncSetup(step) => match step {
+                crate::github::Step::Code { code, url } => {
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(code.clone()));
+                    self.open_tab(&url, None, true);
+                    self.toast(&format!("Paste the code {code} on GitHub (it's on your clipboard)"));
+                }
+                crate::github::Step::Done { login, repo } => match sync::write_repo_setting(&repo) {
+                    Ok(()) => {
+                        self.reload_config();
+                        self.toast(&format!("Signed in as {login}: syncing with {}", repo.trim_end_matches(".git").trim_start_matches("https://")));
+                        self.start_sync();
+                    }
+                    Err(e) => self.toast(&format!("Couldn't save the sync setting: {e}")),
+                },
+                crate::github::Step::Failed(e) => self.toast(&format!("Sync setup: {e}")),
+            },
             UserEvent::SyncDone(r) => {
                 self.syncing = false;
                 match r {

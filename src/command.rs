@@ -240,6 +240,8 @@ pub enum Command {
     CloseDuplicateTabs,
     /// Turn Valerie's dark mode for light websites on or off for this site.
     ToggleDarkPage,
+    /// Sign in to GitHub and sync settings and tabs through a private repo (created if needed).
+    SetUpSync,
     /// Copy text to the clipboard (the command bar's calculator uses this).
     CopyText {
         text: String,
@@ -394,6 +396,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("open_config", "Open Config File"),
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),
+    ("set_up_sync", "Set Up Sync (sign in to GitHub)"),
     ("quit", "Quit Valerie"),
 ];
 

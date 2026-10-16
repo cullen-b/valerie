@@ -68,7 +68,7 @@ pub fn import_csv(path: &std::path::Path, vault: &str) -> Result<usize> {
 }
 
 #[cfg(target_os = "macos")]
-mod keychain {
+pub(crate) mod keychain {
     use anyhow::{bail, Result};
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
@@ -216,7 +216,7 @@ mod keychain {
 }
 
 #[cfg(not(target_os = "macos"))]
-mod keychain {
+pub(crate) mod keychain {
     use anyhow::{bail, Result};
     pub fn save(_: &str, _: &str, _: &str, _: &str) -> Result<()> {
         bail!("password storage is only implemented on macOS so far")

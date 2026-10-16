@@ -366,10 +366,18 @@ agents:
 
 # Sync pinned tabs, folders, favorites and spaces through a private GitHub repo you own. `valerie sync-setup`
 # creates one.
+# Sync: your settings, boosts, plugins and tabs, on every machine. Run "Set Up Sync" from the command bar (or
+# `valerie sync-setup`): it signs you in to GitHub, makes a private repo and fills in `repo` below. This config folder
+# becomes a git checkout of that repo, so on a new machine you can also just clone the repo into the config folder.
 sync:
-  repo: ""                 # e.g. git@github.com:you/valerie-sync.git; empty = sync off
+  repo: ""                 # the sync repo's address, e.g. https://github.com/you/valerie-sync.git; empty = sync off
   device: ""               # this machine's name in the sync repo; empty = its hostname
-  interval_minutes: 5      # 0 = only when you press ⌘⇧Y
+  on_change: true          # sync shortly after you change tabs or settings
+  delay_seconds: 10        # how long after a change to sync (changes in the meantime go along too)
+  interval_minutes: 5      # also check for other machines' changes this often; 0 = only on change and ⌘⇧Y
+  repo_name: valerie-sync  # name of the private GitHub repo "Set Up Sync" creates or reuses
+  github_client_id: ""     # a GitHub OAuth app's client ID for signing in without the GitHub CLI (device flow);
+                           # empty = sign in through the GitHub CLI (`gh`)
 
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}
