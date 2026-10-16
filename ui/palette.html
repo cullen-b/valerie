@@ -163,8 +163,10 @@ function calc(raw) {
 // Questions and requests ("what's in my tabs?", "merge these PRs once checks pass") rather than searches.
 const ASKY = /^(what|why|how|who|when|where|which|is|are|can|could|does|do|should|would|will|explain|summari[sz]e|compare|find|merge|close|open|book|buy|order|check|watch|remind|organi[sz]e|tidy|draft|write|reply|fill|sign|tell|show|list|help)\b/i;
 function wantsAgent(raw) {
+  const n = (D.options || {}).ask_agent_words ?? 6;
+  if (n <= 0) return false;
   const t = raw.trim(), words = t.split(/\s+/).length;
-  return (t.endsWith("?") && words >= 3) || (words >= 4 && ASKY.test(t)) || words >= 8;
+  return (t.endsWith("?") && words >= Math.max(3, n - 2)) || (words >= n && ASKY.test(t)) || words >= n * 2;
 }
 
 function compute() {
@@ -208,11 +210,12 @@ function compute() {
   }
   const head = out[0] && out[0].kind === "go" ? [out.shift()] : [];
   out.sort((a, b) => b.s - a.s);
-  // A strong exact title/host match beats the raw search action.
-  if (head.length && out[0] && out[0].s > 120 && D.mode !== "current") out.splice(1, 0, ...head); else out = head.concat(out);
+  // What you typed comes first; with top_result: best_match a strong title/host match goes above it instead.
+  const bestFirst = (D.options || {}).top_result === "best_match";
+  if (bestFirst && head.length && out[0] && out[0].s > 120 && D.mode !== "current") out.splice(1, 0, ...head); else out = head.concat(out);
   results = out.slice(0, raw ? Math.max(1, ((D.options || {}).max_results || 60) - 1) : 8);
   const site = siteFor(raw);
-  if (site) results.unshift({ kind: "site", title: "Search " + site.name, sub: "", site, favicon: siteIcon(site) });
+  if (site) results.splice(bestFirst || !head.length ? 0 : 1, 0, { kind: "site", title: "Search " + site.name, sub: "", site, favicon: siteIcon(site) });
   if (raw && !looksLikeUrl(raw)) {
     // Something that reads like a question or a request goes to the top: Enter asks the agent.
     const ask = { kind: "agent", title: "Ask " + D.agent + ": " + raw, sub: "Opens in Chats · can use your browser", icon: "✦", cmd: { cmd: "new_chat", prompt: raw } };
