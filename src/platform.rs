@@ -590,3 +590,17 @@ pub fn notify(title: &str, body: &str) {
     #[cfg(windows)]
     let _ = (title, body, esc);
 }
+
+/// Today's local date, weekday and time: ("2026-10-16", "Thu", "Thursday 16 October", "08:02").
+pub fn local_day() -> (String, String, String, String) {
+    #[cfg(unix)]
+    if let Ok(o) = std::process::Command::new("date").arg("+%Y-%m-%d|%a|%A %-d %B|%H:%M").output() {
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        let p: Vec<&str> = s.split('|').collect();
+        if p.len() == 4 {
+            return (p[0].into(), p[1].into(), p[2].into(), p[3].into());
+        }
+    }
+    let d = crate::state::now() / 86400;
+    (format!("day {d}"), String::new(), String::new(), String::new())
+}

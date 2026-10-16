@@ -83,6 +83,20 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("agents: {job} uses {name:?}, which isn't under agents.available"));
                 }
             }
+            for b in &c.briefs {
+                if config::parse_time(&b.at).is_none() {
+                    problems.push(format!("briefs: {:?} has at {:?}; use a time like 08:00", b.name, b.at));
+                }
+                if !b.space.is_empty() && !c.spaces.iter().any(|s| s.name == b.space) {
+                    problems.push(format!("briefs: {:?} lives in space {:?}, which isn't in `spaces`", b.name, b.space));
+                }
+                if b.want.trim().is_empty() {
+                    problems.push(format!("briefs: {:?} needs `want` (what it should cover, in plain words)", b.name));
+                }
+                if !b.agent.is_empty() && !c.agents.available.get(&b.agent).is_some_and(Option::is_some) && ai::kind(&b.agent).is_none() {
+                    problems.push(format!("briefs: {:?} uses agent {:?}, which isn't under agents.available", b.name, b.agent));
+                }
+            }
             for (name, a) in c.ai_actions.iter().filter_map(|(n, a)| a.as_ref().map(|a| (n, a))) {
                 if !["page", "chat"].contains(&a.mode.as_str()) {
                     problems.push(format!("ai_actions.{name}: mode is {:?}; use page or chat", a.mode));
