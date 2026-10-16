@@ -57,8 +57,10 @@ body.pointer .tile:hover { background: var(--active); }
 #scroll::-webkit-scrollbar { width: 0; }
 .space-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 8px; font-weight: 600; font-size: 13px; }
 .space-title .icon { color: var(--accent); }
+/* tab rows: sidebar.tab_height sets --tab-h; text, icon and corners scale with it */
+:root { --tab-h: 38px; --tab-icon: 16px; --tab-font: 13px; }
 .row {
-  height: 34px; border-radius: 9px; display: flex; align-items: center; gap: 9px; padding: 0 6px 0 10px;
+  height: var(--tab-h); border-radius: calc(var(--tab-h) * .26); font-size: var(--tab-font); display: flex; align-items: center; gap: 9px; padding: 0 6px 0 10px;
   position: relative; color: var(--fg); transition: background .12s;
 }
 body.pointer .row:hover { background: var(--hover); }
@@ -66,11 +68,13 @@ body.pointer .row:hover { background: var(--hover); }
 :root.light .row.active { box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .row .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .row.unloaded .title { color: var(--fg-dim); }
-.row .x { width: 22px; height: 22px; border-radius: 6px; display: none; place-items: center; color: var(--fg-dim); font-size: 14px; }
+.row img.ico, .row .letter { width: var(--tab-icon); height: var(--tab-icon); border-radius: calc(var(--tab-icon) * .25); }
+.row .letter { font-size: calc(var(--tab-icon) * .62); }
+.row .x { width: min(22px, calc(var(--tab-h) * .65)); height: min(22px, calc(var(--tab-h) * .65)); border-radius: 6px; display: none; place-items: center; color: var(--fg-dim); font-size: 14px; }
 body.pointer .row:hover .x { display: grid; }
 body.pointer.dragging .row:hover .x { display: none; }
 body.pointer .row .x:hover { background: var(--hover); color: var(--fg); }
-.row .audio { font-size: 11px; color: var(--accent); }
+.row .audio { font-size: calc(var(--tab-font) * .85); color: var(--accent); }
 .row.split::after { content: ""; position: absolute; left: 2px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
 img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .letter { display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--accent); color: #fff; }
@@ -121,7 +125,7 @@ body.size-compact .empty-pinned { display: none; }
 body.size-compact .grid { grid-template-columns: 1fr; gap: 6px; }
 body.size-compact .tile { height: 40px; }
 body.size-compact .row { justify-content: center; padding: 0; gap: 0; }
-body.size-compact .row img.ico, body.size-compact .row .letter { width: 18px; height: 18px; }
+body.size-compact .row img.ico, body.size-compact .row .letter { width: calc(var(--tab-icon) + 2px); height: calc(var(--tab-icon) + 2px); }
 body.size-compact .folder .kids { padding-left: 0; }
 body.size-compact .folder.open > .kids { border-left: 2px solid var(--line); margin-left: 4px; }
 body.size-compact #bottom { flex-direction: column; gap: 4px; }
@@ -449,6 +453,10 @@ function render(state) {
   applyTheme(S.theme);
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
+  const th = Math.min(120, Math.max(16, +S.sidebar.tab_height || 38));
+  root.style.setProperty("--tab-h", th + "px");
+  root.style.setProperty("--tab-icon", Math.round(Math.min(36, Math.max(11, th * .42))) + "px");
+  root.style.setProperty("--tab-font", Math.min(22, Math.max(9.5, th * .342)).toFixed(1) + "px");
   const hadPointer = b.classList.contains("pointer");
   b.className = (hadPointer ? "pointer " : "") + (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
     (drag && drag.active ? " dragging" : "") + (resizing ? " resizing" : "");
