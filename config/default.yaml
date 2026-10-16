@@ -105,6 +105,7 @@ command_bar:
     setup: 6
     ai: 15
     watch: 5
+    brief: 17
     history: 8
     synced: 6
     theme: 5
@@ -220,6 +221,18 @@ ai_actions:
   Short tab titles: { mode: chat, prompt: "Give every tab in this space a short, clear title (2 to 4 words) with rename_tab." }
   Find related reading: { mode: chat, prompt: "Find three good pages related to \"{title}\" ({url}) and open them as background tabs. Say why each is worth reading." }
   Do something on this page…: { mode: chat, prompt: "On the page I'm on ({title}, {url}): {input}" }
+
+# Briefs: a page an agent writes for you on a schedule, like a morning brief from your Jira. Pick "New Brief…" in the
+# command bar and describe what you want in your own words; it lands here. Each brief is a tab (in Kept, in its space)
+# that always shows the latest edition, with earlier ones linked at the bottom.
+briefs: []
+#  - name: Morning brief
+#    want: "Go through my Jira and tell me what's on my plate today, most urgent first, with links."
+#    space: Work           # the space its tab lives in
+#    at: "08:00"           # when to write it, 24-hour (runs as soon as the computer is awake after that)
+#    days: weekdays        # one of: every day | weekdays | weekends | days like "mon, wed, fri"
+#    agent: ""             # which agent (a name under agents.available); empty = agents.use.tasks
+#    machine: ""           # only this computer writes it (set automatically, so synced machines don't double up)
 
 # Watch This Page…: describe what to wait for ("the price drops below $500", "checks pass on this PR"); an agent looks
 # in the background and tells you once it happens.
@@ -392,6 +405,7 @@ vim:
   scroll_duration_ms: 150  # how long each glide takes; lower = snappier
   hold_to_accelerate: true # holding j/k/h/l scrolls continuously and speeds up until you let go
   block_autofocus: true    # pages can't put the cursor in a text box until you click, so vim keys keep working
+  jump_to_text_box: true   # after you click with f (or press Enter in a text box), the cursor goes to the sign-in, reply or compose box that shows up; true | false
   hold_delay_ms: 180       # how long a key must be held before continuous scrolling starts
   hold_scroll_speed: 1000  # starting speed while holding, pixels per second
   hold_scroll_acceleration: 7000   # how quickly it speeds up, pixels per second, per second
@@ -485,8 +499,9 @@ agents:
     #   local:  { command: ["ollama", "run", "llama3", "{prompt}"] }   # any program that prints an answer
   use:                     # which agent (a name above) does each job; "" = default
     chat: ""               # Chats and "Ask …" in the command bar: can see and use your whole browser
-    find: ""               # questions typed into find (/) about the page: sees only that page, no tools
-                           # (needs claude, pi, opencode or a `command` agent: those can run with no tools)
+    find: ""               # questions typed into find (/) about the page: it sees only that page and runs with as
+                           # little power as its CLI allows (no tools for claude, pi, opencode; read-only, offline
+                           # and in an empty folder for codex, cursor, hermes). Answers show in Valerie's own panel.
     tasks: ""              # scheduled jobs (below)
     customize: ""          # "! make the text bigger" in the command bar: edits Valerie's settings
   model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")

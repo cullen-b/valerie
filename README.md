@@ -47,6 +47,8 @@ config.
 `gg/G` top/bottom (hold `j`/`k` to scroll faster and faster), `f`/`F` link hints (same/new tab), `u` back, `H`/`L` back/forward (in split view: focus the pane to the left/right), `J/K` or `gt/gT` next/prev tab,
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
 `s` toggle sidebar, `]s`/`[s` next/prev space.
+After a keyboard click (`f`, or `Enter` in a text box), the cursor jumps into the sign-in, reply or compose box that
+shows up, so you can type straight away (header search bars and feed composers are left alone; `vim.jump_to_text_box`).
 
 Each space has **pinned** tabs (icon tiles), **Kept** tabs (a list under them that stays until you remove it), and
 **today** tabs (archived after 12 hours unused). Folders work in pinned and Kept. Drag tabs anywhere in the sidebar:
@@ -79,7 +81,9 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   in my tabs" just works. Chats are saved in the config folder, so they sync.
 - **Ask from the command bar:** type a question or a request; it opens in Chats (`> do this` / `? ask that` force it).
 - **Ask from find:** press `/`, type a question ("what's the return policy here?"), Enter: the answer appears right
-  under the find bar. It only sees that page and has no tools, since a web page could be trying to trick it.
+  under the find bar, in Valerie's own panel (the page can't read it). Any agent works; it only sees that page and runs
+  with as little power as its CLI allows (no tools for Claude, Pi and OpenCode; read-only and offline for Codex,
+  Cursor and Hermes), since the page's text could be trying to trick it.
 - **Pick an agent per job:** `agents.available` names as many as you like (same CLI with another model, or any
   command), `agents.use` picks one for chat, find, scheduled tasks and customizing: e.g. a strong model to chat and a
   fast one for find.
@@ -88,6 +92,10 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   the selection, Key facts and dates, Tidy my tabs, Short tab titles, Find related reading, and anything you add in
   YAML (`{title}`, `{url}`, `{selection}`, `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use
   the browser).
+- **Briefs:** "New Brief…" in the command bar, then describe it in your own words ("go through my Jira and tell me
+  what's on my plate today") and pick a time. Every day an agent gathers it from your signed-in sites and writes a
+  page that sits as a tab in that space (in Kept), always showing the latest edition, with earlier ones linked and a
+  "Write it again now" link. Briefs are saved under `briefs:` in your config, so you can edit the wording any time.
 - **Watch This Page…:** "tell me when the price drops below $500" / "when checks pass on this PR". An agent checks in
   the background every 30 minutes (`watch.every_minutes`), notifies you once it happens, and leaves the details in Chats.
 

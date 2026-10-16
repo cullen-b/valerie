@@ -83,23 +83,7 @@ function ui() {
     .find .ask { display: none; padding: 2px 7px; border-radius: 6px; background: ${cfg.accent || "#9d8cff"}; color: #fff; font-size: 11px; white-space: nowrap; }
     .find.question .ask { display: inline-block; }
     .find.question .count { display: none; }
-    .answer { position: fixed; top: 54px; right: 16px; width: 440px; max-width: calc(100vw - 32px); max-height: 60vh; overflow-y: auto; padding: 12px 14px;
               border-radius: 12px; background: rgba(24,24,32,.96); color: rgba(255,255,255,.92); pointer-events: auto; box-shadow: 0 12px 32px rgba(0,0,0,.35); }
-    .answer.with-map { right: 78px; }
-    .answer * { font: 400 13px/1.55 -apple-system, system-ui, sans-serif; }
-    .answer .q { color: rgba(255,255,255,.5); font-size: 12px; margin-bottom: 6px; display: flex; gap: 8px; }
-    .answer .q span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-    .answer .q b { cursor: default; font-size: 13px; font-weight: 600; }
-    .answer p { margin: 0 0 8px; } .answer ul, .answer ol { margin: 0 0 8px; padding-left: 18px; }
-    .answer code { font: 12px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.08); padding: 1px 4px; border-radius: 4px; }
-    .answer pre { background: rgba(255,255,255,.06); padding: 8px; border-radius: 8px; overflow-x: auto; }
-    .answer strong { font-weight: 600; } .answer a { color: ${cfg.accent || "#9d8cff"}; text-decoration: none; }
-    .answer .err { color: #ff8f8f; }
-    .answer .tools { color: rgba(255,255,255,.45); font: 11.5px ui-monospace, Menlo, monospace; margin-bottom: 6px; }
-    .answer .foot { margin-top: 8px; display: flex; gap: 8px; align-items: center; color: rgba(255,255,255,.45); font-size: 11.5px; }
-    .answer .foot button { all: unset; padding: 4px 9px; border-radius: 7px; background: rgba(255,255,255,.1); color: #fff; font-size: 12px; }
-    .answer .dots::after { content: "…"; animation: dots 1s steps(3) infinite; }
-    @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
     .loadbar { position: fixed; top: 0; left: 0; height: 2px; width: 0; background: ${cfg.accent || "#9d8cff"}; box-shadow: 0 0 6px ${cfg.accent || "#9d8cff"};
                transition: width 2.5s cubic-bezier(.1,.7,.3,1), opacity .25s; }
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
@@ -361,16 +345,107 @@ function activate(e, newTab) {
   userActed = true; // choosing a hint is deliberate, so it may focus a text box
   if (textual) { e.focus(); if (e.select) try { e.select(); } catch (_) {} return; }
   if (tag === "SELECT") { e.focus(); try { e.showPicker(); } catch (_) {} return; }
+  kbArm(false);
   const r = e.getBoundingClientRect();
   const x = r.left + Math.min(r.width / 2, 40), y = r.top + r.height / 2;
+  // Like a real mouse, send the events to the innermost thing under the pointer (handlers often live on a child).
+  const root = e.getRootNode().elementFromPoint ? e.getRootNode() : document, hit = root.elementFromPoint(x, y);
+  const t = hit && e.contains(hit) ? hit : e;
   const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
   const ptr = { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true };
-  e.dispatchEvent(new PointerEvent("pointerover", ptr)); e.dispatchEvent(new MouseEvent("mouseover", base));
-  e.dispatchEvent(new PointerEvent("pointerdown", { ...ptr, buttons: 1 })); e.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+  t.dispatchEvent(new PointerEvent("pointerover", ptr)); t.dispatchEvent(new MouseEvent("mouseover", base));
+  t.dispatchEvent(new PointerEvent("pointerdown", { ...ptr, buttons: 1 })); t.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
   try { e.focus({ preventScroll: true }); } catch (_) {}
-  e.dispatchEvent(new PointerEvent("pointerup", ptr)); e.dispatchEvent(new MouseEvent("mouseup", base));
-  e.click();
+  t.dispatchEvent(new PointerEvent("pointerup", ptr)); t.dispatchEvent(new MouseEvent("mouseup", base));
+  t.click();
 }
+
+// ---------- after a keyboard click (f, or Enter in a text box) the cursor lands in the text box that shows up ----------
+// Same page: any box that wasn't on screen before (a reply box, a dialog, a search field that opens). A new page or URL:
+// only boxes that are clearly the point of it (sign-in, checkout, a big compose box, a dialog, or what the page itself
+// tried to focus), never a header search bar or a feed's composer, so j/k keep scrolling articles.
+const kb = { on: false, at: 0, wait: 0, href: "", before: null, asked: null, timer: 0, until: 0, touched: false, mo: null, raf: 0 };
+const SIDE_AREAS = "header, nav, footer, aside, [role=banner], [role=navigation], [role=contentinfo], [role=complementary], [role=search]";
+const DIALOG = "dialog, [role=dialog], [role=alertdialog], [aria-modal=true]";
+const SEARCHY = /search|query|keyword|^q$|^s$/i;
+const FORM_FIELD = /name|email|password|one-time-code|tel|address|postal|cc-|organization/i;
+function typable(el) {
+  if (el.disabled || el.readOnly) return false;
+  if (el.tagName === "INPUT") return /^(text|email|password|search|tel|url|number)$/.test(el.type);
+  if (el.tagName === "TEXTAREA") return true;
+  return el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable);
+}
+function boxesOnScreen() {
+  const out = [];
+  for (const el of document.querySelectorAll("input, textarea, [contenteditable]")) {
+    if (!typable(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width >= 8 && r.height >= 8 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth) out.push({ el, r });
+  }
+  return out;
+}
+function searchy(el) {
+  return el.type === "search" || el.getAttribute("role") === "searchbox" || SEARCHY.test(el.name || "") || SEARCHY.test(el.id || "")
+    || /search/i.test((el.placeholder || "") + " " + (el.getAttribute("aria-label") || ""))
+    || !!(el.form && /search|results/i.test(el.form.getAttribute("action") || ""));
+}
+function pointOfPage(el, r) {
+  if (el.closest(SIDE_AREAS) || searchy(el) || (el.value !== undefined ? el.value : el.textContent.trim())) return false;
+  if (el.tagName === "INPUT" && /^(email|password|tel)$/.test(el.type)) return true;
+  if (FORM_FIELD.test(el.getAttribute("autocomplete") || "") || (el.form && el.form.querySelector("input[type=password]"))) return true;
+  return el.tagName === "TEXTAREA" && r.width >= 300 && r.height >= 60;
+}
+function pickBox() {
+  const a = kb.asked;
+  if (a && a.isConnected && typable(a) && a.getClientRects().length) return a;
+  const samePage = kb.before && location.href === kb.href;
+  for (const { el, r } of boxesOnScreen()) {
+    if (kb.before && kb.before.has(el)) continue;
+    if (!samePage && !el.closest(DIALOG) && !pointOfPage(el, r)) continue;
+    if (getComputedStyle(el).visibility === "visible" && hitsElement(el, r)) return el;
+  }
+  return null;
+}
+function kbCheck() {
+  clearTimeout(kb.timer); kb.timer = 0; kb.raf = 0;
+  const waited = performance.now() - kb.at;
+  if (!kb.on || waited > kb.wait) return kbOff();
+  // Never pull the cursor out of a box you're already in.
+  const el = editable(deepActive()) ? null : pickBox();
+  if (el) {
+    kbOff();
+    userActed = true;
+    el.focus({ preventScroll: true });
+    if (el.setSelectionRange) try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {}
+    return;
+  }
+  kb.timer = setTimeout(kbCheck, Math.min(50 + waited / 8, 250)); // backstop for changes the observer can't see (CSS transitions)
+}
+function kbArm(newPage) {
+  if (cfg.vim.jump_to_text_box === false || (newPage && kb.touched)) return;
+  clearTimeout(kb.timer);
+  Object.assign(kb, { on: true, at: performance.now(), wait: newPage ? 5000 : 2000, href: location.href,
+    before: newPage ? null : new Set(boxesOnScreen().map((b) => b.el)), asked: newPage ? kb.asked : null });
+  // Check the frame after the page changes, so a box is focused the moment it appears.
+  if (!kb.mo) kb.mo = new MutationObserver(() => { if (kb.on && !kb.raf) kb.raf = requestAnimationFrame(kbCheck); });
+  kb.mo.observe(document, { childList: true, subtree: true, attributes: true });
+  kb.timer = setTimeout(kbCheck, newPage ? 0 : 16);
+  if (newPage) return;
+  kb.until = kb.at + 6000;
+  post({ t: "keyed", on: true }); // so the page this leads to (even on another site) knows you got there by keyboard
+}
+function kbOff() { kb.on = false; clearTimeout(kb.timer); kb.timer = 0; cancelAnimationFrame(kb.raf); kb.raf = 0; if (kb.mo) kb.mo.disconnect(); }
+// Anything you do yourself in the meantime (a key, the mouse, scrolling) wins.
+function kbCancel(e) {
+  if (!e.isTrusted || /^(Shift|Control|Alt|Meta|CapsLock)$/.test(e.key || "")) return;
+  kb.touched = true;
+  kbOff();
+  if (performance.now() < kb.until) { kb.until = 0; post({ t: "keyed", on: false }); }
+}
+addEventListener("keydown", kbCancel, true);
+addEventListener("mousedown", kbCancel, true);
+addEventListener("wheel", kbCancel, { capture: true, passive: true });
+if (cfg.vim.enabled && cfg.vim.jump_to_text_box !== false) post({ t: "arrived" });
 
 // ---------- find: every match highlighted, a count, and a minimap of the whole page ----------
 const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0 };
@@ -543,7 +618,7 @@ addEventListener("touchstart", (e) => { if (e.isTrusted) userActed = true; }, tr
 document.addEventListener("focusin", (e) => {
   if (userActed || !cfg.vim.enabled || cfg.vim.block_autofocus === false || excluded()) return;
   const t = e.composedPath ? e.composedPath()[0] : e.target;
-  if (editable(t)) t.blur();
+  if (editable(t)) { kb.asked = t; t.blur(); }
 }, true);
 
 // ---------- key handling ----------
@@ -584,6 +659,8 @@ window.addEventListener("keydown", (e) => {
   // Typing in Valerie's own UI (find box, prompts) lives in a closed shadow root the page can't see into.
   if (mode !== "hints" && inOurUi(e)) return;
   if (e.isTrusted && (e.key === "i" || e.key === "Tab" || e.key === "/")) userActed = true; // deliberate moves into fields
+  if (e.isTrusted && e.key === "Enter" && mode === "normal" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing
+    && (deepActive() || {}).tagName === "INPUT" && editable(deepActive()) && !excluded()) kbArm(false);
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.key === "Escape") {
@@ -988,83 +1065,18 @@ function isQuestion(q) {
   const words = t.split(/\s+/).length;
   return (t.endsWith("?") && words >= 2) || (words >= (a.find_question_words || 4) && QUESTION_START.test(t)) || words >= 9;
 }
-const ans = { box: null, body: null, text: "", tools: [], q: "", done: false, raf: 0 };
-function closeAnswer() { if (ans.box) { ans.box.remove(); ans.box = null; } }
+// The answer appears in Valerie's own panel under the find bar: the page never sees it.
+function closeAnswer() { post({ t: "answer_close" }); }
+function askPage(q, label) {
+  const limit = (cfg.ai || {}).page_text_limit || 60000;
+  const text = (document.body ? document.body.innerText : "").slice(0, limit);
+  post({ t: "page_ask", question: q, label: label || q, text, title: document.title });
+}
 // An AI action from Valerie: fill in what only the page knows, then ask like find does.
 function askAction(label, prompt) {
   const sel = String(getSelection() || "").trim().slice(0, 4000);
   if (prompt.includes("{selection}") && !sel) return toast("Select some text first");
   askPage(prompt.split("{selection}").join(sel), label);
-}
-function askPage(q, label) {
-  const limit = (cfg.ai || {}).page_text_limit || 60000;
-  const text = (document.body ? document.body.innerText : "").slice(0, limit);
-  closeAnswer();
-  Object.assign(ans, { text: "", tools: [], q, done: false, error: "" });
-  ans.box = document.createElement("div"); ans.box.className = "answer" + (fnd.map ? " with-map" : "");
-  const head = document.createElement("div"); head.className = "q";
-  const qs = document.createElement("span"); qs.textContent = label || q;
-  const x = document.createElement("b"); x.textContent = "×"; x.title = "Close"; x.onclick = closeAnswer;
-  head.append(qs, x);
-  ans.body = document.createElement("div");
-  ans.box.append(head, ans.body);
-  ui().appendChild(ans.box);
-  drawAnswer();
-  post({ t: "page_ask", question: q, text, title: document.title });
-}
-function drawAnswer() {
-  ans.raf = 0;
-  if (!ans.box) return;
-  const b = ans.body; b.replaceChildren();
-  if (ans.tools.length) { const t = document.createElement("div"); t.className = "tools"; t.textContent = "Used " + ans.tools.join(", "); b.append(t); }
-  if (ans.text) answerMarkdown(ans.text, b);
-  else if (!ans.done && !ans.error) { const w = document.createElement("div"); w.className = "dots"; w.textContent = "Reading the page"; b.append(w); }
-  if (ans.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = ans.error; b.append(e); }
-  if (ans.done && ans.text) {
-    const f = document.createElement("div"); f.className = "foot";
-    const go = document.createElement("button"); go.textContent = "Continue in Chats";
-    go.addEventListener("click", (e) => { if (!e.isTrusted) return; post({ t: "page_to_chat" }); closeAnswer(); });
-    const who = document.createElement("span"); who.textContent = ans.agent ? "Answered by " + ans.agent : "";
-    f.append(go, who); b.append(f);
-  }
-}
-// The same small Markdown as the chat view, built as DOM.
-function answerMarkdown(src, into) {
-  const add = (tag, text, parent) => { const e = document.createElement(tag); answerInline(text, e); (parent || into).append(e); return e; };
-  let list = null, para = null, code = null;
-  for (const line of src.split("\n")) {
-    if (/^```/.test(line)) { if (code) { code = null; } else { const pre = document.createElement("pre"); code = document.createElement("code"); pre.append(code); into.append(pre); } list = para = null; continue; }
-    if (code) { code.textContent += (code.textContent ? "\n" : "") + line; continue; }
-    if (!line.trim()) { list = para = null; continue; }
-    const m = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)/);
-    if (m) { if (!list) { list = document.createElement(/\d/.test(m[1]) ? "ol" : "ul"); into.append(list); } add("li", m[2], list); para = null; continue; }
-    const h = line.match(/^#{1,3}\s+(.*)/);
-    if (h) { const s = add("p", "", into); const st = document.createElement("strong"); answerInline(h[1], st); s.append(st); list = para = null; continue; }
-    if (!para) { para = add("p", line); list = null; } else { para.append(document.createElement("br")); answerInline(line, para); }
-  }
-}
-function answerInline(text, into) {
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:[^)\s]+)\))/g;
-  let last = 0, m;
-  while ((m = re.exec(text))) {
-    if (m.index > last) into.append(text.slice(last, m.index));
-    if (m[1]) { const c = document.createElement("code"); c.textContent = m[1].slice(1, -1); into.append(c); }
-    else if (m[2]) { const s = document.createElement("strong"); s.textContent = m[2].slice(2, -2); into.append(s); }
-    else { const a = document.createElement("a"); a.textContent = m[3].slice(1, m[3].indexOf("]")); a.href = m[4]; into.append(a); }
-    last = re.lastIndex;
-  }
-  if (last < text.length) into.append(text.slice(last));
-}
-// Pieces of the answer as Valerie streams them in.
-function answer(ev) {
-  if (!ans.box || !ev) return;
-  if (ev.type === "delta") ans.text += ev.text;
-  else if (ev.type === "block") { if (ans.text && !ans.text.endsWith("\n\n")) ans.text += "\n\n"; ans.text += ev.text; }
-  else if (ev.type === "final") { if (!ans.text.trim()) ans.text = ev.text; }
-  else if (ev.type === "tool") ans.tools.push(ev.text);
-  else if (ev.type === "error") ans.error = ev.text;
-  else if (ev.type === "done") { ans.done = true; ans.agent = ev.agent; }
-  if (!ans.raf) ans.raf = requestAnimationFrame(drawAnswer);
 }
 
 // ---------- reader view: the page's article as clean text ----------
@@ -1252,7 +1264,7 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind, media, reader, request, answer, askAction, ask: (q) => { openFind(q); askPage(q); },
+    closeFind, media, reader, request, askAction, keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,

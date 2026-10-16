@@ -34,6 +34,7 @@ pub enum Source {
     Chrome,
     Overlay,
     Chat,
+    Answer,
     LittleBar(WindowId),
     Page(Target),
 }
@@ -59,6 +60,10 @@ pub enum UserEvent {
     PageAnswerDone { tab: TabId },
     /// A chat-mode AI action whose {selection} has been read from the page.
     AiActionReady { prompt: String, agent: Option<String> },
+    /// A brief's agent finished: its Markdown, or why it failed.
+    BriefDone { name: String, agent: String, text: String, error: Option<String> },
+    /// "Write it again now" was clicked on a brief page.
+    BriefRequested { slug: String },
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -104,6 +109,13 @@ pub struct App {
     /// Each tab's last question from find: (question, answer so far, agent), for "Open in Chats".
     page_answers: HashMap<TabId, (String, String, String)>,
     page_ask_times: Vec<std::time::Instant>,
+    /// Valerie's own panel for answers to questions from find (the page can't see into it), its tab and height.
+    answer_view: Option<WebView>,
+    answer_tab: Option<TabId>,
+    answer_height: f64,
+    answer_label: String,
+    /// Briefs being written right now (by name).
+    briefs_running: std::collections::HashSet<String>,
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
@@ -129,6 +141,8 @@ pub struct App {
     sidebar_peek: bool,
     /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
+    /// When each page last clicked or submitted by keyboard: the page it leads to puts the cursor in its text box.
+    keyed: HashMap<Target, u64>,
     pending_save: Option<PendingSave>,
     peek: Option<PeekView>,
     /// Tabs whose page script has reported in (so it can handle vim keys).
@@ -166,6 +180,44 @@ struct Boost {
     host: String,
     css: String,
     js: String,
+}
+
+fn briefs_dir() -> PathBuf {
+    config::data_dir().join("briefs")
+}
+
+/// valerie://brief/<slug> serves a brief's latest edition, /<slug>/<date> an earlier one, ?run=1 writes it again.
+fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<UserEvent>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
+    let page = |html: String| {
+        wry::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(html.into_bytes())).unwrap()
+    };
+    let parts: Vec<&str> = uri.path().trim_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+    let safe = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let Some(slug) = parts.first().copied().filter(|s| uri.host() == Some("brief") && safe(s)) else {
+        return page("<p>Not a Valerie page.</p>".into());
+    };
+    if uri.query().is_some_and(|q| q.contains("run=1")) {
+        if let Ok(p) = proxy.lock() {
+            send(&p, UserEvent::BriefRequested { slug: slug.to_string() });
+        }
+    }
+    let dir = briefs_dir().join(slug);
+    let mut editions: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".html")).map(str::to_string))
+        .collect();
+    editions.sort();
+    let want = parts.get(1).copied().filter(|d| safe(d)).map(str::to_string).or_else(|| editions.last().cloned());
+    match want.and_then(|d| std::fs::read_to_string(dir.join(format!("{d}.html"))).ok()) {
+        Some(html) => page(html),
+        None => page(format!(
+            "<meta charset=utf-8><title>☀ Brief</title><body style=\"font:16px -apple-system,system-ui;padding:60px;max-width:640px;margin:auto;color:#888\">\
+             <h2 style=\"color:inherit\">This brief hasn't been written yet</h2><p>It's written at its set time each day. \
+             <a href=\"valerie://brief/{slug}?run=1\">Write it now</a> (it takes a minute; this page updates when it's ready).</p></body>"
+        )),
+    }
 }
 
 /// Chats live in the config folder (so they sync) unless chats.sync is off.
@@ -230,6 +282,8 @@ fn ui(name: &str) -> String {
         "palette.html" => include_str!("../ui/palette.html"),
         "little.html" => include_str!("../ui/little.html"),
         "chat.html" => include_str!("../ui/chat.html"),
+        "answer.html" => include_str!("../ui/answer.html"),
+        "brief.html" => include_str!("../ui/brief.html"),
         "content.js" => include_str!("../ui/content.js"),
         _ => "",
     }
@@ -317,6 +371,11 @@ impl App {
             chat_running: Default::default(),
             page_answers: HashMap::new(),
             page_ask_times: Vec::new(),
+            answer_view: None,
+            answer_tab: None,
+            answer_height: 120.0,
+            answer_label: String::new(),
+            briefs_running: Default::default(),
             sync_gen: 0,
             littles: HashMap::new(),
             focused_little: None,
@@ -339,6 +398,7 @@ impl App {
             plugins: plugins::load_all().0,
             sidebar_peek: false,
             fill_offers: HashMap::new(),
+            keyed: HashMap::new(),
             pending_save: None,
             peek: None,
             ready_views: Default::default(),
@@ -470,6 +530,7 @@ impl App {
         let saving = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, PathBuf>::new()));
         let saved = saving.clone();
         let p6 = p.clone();
+        let briefs_proxy = std::sync::Mutex::new(self.proxy.clone());
         let popup_windows = self.config.links.popups == "window";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
         base
@@ -494,6 +555,7 @@ impl App {
                 send(&p4, UserEvent::NewWindow { target, url });
                 NewWindowResponse::Deny
             })
+            .with_custom_protocol("valerie".into(), move |_, req| brief_page(req.uri(), &briefs_proxy))
             .with_permission_handler(move |kind| {
                 let choice = match kind {
                     wry::PermissionKind::Camera => camera.as_str(),
@@ -508,7 +570,7 @@ impl App {
             })
             .with_navigation_handler(move |url| {
                 let scheme = scheme_of(&url);
-                if matches!(scheme.as_str(), "http" | "https" | "about" | "data" | "blob" | "file") {
+                if matches!(scheme.as_str(), "http" | "https" | "about" | "data" | "blob" | "file" | "valerie") {
                     return true;
                 }
                 send(&p5, UserEvent::ExternalScheme(url));
@@ -635,6 +697,19 @@ impl App {
                     let _ = v.set_bounds(rect(px, y, pw, h));
                 }
                 let _ = v.set_visible(true);
+            }
+        }
+        if let Some(av) = &self.answer_view {
+            match self.answer_tab.filter(|t| panes.contains(t)) {
+                Some(_) => {
+                    let (ax, ay, aw, ah) = self.answer_rect();
+                    let _ = av.set_bounds(rect(ax, ay, aw, ah));
+                    let _ = av.set_visible(true);
+                    platform::bring_to_front(av);
+                }
+                None => {
+                    let _ = av.set_visible(false);
+                }
             }
         }
         if let Some(cv) = &self.chat_view {
@@ -1054,6 +1129,7 @@ impl App {
     }
 
     fn navigate(&mut self, tab: TabId, url: &str) {
+        self.keyed.remove(&Target::Tab(tab)); // you went there yourself, not by a keyboard click on the page
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.url = url.to_string();
         }
@@ -1266,6 +1342,10 @@ impl App {
         for (name, a) in self.config.ai_actions.iter().filter_map(|(n, a)| a.as_ref().map(|a| (n, a))) {
             let sub = if a.mode == "chat" { "AI · opens in Chats" } else { "AI · answers on the page" };
             items.push(json!({ "kind": "ai", "title": name, "sub": sub, "icon": "✦", "cmd": { "cmd": "ai_action", "name": name } }));
+        }
+        for b in &self.config.briefs {
+            items.push(json!({ "kind": "brief", "title": format!("☀ {}", b.name), "sub": format!("Brief · {} at {}", b.space, b.at), "cmd": { "cmd": "open_brief", "name": b.name } }));
+            items.push(json!({ "kind": "brief", "title": format!("Write {} now", b.name), "sub": b.want, "icon": "☀", "cmd": { "cmd": "run_brief", "name": b.name } }));
         }
         for w in &self.state.watches {
             items.push(json!({ "kind": "watch", "title": format!("Stop watching: {}", w.title), "sub": w.condition, "icon": "◉", "cmd": { "cmd": "stop_watching", "id": w.id } }));
@@ -2123,6 +2203,7 @@ impl App {
         }
         self.schedule_agents();
         self.check_watches();
+        self.check_briefs();
         if self.state.track_changes() {
             self.dirty = true;
         }
@@ -2624,6 +2705,14 @@ impl App {
                 }
             }
             Command::AiAction { name, input } => self.ai_action(name, input, elwt),
+            Command::NewBrief { want, at } => self.new_brief(want, at, elwt),
+            Command::RunBrief { name } => self.run_brief(&name),
+            Command::OpenBrief { name } => {
+                if let Some(b) = self.config.briefs.iter().find(|b| b.name == name).cloned() {
+                    let t = self.brief_tab(&b);
+                    self.activate(t);
+                }
+            }
             Command::WatchPage { condition } => {
                 let Some(t) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).filter(|t| t.url.starts_with("http")).cloned() else {
                     return self.toast("Open the page to watch first");
@@ -3053,7 +3142,7 @@ impl App {
                             self.state.space_mut().active = Some(id);
                         }
                     }
-                    Source::Chrome | Source::Chat => self.focused_little = None,
+                    Source::Chrome | Source::Chat | Source::Answer => self.focused_little = None,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -3102,10 +3191,50 @@ impl App {
                     self.render();
                 }
             }
+            (Source::Page(target), "keyed") => {
+                if m["on"].as_bool() == Some(true) {
+                    self.keyed.insert(target, now());
+                } else {
+                    self.keyed.remove(&target);
+                }
+            }
+            (Source::Page(target), "arrived") => {
+                if self.keyed.remove(&target).is_some_and(|at| now().saturating_sub(at) <= 6) {
+                    if let Some(v) = self.view_for(target) {
+                        let _ = v.evaluate_script("window.__valerie && __valerie.keyed()");
+                    }
+                }
+            }
             (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
             (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
-            (Source::Page(Target::Tab(id)), "page_to_chat") => self.page_to_chat(id),
             (Source::Chat, "ready") => self.render_chat(),
+            (Source::Answer, "ready") => {
+                // The panel finished loading after the question went out: replay it and what's arrived so far.
+                if let (Some(v), Some(t)) = (&self.answer_view, self.answer_tab) {
+                    let accent = self.theme_for(self.state.active_space).accent;
+                    let _ = v.evaluate_script(&format!("answer.start({}, {})", json!(self.answer_label), json!(accent)));
+                    if let Some((_, text, _)) = self.page_answers.get(&t).filter(|a| !a.1.is_empty()) {
+                        let _ = v.evaluate_script(&format!("answer.event({})", json!({ "type": "block", "text": text })));
+                    }
+                }
+            }
+            (Source::Answer, "height") => {
+                self.answer_height = m["h"].as_f64().unwrap_or(120.0);
+                self.layout();
+            }
+            (Source::Answer, "close") | (Source::Page(Target::Tab(_)), "answer_close") => self.close_answer(),
+            (Source::Answer, "to_chat") => {
+                if let Some(t) = self.answer_tab {
+                    self.close_answer();
+                    self.page_to_chat(t);
+                }
+            }
+            (Source::Answer, "open") => {
+                if let Some(u) = m["url"].as_str().filter(|u| u.starts_with("http")) {
+                    let u = self.clean(u);
+                    self.open_tab(&u, None, false);
+                }
+            }
             (Source::Chrome, "chat_menu") => {
                 if let Some(id) = m["chat"].as_str() {
                     self.chat_menu(id.to_string(), m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
@@ -3365,6 +3494,12 @@ impl App {
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
+            UserEvent::BriefDone { name, agent, text, error } => self.brief_done(name, agent, text, error),
+            UserEvent::BriefRequested { slug } => {
+                if let Some(b) = self.config.briefs.iter().find(|b| b.slug() == slug).cloned() {
+                    self.run_brief(&b.name);
+                }
+            }
             UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt),
             UserEvent::ChatDone { chat } => {
                 self.chat_running.remove(&chat);
@@ -3391,14 +3526,14 @@ impl App {
                         _ => {}
                     }
                 }
-                if let Some(v) = self.views.get(&tab) {
-                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.answer({})", json!(ev)));
+                if let Some(v) = self.answer_view.as_ref().filter(|_| self.answer_tab == Some(tab)) {
+                    let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!(ev)));
                 }
             }
             UserEvent::PageAnswerDone { tab } => {
                 let agent = self.page_answers.get(&tab).map(|a| a.2.clone()).unwrap_or_default();
-                if let Some(v) = self.views.get(&tab) {
-                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.answer({})", json!({ "type": "done", "agent": agent })));
+                if let Some(v) = self.answer_view.as_ref().filter(|_| self.answer_tab == Some(tab)) {
+                    let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "done", "agent": agent })));
                 }
             }
             UserEvent::DownloadStarted { target } => {
@@ -3863,10 +3998,12 @@ impl App {
         if q.is_empty() {
             return;
         }
+        let label: String = m["label"].as_str().filter(|l| !l.is_empty()).unwrap_or(&q).chars().take(200).collect();
+        self.show_answer(tab, &label);
         let answer_error = |app: &Self, text: &str| {
-            if let Some(v) = app.views.get(&tab) {
-                let _ = v.evaluate_script(&format!("window.__valerie && __valerie.answer({})", json!({ "type": "error", "text": text })));
-                let _ = v.evaluate_script("window.__valerie && __valerie.answer({\"type\":\"done\"})");
+            if let Some(v) = &app.answer_view {
+                let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "error", "text": text })));
+                let _ = v.evaluate_script("window.answer && answer.event({\"type\":\"done\"})");
             }
         };
         let now_i = std::time::Instant::now();
@@ -3902,6 +4039,52 @@ impl App {
             }
             send(&p, UserEvent::PageAnswerDone { tab });
         });
+    }
+
+    /// Where the answer panel sits: under the find bar, at the page's top right.
+    fn answer_rect(&self) -> (f64, f64, f64, f64) {
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (x, y, w, h) = self.content_area(size.width, size.height);
+        let right = if self.config.find.minimap { 78.0 } else { 16.0 };
+        let pw = 440.0_f64.min(w - right - 16.0).max(200.0);
+        (x + w - pw - right, y + 54.0, pw, self.answer_height.clamp(60.0, (h * 0.7).max(60.0)))
+    }
+
+    fn show_answer(&mut self, tab: TabId, label: &str) {
+        if self.answer_view.is_none() {
+            let p = self.proxy.clone();
+            let built = WebViewBuilder::new()
+                .with_html(ui("answer.html"))
+                .with_visible(false)
+                .with_transparent(true)
+                .with_accept_first_mouse(true)
+                .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Answer, msg: r.into_body() }))
+                .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
+                .build_as_child(&self.window);
+            match built {
+                Ok(v) => {
+                    platform::round_corners(&v, 12.0, platform::Corners::All);
+                    self.answer_view = Some(v);
+                }
+                Err(e) => return eprintln!("valerie: answer panel: {e}"),
+            }
+        }
+        self.answer_tab = Some(tab);
+        self.answer_height = 120.0;
+        self.answer_label = label.to_string();
+        let accent = self.theme_for(self.state.active_space).accent;
+        if let Some(v) = &self.answer_view {
+            let _ = v.evaluate_script(&format!("window.answer && answer.start({}, {})", json!(label), json!(accent)));
+        }
+        self.layout();
+    }
+
+    fn close_answer(&mut self) {
+        self.answer_tab = None;
+        if let Some(v) = &self.answer_view {
+            let _ = v.set_visible(false);
+        }
+        self.focus_active();
     }
 
     /// "Open in Chats" under an answer in find: the question and answer become a chat to continue (no agent runs).
@@ -4009,4 +4192,207 @@ impl App {
             platform::notify("Valerie", &format!("{}: {}", w.title, w.condition));
         }
     }
+}
+
+// ---------------------------------------------------------------- briefs
+
+impl App {
+    /// "New Brief…": ask what it should cover and when, save it to config.yaml, write the first edition now.
+    fn new_brief(&mut self, want: Option<String>, at: Option<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let Some(want) = want.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) else {
+            let then = json!({ "cmd": "new_brief" });
+            let label = "Describe your brief (e.g. go through my Jira and tell me what's on my plate today)";
+            return self.dispatch(Command::Prompt { label: label.into(), value: String::new(), then, field: "want".into() }, elwt);
+        };
+        let Some(at) = at.as_deref().and_then(config::parse_time) else {
+            let then = json!({ "cmd": "new_brief", "want": want });
+            return self.dispatch(Command::Prompt { label: "What time each day? (e.g. 8:00 or 5pm)".into(), value: "8:00".into(), then, field: "at".into() }, elwt);
+        };
+        let hour: u32 = at[..2].parse().unwrap_or(8);
+        let base = if hour < 12 { "Morning brief" } else if hour < 17 { "Afternoon brief" } else { "Evening brief" };
+        let mut name = base.to_string();
+        let mut n = 2;
+        while self.config.briefs.iter().any(|b| b.name == name) {
+            name = format!("{base} {n}");
+            n += 1;
+        }
+        let brief = config::BriefConfig {
+            name: name.clone(),
+            want,
+            space: self.state.space().name.clone(),
+            at,
+            days: "every day".into(),
+            agent: String::new(),
+            machine: self.config.device_name(),
+        };
+        if let Err(e) = append_brief(&brief) {
+            return self.toast(&format!("Couldn't save the brief: {e}"));
+        }
+        self.reload_config();
+        self.toast(&format!("{name} set for {} every day: writing the first one now", brief.at));
+        self.run_brief(&name);
+    }
+
+    /// Write the briefs whose time has come today (once a day, on the machine that owns them).
+    fn check_briefs(&mut self) {
+        if self.config.briefs.is_empty() {
+            return;
+        }
+        let (date, weekday, _, time) = platform::local_day();
+        let me = self.config.device_name();
+        let due: Vec<String> = self
+            .config
+            .briefs
+            .iter()
+            .filter(|b| b.machine.is_empty() || b.machine == me)
+            .filter(|b| b.runs_on(&weekday) && config::parse_time(&b.at).is_some_and(|at| time >= at))
+            .filter(|b| self.state.brief_last.get(&b.name) != Some(&date))
+            .map(|b| b.name.clone())
+            .collect();
+        for name in due {
+            self.run_brief(&name);
+        }
+    }
+
+    fn run_brief(&mut self, name: &str) {
+        let Some(b) = self.config.briefs.iter().find(|b| b.name == name).cloned() else { return };
+        if !self.briefs_running.insert(b.name.clone()) {
+            return;
+        }
+        let (date, _, day, _) = platform::local_day();
+        self.state.brief_last.insert(b.name.clone(), date);
+        self.dirty = true;
+        let (agent, def) = if b.agent.is_empty() { self.config.agent_for("tasks") } else { self.config.agent_named(&b.agent) };
+        let space = self.config.agents.space.clone();
+        if self.state.space_index(&space).is_none() {
+            self.state.spaces.push(crate::state::Space { name: space.clone(), ..Default::default() });
+        }
+        let prompt = format!(
+            "You're writing the user's \"{name}\", a briefing page they read in their browser. Today is {day}.\n\n\
+             What they want, in their words: {want}\n\n{how} Their sites are already signed in. Open what you need in \
+             background tabs in the space \"{space}\" and close them when you're done; don't change the user's own tabs.\n\n\
+             Then reply with ONLY the brief, in Markdown: first one line that sums up the day, then short sections with \
+             \"## \" headings and bullet points, most important first, each item linking to where it lives. No preamble, \
+             no sign-off. If you couldn't reach something, say so in one line.",
+            name = b.name,
+            want = b.want,
+            how = crate::ai::control_note(&def),
+        );
+        self.toast(&format!("Writing {}…", b.name));
+        let p = self.proxy.clone();
+        let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
+        let work = config::data_dir().join("agents").join("brief");
+        std::thread::spawn(move || {
+            let _ = std::fs::create_dir_all(&work);
+            let text = std::sync::Mutex::new(String::new());
+            let error = std::sync::Mutex::new(None::<String>);
+            let on = |ev: crate::ai::Ev| {
+                let mut t = text.lock().unwrap();
+                match ev {
+                    crate::ai::Ev::Delta { text: d } => t.push_str(&d),
+                    crate::ai::Ev::Block { text: d } => {
+                        if !t.is_empty() && !t.ends_with("\n\n") {
+                            t.push_str("\n\n");
+                        }
+                        t.push_str(&d);
+                    }
+                    crate::ai::Ev::Final { text: d } if t.trim().is_empty() => *t = d,
+                    crate::ai::Ev::Error { text: e } => *error.lock().unwrap() = Some(e),
+                    _ => {}
+                }
+            };
+            let run = format!("brief:{}", b.name);
+            match crate::ai::build(&def, "", crate::ai::Mode::Browser, &prompt, None, true, &work) {
+                Ok((cmd, fmt)) => {
+                    if let Err(e) = crate::ai::stream(&run, cmd, fmt, timeout, &on) {
+                        on(crate::ai::Ev::Error { text: format!("{e:#}") });
+                    }
+                }
+                Err(e) => on(crate::ai::Ev::Error { text: format!("{e:#}") }),
+            }
+            let text = text.into_inner().unwrap();
+            let error = error.into_inner().unwrap();
+            send(&p, UserEvent::BriefDone { name: b.name, agent, text, error });
+        });
+    }
+
+    fn brief_done(&mut self, name: String, agent: String, text: String, error: Option<String>) {
+        self.briefs_running.remove(&name);
+        let Some(b) = self.config.briefs.iter().find(|b| b.name == name).cloned() else { return };
+        if text.trim().is_empty() {
+            return self.toast(&format!("{name} couldn't be written: {}", error.unwrap_or_else(|| "the agent gave no answer".into())));
+        }
+        let (date, _, day, time) = platform::local_day();
+        let dir = briefs_dir().join(b.slug());
+        let _ = std::fs::create_dir_all(&dir);
+        let mut earlier: Vec<String> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".html")).map(str::to_string))
+            .filter(|d| d != &date)
+            .collect();
+        earlier.sort();
+        earlier.reverse();
+        earlier.truncate(14);
+        let data = json!({ "name": b.name, "slug": b.slug(), "day": day, "time": time, "agent": agent, "markdown": text, "error": error, "earlier": earlier });
+        let html = ui("brief.html").replace("/*BRIEF*/null", &data.to_string().replace("</", "<\\/"));
+        if let Err(e) = std::fs::write(dir.join(format!("{date}.html")), html) {
+            return self.toast(&format!("Couldn't save {name}: {e}"));
+        }
+        let tab = self.brief_tab(&b);
+        let url = format!("valerie://brief/{}", b.slug());
+        if let Some(v) = self.views.get(&tab) {
+            let _ = v.load_url(&url);
+        }
+        self.toast(&format!("☀ {name} is ready"));
+        platform::notify("Valerie", &format!("Your {} is ready", name.to_lowercase()));
+        self.render();
+    }
+
+    /// The brief's tab (in Kept in its space), made if it doesn't exist yet.
+    fn brief_tab(&mut self, b: &config::BriefConfig) -> TabId {
+        let url = format!("valerie://brief/{}", b.slug());
+        if let Some(t) = self.state.tabs.values().find(|t| t.url.starts_with(&url)).map(|t| t.id) {
+            return t;
+        }
+        let space = self.state.space_index(&b.space);
+        let t = self.open_tab(&url, space, false);
+        self.move_tab(t, space.map(|i| self.state.spaces[i].name.clone()), None, Some("kept".into()), None);
+        if let Some(tab) = self.state.tabs.get_mut(&t) {
+            tab.title = format!("☀ {}", b.name);
+        }
+        t
+    }
+}
+
+/// Add a brief to the user's config.yaml under `briefs:`, keeping the rest of the file as it is.
+fn append_brief(b: &config::BriefConfig) -> anyhow::Result<()> {
+    let path = config::config_path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let item: String = serde_yaml::to_string(&vec![b])?.lines().map(|l| format!("  {l}\n")).collect();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    match lines.iter().position(|l| l.starts_with("briefs:")) {
+        Some(i) if lines[i].trim_end() == "briefs:" => {
+            let end = lines[i + 1..].iter().position(|l| !l.starts_with(' ') && !l.trim().is_empty() && !l.starts_with('#')).map_or(lines.len(), |j| i + 1 + j);
+            lines.insert(end, item.trim_end().to_string());
+        }
+        Some(i) if lines[i].replace(' ', "").starts_with("briefs:[]") => {
+            lines[i] = format!("briefs:\n{}", item.trim_end());
+        }
+        Some(_) => {
+            // `briefs: [ … ]` written inline: rewrite through YAML.
+            let mut v: serde_yaml::Value = serde_yaml::from_str(&text)?;
+            let list = v["briefs"].as_sequence_mut().ok_or_else(|| anyhow::anyhow!("briefs isn't a list"))?;
+            list.push(serde_yaml::to_value(b)?);
+            return Ok(std::fs::write(&path, serde_yaml::to_string(&v)?)?);
+        }
+        None => {
+            lines.push(String::new());
+            lines.push("# Pages an agent writes for you on a schedule (\"New Brief…\" in the command bar adds them).".into());
+            lines.push(format!("briefs:\n{}", item.trim_end()));
+        }
+    }
+    std::fs::write(&path, lines.join("\n") + "\n")?;
+    Ok(())
 }

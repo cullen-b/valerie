@@ -33,6 +33,7 @@ pub struct Config {
     pub chats: ChatsConfig,
     pub ai_actions: BTreeMap<String, Option<AiAction>>,
     pub watch: WatchConfig,
+    pub briefs: Vec<BriefConfig>,
     pub permissions: PermissionsConfig,
     pub pages: PagesConfig,
     pub translate: TranslateConfig,
@@ -199,6 +200,62 @@ pub struct AiAction {
     pub prompt: String,
     /// Which agent (a name under agents.available); empty = the one for that mode's job.
     pub agent: String,
+}
+
+/// A page an agent writes on a schedule (`briefs`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BriefConfig {
+    pub name: String,
+    /// What the user wants it to cover, in their own words.
+    pub want: String,
+    pub space: String,
+    /// Time of day, "HH:MM" (24-hour).
+    pub at: String,
+    /// "every day" | "weekdays" | "weekends" | days like "mon, wed, fri".
+    pub days: String,
+    /// Which agent; empty = agents.use.tasks.
+    pub agent: String,
+    /// Only this machine writes it (so synced machines don't each write one); empty = any.
+    pub machine: String,
+}
+
+impl BriefConfig {
+    pub fn slug(&self) -> String {
+        let s: String = self.name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
+    }
+
+    /// Whether it runs on a weekday like "Thu".
+    pub fn runs_on(&self, weekday: &str) -> bool {
+        let d = weekday.to_lowercase();
+        let d = &d[..d.len().min(3)];
+        match self.days.trim().to_lowercase().as_str() {
+            "" | "every day" | "daily" => true,
+            "weekdays" => !matches!(d, "sat" | "sun"),
+            "weekends" => matches!(d, "sat" | "sun"),
+            list => list.split([',', ' ']).any(|x| x.trim().starts_with(d)),
+        }
+    }
+}
+
+/// "8", "8:30", "8am", "5:15pm", "17:00" → "08:00"-style 24-hour time.
+pub fn parse_time(s: &str) -> Option<String> {
+    let t = s.trim().to_lowercase().replace(' ', "");
+    let (t, pm, am) = match (t.strip_suffix("pm"), t.strip_suffix("am")) {
+        (Some(x), _) => (x.to_string(), true, false),
+        (_, Some(x)) => (x.to_string(), false, true),
+        _ => (t.clone(), false, false),
+    };
+    let (h, m) = t.split_once(':').map_or((t.as_str(), "0"), |(h, m)| (h, m));
+    let (mut h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    if pm && h < 12 {
+        h += 12;
+    }
+    if am && h == 12 {
+        h = 0;
+    }
+    (h < 24 && m < 60).then(|| format!("{h:02}:{m:02}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +464,7 @@ pub struct VimConfig {
     pub scroll_duration_ms: f64,
     pub hold_to_accelerate: bool,
     pub block_autofocus: bool,
+    pub jump_to_text_box: bool,
     pub hold_delay_ms: f64,
     pub hold_scroll_speed: f64,
     pub hold_scroll_acceleration: f64,

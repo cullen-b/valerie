@@ -175,6 +175,9 @@ pub struct State {
     /// How much history, archive and closed tabs to keep (from the `history` settings; not saved).
     #[serde(skip)]
     pub limits: Limits,
+    /// The date each brief was last written ("2026-10-16").
+    #[serde(default)]
+    pub brief_last: BTreeMap<String, String>,
     /// Pages an agent checks in the background (Watch This Page…).
     #[serde(default)]
     pub watches: Vec<Watch>,

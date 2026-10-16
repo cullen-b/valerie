@@ -108,7 +108,8 @@ Valerie runs the agent CLIs installed on this computer (Claude Code, Codex, Open
 user's own sign-ins. Name as many as you like under `agents.available` (same CLI with different models, or any
 `command` that prints an answer) and pick one per job under `agents.use` (`chat`, `find`, `tasks`, `customize`),
 e.g. a strong model for chat and a fast one for find. "Set Up <name>" in the command bar installs a CLI and signs in.
-Chats are JSON files in `chats/` here (they sync when `chats.sync` is on). Settings for the Chats space and asking
+Briefs (`briefs:` in config.yaml) are pages an agent writes on a schedule from a plain description (`want`); to change
+what a brief covers, edit its `want`. Chats are JSON files in `chats/` here (they sync when `chats.sync` is on). Settings for the Chats space and asking
 questions from find are under `chats`.
 
 ## Settings

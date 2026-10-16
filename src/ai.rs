@@ -2,7 +2,7 @@
 //! any command), run headless. They chat in the Chats space with full control of the browser, answer questions
 //! about a page from find (with no tools at all), and stream their answers back as they write them.
 use crate::config::AgentDef;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
@@ -52,7 +52,9 @@ pub fn kind(id: &str) -> Option<&'static Kind> {
 pub enum Mode {
     /// Full control of the browser (Valerie's MCP tools, or `valerie call` for CLIs without MCP).
     Browser,
-    /// Answer from the text it's given: no tools at all (the question may come from a web page).
+    /// Answer from the page text it's given, with as little power as the CLI allows: no tools for Claude, Pi and
+    /// OpenCode; read-only, offline and in an empty folder for Codex, Cursor and Hermes. The page text could be trying
+    /// to trick it, and the answer is shown in Valerie's own panel, never inside the page.
     PageOnly,
     /// Edit Valerie's config folder.
     Customize,
@@ -159,15 +161,17 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
             Format::Claude
         }
         "codex" => {
-            if mode == Mode::PageOnly {
-                bail!("Codex can't run without tools, so it can't answer questions from web pages: set agents.use.find to claude, pi or opencode");
-            }
             c.arg("exec");
             if stream {
                 c.arg("--json");
             }
             c.args(["--skip-git-repo-check", "-s", if mode == Mode::Customize { "workspace-write" } else { "read-only" }]);
-            c.args(["-c", &format!("mcp_servers.valerie.command={}", serde_json::to_string(&exe)?), "-c", r#"mcp_servers.valerie.args=["mcp-stdio"]"#]);
+            if mode == Mode::PageOnly {
+                // Read-only sandbox (its commands can't write or reach the network), no web search, none of the user's MCP servers.
+                c.args(["-c", r#"web_search="disabled""#, "-c", "mcp_servers={}"]);
+            } else {
+                c.args(["-c", &format!("mcp_servers.valerie.command={}", serde_json::to_string(&exe)?), "-c", r#"mcp_servers.valerie.args=["mcp-stdio"]"#]);
+            }
             if !model.is_empty() {
                 c.args(["-m", model]);
             }
@@ -196,17 +200,20 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
             Format::OpenCode
         }
         "cursor" => {
-            if mode == Mode::PageOnly {
-                bail!("Cursor can't run without tools, so it can't answer questions from web pages: set agents.use.find to claude, pi or opencode");
-            }
-            c.args(["-p", "--trust", "--approve-mcps"]);
+            c.args(["-p", "--trust"]);
             if stream {
                 c.args(["--output-format", "stream-json", "--stream-partial-output"]);
             }
-            // Cursor reads MCP servers from the workspace folder.
-            let dir = work.join(".cursor");
-            std::fs::create_dir_all(&dir)?;
-            std::fs::write(dir.join("mcp.json"), mcp_json().to_string())?;
+            if mode == Mode::PageOnly {
+                // Ask mode is read-only; the sandbox keeps its commands in the (empty) working folder and offline.
+                c.args(["--mode", "ask", "--sandbox", "enabled"]);
+            } else {
+                // Cursor reads MCP servers from the workspace folder.
+                c.arg("--approve-mcps");
+                let dir = work.join(".cursor");
+                std::fs::create_dir_all(&dir)?;
+                std::fs::write(dir.join("mcp.json"), mcp_json().to_string())?;
+            }
             if let Some(s) = session {
                 c.args(["--resume", s]);
             }
@@ -232,7 +239,8 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
         }
         "hermes" => {
             if mode == Mode::PageOnly {
-                bail!("Hermes can't run without tools, so it can't answer questions from web pages: set agents.use.find to claude, pi or opencode");
+                // Only the harmless "clarify" toolset, and no AGENTS.md / memory / rules injected.
+                c.args(["-t", "clarify", "--ignore-rules"]);
             }
             if !model.is_empty() {
                 c.args(["-m", model]);
