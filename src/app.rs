@@ -60,10 +60,10 @@ pub enum UserEvent {
     PageAnswerDone { tab: TabId },
     /// A chat-mode AI action whose {selection} has been read from the page.
     AiActionReady { prompt: String, agent: Option<String> },
-    /// A brief's agent finished: its Markdown, or why it failed.
-    BriefDone { name: String, agent: String, text: String, error: Option<String> },
-    /// "Write it again now" was clicked on a brief page.
-    BriefRequested { slug: String },
+    /// A task's agent finished: its answer, or why it failed.
+    TaskDone { name: String, agent: String, text: String, error: Option<String> },
+    /// "Run it again now" was clicked on a task's page.
+    TaskRequested { slug: String },
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -114,8 +114,8 @@ pub struct App {
     answer_tab: Option<TabId>,
     answer_height: f64,
     answer_label: String,
-    /// Briefs being written right now (by name).
-    briefs_running: std::collections::HashSet<String>,
+    /// Tasks running right now (by name).
+    tasks_running: std::collections::HashSet<String>,
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
@@ -182,26 +182,27 @@ struct Boost {
     js: String,
 }
 
-fn briefs_dir() -> PathBuf {
-    config::data_dir().join("briefs")
+fn tasks_dir() -> PathBuf {
+    config::data_dir().join("tasks")
 }
 
-/// valerie://brief/<slug> serves a brief's latest edition, /<slug>/<date> an earlier one, ?run=1 writes it again.
+/// valerie://task/<slug> serves a task's latest page, /<slug>/<date> an earlier one, ?run=1 runs it again
+/// (valerie://brief/… is the older name).
 fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<UserEvent>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
     let page = |html: String| {
         wry::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(html.into_bytes())).unwrap()
     };
     let parts: Vec<&str> = uri.path().trim_matches('/').split('/').filter(|p| !p.is_empty()).collect();
     let safe = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-    let Some(slug) = parts.first().copied().filter(|s| uri.host() == Some("brief") && safe(s)) else {
+    let Some(slug) = parts.first().copied().filter(|s| matches!(uri.host(), Some("task" | "brief")) && safe(s)) else {
         return page("<p>Not a Valerie page.</p>".into());
     };
     if uri.query().is_some_and(|q| q.contains("run=1")) {
         if let Ok(p) = proxy.lock() {
-            send(&p, UserEvent::BriefRequested { slug: slug.to_string() });
+            send(&p, UserEvent::TaskRequested { slug: slug.to_string() });
         }
     }
-    let dir = briefs_dir().join(slug);
+    let dir = tasks_dir().join(slug);
     let mut editions: Vec<String> = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
@@ -214,8 +215,8 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
         Some(html) => page(html),
         None => page(format!(
             "<meta charset=utf-8><title>☀ Brief</title><body style=\"font:16px -apple-system,system-ui;padding:60px;max-width:640px;margin:auto;color:#888\">\
-             <h2 style=\"color:inherit\">This brief hasn't been written yet</h2><p>It's written at its set time each day. \
-             <a href=\"valerie://brief/{slug}?run=1\">Write it now</a> (it takes a minute; this page updates when it's ready).</p></body>"
+             <h2 style=\"color:inherit\">Nothing here yet</h2><p>This task hasn't run yet. \
+             <a href=\"valerie://task/{slug}?run=1\">Run it now</a> (it takes a minute; this page updates when it's done).</p></body>"
         )),
     }
 }
@@ -375,7 +376,7 @@ impl App {
             answer_tab: None,
             answer_height: 120.0,
             answer_label: String::new(),
-            briefs_running: Default::default(),
+            tasks_running: Default::default(),
             sync_gen: 0,
             littles: HashMap::new(),
             focused_little: None,
@@ -1343,9 +1344,12 @@ impl App {
             let sub = if a.mode == "chat" { "AI · opens in Chats" } else { "AI · answers on the page" };
             items.push(json!({ "kind": "ai", "title": name, "sub": sub, "icon": "✦", "cmd": { "cmd": "ai_action", "name": name } }));
         }
-        for b in &self.config.briefs {
-            items.push(json!({ "kind": "brief", "title": format!("☀ {}", b.name), "sub": format!("Brief · {} at {}", b.space, b.at), "cmd": { "cmd": "open_brief", "name": b.name } }));
-            items.push(json!({ "kind": "brief", "title": format!("Write {} now", b.name), "sub": b.want, "icon": "☀", "cmd": { "cmd": "run_brief", "name": b.name } }));
+        for t in self.config.all_tasks() {
+            let when = t.schedule().map(|w| w.describe()).unwrap_or_default();
+            if t.result() != "notify" {
+                items.push(json!({ "kind": "task", "title": format!("{} {}", if t.result() == "page" { "☀" } else { "⚙" }, t.name), "sub": format!("Task · {when}"), "cmd": { "cmd": "open_task", "name": t.name } }));
+            }
+            items.push(json!({ "kind": "task", "title": format!("Run {} now", t.name), "sub": t.want, "icon": "⚙", "cmd": { "cmd": "run_task", "name": t.name } }));
         }
         for w in &self.state.watches {
             items.push(json!({ "kind": "watch", "title": format!("Stop watching: {}", w.title), "sub": w.condition, "icon": "◉", "cmd": { "cmd": "stop_watching", "id": w.id } }));
@@ -2031,34 +2035,6 @@ impl App {
         std::thread::spawn(move || send(&p, UserEvent::AgentDone(agents::run(run))));
     }
 
-    fn schedule_agents(&mut self) {
-        let t = now();
-        let mut hhmm: Option<String> = None;
-        let mut due = Vec::new();
-        for job in self.config.agents.jobs.iter().filter(|j| j.enabled) {
-            let last = self.state.agent_last.get(&job.name).copied();
-            let by_interval = job.every.as_deref().and_then(config::parse_interval).is_some_and(|secs| match last {
-                Some(l) => t.saturating_sub(l) >= secs,
-                None => false,
-            });
-            let by_time = job.at.as_deref().is_some_and(|at| {
-                let now_hhmm = hhmm.get_or_insert_with(agents::local_hhmm);
-                now_hhmm == at && last.is_none_or(|l| t.saturating_sub(l) > 120)
-            });
-            if last.is_none() && job.every.is_some() {
-                // First sighting starts the clock rather than firing immediately.
-                self.state.agent_last.insert(job.name.clone(), t);
-                self.dirty = true;
-            }
-            if by_interval || by_time {
-                due.push(job.clone());
-            }
-        }
-        for job in due {
-            self.start_agent(job.name, job.prompt, job.agent, job.model);
-        }
-    }
-
     /// Fetch lists and build rules off the main thread; WebKit compiles them asynchronously afterwards.
     fn start_blocklist(&mut self) {
         let cb = self.config.content_blocking.clone();
@@ -2201,9 +2177,8 @@ impl App {
         if !self.config.sync.repo.is_empty() && interval > 0 && t.saturating_sub(self.last_sync) > interval {
             self.start_sync();
         }
-        self.schedule_agents();
         self.check_watches();
-        self.check_briefs();
+        self.check_tasks(false);
         if self.state.track_changes() {
             self.dirty = true;
         }
@@ -2705,14 +2680,9 @@ impl App {
                 }
             }
             Command::AiAction { name, input } => self.ai_action(name, input, elwt),
-            Command::NewBrief { want, at } => self.new_brief(want, at, elwt),
-            Command::RunBrief { name } => self.run_brief(&name),
-            Command::OpenBrief { name } => {
-                if let Some(b) = self.config.briefs.iter().find(|b| b.name == name).cloned() {
-                    let t = self.brief_tab(&b);
-                    self.activate(t);
-                }
-            }
+            Command::NewTask { want, when } => self.new_task(want, when, elwt),
+            Command::RunTask { name } => self.run_task(&name),
+            Command::OpenTask { name } => self.open_task(&name),
             Command::WatchPage { condition } => {
                 let Some(t) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).filter(|t| t.url.starts_with("http")).cloned() else {
                     return self.toast("Open the page to watch first");
@@ -2922,9 +2892,9 @@ impl App {
             }
             Command::RunAgent { name, prompt, agent } => {
                 self.close_bar();
-                let job = name.as_ref().and_then(|n| self.config.agents.jobs.iter().find(|j| &j.name == n).cloned());
-                match (job, prompt) {
-                    (Some(j), _) => self.start_agent(j.name, j.prompt, agent.or(j.agent), j.model),
+                let task = name.as_ref().and_then(|n| self.config.all_tasks().into_iter().find(|t| &t.name == n));
+                match (task, prompt) {
+                    (Some(t), _) => self.run_task(&t.name),
                     (None, Some(p)) if !p.trim().is_empty() => {
                         let short: String = p.chars().take(40).collect();
                         self.start_agent(name.unwrap_or(short), p, agent, None)
@@ -3494,10 +3464,10 @@ impl App {
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
-            UserEvent::BriefDone { name, agent, text, error } => self.brief_done(name, agent, text, error),
-            UserEvent::BriefRequested { slug } => {
-                if let Some(b) = self.config.briefs.iter().find(|b| b.slug() == slug).cloned() {
-                    self.run_brief(&b.name);
+            UserEvent::TaskDone { name, agent, text, error } => self.task_done(name, agent, text, error),
+            UserEvent::TaskRequested { slug } => {
+                if let Some(t) = self.config.all_tasks().into_iter().find(|t| t.slug() == slug) {
+                    self.run_task(&t.name);
                 }
             }
             UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt),
@@ -3717,6 +3687,7 @@ impl App {
         if !urls.is_empty() {
             self.open_external(urls, elwt);
         }
+        self.check_tasks(true);
     }
 }
 
@@ -4194,94 +4165,156 @@ impl App {
     }
 }
 
-// ---------------------------------------------------------------- briefs
+// ---------------------------------------------------------------- tasks
+
+/// A first guess at where a task's result should go, from how it's described: things to read become a page.
+fn guess_result(want: &str) -> &'static str {
+    let w = want.to_lowercase();
+    let reads = ["tell me", "brief", "summar", "digest", "report", "overview", "catch me up", "what's", "what is", "what are", "list ", "news", "show me", "scan"];
+    if reads.iter().any(|r| w.contains(r)) { "page" } else { "chat" }
+}
+
+/// A short name from the description ("Go through my Jira and tell me…" → "Go through my Jira").
+fn task_name(want: &str, when: &config::When, taken: &[String]) -> String {
+    let base = match when {
+        config::When::Daily { at, .. } if guess_result(want) == "page" => {
+            let h: u32 = at[..2].parse().unwrap_or(8);
+            (if h < 12 { "Morning brief" } else if h < 17 { "Afternoon brief" } else { "Evening brief" }).to_string()
+        }
+        _ => {
+            // Links become their site's name; trailing little words go.
+            let words: Vec<String> = want
+                .split_whitespace()
+                .map(|w| url::Url::parse(w).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())).unwrap_or_else(|| w.to_string()))
+                .take(4)
+                .collect();
+            let mut words: Vec<&str> = words.iter().map(String::as_str).collect();
+            while words.len() > 2 && ["in", "a", "an", "the", "and", "to", "of", "for", "on", "my", "at", "with"].contains(&words[words.len() - 1].to_lowercase().as_str()) {
+                words.pop();
+            }
+            let mut n = words.join(" ").trim_end_matches(|c: char| !c.is_alphanumeric()).to_string();
+            if let Some(f) = n.get(..1) {
+                n = f.to_uppercase() + &n[1..];
+            }
+            if n.is_empty() { "Task".into() } else { n }
+        }
+    };
+    let mut name = base.clone();
+    let mut i = 2;
+    while taken.contains(&name) {
+        name = format!("{base} {i}");
+        i += 1;
+    }
+    name
+}
 
 impl App {
-    /// "New Brief…": ask what it should cover and when, save it to config.yaml, write the first edition now.
-    fn new_brief(&mut self, want: Option<String>, at: Option<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+    /// "Create Task…": what it should do and when, in plain words; saved to config.yaml and run once now.
+    fn new_task(&mut self, want: Option<String>, when: Option<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
         let Some(want) = want.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) else {
-            let then = json!({ "cmd": "new_brief" });
-            let label = "Describe your brief (e.g. go through my Jira and tell me what's on my plate today)";
+            let then = json!({ "cmd": "new_task" });
+            let label = "What should the task do? (e.g. go through my Jira and tell me what's on my plate, join my Google Meet calls when they start)";
             return self.dispatch(Command::Prompt { label: label.into(), value: String::new(), then, field: "want".into() }, elwt);
         };
-        let Some(at) = at.as_deref().and_then(config::parse_time) else {
-            let then = json!({ "cmd": "new_brief", "want": want });
-            return self.dispatch(Command::Prompt { label: "What time each day? (e.g. 8:00 or 5pm)".into(), value: "8:00".into(), then, field: "at".into() }, elwt);
+        let Some(schedule) = when.as_deref().and_then(config::parse_when) else {
+            let then = json!({ "cmd": "new_task", "want": want });
+            let label = if when.is_some() { "Didn't catch that. When? (every day at 8am · weekdays at 9 · every 5 minutes · when Valerie starts · only when I ask)" } else { "When? (every day at 8am · weekdays at 9 · every 5 minutes · when Valerie starts · only when I ask)" };
+            return self.dispatch(Command::Prompt { label: label.into(), value: when.unwrap_or_default(), then, field: "when".into() }, elwt);
         };
-        let hour: u32 = at[..2].parse().unwrap_or(8);
-        let base = if hour < 12 { "Morning brief" } else if hour < 17 { "Afternoon brief" } else { "Evening brief" };
-        let mut name = base.to_string();
-        let mut n = 2;
-        while self.config.briefs.iter().any(|b| b.name == name) {
-            name = format!("{base} {n}");
-            n += 1;
-        }
-        let brief = config::BriefConfig {
+        let taken: Vec<String> = self.config.all_tasks().into_iter().map(|t| t.name).collect();
+        let name = task_name(&want, &schedule, &taken);
+        let task = config::TaskConfig {
             name: name.clone(),
+            result: guess_result(&want).into(),
             want,
+            when: schedule.describe(),
             space: self.state.space().name.clone(),
-            at,
-            days: "every day".into(),
-            agent: String::new(),
             machine: self.config.device_name(),
+            ..Default::default()
         };
-        if let Err(e) = append_brief(&brief) {
-            return self.toast(&format!("Couldn't save the brief: {e}"));
+        if let Err(e) = append_task(&task) {
+            return self.toast(&format!("Couldn't save the task: {e}"));
         }
         self.reload_config();
-        self.toast(&format!("{name} set for {} every day: writing the first one now", brief.at));
-        self.run_brief(&name);
+        self.toast(&format!("Task \"{name}\" runs {}: trying it once now", schedule.describe()));
+        self.run_task(&name);
     }
 
-    /// Write the briefs whose time has come today (once a day, on the machine that owns them).
-    fn check_briefs(&mut self) {
-        if self.config.briefs.is_empty() {
+    /// Run the tasks that are due (on the machine that owns them).
+    fn check_tasks(&mut self, starting: bool) {
+        let tasks = self.config.all_tasks();
+        if tasks.is_empty() {
             return;
         }
         let (date, weekday, _, time) = platform::local_day();
-        let me = self.config.device_name();
-        let due: Vec<String> = self
-            .config
-            .briefs
-            .iter()
-            .filter(|b| b.machine.is_empty() || b.machine == me)
-            .filter(|b| b.runs_on(&weekday) && config::parse_time(&b.at).is_some_and(|at| time >= at))
-            .filter(|b| self.state.brief_last.get(&b.name) != Some(&date))
-            .map(|b| b.name.clone())
-            .collect();
+        let (me, t) = (self.config.device_name(), now());
+        let mut due = Vec::new();
+        for task in tasks.iter().filter(|x| x.machine.is_empty() || x.machine == me) {
+            let ok = match task.schedule() {
+                Some(config::When::Daily { at, days }) => {
+                    config::When::runs_on(&days, &weekday) && time >= at && self.state.task_last.get(&task.name) != Some(&date)
+                }
+                Some(config::When::Every(secs)) => self.state.agent_last.get(&format!("task:{}", task.name)).is_none_or(|l| t.saturating_sub(*l) >= secs),
+                Some(config::When::OnStart) => starting,
+                _ => false,
+            };
+            if ok {
+                due.push(task.name.clone());
+            }
+        }
         for name in due {
-            self.run_brief(&name);
+            self.run_task(&name);
         }
     }
 
-    fn run_brief(&mut self, name: &str) {
-        let Some(b) = self.config.briefs.iter().find(|b| b.name == name).cloned() else { return };
-        if !self.briefs_running.insert(b.name.clone()) {
+    fn run_task(&mut self, name: &str) {
+        let Some(task) = self.config.all_tasks().into_iter().find(|x| x.name == name) else { return };
+        if !self.tasks_running.insert(task.name.clone()) {
             return;
         }
-        let (date, _, day, _) = platform::local_day();
-        self.state.brief_last.insert(b.name.clone(), date);
+        let (date, _, day, time) = platform::local_day();
+        self.state.task_last.insert(task.name.clone(), date);
+        self.state.agent_last.insert(format!("task:{}", task.name), now());
         self.dirty = true;
-        let (agent, def) = if b.agent.is_empty() { self.config.agent_for("tasks") } else { self.config.agent_named(&b.agent) };
+        let (agent, mut def) = if task.agent.is_empty() { self.config.agent_for("tasks") } else { self.config.agent_named(&task.agent) };
+        if !task.model.is_empty() {
+            def.model = task.model.clone();
+        }
         let space = self.config.agents.space.clone();
         if self.state.space_index(&space).is_none() {
             self.state.spaces.push(crate::state::Space { name: space.clone(), ..Default::default() });
         }
-        let prompt = format!(
-            "You're writing the user's \"{name}\", a briefing page they read in their browser. Today is {day}.\n\n\
-             What they want, in their words: {want}\n\n{how} Their sites are already signed in. Open what you need in \
-             background tabs in the space \"{space}\" and close them when you're done; don't change the user's own tabs.\n\n\
-             Then reply with ONLY the brief, in Markdown: first one line that sums up the day, then short sections with \
-             \"## \" headings and bullet points, most important first, each item linking to where it lives. No preamble, \
-             no sign-off. If you couldn't reach something, say so in one line.",
-            name = b.name,
-            want = b.want,
-            how = crate::ai::control_note(&def),
+        let how = crate::ai::control_note(&def);
+        let common = format!(
+            "{how} The user's sites are already signed in. The task's own words come first; otherwise, open what you need in \
+             background tabs in the space \"{space}\" and close them when you're done, and don't change the user's own tabs. \
+             Never pay, buy or submit anything irreversible; stop and say so instead. It is {day}, {time}."
         );
-        self.toast(&format!("Writing {}…", b.name));
+        let prompt = if task.result() == "page" {
+            format!(
+                "You're doing the user's task \"{name}\" and writing the result as a page they'll read in their browser.\n\n\
+                 The task, in their words: {want}\n\n{common}\n\nThen reply with ONLY the page, in Markdown: first one line \
+                 that sums it up, then short sections with \"## \" headings and bullet points, most important first, each \
+                 item linking to where it lives. No preamble, no sign-off. If you couldn't reach something, say so in one line.",
+                name = task.name,
+                want = task.want,
+            )
+        } else {
+            format!(
+                "You're doing the user's task \"{name}\", which runs {when}.\n\nThe task, in their words: {want}\n\n{common}\n\n\
+                 If there's nothing to do right now (for example no meeting is starting yet), do nothing and reply with exactly \
+                 NOTHING TO DO. Otherwise do it, then reply with one or two short sentences saying what you did.",
+                name = task.name,
+                want = task.want,
+                when = task.schedule().map(|w| w.describe()).unwrap_or_default(),
+            )
+        };
+        if task.result() == "page" || task.schedule() == Some(config::When::Manual) {
+            self.toast(&format!("Running {}…", task.name));
+        }
         let p = self.proxy.clone();
         let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
-        let work = config::data_dir().join("agents").join("brief");
+        let work = config::data_dir().join("agents").join("task");
         std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&work);
             let text = std::sync::Mutex::new(String::new());
@@ -4301,7 +4334,7 @@ impl App {
                     _ => {}
                 }
             };
-            let run = format!("brief:{}", b.name);
+            let run = format!("task:{}", task.name);
             match crate::ai::build(&def, "", crate::ai::Mode::Browser, &prompt, None, true, &work) {
                 Ok((cmd, fmt)) => {
                     if let Err(e) = crate::ai::stream(&run, cmd, fmt, timeout, &on) {
@@ -4312,85 +4345,141 @@ impl App {
             }
             let text = text.into_inner().unwrap();
             let error = error.into_inner().unwrap();
-            send(&p, UserEvent::BriefDone { name: b.name, agent, text, error });
+            send(&p, UserEvent::TaskDone { name: task.name, agent, text, error });
         });
     }
 
-    fn brief_done(&mut self, name: String, agent: String, text: String, error: Option<String>) {
-        self.briefs_running.remove(&name);
-        let Some(b) = self.config.briefs.iter().find(|b| b.name == name).cloned() else { return };
-        if text.trim().is_empty() {
-            return self.toast(&format!("{name} couldn't be written: {}", error.unwrap_or_else(|| "the agent gave no answer".into())));
+    fn task_done(&mut self, name: String, agent: String, text: String, error: Option<String>) {
+        self.tasks_running.remove(&name);
+        let Some(task) = self.config.all_tasks().into_iter().find(|x| x.name == name) else { return };
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return self.toast(&format!("{name} didn't finish: {}", error.unwrap_or_else(|| "the agent gave no answer".into())));
+        }
+        if text.trim_matches(|c: char| !c.is_alphanumeric() && c != ' ').eq_ignore_ascii_case("NOTHING TO DO") {
+            return;
         }
         let (date, _, day, time) = platform::local_day();
-        let dir = briefs_dir().join(b.slug());
-        let _ = std::fs::create_dir_all(&dir);
-        let mut earlier: Vec<String> = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".html")).map(str::to_string))
-            .filter(|d| d != &date)
-            .collect();
-        earlier.sort();
-        earlier.reverse();
-        earlier.truncate(14);
-        let data = json!({ "name": b.name, "slug": b.slug(), "day": day, "time": time, "agent": agent, "markdown": text, "error": error, "earlier": earlier });
-        let html = ui("brief.html").replace("/*BRIEF*/null", &data.to_string().replace("</", "<\\/"));
-        if let Err(e) = std::fs::write(dir.join(format!("{date}.html")), html) {
-            return self.toast(&format!("Couldn't save {name}: {e}"));
+        match task.result() {
+            "page" => {
+                let dir = tasks_dir().join(task.slug());
+                let _ = std::fs::create_dir_all(&dir);
+                let mut earlier: Vec<String> = std::fs::read_dir(&dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".html")).map(str::to_string))
+                    .filter(|d| d != &date)
+                    .collect();
+                earlier.sort();
+                earlier.reverse();
+                earlier.truncate(14);
+                let data = json!({ "name": task.name, "slug": task.slug(), "day": day, "time": time, "agent": agent, "markdown": text, "error": error, "earlier": earlier });
+                let html = ui("brief.html").replace("/*BRIEF*/null", &data.to_string().replace("</", "<\\/"));
+                if let Err(e) = std::fs::write(dir.join(format!("{date}.html")), html) {
+                    return self.toast(&format!("Couldn't save {name}: {e}"));
+                }
+                let tab = self.task_tab(&task);
+                if let Some(v) = self.views.get(&tab) {
+                    let _ = v.load_url(&format!("valerie://task/{}", task.slug()));
+                }
+                self.toast(&format!("☀ {name} is ready"));
+                platform::notify("Valerie", &format!("{name} is ready"));
+            }
+            "chat" => {
+                let id = format!("task-{}", task.slug());
+                let t = now();
+                let pos = self.chats.iter().position(|c| c.id == id);
+                let mut c = match pos {
+                    Some(i) => self.chats.remove(i),
+                    None => {
+                        let mut c = crate::ai::Chat::new(&agent);
+                        c.id = id;
+                        c.title = format!("⚙ {name}");
+                        c
+                    }
+                };
+                c.messages.push(crate::ai::Msg { role: "user".into(), text: format!("{} ({day}, {time})", task.want), at: t, ..Default::default() });
+                c.messages.push(crate::ai::Msg { role: "assistant".into(), text: text.clone(), agent, error, at: t, ..Default::default() });
+                c.updated = t;
+                crate::ai::save_chat(&chats_dir(&self.config), &c);
+                self.chats.insert(0, c);
+                let short: String = text.chars().take(90).collect();
+                self.toast(&format!("⚙ {name}: {short}"));
+                self.render();
+                self.render_chat();
+            }
+            _ => {
+                let short: String = text.chars().take(160).collect();
+                self.toast(&format!("⚙ {name}: {short}"));
+                platform::notify(&name, &short);
+            }
         }
-        let tab = self.brief_tab(&b);
-        let url = format!("valerie://brief/{}", b.slug());
-        if let Some(v) = self.views.get(&tab) {
-            let _ = v.load_url(&url);
-        }
-        self.toast(&format!("☀ {name} is ready"));
-        platform::notify("Valerie", &format!("Your {} is ready", name.to_lowercase()));
-        self.render();
     }
 
-    /// The brief's tab (in Kept in its space), made if it doesn't exist yet.
-    fn brief_tab(&mut self, b: &config::BriefConfig) -> TabId {
-        let url = format!("valerie://brief/{}", b.slug());
-        if let Some(t) = self.state.tabs.values().find(|t| t.url.starts_with(&url)).map(|t| t.id) {
+    /// The tab showing a page task's latest result (in Kept, in the task's space), made if it doesn't exist yet.
+    fn task_tab(&mut self, task: &config::TaskConfig) -> TabId {
+        let slug = task.slug();
+        let urls = [format!("valerie://task/{slug}"), format!("valerie://brief/{slug}")];
+        if let Some(t) = self.state.tabs.values().find(|t| urls.iter().any(|u| t.url.starts_with(u.as_str()))).map(|t| t.id) {
             return t;
         }
-        let space = self.state.space_index(&b.space);
-        let t = self.open_tab(&url, space, false);
+        let space = self.state.space_index(&task.space);
+        let t = self.open_tab(&urls[0], space, false);
         self.move_tab(t, space.map(|i| self.state.spaces[i].name.clone()), None, Some("kept".into()), None);
         if let Some(tab) = self.state.tabs.get_mut(&t) {
-            tab.title = format!("☀ {}", b.name);
+            tab.title = format!("☀ {}", task.name);
         }
         t
     }
+
+    /// Open a task: its page, its chat, or (for notify tasks) run it now.
+    fn open_task(&mut self, name: &str) {
+        let Some(task) = self.config.all_tasks().into_iter().find(|x| x.name == name) else { return };
+        match task.result() {
+            "page" => {
+                let t = self.task_tab(&task);
+                self.activate(t);
+            }
+            "chat" => {
+                let id = format!("task-{}", task.slug());
+                if self.chats.iter().any(|c| c.id == id) {
+                    self.active_chat = Some(id);
+                    self.open_chats();
+                } else {
+                    self.toast(&format!("{name} hasn't run yet"));
+                }
+            }
+            _ => self.run_task(name),
+        }
+    }
 }
 
-/// Add a brief to the user's config.yaml under `briefs:`, keeping the rest of the file as it is.
-fn append_brief(b: &config::BriefConfig) -> anyhow::Result<()> {
+/// Add a task to the user's config.yaml under `tasks:`, keeping the rest of the file as it is.
+fn append_task(task: &config::TaskConfig) -> anyhow::Result<()> {
     let path = config::config_path();
     let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let item: String = serde_yaml::to_string(&vec![b])?.lines().map(|l| format!("  {l}\n")).collect();
+    let item: String = serde_yaml::to_string(&vec![task])?.lines().map(|l| format!("  {l}\n")).collect();
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    match lines.iter().position(|l| l.starts_with("briefs:")) {
-        Some(i) if lines[i].trim_end() == "briefs:" => {
+    match lines.iter().position(|l| l.starts_with("tasks:")) {
+        Some(i) if lines[i].trim_end() == "tasks:" => {
             let end = lines[i + 1..].iter().position(|l| !l.starts_with(' ') && !l.trim().is_empty() && !l.starts_with('#')).map_or(lines.len(), |j| i + 1 + j);
             lines.insert(end, item.trim_end().to_string());
         }
-        Some(i) if lines[i].replace(' ', "").starts_with("briefs:[]") => {
-            lines[i] = format!("briefs:\n{}", item.trim_end());
+        Some(i) if lines[i].replace(' ', "").starts_with("tasks:[]") => {
+            lines[i] = format!("tasks:\n{}", item.trim_end());
         }
         Some(_) => {
-            // `briefs: [ … ]` written inline: rewrite through YAML.
+            // `tasks: [ … ]` written inline: rewrite through YAML.
             let mut v: serde_yaml::Value = serde_yaml::from_str(&text)?;
-            let list = v["briefs"].as_sequence_mut().ok_or_else(|| anyhow::anyhow!("briefs isn't a list"))?;
-            list.push(serde_yaml::to_value(b)?);
+            let list = v["tasks"].as_sequence_mut().ok_or_else(|| anyhow::anyhow!("tasks isn't a list"))?;
+            list.push(serde_yaml::to_value(task)?);
             return Ok(std::fs::write(&path, serde_yaml::to_string(&v)?)?);
         }
         None => {
             lines.push(String::new());
-            lines.push("# Pages an agent writes for you on a schedule (\"New Brief…\" in the command bar adds them).".into());
-            lines.push(format!("briefs:\n{}", item.trim_end()));
+            lines.push("# Things your agents do for you (\"Create Task…\" in the command bar adds them).".into());
+            lines.push(format!("tasks:\n{}", item.trim_end()));
         }
     }
     std::fs::write(&path, lines.join("\n") + "\n")?;

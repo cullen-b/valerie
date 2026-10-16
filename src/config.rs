@@ -33,7 +33,9 @@ pub struct Config {
     pub chats: ChatsConfig,
     pub ai_actions: BTreeMap<String, Option<AiAction>>,
     pub watch: WatchConfig,
-    pub briefs: Vec<BriefConfig>,
+    pub tasks: Vec<TaskConfig>,
+    /// Older name for tasks that write a page.
+    pub briefs: Vec<TaskConfig>,
     pub permissions: PermissionsConfig,
     pub pages: PagesConfig,
     pub translate: TranslateConfig,
@@ -202,39 +204,156 @@ pub struct AiAction {
     pub agent: String,
 }
 
-/// A page an agent writes on a schedule (`briefs`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Something an agent does for the user (`tasks`): a morning brief, joining meetings, opening pages, watching a feed…
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct BriefConfig {
+pub struct TaskConfig {
     pub name: String,
-    /// What the user wants it to cover, in their own words.
+    /// What to do, in the user's own words.
     pub want: String,
+    /// When, in plain words: "every day at 8am", "weekdays at 9", "mondays at 5pm", "every 5 minutes",
+    /// "when Valerie starts", "only when I ask".
+    pub when: String,
+    /// Where the result goes: "page" (a tab with the latest result) | "chat" (a chat with each run) | "notify".
+    pub result: String,
     pub space: String,
-    /// Time of day, "HH:MM" (24-hour).
-    pub at: String,
-    /// "every day" | "weekdays" | "weekends" | days like "mon, wed, fri".
-    pub days: String,
     /// Which agent; empty = agents.use.tasks.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub agent: String,
-    /// Only this machine writes it (so synced machines don't each write one); empty = any.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// Only this machine runs it (so synced machines don't each run it); empty = any.
     pub machine: String,
+    #[serde(skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    /// Older brief fields: a time and days instead of `when`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub at: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub days: String,
 }
 
-impl BriefConfig {
+impl Default for TaskConfig {
+    fn default() -> Self {
+        TaskConfig {
+            name: String::new(),
+            want: String::new(),
+            when: String::new(),
+            result: String::new(),
+            space: String::new(),
+            agent: String::new(),
+            model: String::new(),
+            machine: String::new(),
+            enabled: true,
+            at: String::new(),
+            days: String::new(),
+        }
+    }
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+/// When a task runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum When {
+    /// Once a day at "HH:MM" on the given days ("every day" | "weekdays" | "weekends" | "mon, wed, fri").
+    Daily { at: String, days: String },
+    Every(u64),
+    OnStart,
+    Manual,
+}
+
+impl When {
+    pub fn runs_on(days: &str, weekday: &str) -> bool {
+        let d = weekday.to_lowercase();
+        let d = &d[..d.len().min(3)];
+        match days.trim().to_lowercase().as_str() {
+            "" | "every day" | "daily" => true,
+            "weekdays" => !matches!(d, "sat" | "sun"),
+            "weekends" => matches!(d, "sat" | "sun"),
+            list => list.split([',', ' ']).any(|x| x.trim().starts_with(d)),
+        }
+    }
+
+    /// Plain words for showing to people.
+    pub fn describe(&self) -> String {
+        match self {
+            When::Daily { at, days } => format!("{} at {at}", if days.is_empty() { "every day" } else { days }),
+            When::Every(s) if s % 3600 == 0 => format!("every {} hour{}", s / 3600, if *s == 3600 { "" } else { "s" }),
+            When::Every(s) => format!("every {} minute{}", s / 60, if *s == 60 { "" } else { "s" }),
+            When::OnStart => "when Valerie starts".into(),
+            When::Manual => "only when asked".into(),
+        }
+    }
+}
+
+/// Read a schedule written in plain words. None when it can't be understood.
+pub fn parse_when(s: &str) -> Option<When> {
+    let t = s.trim().to_lowercase().replace(" am", "am").replace(" pm", "pm").replace(" o'clock", "");
+    if t.is_empty() || ["manual", "never", "on demand"].contains(&t.as_str()) || t.contains("when i ask") || t.contains("only when") {
+        return Some(When::Manual);
+    }
+    if t.contains("start") || t.contains("launch") || t.contains("when valerie opens") || t.contains("on open") {
+        return Some(When::OnStart);
+    }
+    let words: Vec<&str> = t.split([' ', ',']).filter(|w| !w.is_empty()).collect();
+    if t == "hourly" {
+        return Some(When::Every(3600));
+    }
+    if let Some(i) = words.iter().position(|w| *w == "every") {
+        let unit = |u: &str| -> Option<u64> {
+            match u.trim_end_matches('s') {
+                "m" | "min" | "minute" => Some(60),
+                "h" | "hr" | "hour" => Some(3600),
+                _ => None,
+            }
+        };
+        let (n, u) = match (words.get(i + 1), words.get(i + 2)) {
+            (Some(a), _) if a.ends_with(['m', 'h']) && a[..a.len() - 1].parse::<u64>().is_ok() => (a[..a.len() - 1].parse().ok(), unit(&a[a.len() - 1..])),
+            (Some(a), Some(b)) if a.parse::<u64>().is_ok() => (a.parse().ok(), unit(b)),
+            (Some(a), _) => (Some(1), unit(a)),
+            _ => (None, None),
+        };
+        if let (Some(n), Some(u)) = (n, u) {
+            return (n > 0).then_some(When::Every(n * u));
+        }
+    }
+    let at = words.iter().filter(|w| **w != "at").find_map(|w| {
+        let looks = w.contains(':') || w.ends_with("am") || w.ends_with("pm") || w.parse::<u32>().is_ok_and(|n| n < 24);
+        looks.then(|| parse_time(w)).flatten()
+    })?;
+    let names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    let days = if t.contains("weekday") {
+        "weekdays".to_string()
+    } else if t.contains("weekend") {
+        "weekends".to_string()
+    } else {
+        let picked: Vec<&str> = names.iter().copied().filter(|d| words.iter().any(|w| w.starts_with(d))).collect();
+        if picked.is_empty() { "every day".to_string() } else { picked.join(", ") }
+    };
+    Some(When::Daily { at, days })
+}
+
+impl TaskConfig {
     pub fn slug(&self) -> String {
         let s: String = self.name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
         s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
     }
 
-    /// Whether it runs on a weekday like "Thu".
-    pub fn runs_on(&self, weekday: &str) -> bool {
-        let d = weekday.to_lowercase();
-        let d = &d[..d.len().min(3)];
-        match self.days.trim().to_lowercase().as_str() {
-            "" | "every day" | "daily" => true,
-            "weekdays" => !matches!(d, "sat" | "sun"),
-            "weekends" => matches!(d, "sat" | "sun"),
-            list => list.split([',', ' ']).any(|x| x.trim().starts_with(d)),
+    pub fn schedule(&self) -> Option<When> {
+        if self.when.trim().is_empty() && !self.at.is_empty() {
+            return parse_time(&self.at).map(|at| When::Daily { at, days: if self.days.is_empty() { "every day".into() } else { self.days.clone() } });
+        }
+        parse_when(&self.when)
+    }
+
+    /// "page" | "chat" | "notify" (a missing one is a page, like the briefs tasks grew out of).
+    pub fn result(&self) -> &str {
+        match self.result.as_str() {
+            "chat" | "notify" => &self.result,
+            _ => "page",
         }
     }
 }
@@ -314,6 +433,30 @@ pub struct DownloadsConfig {
 }
 
 impl Config {
+    /// Every task: `tasks`, plus the older `briefs` (pages) and `agents.jobs` (results as notifications).
+    pub fn all_tasks(&self) -> Vec<TaskConfig> {
+        let mut all: Vec<TaskConfig> = self.tasks.iter().filter(|t| t.enabled).cloned().collect();
+        all.extend(self.briefs.iter().filter(|t| t.enabled).cloned());
+        for j in self.agents.jobs.iter().filter(|j| j.enabled) {
+            let when = match (&j.at, &j.every) {
+                (Some(at), _) => format!("every day at {at}"),
+                (None, Some(every)) if every.ends_with('d') => "every day at 09:00".into(),
+                (None, Some(every)) => format!("every {every}"),
+                (None, None) => "only when I ask".into(),
+            };
+            all.push(TaskConfig {
+                name: j.name.clone(),
+                want: j.prompt.clone(),
+                when,
+                result: "notify".into(),
+                agent: j.agent.clone().unwrap_or_default(),
+                model: j.model.clone().unwrap_or_default(),
+                ..Default::default()
+            });
+        }
+        all
+    }
+
     /// The agent for a job ("chat", "find", "tasks", "customize"): its name and definition. A name that isn't under
     /// agents.available but is a known CLI (e.g. "codex") means that CLI with the default model.
     pub fn agent_for(&self, job: &str) -> (String, AgentDef) {
@@ -548,18 +691,6 @@ fn yes() -> bool {
 }
 
 /// Parse "90s", "30m", "6h", "1d" into seconds.
-pub fn parse_interval(s: &str) -> Option<u64> {
-    let s = s.trim();
-    let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit())?);
-    let n: u64 = num.parse().ok()?;
-    Some(n * match unit.trim() {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86400,
-        _ => return None,
-    })
-}
 
 pub fn config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("VALERIE_CONFIG_DIR") {
@@ -742,12 +873,22 @@ mod tests {
     }
 
     #[test]
-    fn starter_parses_and_intervals() {
+    fn starter_parses_and_task_schedules() {
         let c = Config::parse(STARTER_YAML).unwrap();
         assert_eq!(c.spaces.len(), 3);
-        assert_eq!(parse_interval("30m"), Some(1800));
-        assert_eq!(parse_interval("1d"), Some(86400));
-        assert_eq!(parse_interval("x"), None);
+        let daily = |at: &str, days: &str| Some(When::Daily { at: at.into(), days: days.into() });
+        assert_eq!(parse_when("every day at 8am"), daily("08:00", "every day"));
+        assert_eq!(parse_when("weekdays at 9"), daily("09:00", "weekdays"));
+        assert_eq!(parse_when("Mondays and Fridays at 5:30 pm"), daily("17:30", "mon, fri"));
+        assert_eq!(parse_when("17:00"), daily("17:00", "every day"));
+        assert_eq!(parse_when("every 5 minutes"), Some(When::Every(300)));
+        assert_eq!(parse_when("every 30m"), Some(When::Every(1800)));
+        assert_eq!(parse_when("every 2 hours"), Some(When::Every(7200)));
+        assert_eq!(parse_when("hourly"), Some(When::Every(3600)));
+        assert_eq!(parse_when("when Valerie starts"), Some(When::OnStart));
+        assert_eq!(parse_when("only when I ask"), Some(When::Manual));
+        assert_eq!(parse_when("every morning"), None);
+        assert_eq!(parse_when(&daily("08:00", "weekdays").unwrap().describe()), daily("08:00", "weekdays"));
     }
 
     #[test]
