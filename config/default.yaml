@@ -91,6 +91,10 @@ command_bar:
   ask_agent_words: 6       # a request this many words long ("summarize the reviews on this page please") puts "Ask agent"
                            # at the top, as do questions ending in "?" two words shorter, and anything twice as long;
                            # 0 = never (it's still listed at the bottom)
+  ask_agent_starts: [summarize, summarise, create, generate, write, draft, rewrite, explain, translate, compare,
+                     analyze, analyse, research, brainstorm, outline, organize, organise, tidy]
+                           # starting with one of these words puts "Ask agent" at the top, however short
+                           # ("summarize this page", "create a packing list"); [] = only by length
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
   width: 680               # command bar width, pixels
   top: 18                  # how far down the window it opens, percent of the window height
