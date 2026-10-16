@@ -44,6 +44,10 @@ the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`),
 ## Building and checking
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).
+- After merging a change the owner should get, run `scripts/install-macos.sh`: it builds, signs, installs
+  `/Applications/Valerie.app` and tells a running Valerie that an update is ready (it doesn't restart it).
+- Run the app as the `.app`, not the bare `target/*/valerie` binary: WebKit keeps the bare binary's logins in a
+  separate store (`~/Library/WebKit/valerie` vs `~/Library/WebKit/dev.valerie.browser`).
 - UI is plain HTML/JS in `ui/`; `VALERIE_UI_DIR=ui cargo run` reloads it from disk.
 - Run test instances with `VALERIE_CONFIG_DIR`/`VALERIE_DATA_DIR` pointing at a temp dir and a non-default
   `mcp.port` (e.g. 7790) so you never touch the owner's real browser. Also give the test config its own profiles

@@ -2,6 +2,8 @@
 # Build Valerie.app so macOS can use it as the default browser (http/https handler).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Each build carries the commit it came from (shown in "Valerie updated" and `valerie --version`).
+export VALERIE_BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo dev)$(git diff --quiet 2>/dev/null || echo +)"
 cargo build --release
 APP=target/Valerie.app
 rm -rf "$APP"

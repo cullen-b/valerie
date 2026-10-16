@@ -350,6 +350,10 @@ pub enum Command {
     StopWatching {
         id: String,
     },
+    /// Quit and open again (to use a newly installed version).
+    Restart,
+    /// scripts/install-macos.sh says a new version is in /Applications.
+    UpdateInstalled,
     /// Allow or stop notifications from the site you're on.
     ToggleSiteNotifications,
     /// Install (if needed) and sign in to an agent CLI in one step.
@@ -530,6 +534,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("toggle_settle_chat", "Settle / Un-settle Chat"),
     ("copy_chat_id", "Copy Chat ID (share its context with another chat)"),
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
+    ("restart", "Restart Valerie (use a newly installed version)"),
     ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),

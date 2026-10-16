@@ -216,6 +216,11 @@ struct Preloaded {
     favicon: Option<String>,
 }
 
+/// "0.1.0 (abc1234)": the version and the commit this build came from.
+pub fn version() -> String {
+    format!("{} ({})", env!("CARGO_PKG_VERSION"), option_env!("VALERIE_BUILD").unwrap_or("dev"))
+}
+
 /// With VALERIE_TRACE set, print how long after launch each startup step happens.
 pub fn trace(step: &str) {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -404,6 +409,9 @@ impl App {
             builder = builder.with_position(tao::dpi::LogicalPosition::new(x, y));
         }
         let window = builder.build(elwt)?;
+        // Logins from the bare binary come along the first time Valerie runs as an app (before any page exists).
+        let names: Vec<String> = config.profiles.iter().map(|p| p.name.clone()).collect();
+        platform::merge_bare_logins(&config::data_dir().join("logins-merged-from-bare-binary.txt"), &names);
         trace("  window");
         let size = window.inner_size().to_logical::<f64>(window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
@@ -2804,6 +2812,27 @@ impl App {
                 self.state.watches.retain(|w| w.id != id);
                 self.dirty = true;
                 self.toast("Stopped watching");
+            }
+            Command::Restart => {
+                // Reopen whichever copy is newest: the installed app if there is one, else this one.
+                let installed = PathBuf::from("/Applications/Valerie.app");
+                let me = std::env::current_exe().ok().and_then(|e| e.ancestors().nth(3).map(|p| p.to_path_buf())).filter(|p| p.extension().is_some_and(|x| x == "app"));
+                let target = if installed.exists() { Some(installed) } else { me };
+                match target {
+                    Some(app) => {
+                        let _ = std::process::Command::new("/bin/sh").arg("-c").arg(format!("sleep 1; open -n {:?}", app)).spawn();
+                        self.quit = true;
+                    }
+                    None => self.toast("Restart: open Valerie again yourself (it isn't running as an app)"),
+                }
+            }
+            Command::UpdateInstalled => {
+                let installed = std::process::Command::new("/Applications/Valerie.app/Contents/MacOS/valerie").arg("--version").output().ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_start_matches("Valerie ").to_string()).unwrap_or_default();
+                if installed != version() {
+                    self.toast(&format!("Valerie {installed} is installed: Restart Valerie (from the command bar) to use it"));
+                    self.notify_valerie("Valerie updated", &format!("{installed} is ready. Restart Valerie to use it."), Some(json!({ "cmd": "restart" })));
+                }
             }
             Command::ToggleSiteNotifications => {
                 let Some(site) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)) else { return };
