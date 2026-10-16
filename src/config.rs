@@ -142,6 +142,7 @@ pub struct CommandBarConfig {
     pub calculator: bool,
     pub top_result: String,
     pub ask_agent_words: usize,
+    pub ask_agent_starts: Vec<String>,
     pub width: f64,
     pub top: f64,
     pub font_size: f64,

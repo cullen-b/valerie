@@ -163,9 +163,12 @@ function calc(raw) {
 // Questions and requests ("what's in my tabs?", "merge these PRs once checks pass") rather than searches.
 const ASKY = /^(what|why|how|who|when|where|which|is|are|can|could|does|do|should|would|will|explain|summari[sz]e|compare|find|merge|close|open|book|buy|order|check|watch|remind|organi[sz]e|tidy|draft|write|reply|fill|sign|tell|show|list|help)\b/i;
 function wantsAgent(raw) {
-  const n = (D.options || {}).ask_agent_words ?? 6;
-  if (n <= 0) return false;
+  const o = D.options || {}, n = o.ask_agent_words ?? 6;
   const t = raw.trim(), words = t.split(/\s+/).length;
+  // Starting with a word like "summarize" or "create" means an agent, however short.
+  const first = t.split(/\s+/)[0].toLowerCase().replace(/[^a-z']/g, "");
+  if (words >= 2 && (o.ask_agent_starts || []).some((w) => w.toLowerCase() === first)) return true;
+  if (n <= 0) return false;
   return (t.endsWith("?") && words >= Math.max(3, n - 2)) || (words >= n && ASKY.test(t)) || words >= n * 2;
 }
 
