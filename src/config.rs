@@ -33,6 +33,7 @@ pub struct Config {
     pub chats: ChatsConfig,
     pub ai_actions: BTreeMap<String, Option<AiAction>>,
     pub watch: WatchConfig,
+    pub notifications: NotificationsConfig,
     pub tasks: Vec<TaskConfig>,
     /// Older name for tasks that write a page.
     pub briefs: Vec<TaskConfig>,
@@ -378,6 +379,14 @@ pub fn parse_time(s: &str) -> Option<String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsConfig {
+    pub from_valerie: bool,
+    pub websites: String,
+    pub sites: BTreeMap<String, String>,
+    pub sound: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchConfig {
     pub every_minutes: f64,
     pub notify: bool,
@@ -712,7 +721,7 @@ pub fn config_path() -> PathBuf {
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
-const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "ai_actions"];
+const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "ai_actions", "notifications.sites"];
 
 /// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
 /// ignored), each with the closest real key when there is one.

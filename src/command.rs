@@ -311,6 +311,8 @@ pub enum Command {
     StopWatching {
         id: String,
     },
+    /// Allow or stop notifications from the site you're on.
+    ToggleSiteNotifications,
     /// Install (if needed) and sign in to an agent CLI in one step.
     SetUpAgent {
         agent: String,
@@ -487,6 +489,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("close_chat", "Close Chat"),
     ("toggle_pin_chat", "Pin / Unpin Chat"),
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
+    ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),

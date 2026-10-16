@@ -178,6 +178,9 @@ pub struct State {
     /// The date each task last ran ("2026-10-16").
     #[serde(default, alias = "brief_last")]
     pub task_last: BTreeMap<String, String>,
+    /// Answers to "Allow this site to send notifications?" (site → allowed).
+    #[serde(default)]
+    pub notify_sites: BTreeMap<String, bool>,
     /// Pages an agent checks in the background (Watch This Page…).
     #[serde(default)]
     pub watches: Vec<Watch>,

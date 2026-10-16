@@ -108,6 +108,14 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("ai_actions.{name}: agent {:?} isn't under agents.available", a.agent));
                 }
             }
+            if !["ask", "allow", "deny"].contains(&c.notifications.websites.as_str()) {
+                problems.push(format!("notifications: websites is {:?}; use ask, allow or deny", c.notifications.websites));
+            }
+            for (site, v) in &c.notifications.sites {
+                if !["allow", "deny"].contains(&v.as_str()) {
+                    problems.push(format!("notifications.sites: {site} is {v:?}; use allow or deny"));
+                }
+            }
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
             }

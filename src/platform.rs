@@ -241,6 +241,18 @@ mod mac {
         input: Option<&str>,
         reply: impl FnOnce(isize, Option<String>) + 'static,
     ) {
+        sheet_titled(webview, msg, frame, None, buttons, input, reply)
+    }
+
+    unsafe fn sheet_titled(
+        webview: *mut AnyObject,
+        msg: *mut objc2_foundation::NSString,
+        frame: *mut AnyObject,
+        heading: Option<&str>,
+        buttons: &[&str],
+        input: Option<&str>,
+        reply: impl FnOnce(isize, Option<String>) + 'static,
+    ) {
         use objc2::class;
         use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
         let host: Option<String> = (|| {
@@ -249,7 +261,7 @@ mod mac {
             (!h.is_null()).then(|| (*h).to_string()).filter(|s| !s.is_empty())
         })();
         let alert: *mut AnyObject = msg_send![class!(NSAlert), new];
-        let title = host.map_or("This page says".to_string(), |h| format!("{} says", h.trim_start_matches("www.")));
+        let title = heading.map(str::to_string).unwrap_or_else(|| host.map_or("This page says".to_string(), |h| format!("{} says", h.trim_start_matches("www."))));
         let _: () = msg_send![alert, setMessageText: &*NSString::from_str(&title)];
         let body = if msg.is_null() { String::new() } else { (*msg).to_string() };
         let _: () = msg_send![alert, setInformativeText: &*NSString::from_str(&body)];
@@ -304,6 +316,127 @@ mod mac {
             let bounds: objc2_foundation::NSRect = msg_send![v, bounds];
             let _: () = msg_send![view, setFrame: bounds];
             let _: () = msg_send![op, runOperationModalForWindow: win, delegate: std::ptr::null_mut::<AnyObject>(), didRunSelector: None::<objc2::runtime::Sel>, contextInfo: std::ptr::null_mut::<std::ffi::c_void>()];
+        }
+    }
+
+    // ---------------------------------------------------------------- notifications (UserNotifications.framework)
+
+    #[link(name = "UserNotifications", kind = "framework")]
+    extern "C" {}
+
+    static CLICKED: std::sync::OnceLock<Box<dyn Fn(String) + Send + Sync>> = std::sync::OnceLock::new();
+    static READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Only an app bundle (with a bundle id) may use the notification center; a bare binary would crash in it.
+    fn bundled() -> bool {
+        use objc2::class;
+        unsafe {
+            let b: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+            let id: *mut objc2_foundation::NSString = msg_send![b, bundleIdentifier];
+            !id.is_null()
+        }
+    }
+
+    pub fn notifications_init(on_click: Box<dyn Fn(String) + Send + Sync>) {
+        use objc2::runtime::{AnyClass, Bool, Imp, Sel};
+        use objc2::{class, sel};
+        let _ = CLICKED.set(on_click);
+        if !bundled() {
+            return;
+        }
+        type Done0 = block2::Block<dyn Fn()>;
+        type DoneOpts = block2::Block<dyn Fn(usize)>;
+        // Clicked: hand the notification's action back to Valerie.
+        unsafe extern "C-unwind" fn did_receive(_: *mut AnyObject, _: Sel, _: *mut AnyObject, response: *mut AnyObject, done: &Done0) {
+            let note: *mut AnyObject = msg_send![response, notification];
+            let req: *mut AnyObject = msg_send![note, request];
+            let content: *mut AnyObject = msg_send![req, content];
+            let info: *mut AnyObject = msg_send![content, userInfo];
+            let key = objc2_foundation::NSString::from_str("action");
+            let v: *mut objc2_foundation::NSString = if info.is_null() { std::ptr::null_mut() } else { msg_send![info, objectForKey: &*key] };
+            if !v.is_null() {
+                if let Some(f) = CLICKED.get() {
+                    f((*v).to_string());
+                }
+            }
+            done.call(());
+        }
+        // Show banners even while Valerie is the front app (macOS hides them by default).
+        unsafe extern "C-unwind" fn will_present(_: *mut AnyObject, _: Sel, _: *mut AnyObject, _: *mut AnyObject, done: &DoneOpts) {
+            done.call((0b11010,)); // banner | list | sound
+        }
+        unsafe {
+            let name = c"ValerieNotificationDelegate";
+            let cls: *const AnyClass = match AnyClass::get(name) {
+                Some(c) => c,
+                None => {
+                    let c = objc2::ffi::objc_allocateClassPair(class!(NSObject), name.as_ptr(), 0);
+                    if c.is_null() {
+                        return;
+                    }
+                    let add = |s: Sel, f: *const (), types: &std::ffi::CStr| {
+                        objc2::ffi::class_addMethod(c, s, std::mem::transmute::<*const (), Imp>(f), types.as_ptr());
+                    };
+                    add(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:), did_receive as *const (), c"v@:@@@?");
+                    add(sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:), will_present as *const (), c"v@:@@@?");
+                    objc2::ffi::objc_registerClassPair(c);
+                    c
+                }
+            };
+            let center: *mut AnyObject = msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
+            let delegate: *mut AnyObject = msg_send![cls, new]; // the center holds it weakly, so it lives for the app's life
+            let _: () = msg_send![center, setDelegate: delegate];
+            let asked = block2::RcBlock::new(|granted: Bool, err: *mut AnyObject| {
+                READY.store(granted.as_bool(), std::sync::atomic::Ordering::Relaxed);
+                if !granted.as_bool() {
+                    let why: *mut objc2_foundation::NSString = if err.is_null() { std::ptr::null_mut() } else { msg_send![err, localizedDescription] };
+                    let why = if why.is_null() { "turned off in System Settings > Notifications".to_string() } else { (*why).to_string() };
+                    eprintln!("valerie: notifications aren't allowed ({why}); using the fallback");
+                }
+            });
+            // alert | sound
+            let _: () = msg_send![center, requestAuthorizationWithOptions: 6usize, completionHandler: &*asked];
+        }
+    }
+
+    /// Post through the notification center; false when that isn't available (not an app, or not allowed).
+    pub fn notify_native(n: &super::Note) -> bool {
+        use objc2::class;
+        use objc2_foundation::NSString;
+        if !bundled() || !READY.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        unsafe {
+            let content: *mut AnyObject = msg_send![class!(UNMutableNotificationContent), new];
+            let _: () = msg_send![content, setTitle: &*NSString::from_str(n.title)];
+            if !n.subtitle.is_empty() {
+                let _: () = msg_send![content, setSubtitle: &*NSString::from_str(n.subtitle)];
+            }
+            let _: () = msg_send![content, setBody: &*NSString::from_str(n.body)];
+            if n.sound {
+                let s: *mut AnyObject = msg_send![class!(UNNotificationSound), defaultSound];
+                let _: () = msg_send![content, setSound: s];
+            }
+            if let Some(a) = &n.action {
+                let (k, v) = (NSString::from_str("action"), NSString::from_str(a));
+                let info: *mut AnyObject = msg_send![class!(NSDictionary), dictionaryWithObject: &*v, forKey: &*k];
+                let _: () = msg_send![content, setUserInfo: info];
+            }
+            let id = NSString::from_str(&crate::mcp::random_hex());
+            let req: *mut AnyObject = msg_send![class!(UNNotificationRequest), requestWithIdentifier: &*id, content: content, trigger: std::ptr::null_mut::<AnyObject>()];
+            let center: *mut AnyObject = msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
+            let _: () = msg_send![center, addNotificationRequest: req, withCompletionHandler: std::ptr::null::<block2::Block<dyn Fn(*mut AnyObject)>>()];
+            let _: () = msg_send![content, release];
+        }
+        true
+    }
+
+    /// A yes/no question as a sheet on the webview's window; `done(true)` for the first button.
+    pub fn ask(wv: &WebView, title: &str, body: &str, yes: &str, no: &str, done: impl FnOnce(bool) + 'static) {
+        let msg = objc2_foundation::NSString::from_str(body);
+        unsafe {
+            let m = objc2::rc::Retained::as_ptr(&msg) as *mut objc2_foundation::NSString;
+            sheet_titled(ptr(wv), m, std::ptr::null_mut(), Some(title), &[yes, no], None, move |r, _| done(r == 1000));
         }
     }
 
@@ -580,15 +713,40 @@ pub fn print(wv: &WebView) {
     let _ = wv.evaluate_script("window.print()");
 }
 
-/// A system notification (for things that happen while you're looking elsewhere, like a watched page changing).
-pub fn notify(title: &str, body: &str) {
+/// One notification. `action` is JSON Valerie gets back when it's clicked.
+pub struct Note<'a> {
+    pub title: &'a str,
+    pub subtitle: &'a str,
+    pub body: &'a str,
+    pub action: Option<String>,
+    pub sound: bool,
+}
+
+/// Get ready to send notifications; `on_click` receives a clicked notification's action.
+pub fn notifications_init(on_click: impl Fn(String) + Send + Sync + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::notifications_init(Box::new(on_click));
+    #[cfg(not(target_os = "macos"))]
+    let _ = on_click;
+}
+
+/// Show a system notification: macOS's own notification system when Valerie runs as an app, otherwise the best the
+/// platform offers (a script on a bare macOS build, notify-send on Linux).
+pub fn notify(n: &Note) {
+    #[cfg(target_os = "macos")]
+    if mac::notify_native(n) {
+        return;
+    }
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("osascript").arg("-e").arg(format!("display notification \"{}\" with title \"{}\"", esc(body), esc(title))).spawn();
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(format!("display notification \"{}\" with title \"{}\" subtitle \"{}\"", esc(n.body), esc(n.title), esc(n.subtitle)))
+        .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = std::process::Command::new("notify-send").args([title, body]).spawn();
+    let _ = std::process::Command::new("notify-send").args([n.title, &format!("{}\n{}", n.subtitle, n.body)]).spawn();
     #[cfg(windows)]
-    let _ = (title, body, esc);
+    let _ = esc;
 }
 
 /// Today's local date, weekday and time: ("2026-10-16", "Thu", "Thursday 16 October", "08:02").
@@ -603,4 +761,15 @@ pub fn local_day() -> (String, String, String, String) {
     }
     let d = crate::state::now() / 86400;
     (format!("day {d}"), String::new(), String::new(), String::new())
+}
+
+/// Ask a yes/no question on a webview's window (a sheet); `done(true)` for yes. Elsewhere it answers no.
+pub fn ask(wv: &WebView, title: &str, body: &str, yes: &str, no: &str, done: impl FnOnce(bool) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::ask(wv, title, body, yes, no, done);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, title, body, yes, no);
+        done(false);
+    }
 }
