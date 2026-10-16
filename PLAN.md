@@ -155,7 +155,9 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
-- Auto-update from GitHub Releases
+- Auto-update from GitHub Releases (the goal): CI builds and notarizes a signed release (needs a paid Developer ID),
+  Valerie checks GitHub Releases, downloads and swaps itself in, then offers a restart. For now
+  `scripts/install-macos.sh` installs local builds and tells the running app to restart.
 - Agent approvals for sensitive actions, action log, Notification Center results
 - Download manager panel, history page, site permissions UI
 

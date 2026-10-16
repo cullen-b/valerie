@@ -213,6 +213,10 @@ fn main() -> anyhow::Result<()> {
             println!("{HELP}");
             return Ok(());
         }
+        Some("--version") | Some("version") => {
+            println!("Valerie {}", app::version());
+            return Ok(());
+        }
         Some("mcp-stdio") => {
             let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
             return mcp::stdio_bridge(config.mcp.port, flag("--access"), flag("--chat"));

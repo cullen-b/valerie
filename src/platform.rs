@@ -440,6 +440,123 @@ mod mac {
         }
     }
 
+    pub fn merge_bare_logins(marker: &std::path::Path, profiles: &[String]) {
+        use objc2::class;
+        use objc2_foundation::NSString;
+        if marker.exists() || !bundled() {
+            return;
+        }
+        let Some(lib) = dirs::home_dir().map(|h| h.join("Library/WebKit")) else { return };
+        let (old, new) = (lib.join("valerie/WebsiteDataStore"), lib.join("dev.valerie.browser/WebsiteDataStore"));
+        if !old.is_dir() {
+            let _ = std::fs::write(marker, "nothing to bring over\n");
+            return;
+        }
+        // The bare binary must not be running, or its files may be half-written.
+        // (Matched on each process's program path, not its arguments.)
+        let bare_running = std::process::Command::new("ps").args(["-Ao", "comm="]).output().is_ok_and(|o| {
+            String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim_end().ends_with("/target/release/valerie") || l.trim_end().ends_with("/target/debug/valerie"))
+        });
+        if bare_running {
+            return;
+        }
+        let mut report = String::new();
+        // Only the profiles in the user's settings.
+        let wanted: Vec<[u8; 16]> = profiles.iter().map(|p| super::profile_id(p)).collect();
+        for entry in std::fs::read_dir(&old).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Ok(uuid) = uuid_bytes(&name) else { continue };
+            if !wanted.contains(&uuid) {
+                continue;
+            }
+            let dest = new.join(&name);
+            if !dest.exists() {
+                let ok = std::process::Command::new("ditto").arg(entry.path()).arg(&dest).status().is_ok_and(|s| s.success());
+                report.push_str(&format!("{name}: copied ({})\n", if ok { "ok" } else { "failed" }));
+                continue;
+            }
+            let cookies = super::read_binary_cookies(&std::fs::read(entry.path().join("Cookies/Cookies.binarycookies")).unwrap_or_default());
+            let now = crate::state::now() as f64;
+            let cookies: Vec<super::Cookie> = cookies.into_iter().filter(|c| c.expires > now).collect();
+            report.push_str(&format!("{name}: merging {} cookies\n", cookies.len()));
+            if cookies.is_empty() {
+                continue;
+            }
+            unsafe {
+                let id: *mut AnyObject = msg_send![class!(NSUUID), alloc];
+                let id: *mut AnyObject = msg_send![id, initWithUUIDBytes: uuid.as_ptr()];
+                let store: *mut AnyObject = msg_send![class!(WKWebsiteDataStore), dataStoreForIdentifier: id];
+                if store.is_null() {
+                    continue;
+                }
+                let _: *mut AnyObject = msg_send![store, retain]; // lives until the async merge is done (once per launch)
+                let jar: *mut AnyObject = msg_send![store, httpCookieStore];
+                let pending = std::cell::RefCell::new(Some(cookies));
+                let merge = block2::RcBlock::new(move |existing: *mut AnyObject| {
+                    let Some(cookies) = pending.borrow_mut().take() else { return };
+                    let mut have: std::collections::HashMap<(String, String, String), f64> = Default::default();
+                    let n: usize = if existing.is_null() { 0 } else { msg_send![existing, count] };
+                    let s = |o: *mut AnyObject, sel: &str| -> String {
+                        let v: *mut NSString = match sel {
+                            "domain" => msg_send![o, domain],
+                            "name" => msg_send![o, name],
+                            _ => msg_send![o, path],
+                        };
+                        if v.is_null() { String::new() } else { (*v).to_string() }
+                    };
+                    for i in 0..n {
+                        let c: *mut AnyObject = msg_send![existing, objectAtIndex: i];
+                        let date: *mut AnyObject = msg_send![c, expiresDate];
+                        let exp: f64 = if date.is_null() { f64::MAX } else { msg_send![date, timeIntervalSince1970] };
+                        have.insert((s(c, "domain"), s(c, "name"), s(c, "path")), exp);
+                    }
+                    for c in cookies {
+                        if have.get(&(c.domain.clone(), c.name.clone(), c.path.clone())).is_some_and(|e| *e >= c.expires) {
+                            continue;
+                        }
+                        let props: *mut AnyObject = msg_send![class!(NSMutableDictionary), new];
+                        let put = |k: &str, v: *mut AnyObject| {
+                            let _: () = msg_send![props, setObject: v, forKey: &*NSString::from_str(k)];
+                        };
+                        let st = |v: &str| objc2::rc::Retained::autorelease_ptr(NSString::from_str(v)) as *mut AnyObject;
+                        put("Domain", st(&c.domain));
+                        put("Name", st(&c.name));
+                        put("Path", st(if c.path.is_empty() { "/" } else { &c.path }));
+                        put("Value", st(&c.value));
+                        let date: *mut AnyObject = msg_send![class!(NSDate), dateWithTimeIntervalSince1970: c.expires];
+                        put("Expires", date);
+                        if c.secure {
+                            put("Secure", st("TRUE"));
+                        }
+                        if c.http_only {
+                            put("HttpOnly", st("TRUE"));
+                        }
+                        let cookie: *mut AnyObject = msg_send![class!(NSHTTPCookie), cookieWithProperties: props];
+                        if !cookie.is_null() {
+                            let _: () = msg_send![jar, setCookie: cookie, completionHandler: std::ptr::null::<block2::Block<dyn Fn()>>()];
+                        }
+                        let _: () = msg_send![props, release];
+                    }
+                });
+                let _: () = msg_send![jar, getAllCookies: &*merge];
+            }
+        }
+        let _ = std::fs::write(marker, report);
+    }
+
+    /// "b1cc7f6a-8f82-…" → its 16 bytes.
+    fn uuid_bytes(s: &str) -> Result<[u8; 16], ()> {
+        let hex: String = s.chars().filter(|c| *c != '-').collect();
+        if hex.len() != 32 {
+            return Err(());
+        }
+        let mut out = [0u8; 16];
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| ())?;
+        }
+        Ok(out)
+    }
+
     pub fn copy_png(png: &[u8]) -> bool {
         use objc2::class;
         unsafe {
@@ -788,4 +905,113 @@ pub fn local_time_of(secs: u64) -> String {
         }
     }
     format!("{secs}")
+}
+
+/// A saved cookie (from WebKit's Cookies.binarycookies).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cookie {
+    pub domain: String,
+    pub name: String,
+    pub path: String,
+    pub value: String,
+    /// Seconds since 1970.
+    pub expires: f64,
+    pub secure: bool,
+    pub http_only: bool,
+}
+
+/// Read WebKit's Cookies.binarycookies: "cook", page count and sizes (big-endian), then pages of cookie records
+/// (little-endian) with null-terminated strings and dates counted from 2001.
+pub fn read_binary_cookies(data: &[u8]) -> Vec<Cookie> {
+    let be = |b: &[u8], i: usize| b.get(i..i + 4).map(|s| u32::from_be_bytes(s.try_into().unwrap()) as usize);
+    let le = |b: &[u8], i: usize| b.get(i..i + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()) as usize);
+    let f64le = |b: &[u8], i: usize| b.get(i..i + 8).map(|s| f64::from_le_bytes(s.try_into().unwrap()));
+    let text = |b: &[u8], i: usize| b.get(i..).map(|s| String::from_utf8_lossy(&s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]).into_owned());
+    let mut out = Vec::new();
+    if data.get(..4) != Some(b"cook") {
+        return out;
+    }
+    let Some(pages) = be(data, 4) else { return out };
+    let sizes: Vec<usize> = (0..pages).filter_map(|i| be(data, 8 + i * 4)).collect();
+    let mut at = 8 + pages * 4;
+    for size in sizes {
+        let Some(page) = data.get(at..at + size) else { break };
+        at += size;
+        let n = le(page, 4).unwrap_or(0);
+        for k in 0..n {
+            let Some(off) = le(page, 8 + k * 4) else { continue };
+            let Some(c) = page.get(off..) else { continue };
+            let (Some(flags), Some(u), Some(nm), Some(p), Some(v), Some(exp)) = (le(c, 8), le(c, 16), le(c, 20), le(c, 24), le(c, 28), f64le(c, 40)) else { continue };
+            let (Some(domain), Some(name), Some(path), Some(value)) = (text(c, u), text(c, nm), text(c, p), text(c, v)) else { continue };
+            out.push(Cookie { domain, name, path, value, expires: exp + 978_307_200.0, secure: flags & 1 != 0, http_only: flags & 4 != 0 });
+        }
+    }
+    out
+}
+
+/// Bring logins from runs of the bare `valerie` binary (WebKit keeps those apart, under ~/Library/WebKit/valerie)
+/// into the app's own (~/Library/WebKit/dev.valerie.browser), once. A profile only the bare binary had is copied
+/// whole; one both had gets the other's cookies where they're newer. Call before any page view exists.
+pub fn merge_bare_logins(marker: &std::path::Path, profiles: &[String]) {
+    #[cfg(target_os = "macos")]
+    mac::merge_bare_logins(marker, profiles);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (marker, profiles);
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    /// One page holding one cookie, laid out like WebKit writes it.
+    fn blob(domain: &str, name: &str, path: &str, value: &str, expires_2001: f64, flags: u32) -> Vec<u8> {
+        let mut c = vec![0u8; 56];
+        let mut strings = Vec::new();
+        let mut offs = [0u32; 4];
+        for (i, s) in [domain, name, path, value].iter().enumerate() {
+            offs[i] = (56 + strings.len()) as u32;
+            strings.extend_from_slice(s.as_bytes());
+            strings.push(0);
+        }
+        c[8..12].copy_from_slice(&flags.to_le_bytes());
+        for (i, o) in offs.iter().enumerate() {
+            c[16 + i * 4..20 + i * 4].copy_from_slice(&o.to_le_bytes());
+        }
+        c[40..48].copy_from_slice(&expires_2001.to_le_bytes());
+        c.extend(strings);
+        let size = c.len() as u32;
+        c[0..4].copy_from_slice(&size.to_le_bytes());
+        let mut page = vec![0, 0, 1, 0];
+        page.extend(1u32.to_le_bytes());
+        page.extend(16u32.to_le_bytes()); // the cookie starts after header, count, one offset, footer
+        page.extend([0u8; 4]);
+        page.extend(c);
+        let mut out = b"cook".to_vec();
+        out.extend(1u32.to_be_bytes());
+        out.extend((page.len() as u32).to_be_bytes());
+        out.extend(page);
+        out
+    }
+
+    #[test]
+    fn reads_webkit_cookies() {
+        let got = super::read_binary_cookies(&blob(".example.com", "sid", "/", "abc", 1_000_000.0, 5));
+        assert_eq!(got.len(), 1);
+        let c = &got[0];
+        assert_eq!((c.domain.as_str(), c.name.as_str(), c.path.as_str(), c.value.as_str()), (".example.com", "sid", "/", "abc"));
+        assert_eq!(c.expires, 979_307_200.0);
+        assert!(c.secure && c.http_only);
+        assert!(super::read_binary_cookies(b"nope").is_empty());
+    }
+
+    /// `VALERIE_COOKIES=<path to Cookies.binarycookies> cargo test real_cookie_file -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_cookie_file() {
+        let path = std::env::var("VALERIE_COOKIES").expect("set VALERIE_COOKIES");
+        let got = super::read_binary_cookies(&std::fs::read(path).unwrap());
+        let mut sites: Vec<&str> = got.iter().map(|c| c.domain.trim_start_matches('.')).collect();
+        sites.sort();
+        sites.dedup();
+        println!("{} cookies from {} sites, e.g. {:?}", got.len(), sites.len(), &sites[..sites.len().min(8)]);
+        assert!(!got.is_empty());
+    }
 }
