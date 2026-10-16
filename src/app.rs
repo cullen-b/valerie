@@ -1129,6 +1129,7 @@ impl App {
     }
 
     fn navigate(&mut self, tab: TabId, url: &str) {
+        self.keyed.remove(&Target::Tab(tab)); // you went there yourself, not by a keyboard click on the page
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.url = url.to_string();
         }
@@ -3198,7 +3199,7 @@ impl App {
                 }
             }
             (Source::Page(target), "arrived") => {
-                if self.keyed.remove(&target).is_some_and(|at| now().saturating_sub(at) <= 10) {
+                if self.keyed.remove(&target).is_some_and(|at| now().saturating_sub(at) <= 6) {
                     if let Some(v) = self.view_for(target) {
                         let _ = v.evaluate_script("window.__valerie && __valerie.keyed()");
                     }

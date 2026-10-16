@@ -47,6 +47,8 @@ config.
 `gg/G` top/bottom (hold `j`/`k` to scroll faster and faster), `f`/`F` link hints (same/new tab), `u` back, `H`/`L` back/forward (in split view: focus the pane to the left/right), `J/K` or `gt/gT` next/prev tab,
 `x`/`X` close/reopen, `o`/`O` command bar/edit URL, `t` new tab, `yy` copy URL, `/` find, `i` insert mode,
 `s` toggle sidebar, `]s`/`[s` next/prev space.
+After a keyboard click (`f`, or `Enter` in a text box), the cursor jumps into the sign-in, reply or compose box that
+shows up, so you can type straight away (header search bars and feed composers are left alone; `vim.jump_to_text_box`).
 
 Each space has **pinned** tabs (icon tiles), **Kept** tabs (a list under them that stays until you remove it), and
 **today** tabs (archived after 12 hours unused). Folders work in pinned and Kept. Drag tabs anywhere in the sidebar:

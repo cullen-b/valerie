@@ -345,16 +345,107 @@ function activate(e, newTab) {
   userActed = true; // choosing a hint is deliberate, so it may focus a text box
   if (textual) { e.focus(); if (e.select) try { e.select(); } catch (_) {} return; }
   if (tag === "SELECT") { e.focus(); try { e.showPicker(); } catch (_) {} return; }
+  kbArm(false);
   const r = e.getBoundingClientRect();
   const x = r.left + Math.min(r.width / 2, 40), y = r.top + r.height / 2;
+  // Like a real mouse, send the events to the innermost thing under the pointer (handlers often live on a child).
+  const root = e.getRootNode().elementFromPoint ? e.getRootNode() : document, hit = root.elementFromPoint(x, y);
+  const t = hit && e.contains(hit) ? hit : e;
   const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
   const ptr = { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true };
-  e.dispatchEvent(new PointerEvent("pointerover", ptr)); e.dispatchEvent(new MouseEvent("mouseover", base));
-  e.dispatchEvent(new PointerEvent("pointerdown", { ...ptr, buttons: 1 })); e.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+  t.dispatchEvent(new PointerEvent("pointerover", ptr)); t.dispatchEvent(new MouseEvent("mouseover", base));
+  t.dispatchEvent(new PointerEvent("pointerdown", { ...ptr, buttons: 1 })); t.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
   try { e.focus({ preventScroll: true }); } catch (_) {}
-  e.dispatchEvent(new PointerEvent("pointerup", ptr)); e.dispatchEvent(new MouseEvent("mouseup", base));
-  e.click();
+  t.dispatchEvent(new PointerEvent("pointerup", ptr)); t.dispatchEvent(new MouseEvent("mouseup", base));
+  t.click();
 }
+
+// ---------- after a keyboard click (f, or Enter in a text box) the cursor lands in the text box that shows up ----------
+// Same page: any box that wasn't on screen before (a reply box, a dialog, a search field that opens). A new page or URL:
+// only boxes that are clearly the point of it (sign-in, checkout, a big compose box, a dialog, or what the page itself
+// tried to focus), never a header search bar or a feed's composer, so j/k keep scrolling articles.
+const kb = { on: false, at: 0, wait: 0, href: "", before: null, asked: null, timer: 0, until: 0, touched: false, mo: null, raf: 0 };
+const SIDE_AREAS = "header, nav, footer, aside, [role=banner], [role=navigation], [role=contentinfo], [role=complementary], [role=search]";
+const DIALOG = "dialog, [role=dialog], [role=alertdialog], [aria-modal=true]";
+const SEARCHY = /search|query|keyword|^q$|^s$/i;
+const FORM_FIELD = /name|email|password|one-time-code|tel|address|postal|cc-|organization/i;
+function typable(el) {
+  if (el.disabled || el.readOnly) return false;
+  if (el.tagName === "INPUT") return /^(text|email|password|search|tel|url|number)$/.test(el.type);
+  if (el.tagName === "TEXTAREA") return true;
+  return el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable);
+}
+function boxesOnScreen() {
+  const out = [];
+  for (const el of document.querySelectorAll("input, textarea, [contenteditable]")) {
+    if (!typable(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width >= 8 && r.height >= 8 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth) out.push({ el, r });
+  }
+  return out;
+}
+function searchy(el) {
+  return el.type === "search" || el.getAttribute("role") === "searchbox" || SEARCHY.test(el.name || "") || SEARCHY.test(el.id || "")
+    || /search/i.test((el.placeholder || "") + " " + (el.getAttribute("aria-label") || ""))
+    || !!(el.form && /search|results/i.test(el.form.getAttribute("action") || ""));
+}
+function pointOfPage(el, r) {
+  if (el.closest(SIDE_AREAS) || searchy(el) || (el.value !== undefined ? el.value : el.textContent.trim())) return false;
+  if (el.tagName === "INPUT" && /^(email|password|tel)$/.test(el.type)) return true;
+  if (FORM_FIELD.test(el.getAttribute("autocomplete") || "") || (el.form && el.form.querySelector("input[type=password]"))) return true;
+  return el.tagName === "TEXTAREA" && r.width >= 300 && r.height >= 60;
+}
+function pickBox() {
+  const a = kb.asked;
+  if (a && a.isConnected && typable(a) && a.getClientRects().length) return a;
+  const samePage = kb.before && location.href === kb.href;
+  for (const { el, r } of boxesOnScreen()) {
+    if (kb.before && kb.before.has(el)) continue;
+    if (!samePage && !el.closest(DIALOG) && !pointOfPage(el, r)) continue;
+    if (getComputedStyle(el).visibility === "visible" && hitsElement(el, r)) return el;
+  }
+  return null;
+}
+function kbCheck() {
+  clearTimeout(kb.timer); kb.timer = 0; kb.raf = 0;
+  const waited = performance.now() - kb.at;
+  if (!kb.on || waited > kb.wait) return kbOff();
+  // Never pull the cursor out of a box you're already in.
+  const el = editable(deepActive()) ? null : pickBox();
+  if (el) {
+    kbOff();
+    userActed = true;
+    el.focus({ preventScroll: true });
+    if (el.setSelectionRange) try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {}
+    return;
+  }
+  kb.timer = setTimeout(kbCheck, Math.min(50 + waited / 8, 250)); // backstop for changes the observer can't see (CSS transitions)
+}
+function kbArm(newPage) {
+  if (cfg.vim.jump_to_text_box === false || (newPage && kb.touched)) return;
+  clearTimeout(kb.timer);
+  Object.assign(kb, { on: true, at: performance.now(), wait: newPage ? 5000 : 2000, href: location.href,
+    before: newPage ? null : new Set(boxesOnScreen().map((b) => b.el)), asked: newPage ? kb.asked : null });
+  // Check the frame after the page changes, so a box is focused the moment it appears.
+  if (!kb.mo) kb.mo = new MutationObserver(() => { if (kb.on && !kb.raf) kb.raf = requestAnimationFrame(kbCheck); });
+  kb.mo.observe(document, { childList: true, subtree: true, attributes: true });
+  kb.timer = setTimeout(kbCheck, newPage ? 0 : 16);
+  if (newPage) return;
+  kb.until = kb.at + 6000;
+  post({ t: "keyed", on: true }); // so the page this leads to (even on another site) knows you got there by keyboard
+}
+function kbOff() { kb.on = false; clearTimeout(kb.timer); kb.timer = 0; cancelAnimationFrame(kb.raf); kb.raf = 0; if (kb.mo) kb.mo.disconnect(); }
+// Anything you do yourself in the meantime (a key, the mouse, scrolling) wins.
+function kbCancel(e) {
+  if (!e.isTrusted || /^(Shift|Control|Alt|Meta|CapsLock)$/.test(e.key || "")) return;
+  kb.touched = true;
+  kbOff();
+  if (performance.now() < kb.until) { kb.until = 0; post({ t: "keyed", on: false }); }
+}
+addEventListener("keydown", kbCancel, true);
+addEventListener("mousedown", kbCancel, true);
+addEventListener("wheel", kbCancel, { capture: true, passive: true });
+if (cfg.vim.enabled && cfg.vim.jump_to_text_box !== false) post({ t: "arrived" });
 
 // ---------- find: every match highlighted, a count, and a minimap of the whole page ----------
 const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0 };
@@ -527,7 +618,7 @@ addEventListener("touchstart", (e) => { if (e.isTrusted) userActed = true; }, tr
 document.addEventListener("focusin", (e) => {
   if (userActed || !cfg.vim.enabled || cfg.vim.block_autofocus === false || excluded()) return;
   const t = e.composedPath ? e.composedPath()[0] : e.target;
-  if (editable(t)) t.blur();
+  if (editable(t)) { kb.asked = t; t.blur(); }
 }, true);
 
 // ---------- key handling ----------
@@ -568,6 +659,8 @@ window.addEventListener("keydown", (e) => {
   // Typing in Valerie's own UI (find box, prompts) lives in a closed shadow root the page can't see into.
   if (mode !== "hints" && inOurUi(e)) return;
   if (e.isTrusted && (e.key === "i" || e.key === "Tab" || e.key === "/")) userActed = true; // deliberate moves into fields
+  if (e.isTrusted && e.key === "Enter" && mode === "normal" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing
+    && (deepActive() || {}).tagName === "INPUT" && editable(deepActive()) && !excluded()) kbArm(false);
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.key === "Escape") {
@@ -1171,7 +1264,7 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind, media, reader, request, askAction, ask: (q) => { openFind(q); askPage(q); },
+    closeFind, media, reader, request, askAction, keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
