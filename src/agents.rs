@@ -74,7 +74,7 @@ pub fn run(r: Run) -> Finished {
         };
         let cwd = if r.customize { crate::config::config_dir() } else { work.clone() };
         let mode = if r.customize { crate::ai::Mode::Customize } else { crate::ai::Mode::Browser };
-        let (mut cmd, _) = crate::ai::build(&r.def, "", mode, &prompt, None, false, &cwd)?;
+        let (mut cmd, _) = crate::ai::build(&r.def, mode, &prompt, None, false, &cwd, &crate::ai::Opts::default())?;
         let file = std::fs::File::create(&log)?;
         use std::io::Write;
         writeln!(&file, "# {} ({})\n# {}\n", r.name, if r.def.cli.is_empty() { "command" } else { &r.def.cli }, r.prompt)?;
