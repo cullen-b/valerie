@@ -181,6 +181,9 @@ pub struct State {
     /// The date each task last ran ("2026-10-16").
     #[serde(default, alias = "brief_last")]
     pub task_last: BTreeMap<String, String>,
+    /// When Valerie last looked for an update (unix seconds).
+    #[serde(default)]
+    pub update_checked: u64,
     /// Answers to "Allow this site to send notifications?" (site → allowed).
     #[serde(default)]
     pub notify_sites: BTreeMap<String, bool>,

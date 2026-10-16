@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valerie: the browser you change by asking</title>
+<meta name="description" content="A fast, endlessly configurable browser written in Rust, with agents built in. Free for Mac, Linux and Windows.">
+<link rel="icon" href="icon.png">
+<style>
+:root { --bg: #0d0c12; --card: #16151d; --line: rgba(255,255,255,.08); --fg: #ecebf5; --dim: rgba(236,235,245,.6); --accent: #9d8cff; }
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(1200px 600px at 50% -200px, #2a2250 0%, var(--bg) 60%); color: var(--fg);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+main { max-width: 860px; margin: 0 auto; padding: 72px 24px 96px; }
+header { text-align: center; }
+header img { width: 112px; height: 112px; filter: drop-shadow(0 12px 40px rgba(157,140,255,.35)); }
+h1 { font-size: 48px; line-height: 1.05; letter-spacing: -1.4px; margin: 18px 0 10px; }
+.lead { font-size: 20px; color: var(--dim); max-width: 620px; margin: 0 auto 30px; }
+.cta { display: inline-flex; gap: 10px; align-items: center; padding: 14px 24px; border-radius: 14px; background: var(--accent);
+  color: #0d0c12; font-weight: 650; text-decoration: none; font-size: 17px; box-shadow: 0 10px 30px rgba(157,140,255,.35); }
+.cta:hover { filter: brightness(1.08); }
+.ver { color: var(--dim); font-size: 13px; margin-top: 12px; min-height: 20px; }
+h2 { font-size: 13px; letter-spacing: .7px; text-transform: uppercase; color: var(--dim); margin: 64px 0 14px; }
+.ways { display: grid; gap: 14px; }
+.way { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.way b { display: block; margin-bottom: 4px; }
+.way p { margin: 0 0 10px; color: var(--dim); font-size: 14.5px; }
+.cmd { display: flex; align-items: center; gap: 10px; background: #0b0a10; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.cmd code { flex: 1; font: 13.5px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: nowrap; }
+.cmd button { all: unset; cursor: pointer; font-size: 12.5px; padding: 4px 10px; border-radius: 7px; background: rgba(255,255,255,.08); }
+.cmd button:hover { background: var(--accent); color: #0d0c12; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.feat { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.feat b { display: block; margin-bottom: 4px; } .feat span { color: var(--dim); font-size: 14.5px; }
+a { color: var(--accent); }
+.note { color: var(--dim); font-size: 13.5px; }
+footer { margin-top: 72px; color: var(--dim); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <h1>Valerie</h1>
+    <p class="lead">A fast browser you change by asking. Spaces, pinned tabs, a command bar and vim keys, on Safari's engine, with agents that can see and use your browser.</p>
+    <a class="cta" id="dl" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Download for Mac</a>
+    <div class="ver" id="ver">Apple silicon and Intel · macOS 14 or later · free</div>
+  </header>
+
+  <h2>Install</h2>
+  <div class="ways">
+    <div class="way">
+      <b>One line in Terminal (the smoothest)</b>
+      <p>Downloads the latest Valerie, checks it's genuine, puts it in Applications and opens it.</p>
+      <div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div>
+    </div>
+    <div class="way">
+      <b>Homebrew</b>
+      <p>Valerie updates itself after that, so there's no need to <code>brew upgrade</code> it.</p>
+      <div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div>
+    </div>
+    <div class="way">
+      <b>Download</b>
+      <p>Open the <a href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">disk image</a> and drag Valerie to Applications. Linux and Windows builds are on the <a href="https://github.com/cullen-b/valerie/releases/latest">releases page</a>.</p>
+    </div>
+    <p class="note">The first time you open a downloaded or Homebrew copy, macOS may say it can't check Valerie for malware (Valerie isn't notarized by Apple yet).
+      Click Done, then open System Settings › Privacy &amp; Security and click <b>Open Anyway</b>. That's once; updates after that install themselves. The Terminal line doesn't need this.</p>
+  </div>
+
+  <h2>Why Valerie</h2>
+  <div class="grid">
+    <div class="feat"><b>Change anything by asking</b><span>Every setting lives in one readable file, written so an AI can edit it for you.</span></div>
+    <div class="feat"><b>Agents built in</b><span>Chats that can open tabs, read pages and do the clicking, with the access you choose.</span></div>
+    <div class="feat"><b>Arc's best ideas</b><span>Spaces, pinned tabs and folders, a command bar, little windows and split view.</span></div>
+    <div class="feat"><b>Fast and light</b><span>Rust on the system's own web engine: Safari's speed and battery life on a Mac.</span></div>
+    <div class="feat"><b>Syncs through GitHub</b><span>Settings and tabs on every machine, in a private repo you own.</span></div>
+    <div class="feat"><b>Updates itself</b><span>New versions install quietly and start the next time you open Valerie.</span></div>
+  </div>
+
+  <footer>Open source on <a href="https://github.com/cullen-b/valerie">GitHub</a>.</footer>
+</main>
+<script>
+for (const b of document.querySelectorAll(".cmd button")) {
+  b.onclick = () => { navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
+}
+fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) => r.ok ? r.json() : null).then((r) => {
+  if (r && r.tag_name) document.getElementById("ver").textContent = `Valerie ${r.tag_name.replace(/^v/, "")} · Apple silicon and Intel · macOS 14 or later · free`;
+}).catch(() => {});
+</script>
+</body>
+</html>

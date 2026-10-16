@@ -352,6 +352,8 @@ pub enum Command {
     },
     /// Quit and open again (to use a newly installed version).
     Restart,
+    /// Look for a newer Valerie now, and install it (or open its download page where Valerie can't update itself).
+    CheckForUpdates,
     /// scripts/install-macos.sh says a new version is in /Applications.
     UpdateInstalled,
     /// Allow or stop notifications from the site you're on.
@@ -442,6 +444,7 @@ impl Command {
                 | Command::NewTask { .. }
                 | Command::RunTask { .. }
                 | Command::SetUpAgent { .. }
+                | Command::CheckForUpdates
         )
     }
 
@@ -540,6 +543,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("copy_chat_id", "Copy Chat ID (share its context with another chat)"),
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
     ("restart", "Restart Valerie (use a newly installed version)"),
+    ("check_for_updates", "Check for Updates"),
     ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),

@@ -14,6 +14,7 @@ mod state;
 mod sync;
 mod github;
 mod ai;
+mod update;
 
 use config::Config;
 
@@ -136,6 +137,12 @@ fn check_config() -> anyhow::Result<()> {
             }
             if c.editor.trim().is_empty() {
                 problems.push("editor is empty; use default, textedit, an app's name or a terminal editor like vim".into());
+            }
+            if !["auto", "ask", "off"].contains(&c.updates.install.as_str()) {
+                problems.push(format!("updates: install is {:?}; use auto, ask or off", c.updates.install));
+            }
+            if !c.updates.feed.starts_with("https://") && !c.updates.feed.starts_with("file://") {
+                problems.push(format!("updates: feed is {:?}; it has to be an https:// address", c.updates.feed));
             }
             if !["auto", "on", "off"].contains(&c.passwords.offer_passkeys.as_str()) {
                 problems.push(format!("passwords: offer_passkeys is {:?}; use auto, on or off", c.passwords.offer_passkeys));

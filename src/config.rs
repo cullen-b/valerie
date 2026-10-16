@@ -52,6 +52,7 @@ pub struct Config {
     pub vim: VimConfig,
     pub mcp: McpConfig,
     pub sync: SyncConfig,
+    pub updates: UpdatesConfig,
     pub agents: AgentsConfig,
     pub content_blocking: BlockingConfig,
     pub passwords: PasswordsConfig,
@@ -647,6 +648,14 @@ pub struct VimConfig {
 pub struct McpConfig {
     pub enabled: bool,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatesConfig {
+    pub check: bool,
+    pub every_hours: f64,
+    pub install: String,
+    pub feed: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

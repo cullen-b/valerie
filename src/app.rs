@@ -79,6 +79,12 @@ pub enum UserEvent {
     SafariSignIn { tab: TabId },
     /// A message from work done off the main thread.
     Toast(String),
+    /// Time to look for an update (a while after launch).
+    CheckUpdates,
+    /// The release feed was read (`manual`: the user asked).
+    UpdateFound { release: Result<crate::update::Release, String>, manual: bool },
+    /// A downloaded update was put in place (its version), or why not.
+    UpdateDone { result: Result<String, String>, manual: bool },
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -143,6 +149,12 @@ pub struct App {
     /// Tabs loaded early because the pointer rested on them in the sidebar, until they're clicked: when, and how the
     /// sidebar showed them then (a preload stays invisible, so they keep looking exactly like that).
     preloaded: HashMap<TabId, Preloaded>,
+    /// Looking for or installing an update right now.
+    update_busy: bool,
+    /// A newer version installed while this one runs; it starts next time.
+    update_ready: Option<String>,
+    /// Versions already mentioned this session, so a found update is only mentioned once.
+    update_told: std::collections::HashSet<String>,
     preload_seq: u64,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
@@ -229,7 +241,7 @@ struct Preloaded {
 
 /// "0.1.0 (abc1234)": the version and the commit this build came from.
 pub fn version() -> String {
-    format!("{} ({})", env!("CARGO_PKG_VERSION"), option_env!("VALERIE_BUILD").unwrap_or("dev"))
+    format!("{} ({})", crate::update::current(), option_env!("VALERIE_BUILD").unwrap_or("dev"))
 }
 
 /// With VALERIE_TRACE set, print how long after launch each startup step happens.
@@ -292,6 +304,10 @@ fn boosts_dir() -> PathBuf {
 /// Lines hide_element adds to boosts/<site>.css, so show_hidden_elements can remove exactly those.
 const HIDDEN_HEADER: &str = "/* Hidden with Valerie's \"Hide an Element\". Delete a line to show that element again. */";
 const HIDDEN_MARK: &str = "/* hidden */";
+
+fn shell_word(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
 
 /// The part of a host that logins are shared across: accounts.google.com → google.com, www.bbc.co.uk → bbc.co.uk.
 fn cookie_base(host: &str) -> String {
@@ -489,6 +505,9 @@ impl App {
             pending_reveal: None,
             reveal_when_chrome_ready: false,
             preloaded: HashMap::new(),
+            update_busy: false,
+            update_ready: None,
+            update_told: Default::default(),
             preload_seq: 0,
             window_focused: true,
             notify_asked: Default::default(),
@@ -2331,6 +2350,10 @@ impl App {
         if !self.config.sync.repo.is_empty() && interval > 0 && t.saturating_sub(self.last_sync) > interval {
             self.start_sync();
         }
+        let every = (self.config.updates.every_hours.max(1.0) * 3600.0) as u64;
+        if t.saturating_sub(self.state.update_checked) >= every {
+            self.check_updates(false);
+        }
         self.check_watches();
         self.check_tasks(false);
         self.tend_chats();
@@ -2856,14 +2879,20 @@ impl App {
                 self.dirty = true;
                 self.toast("Stopped watching");
             }
+            Command::CheckForUpdates => {
+                self.close_bar();
+                self.check_updates(true);
+            }
             Command::Restart => {
-                // Reopen whichever copy is newest: the installed app if there is one, else this one.
+                // Reopen this app (an update replaces it in place), else the installed one.
                 let installed = PathBuf::from("/Applications/Valerie.app");
-                let me = std::env::current_exe().ok().and_then(|e| e.ancestors().nth(3).map(|p| p.to_path_buf())).filter(|p| p.extension().is_some_and(|x| x == "app"));
-                let target = if installed.exists() { Some(installed) } else { me };
+                let target = crate::update::app_bundle().or_else(|| installed.exists().then_some(installed));
                 match target {
                     Some(app) => {
-                        let _ = std::process::Command::new("/bin/sh").arg("-c").arg(format!("sleep 1; open -n {:?}", app)).spawn();
+                        // `open` starts the app without this one's environment: carry Valerie's own settings over (a test
+                        // instance's folders, say), so it comes back as the same instance.
+                        let env: String = std::env::vars().filter(|(k, _)| k.starts_with("VALERIE_")).map(|(k, v)| format!(" --env {}", shell_word(&format!("{k}={v}")))).collect();
+                        let _ = std::process::Command::new("/bin/sh").arg("-c").arg(format!("sleep 1; open -n{env} {}", shell_word(&app.to_string_lossy()))).spawn();
                         self.quit = true;
                     }
                     None => self.toast("Restart: open Valerie again yourself (it isn't running as an app)"),
@@ -3756,6 +3785,19 @@ impl App {
             },
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
             UserEvent::Toast(msg) => self.toast(&msg),
+            UserEvent::CheckUpdates => self.check_updates(false),
+            UserEvent::UpdateFound { release, manual } => self.update_found(release, manual),
+            UserEvent::UpdateDone { result, manual } => {
+                self.update_busy = false;
+                match result {
+                    Ok(v) => {
+                        self.update_ready = Some(v.clone());
+                        self.toast(&format!("Valerie {v} is installed: it starts next time you open Valerie (or run Restart Valerie)"));
+                    }
+                    Err(e) if manual => self.toast(&format!("Couldn't update Valerie: {e}")),
+                    Err(e) => eprintln!("valerie: update: {e}"),
+                }
+            }
             UserEvent::SafariSignedIn { tab, bring } => {
                 if bring {
                     self.bring_login_from_safari(tab);
@@ -4112,6 +4154,11 @@ impl App {
             if let Ok(p) = p.lock() {
                 send(&p, UserEvent::NotificationClicked(action));
             }
+        });
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(20));
+            send(&p, UserEvent::CheckUpdates);
         });
         // Asking each CLI for its models starts node processes: let the first page have the machine first.
         let p = self.proxy.clone();
@@ -5052,6 +5099,82 @@ impl App {
         platform::ask(v, &format!("Allow {site} to send notifications?"), &body, "Allow", "Don't Allow", move |allowed| {
             send(&p, UserEvent::NotifyPermission { tab, site: s, allowed });
         });
+    }
+
+    /// Look for a newer Valerie. By itself only from an installed app (not the bare binary or a test instance with its
+    /// own folders) and when `updates.check` is on; "Check for Updates" always looks.
+    fn check_updates(&mut self, manual: bool) {
+        if self.update_busy {
+            return if manual { self.toast("Already checking for updates") };
+        }
+        // VALERIE_UPDATE_TEST lets a test instance update its own copy of the app.
+        let test_instance = (std::env::var_os("VALERIE_CONFIG_DIR").is_some() || std::env::var_os("VALERIE_DATA_DIR").is_some())
+            && std::env::var_os("VALERIE_UPDATE_TEST").is_none();
+        if !manual && (!self.config.updates.check || test_instance || crate::update::app_bundle().is_none() && cfg!(target_os = "macos")) {
+            return;
+        }
+        self.state.update_checked = now();
+        self.dirty = true;
+        self.update_busy = true;
+        if manual {
+            self.toast("Checking for updates…");
+        }
+        let (feed, p) = (self.config.updates.feed.clone(), self.proxy.clone());
+        std::thread::spawn(move || {
+            let release = crate::update::fetch(&feed).map_err(|e| format!("{e:#}"));
+            send(&p, UserEvent::UpdateFound { release, manual });
+        });
+    }
+
+    fn update_found(&mut self, release: Result<crate::update::Release, String>, manual: bool) {
+        self.update_busy = false;
+        let r = match release {
+            Ok(r) => r,
+            Err(e) => {
+                if manual {
+                    self.toast(&format!("Couldn't check for updates: {e}"));
+                }
+                return eprintln!("valerie: update check: {e}");
+            }
+        };
+        let current = self.update_ready.clone().unwrap_or_else(|| crate::update::current().to_string());
+        if !crate::update::newer(&r.version, &current) {
+            if manual {
+                self.toast(&format!("Valerie {current} is the newest version"));
+            }
+            return;
+        }
+        let app = crate::update::app_bundle().filter(|_| cfg!(target_os = "macos"));
+        let install = manual || self.config.updates.install == "auto";
+        match app {
+            Some(app) if install => {
+                self.update_busy = true;
+                if manual {
+                    self.toast(&format!("Downloading Valerie {}…", r.version));
+                }
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let result = crate::update::install(&r, &app).map(|_| r.version.clone()).map_err(|e| format!("{e:#}"));
+                    send(&p, UserEvent::UpdateDone { result, manual });
+                });
+            }
+            Some(_) => {
+                if self.update_told.insert(r.version.clone()) {
+                    self.toast(&format!("Valerie {} is out: run Check for Updates to install it", r.version));
+                }
+            }
+            // Windows and Linux (and the bare binary): show the release so it can be downloaded.
+            None if manual => {
+                let page = if r.page.is_empty() { "https://github.com/cullen-b/valerie/releases/latest".to_string() } else { r.page.clone() };
+                self.toast(&format!("Valerie {} is out: opening its download page", r.version));
+                platform::open_external(&page);
+            }
+            None => {
+                if self.update_told.insert(r.version.clone()) {
+                    self.toast(&format!("Valerie {} is out: run Check for Updates to get it", r.version));
+                }
+            }
+        }
     }
 
     /// A page asked for a passkey, which Valerie can't do yet: offer Safari, once per site per session.
