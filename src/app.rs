@@ -64,6 +64,9 @@ pub enum UserEvent {
     TaskDone { name: String, agent: String, text: String, error: Option<String> },
     /// "Run it again now" was clicked on a task's page.
     TaskRequested { slug: String },
+    /// Show the window even if the first page is slow.
+    RevealTimeout,
+    DiscoverModels,
     /// A notification was clicked; its action JSON.
     NotificationClicked(String),
     /// A CLI listed its models.
@@ -126,6 +129,13 @@ pub struct App {
     answer_label: String,
     /// Tasks running right now (by name).
     tasks_running: std::collections::HashSet<String>,
+    /// The window is on screen and the after-launch work has started.
+    revealed: bool,
+    /// Set while handling an event that should show the window (done once the borrow ends).
+    pending_reveal: Option<&'static str>,
+    reveal_when_chrome_ready: bool,
+    /// Tabs loaded early because the pointer rested on them in the sidebar (and when).
+    preloaded: HashMap<TabId, u64>,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
     /// Sites asked about notifications this session (a site gets asked once).
@@ -196,6 +206,15 @@ struct Boost {
     host: String,
     css: String,
     js: String,
+}
+
+/// With VALERIE_TRACE set, print how long after launch each startup step happens.
+pub fn trace(step: &str) {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let t0 = *START.get_or_init(std::time::Instant::now);
+    if std::env::var_os("VALERIE_TRACE").is_some() {
+        eprintln!("valerie: {:>6.0} ms  {step}", t0.elapsed().as_secs_f64() * 1000.0);
+    }
 }
 
 fn tasks_dir() -> PathBuf {
@@ -345,9 +364,12 @@ impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
         let window = mac_window(WindowBuilder::new())
             .with_title("Valerie")
+            // Shown once the active space is on screen (reveal), so the first thing you see is your tabs.
+            .with_visible(false)
             .with_inner_size(LogicalSize::new(config.window.width.max(320.0), config.window.height.max(240.0)))
             .with_min_inner_size(LogicalSize::new(config.window.min_width.max(200.0), config.window.min_height.max(150.0)))
             .build(elwt)?;
+        trace("  window");
         let size = window.inner_size().to_logical::<f64>(window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         let p = proxy.clone();
@@ -358,6 +380,7 @@ impl App {
             .with_devtools(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Chrome, msg: r.into_body() }))
             .build_as_child(&window)?;
+        trace("  sidebar view");
         let p = proxy.clone();
         let overlay = WebViewBuilder::new()
             .with_html(ui("palette.html"))
@@ -366,11 +389,14 @@ impl App {
             .with_visible(false)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
             .build_as_child(&window)?;
+        trace("  command bar view");
         platform::install_page_dialogs(&chrome);
         let mut state = State::load(&state_path());
+        trace("  state loaded");
         state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
         state.reconcile_spaces(&config);
         let user_agent = if config.user_agent.is_empty() { platform::safari_user_agent() } else { config.user_agent.clone() };
+        trace("  user agent");
         Ok(App {
             window,
             chrome,
@@ -395,6 +421,10 @@ impl App {
             answer_height: 120.0,
             answer_label: String::new(),
             tasks_running: Default::default(),
+            revealed: false,
+            pending_reveal: None,
+            reveal_when_chrome_ready: false,
+            preloaded: HashMap::new(),
             window_focused: true,
             notify_asked: Default::default(),
             notify_times: HashMap::new(),
@@ -2190,6 +2220,7 @@ impl App {
                 .keys()
                 .copied()
                 .filter(|id| !panes.contains(id))
+                .filter(|id| self.preloaded.get(id).is_none_or(|at| t.saturating_sub(*at) > unload_secs))
                 .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && t.saturating_sub(tab.last_active) > unload_secs))
                 .collect();
             for id in idle {
@@ -3142,6 +3173,10 @@ impl App {
             (Source::Chrome, "ready") => {
                 self.last_render.borrow_mut().clear();
                 self.render();
+                trace("sidebar drawn");
+                if self.reveal_when_chrome_ready {
+                    self.reveal("nothing to load");
+                }
             }
             (Source::Chrome, "unpeek") | (Source::Page(Target::Tab(_)), "unpeek") => {
                 if self.sidebar_peek {
@@ -3233,6 +3268,10 @@ impl App {
                     return;
                 };
                 self.ready_views.insert(id);
+                if !self.revealed && self.state.active_tab() == Some(id) {
+                    trace("active page drawn");
+                    self.pending_reveal = Some("active page drawn");
+                }
                 if self.pending_focus.get() == Some(id) && self.state.active_tab() == Some(id) && !self.bar_open && self.focused_little.is_none() {
                     self.pending_focus.set(None);
                     if let Some(v) = self.views.get(&id) {
@@ -3314,6 +3353,16 @@ impl App {
                     self.open_tab(&u, None, false);
                 }
             }
+            (Source::Chrome, "preload") => {
+                // The pointer is resting on a tab in the sidebar: start loading it now, so the click is instant.
+                if let Some(t) = m["tab"].as_u64().filter(|t| self.config.sidebar.preload_on_hover && self.state.tabs.contains_key(t)) {
+                    if !self.views.contains_key(&t) {
+                        self.preloaded.insert(t, now());
+                        self.ensure_view(t);
+                        self.layout();
+                    }
+                }
+            }
             (Source::Chrome, "chat_menu") => {
                 if let Some(id) = m["chat"].as_str() {
                     self.chat_menu(id.to_string(), m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
@@ -3361,6 +3410,9 @@ impl App {
                     self.render();
                 }
                 Target::Tab(id) => {
+                    if finished && !self.revealed && self.state.active_tab() == Some(id) {
+                        self.pending_reveal = Some("active page loaded");
+                    }
                     let mut visit = None;
                     if let Some(t) = self.state.tabs.get_mut(&id) {
                         if !url.is_empty() && url != "about:blank" {
@@ -3573,6 +3625,8 @@ impl App {
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
+            UserEvent::RevealTimeout => self.reveal("timeout"),
+            UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
                 self.found_models.insert(cli, models);
                 self.render_chat();
@@ -3840,22 +3894,58 @@ impl App {
         }
     }
 
+    /// Launch: only what the active space needs. The window appears once it's on screen (or after 1.5s at most);
+    /// everything else happens after that, in `after_reveal`.
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        trace("start");
         self.build_menu();
-        self.start_blocklist();
         let a = self.state.active_space;
         self.switch_space(a);
         if !urls.is_empty() {
             self.open_external(urls, elwt);
         }
+        trace("active space requested");
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            send(&p, UserEvent::RevealTimeout);
+        });
+        if self.state.active_tab().is_none() {
+            // Nothing to load: show as soon as the sidebar has drawn.
+            self.reveal_when_chrome_ready = true;
+        }
+    }
+
+    /// Show the window, then start the work nobody is waiting for.
+    fn reveal(&mut self, why: &str) {
+        if self.revealed {
+            return;
+        }
+        self.revealed = true;
+        self.window.set_visible(true);
+        self.window.set_focus();
+        self.focus_active();
+        trace(&format!("window shown ({why})"));
+        self.after_reveal();
+    }
+
+    fn after_reveal(&mut self) {
+        self.start_blocklist();
+        std::thread::spawn(crate::llm_guide::install);
         self.check_tasks(true);
-        self.discover_models();
         let p = std::sync::Mutex::new(self.proxy.clone());
         platform::notifications_init(move |action| {
             if let Ok(p) = p.lock() {
                 send(&p, UserEvent::NotificationClicked(action));
             }
         });
+        // Asking each CLI for its models starts node processes: let the first page have the machine first.
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            send(&p, UserEvent::DiscoverModels);
+        });
+        trace("after-launch work started");
     }
 }
 
@@ -3887,7 +3977,7 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
 }
 
 pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
-    crate::llm_guide::install();
+    trace("launch");
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let p = proxy.clone();
@@ -3902,12 +3992,18 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     });
     watch_config(proxy.clone());
     let mut app = App::new(&event_loop, config, proxy)?;
+    trace("window and sidebar created");
     let mut initial = Some(urls);
     event_loop.run(move |event, elwt, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::NewEvents(StartCause::Init) => app.start(initial.take().unwrap_or_default(), elwt),
-            Event::UserEvent(ev) => app.handle(ev, elwt),
+            Event::UserEvent(ev) => {
+                app.handle(ev, elwt);
+                if let Some(why) = app.pending_reveal.take() {
+                    app.reveal(why);
+                }
+            }
             Event::WindowEvent { window_id, event, .. } => app.window_event(window_id, event, elwt),
             Event::Opened { urls } => app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt),
             Event::LoopDestroyed => app.save(),

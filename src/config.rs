@@ -102,6 +102,8 @@ pub struct SidebarConfig {
     pub pinned_columns: u32,
     pub pinned_tile_height: f64,
     pub swipe_between_spaces: bool,
+    pub preload_on_hover: bool,
+    pub preload_delay_ms: f64,
     pub double_click_edge: bool,
 }
 

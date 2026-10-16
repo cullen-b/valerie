@@ -329,6 +329,17 @@ document.addEventListener("mouseup", () => {
 });
 
 // ---------- elements ----------
+// Resting the pointer on a tab that isn't loaded yet starts loading it (sidebar.preload_on_hover).
+let preloadTimer = 0;
+function preloadOnHover(node, t) {
+  if (t.loaded) return;
+  node.addEventListener("mouseenter", () => {
+    if (!S.sidebar.preload_on_hover || drag) return;
+    clearTimeout(preloadTimer);
+    preloadTimer = setTimeout(() => send({ t: "preload", tab: t.id }), S.sidebar.preload_delay_ms ?? 90);
+  });
+  node.addEventListener("mouseleave", () => clearTimeout(preloadTimer));
+}
 function tile(t, list, index) {
   const f = el("div", "tile" + (isActive(t) ? " active" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));
   f.append(icon(t)); f.title = t.title || t.url;
@@ -337,6 +348,7 @@ function tile(t, list, index) {
   f.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
   f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
   source(f, t.id, list, index);
+  preloadOnHover(f, t);
   return f;
 }
 function tabRow(t, list, index) {
@@ -356,6 +368,7 @@ function tabRow(t, list, index) {
   r.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
   r.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
   source(r, t.id, list, index);
+  preloadOnHover(r, t);
   return r;
 }
 function folderEl(n, section = "pinned") {
