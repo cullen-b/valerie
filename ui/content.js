@@ -76,7 +76,12 @@ function ui() {
     .find input { all: unset; width: 220px; padding: 4px 6px; color: #fff; font: 13px -apple-system, system-ui; }
     .find .count { color: rgba(255,255,255,.5); font-weight: 400; font-size: 11.5px; min-width: 52px; text-align: right; }
     .minimap { position: fixed; top: 0; right: 0; width: 64px; height: 100vh; background: rgba(18,18,26,.82); pointer-events: auto;
-               box-shadow: -1px 0 0 rgba(255,255,255,.06), -8px 0 24px rgba(0,0,0,.18); cursor: pointer; }`;
+               box-shadow: -1px 0 0 rgba(255,255,255,.06), -8px 0 24px rgba(0,0,0,.18); cursor: pointer; }
+    .pill { position: fixed; bottom: 6px; left: 6px; max-width: 55vw; padding: 5px 9px; border-radius: 8px; background: rgba(24,24,32,.9); color: rgba(255,255,255,.85);
+            font-weight: 500; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+    .pill.right { left: auto; right: 6px; }
+    .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
+            outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: all .06s; }`;
   shadow.appendChild(st);
   return shadow;
 }
@@ -752,6 +757,190 @@ document.addEventListener("play", report, true); document.addEventListener("paus
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", report); else report();
 addEventListener("load", report);
 
+// ---------- answers to questions from Valerie (selected text, hide an element, dark mode state) ----------
+function request(kind, nonce) {
+  if (kind === "hide_element") return pickHide(nonce);
+  let value = "";
+  if (kind === "selection" || kind === "highlight") value = String(getSelection() || "").trim().slice(0, 4000);
+  if (kind === "dark") value = darkOn();
+  post({ t: "reply", nonce, kind, value });
+}
+
+// ---------- hide an element on this site: hover to highlight, ↑ for its parent, click to hide, Esc to stop ----------
+let picking = false;
+function selectorFor(el) {
+  const parts = [], esc = CSS.escape;
+  for (let e = el; e && e.nodeType === 1 && e !== document.documentElement && e !== document.body; e = e.parentElement) {
+    if (e.id && !/\d{3,}/.test(e.id)) { parts.unshift("#" + esc(e.id)); } else {
+      let p = e.tagName.toLowerCase();
+      const cls = [...e.classList].filter((c) => c.length < 40 && !/\d{3,}|active|hover|open|show|visible|selected|focus/i.test(c)).slice(0, 2);
+      if (cls.length) p += "." + cls.map(esc).join(".");
+      const same = e.parentElement ? [...e.parentElement.children].filter((s) => s.tagName === e.tagName) : [];
+      if (same.length > 1 && e.parentElement.querySelectorAll(":scope > " + p).length > 1) p += `:nth-of-type(${same.indexOf(e) + 1})`;
+      parts.unshift(p);
+    }
+    const s = parts.join(" > ");
+    try { if (document.querySelectorAll(s).length === 1) return s; } catch (_) {}
+    if (parts[0].startsWith("#")) break;
+  }
+  return parts.join(" > ");
+}
+function pickHide(nonce) {
+  if (picking) return;
+  picking = true;
+  const box = document.createElement("div"); box.className = "pick"; ui().appendChild(box);
+  let cur = null, under = null;
+  const show = (el) => {
+    cur = el;
+    if (!el) { box.style.display = "none"; return; }
+    const r = el.getBoundingClientRect();
+    Object.assign(box.style, { display: "block", left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" });
+  };
+  const move = (e) => { const t = document.elementFromPoint(e.clientX, e.clientY); under = t; show(t && t !== document.documentElement && t !== document.body ? t : null); };
+  const block = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
+  const stop = () => {
+    picking = false; box.remove();
+    removeEventListener("mousemove", move, true); removeEventListener("keydown", key, true);
+    for (const t of ["mousedown", "mouseup", "pointerdown", "pointerup"]) removeEventListener(t, block, true);
+    removeEventListener("click", click, true);
+  };
+  const click = (e) => {
+    block(e);
+    if (cur) { const sel = selectorFor(cur); cur.style.setProperty("display", "none", "important"); post({ t: "reply", nonce, kind: "hide_element", value: sel }); }
+    stop();
+  };
+  const key = (e) => {
+    if (e.key === "Escape") { block(e); stop(); }
+    else if (e.key === "ArrowUp" && cur && cur.parentElement && cur.parentElement !== document.body) { block(e); show(cur.parentElement); }
+    else if (e.key === "ArrowDown" && under && cur && cur !== under && cur.contains(under)) { block(e); let c = under; while (c.parentElement !== cur) c = c.parentElement; show(c); }
+    else if (e.key === "Enter" && cur) click(e);
+  };
+  addEventListener("mousemove", move, true); addEventListener("keydown", key, true); addEventListener("click", click, true);
+  for (const t of ["mousedown", "mouseup", "pointerdown", "pointerup"]) addEventListener(t, block, true);
+  toast("Click what to hide · ↑ picks the bigger box around it");
+}
+
+// ---------- dark mode for light websites ----------
+function darkWanted() {
+  const d = cfg.dark || {}, site = location.hostname.replace(/^www\./, "").toLowerCase();
+  if (d.sites && site in d.sites) return d.sites[site] ? "forced" : false;
+  return d.mode === "always" || (d.mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches) ? "auto" : false;
+}
+function pageLooksDark() {
+  for (const el of [document.body, document.documentElement]) {
+    if (!el) continue;
+    const m = getComputedStyle(el).backgroundColor.match(/[\d.]+/g);
+    if (!m || (m.length > 3 && +m[3] === 0)) continue;
+    return (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / 255 < 0.45;
+  }
+  return false;
+}
+let darkSkipped = false;
+function applyDark() {
+  const want = darkWanted();
+  let st = document.getElementById("__valerie_dark");
+  // "auto" leaves sites that are already dark alone (the filter doesn't change the colours this reads).
+  if (want === "auto" && !darkSkipped && document.body && pageLooksDark()) darkSkipped = true;
+  if (!want || (want === "auto" && darkSkipped)) { if (st) st.remove(); return; }
+  if (!document.documentElement) return;
+  if (!st) { st = document.createElement("style"); st.id = "__valerie_dark"; document.documentElement.appendChild(st); }
+  st.textContent = `html { filter: invert(1) hue-rotate(180deg) contrast(.92) !important; background: #fff !important; }
+    img, video, picture, canvas, iframe, embed, object, svg image, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }`;
+}
+function darkOn() { return !!document.getElementById("__valerie_dark"); }
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", applyDark); else applyDark();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { darkSkipped = false; applyDark(); });
+
+// ---------- cookie banners: click "Reject all" when we can, otherwise hide the banner ----------
+// [banner, reject button] for the common consent tools; the button is clicked even while the banner is hidden.
+const CMPS = [
+  ["#onetrust-consent-sdk, #onetrust-banner-sdk", "#onetrust-reject-all-handler"],
+  ["#CybotCookiebotDialog", "#CybotCookiebotDialogBodyButtonDecline, #CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll"],
+  ["#didomi-host, #didomi-notice", "#didomi-notice-disagree-button"],
+  [".qc-cmp2-container", ".qc-cmp2-summary-buttons button[mode=secondary]"],
+  [".osano-cm-window", ".osano-cm-denyAll"],
+  [".cky-consent-container, .cky-overlay", ".cky-btn-reject"],
+  ["#cmplz-cookiebanner-container, .cmplz-cookiebanner", ".cmplz-deny"],
+  ["#iubenda-cs-banner", ".iubenda-cs-reject-btn"],
+  [".klaro .cookie-notice, .klaro .cookie-modal", ".cm-btn-decline"],
+  ["#truste-consent-track, #consent_blackbar", "#truste-consent-required"],
+  ["#cookie-law-info-bar, .cli-modal", "#cookie_action_close_header_reject"],
+  [".cc-window.cc-banner, .cc-window.cc-floating", ".cc-deny"],
+  [".fc-consent-root", ".fc-cta-do-not-consent"],
+  ["#usercentrics-root, #usercentrics-cmp-ui", null],
+  ["#sp_message_container_0, [id^=sp_message_container]", null],
+  ["#gdpr-cookie-message, #cookie-notice, #cookieConsent, #cookie-banner, .cookie-banner, #CookieBanner", null],
+];
+const REJECT_TEXT = /^(reject|decline|deny|refuse)( all| optional)?( cookies)?$|^(use |allow )?(only )?(strictly )?(necessary|essential|required)( cookies)?( only)?$/i;
+function cookieBanners() {
+  const mode = (cfg.privacy || {}).cookie_banners;
+  if (!mode || mode === "off" || !document.documentElement) return;
+  if (!document.getElementById("__valerie_cmp")) {
+    const st = document.createElement("style"); st.id = "__valerie_cmp";
+    st.textContent = CMPS.map((c) => c[0]).join(",\n") + " { display: none !important; }";
+    document.documentElement.appendChild(st);
+  }
+  if (!document.body) return;
+  // A hidden banner can leave the page unable to scroll.
+  if (CMPS.some((c) => document.querySelector(c[0])))
+    for (const el of [document.documentElement, document.body]) if (getComputedStyle(el).overflow === "hidden") el.style.setProperty("overflow", "auto", "important");
+  if (mode !== "reject") return;
+  let done = false;
+  for (const [banner, btn] of CMPS) {
+    if (!btn || !document.querySelector(banner)) continue;
+    const b = document.querySelector(btn);
+    if (b) { b.click(); done = true; }
+  }
+  if (!done) {
+    // Unknown tools: a "Reject all" / "Only necessary" button inside something named cookie/consent/gdpr.
+    const scope = document.querySelectorAll("[id*=cookie i], [class*=cookie i], [id*=consent i], [class*=consent i], [id*=gdpr i], [class*=gdpr i]");
+    for (const s of scope) {
+      const b = [...s.querySelectorAll("button, a[role=button], [role=button]")].find((x) => REJECT_TEXT.test(x.textContent.trim()));
+      if (b) { b.click(); done = true; break; }
+    }
+  }
+  return done;
+}
+// Banners load late, so keep looking for a few seconds after load, then stop watching.
+{
+  let tries = 0, timer = 0, finished = false;
+  const look = () => { timer = 0; if (!finished && (cookieBanners() || ++tries > 20)) { finished = true; cmpWatch.disconnect(); } };
+  const cmpWatch = new MutationObserver(() => { if (!timer) timer = setTimeout(look, 400); });
+  const start = () => { look(); if (!finished) cmpWatch.observe(document.documentElement, { childList: true, subtree: true }); setTimeout(() => cmpWatch.disconnect(), 15000); };
+  if (document.documentElement) cookieBanners();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+}
+
+// ---------- links: show where they go while hovered, and drop tracking junk before following them ----------
+let pill = null, pillTimer = 0;
+function hidePill() { if (pill) { pill.remove(); pill = null; } }
+document.addEventListener("mouseover", (e) => {
+  if (!(cfg.links && cfg.links.show_url_on_hover)) return;
+  const a = e.target.closest && e.target.closest("a[href]");
+  clearTimeout(pillTimer);
+  if (!a || !/^https?:/.test(a.href)) { pillTimer = setTimeout(hidePill, 120); return; }
+  if (!pill) { pill = document.createElement("div"); pill.className = "pill"; ui().appendChild(pill); }
+  let text = cleanUrl(a.href); try { text = decodeURI(text); } catch (_) {}
+  pill.textContent = text.replace(/^https?:\/\/(www\.)?/, "");
+  pill.classList.toggle("right", e.clientX < innerWidth * 0.55 && e.clientY > innerHeight - 70);
+}, { passive: true });
+if (document.documentElement) document.documentElement.addEventListener("mouseleave", hidePill);
+function cleanUrl(href) {
+  const p = cfg.privacy || {};
+  if (!p.strip_tracking || !href.includes("?")) return href;
+  try {
+    const u = new URL(href), hit = (k) => (p.tracking_params || []).some((t) => t.endsWith("*") ? k.toLowerCase().startsWith(t.slice(0, -1).toLowerCase()) : k.toLowerCase() === t.toLowerCase());
+    const keys = [...u.searchParams.keys()].filter(hit);
+    if (!keys.length) return href;
+    keys.forEach((k) => u.searchParams.delete(k));
+    return u.href;
+  } catch (_) { return href; }
+}
+document.addEventListener("click", (e) => {
+  const a = e.isTrusted && e.target.closest && e.target.closest("a[href]");
+  if (a && /^https?:/.test(a.href)) { const c = cleanUrl(a.href); if (c !== a.href) a.href = c; }
+}, true);
+
 // ---------- reader view: the page's article as clean text ----------
 let readerHost = null;
 function articleRoot() {
@@ -936,8 +1125,8 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind, media, reader,
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); }, toast, find: openFind, hints: startHints,
+    closeFind, media, reader, request,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
   }),

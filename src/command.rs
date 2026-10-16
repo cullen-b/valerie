@@ -222,6 +222,28 @@ pub enum Command {
     },
     /// Show the page's article as clean, readable text (again to go back).
     ReaderView,
+    /// Pick an element on the page (hover, ↑ for its parent, click) to hide it on this site for good.
+    HideElement,
+    /// Bring back everything hidden with hide_element on this site.
+    ShowHiddenElements,
+    /// Open the page in the translation service from `translate`.
+    TranslatePage,
+    /// Copy "[title](url)" for the current page.
+    CopyMarkdownLink,
+    /// Copy a link that scrolls to and highlights the selected text.
+    CopyLinkToHighlight,
+    /// Search the web for the selected text in a new tab.
+    SearchSelection,
+    /// Open the URL (or search for the text) on the clipboard in a new tab.
+    PasteAndGo,
+    /// Close Today tabs showing the same page as another tab in this space.
+    CloseDuplicateTabs,
+    /// Turn Valerie's dark mode for light websites on or off for this site.
+    ToggleDarkPage,
+    /// Copy text to the clipboard (the command bar's calculator uses this).
+    CopyText {
+        text: String,
+    },
     /// Screenshot the visible page: copied to the clipboard and/or saved to Downloads (see `capture` settings).
     CapturePage,
     /// Open a file from the downloads list (the command bar shows them). Never available to pages or agents.
@@ -308,6 +330,12 @@ impl Command {
                 | ToggleMute { tab: None }
                 | ToggleMedia { tab: None }
                 | ReaderView
+                | HideElement
+                | CopyMarkdownLink
+                | CopyLinkToHighlight
+                | SearchSelection
+                | ToggleDarkPage
+                | TranslatePage
         )
     }
 }
@@ -349,6 +377,15 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("toggle_mute", "Mute / Unmute Tab"),
     ("toggle_media", "Play / Pause Media"),
     ("reader_view", "Reader View"),
+    ("hide_element", "Hide an Element on This Site…"),
+    ("show_hidden_elements", "Show Hidden Elements on This Site"),
+    ("translate_page", "Translate Page"),
+    ("copy_markdown_link", "Copy Link as Markdown"),
+    ("copy_link_to_highlight", "Copy Link to Highlighted Text"),
+    ("search_selection", "Search Selected Text"),
+    ("paste_and_go", "Paste and Go"),
+    ("close_duplicate_tabs", "Close Duplicate Tabs"),
+    ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
@@ -391,6 +428,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("import", "{ source: arc | chrome | brave | edge | vivaldi | chromium | safari | firefox }"),
     ("find_in_page", "{ query? }"),
     ("toggle_mute", "{ tab? }"),
+    ("copy_text", "{ text }"),
     ("toggle_media", "{ tab? }  (play / pause)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),

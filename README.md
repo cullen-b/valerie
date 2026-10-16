@@ -35,6 +35,7 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘O` | Move a little window into the main window |
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom (remembered per site), dev tools |
 | `⌘⇧R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
+| `⌘⇧V` / `⌘⌥⇧C` | Paste and go / copy the page as a Markdown link |
 | `⌘,` | Open config |
 
 **Tab to search a site:** type `youtube`, `claude`, `chatgpt`, `gh`, `wiki`… in the command bar, press Tab, and
@@ -56,6 +57,12 @@ edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek
 picture-in-picture when you switch away; a mini player above the space icons pauses, mutes or jumps back to whatever
 is playing in another tab; click a tab's ♪ to mute it. **Downloads** go to your Downloads folder and show up in the
 command bar (type the file name).
+
+**Little things:** the command bar is a calculator and unit converter (`12*7`, `15% of 80`, `5 km in mi`, `70 f to c`;
+Enter copies). Hovering a link shows where it goes. Tracking junk (`utm_*`, `fbclid`…) is stripped from links you
+open or copy. Cookie pop-ups get "Reject all" clicked for you. "Hide an Element" removes anything annoying from a site
+for good (it's saved as a line in `boosts/<site>.css`). Plus Translate Page, Copy Link to Highlighted Text, Search
+Selected Text, Close Duplicate Tabs, and dark mode for light websites (`pages.dark_mode`, or per site).
 
 ## Make Valerie yours with AI
 

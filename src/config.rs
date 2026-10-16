@@ -24,6 +24,9 @@ pub struct Config {
     pub tabs: TabsConfig,
     pub reader_view: ReaderConfig,
     pub capture: CaptureConfig,
+    pub privacy: PrivacyConfig,
+    pub pages: PagesConfig,
+    pub translate: TranslateConfig,
     pub little_window: LittleWindowConfig,
     pub profiles: Vec<ProfileConfig>,
     pub spaces: Vec<SpaceConfig>,
@@ -87,6 +90,7 @@ pub struct LinksConfig {
     pub cmd_shift_click: String,
     pub option_shift_click: String,
     pub context_menu: bool,
+    pub show_url_on_hover: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +111,7 @@ pub struct CommandBarConfig {
     pub site_search: bool,
     pub footer_hints: bool,
     pub empty_hint: bool,
+    pub calculator: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -138,6 +143,24 @@ pub struct ReaderConfig {
     pub font: String,
     pub font_size: f64,
     pub width: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyConfig {
+    pub strip_tracking: bool,
+    pub tracking_params: Vec<String>,
+    pub cookie_banners: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagesConfig {
+    pub dark_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranslateConfig {
+    pub language: String,
+    pub service: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

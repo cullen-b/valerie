@@ -85,6 +85,8 @@ pub struct App {
     recent_tabs: Vec<TabId>,
     /// The last URL each tab finished loading, restored if a navigation turns out to be a download.
     committed_url: HashMap<TabId, String>,
+    /// A question Valerie asked a page (selected text, an element to hide…): (tab, nonce, kind).
+    page_request: Option<(TabId, String, &'static str)>,
     littles: HashMap<WindowId, Little>,
     focused_little: Option<WindowId>,
     config: Config,
@@ -149,6 +151,15 @@ struct Boost {
 
 fn boosts_dir() -> PathBuf {
     config::config_dir().join("boosts")
+}
+
+/// Lines hide_element adds to boosts/<site>.css, so show_hidden_elements can remove exactly those.
+const HIDDEN_HEADER: &str = "/* Hidden with Valerie's \"Hide an Element\". Delete a line to show that element again. */";
+const HIDDEN_MARK: &str = "/* hidden */";
+
+/// A URL's host without "www.", which is how boosts and per-site settings are keyed.
+fn site_of(url: &str) -> Option<String> {
+    url::Url::parse(url).ok()?.host_str().map(|h| h.trim_start_matches("www.").to_lowercase())
 }
 
 fn load_boosts() -> Vec<Boost> {
@@ -271,6 +282,7 @@ impl App {
             zoom_applied: HashMap::new(),
             recent_tabs: Vec::new(),
             committed_url: HashMap::new(),
+            page_request: None,
             littles: HashMap::new(),
             focused_little: None,
             config,
@@ -360,7 +372,8 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view })
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
+            "privacy": self.config.privacy, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites } })
     }
 
     fn content_script(&self) -> String {
@@ -717,6 +730,90 @@ impl App {
                 let _ = v.zoom(z);
                 self.zoom_applied.insert(tab, z);
             }
+        }
+    }
+
+    /// Remove tracking parameters when privacy.strip_tracking is on.
+    fn clean(&self, url: &str) -> String {
+        if self.config.privacy.strip_tracking {
+            routing::strip_tracking(url, &self.config.privacy.tracking_params)
+        } else {
+            url.to_string()
+        }
+    }
+
+    fn copy(&self, text: &str, done: &str) {
+        match arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) {
+            Ok(_) => self.toast(done),
+            Err(e) => self.toast(&format!("Clipboard error: {e}")),
+        }
+    }
+
+    /// Ask the active page for something only it knows; it answers with a "reply" message carrying the nonce.
+    fn ask_page(&mut self, kind: &'static str) {
+        let Some(t) = self.state.active_tab() else { return };
+        let Some(v) = self.views.get(&t) else { return };
+        let nonce = crate::mcp::random_hex();
+        let _ = v.evaluate_script(&format!("window.__valerie && __valerie.request({kind:?}, {nonce:?})"));
+        let _ = v.focus();
+        self.page_request = Some((t, nonce, kind));
+    }
+
+    fn page_reply(&mut self, tab: TabId, m: &Value) {
+        let Some((want, nonce, kind)) = self.page_request.clone() else { return };
+        if want != tab || m["nonce"].as_str() != Some(nonce.as_str()) || m["kind"].as_str() != Some(kind) {
+            return;
+        }
+        self.page_request = None;
+        let url = self.state.tabs.get(&tab).map(|t| t.url.clone()).unwrap_or_default();
+        match kind {
+            "selection" => {
+                let text = m["value"].as_str().unwrap_or("").trim().to_string();
+                if text.is_empty() {
+                    return self.toast("Select some text first");
+                }
+                let target = routing::resolve_input(&text, &self.config.search_engine);
+                self.open_tab(&target, None, true);
+            }
+            "highlight" => {
+                let text = m["value"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>();
+                if text.is_empty() {
+                    return self.toast("Select some text first");
+                }
+                let enc = |w: &[&str]| w.join(" ").bytes().map(|b| if b.is_ascii_alphanumeric() || b"._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
+                let frag = if text.len() <= 8 { enc(&text) } else { format!("{},{}", enc(&text[..4]), enc(&text[text.len() - 4..])) };
+                let base = self.clean(url.split('#').next().unwrap_or(&url));
+                self.copy(&format!("{base}#:~:text={frag}"), "Copied link to highlight");
+            }
+            "dark" => {
+                let Some(site) = site_of(&url) else { return };
+                let on = m["value"].as_bool().unwrap_or(false);
+                self.state.dark_sites.insert(site.clone(), !on);
+                self.dirty = true;
+                self.refresh_content_config();
+                self.toast(&format!("Dark mode {} for {site}", if on { "off" } else { "on" }));
+            }
+            "hide_element" => {
+                let sel = m["value"].as_str().unwrap_or("").trim();
+                let bad = sel.is_empty() || sel.len() > 600 || sel.contains(['{', '}', ';', '<', '@', '\n']) || sel.contains("/*");
+                let Some(site) = site_of(&url).filter(|_| !bad) else { return };
+                let path = boosts_dir().join(format!("{site}.css"));
+                let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+                if !text.contains(HIDDEN_HEADER) {
+                    if !text.is_empty() && !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text.push_str(HIDDEN_HEADER);
+                    text.push('\n');
+                }
+                text.push_str(&format!("{sel} {{ display: none !important; }} {HIDDEN_MARK}\n"));
+                let _ = std::fs::create_dir_all(boosts_dir());
+                if std::fs::write(&path, text).is_ok() {
+                    self.reload_boosts();
+                    self.toast(&format!("Hidden on {site} (Show Hidden Elements brings it back)"));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1289,6 +1386,7 @@ impl App {
     /// Links from other apps: Air Traffic Control first, then a little window.
     fn open_external(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
         for url in urls {
+            let url = self.clean(&url);
             let routed = routing::route(&self.config.routes, &url).and_then(|s| self.state.space_index(s));
             match routed {
                 Some(space) => {
@@ -1311,6 +1409,12 @@ impl App {
         for v in self.views.values() {
             let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
+    }
+
+    /// Re-read boosts and push their CSS to every page now (the file watcher would also catch it, a moment later).
+    fn reload_boosts(&mut self) {
+        self.boosts = load_boosts();
+        self.refresh_content_config();
     }
 
     fn reload_config(&mut self) {
@@ -1969,7 +2073,7 @@ impl App {
             }
             Command::Go { input, new_tab } => {
                 self.close_bar();
-                let url = routing::resolve_input(&input, &self.config.search_engine);
+                let url = self.clean(&routing::resolve_input(&input, &self.config.search_engine));
                 match self.state.active_tab().filter(|_| !new_tab) {
                     Some(t) => self.navigate(t, &url),
                     None => {
@@ -2165,10 +2269,8 @@ impl App {
             }
             Command::CopyUrl { tab } => {
                 if let Some(url) = self.target_tab(tab).and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) {
-                    match arboard::Clipboard::new().and_then(|mut c| c.set_text(url)) {
-                        Ok(_) => self.toast("Copied URL"),
-                        Err(e) => self.toast(&format!("Clipboard error: {e}")),
-                    }
+                    let url = self.clean(&url);
+                    self.copy(&url, "Copied URL");
                 }
             }
             Command::ToggleSidebar => {
@@ -2355,6 +2457,81 @@ impl App {
             Command::ShowDownloads => {
                 let dir = dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
                 platform::open_external(&dir.to_string_lossy());
+            }
+            Command::HideElement => self.ask_page("hide_element"),
+            Command::SearchSelection => self.ask_page("selection"),
+            Command::CopyLinkToHighlight => self.ask_page("highlight"),
+            Command::ToggleDarkPage => self.ask_page("dark"),
+            Command::ShowHiddenElements => {
+                let Some(site) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)) else { return };
+                let path = boosts_dir().join(format!("{site}.css"));
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let kept: Vec<&str> = text.lines().filter(|l| !l.ends_with(HIDDEN_MARK) && *l != HIDDEN_HEADER).collect();
+                let removed = text.lines().count() - kept.len();
+                if kept.iter().all(|l| l.trim().is_empty()) {
+                    let _ = std::fs::remove_file(&path);
+                } else {
+                    let _ = std::fs::write(&path, kept.join("\n") + "\n");
+                }
+                self.reload_boosts();
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    let _ = v.reload();
+                }
+                self.toast(if removed > 0 { "Hidden elements are back" } else { "Nothing is hidden on this site" });
+            }
+            Command::TranslatePage => {
+                if let Some(t) = self.state.active_tab() {
+                    let Some(url) = self.state.tabs.get(&t).map(|x| x.url.clone()).filter(|u| u.starts_with("http")) else { return };
+                    let enc: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+                    let target = self.config.translate.service.replace("%l", &self.config.translate.language).replace("%u", &enc);
+                    self.navigate(t, &target);
+                }
+            }
+            Command::CopyMarkdownLink => {
+                if let Some(t) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)) {
+                    let title = t.display_title().replace('[', "(").replace(']', ")");
+                    let text = format!("[{}]({})", if title.is_empty() { t.url.clone() } else { title }, self.clean(&t.url));
+                    self.copy(&text, "Copied Markdown link");
+                }
+            }
+            Command::CopyText { text } => {
+                let short: String = text.chars().take(40).collect();
+                self.copy(&text, &format!("Copied {short}"));
+            }
+            Command::PasteAndGo => {
+                let text = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
+                let text = text.trim();
+                if text.is_empty() {
+                    return self.toast("The clipboard is empty");
+                }
+                let input = text.lines().next().unwrap_or(text).chars().take(2000).collect();
+                self.dispatch(Command::Go { input, new_tab: true }, elwt);
+            }
+            Command::CloseDuplicateTabs => {
+                let active = self.state.active_tab();
+                let sp = self.state.space();
+                let mut seen: std::collections::HashSet<String> = crate::state::flat_ids(&sp.pinned)
+                    .into_iter()
+                    .chain(crate::state::flat_ids(&sp.kept))
+                    .chain(active)
+                    .filter_map(|id| self.state.tabs.get(&id).map(|t| t.url.trim_end_matches('/').to_string()))
+                    .collect();
+                let mut dupes = Vec::new();
+                for id in sp.today.clone() {
+                    let Some(u) = self.state.tabs.get(&id).map(|t| t.url.trim_end_matches('/').to_string()) else { continue };
+                    if Some(id) != active && !seen.insert(u) {
+                        dupes.push(id);
+                    }
+                }
+                let n = dupes.len();
+                for id in dupes {
+                    self.dispatch(Command::CloseTab { tab: Some(id) }, elwt);
+                }
+                self.toast(&match n {
+                    0 => "No duplicate tabs".to_string(),
+                    1 => "Closed 1 duplicate tab".to_string(),
+                    n => format!("Closed {n} duplicate tabs"),
+                });
             }
             Command::DevTools => {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
@@ -2661,6 +2838,7 @@ impl App {
                     self.render();
                 }
             }
+            (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
             (Source::Page(target), kind @ ("open" | "peek")) => {
                 let Some(url) = m["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) else { return };
                 // Pages can forge these messages, so allow a burst (middle-clicking a few links) but not a flood.
@@ -2671,7 +2849,7 @@ impl App {
                 }
                 self.page_opens.push(now_i);
                 let mode = if kind == "peek" { "peek" } else { m["mode"].as_str().unwrap_or("background_tab") };
-                let url = url.to_string();
+                let url = self.clean(url);
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
@@ -2768,6 +2946,7 @@ impl App {
                 Target::Peek => {}
             },
             UserEvent::NewWindow { target, url } => {
+                let url = self.clean(&url);
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
