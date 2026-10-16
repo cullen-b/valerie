@@ -103,6 +103,8 @@ command_bar:
     download: 10
     chat: 16
     setup: 6
+    ai: 15
+    watch: 5
     history: 8
     synced: 6
     theme: 5
@@ -201,6 +203,29 @@ chats:
     - "Summarize the page I'm on"
     - "Find the cheapest flight in my tabs"
     - "Merge my approved GitHub PRs once their checks pass"
+
+# AI actions: one-click jobs for your agents. They show up in the command bar (type part of the name) and can go on a
+# key: "CmdOrCtrl+Shift+S": { cmd: ai_action, name: "Summarize this page" }. Add your own; set one to null to remove it.
+#   mode: page  — answered right under the find bar, from the page alone (the agent gets no tools)
+#   mode: chat  — opens in Chats; the agent can see and use your whole browser
+#   prompt: what to ask. Fill-ins: {title} {url} of the page you're on, {selection} the text you've selected,
+#           {input} asks you for something first
+#   agent: which agent (a name under agents.available); empty = agents.use.find for page, agents.use.chat for chat
+ai_actions:
+  Summarize this page: { mode: page, prompt: "Summarize this page in at most 5 short bullet points." }
+  Explain the selection: { mode: page, prompt: "Explain this in plain words, using the page for context: {selection}" }
+  Key facts and dates: { mode: page, prompt: "List the key facts, numbers, prices and dates on this page." }
+  Ask about this page…: { mode: page, prompt: "{input}" }
+  Tidy my tabs: { mode: chat, prompt: "Tidy my tabs in this space: close duplicates and pages I'm clearly done with, then group what's left in Today into Kept folders by topic. Tell me what you did." }
+  Short tab titles: { mode: chat, prompt: "Give every tab in this space a short, clear title (2 to 4 words) with rename_tab." }
+  Find related reading: { mode: chat, prompt: "Find three good pages related to \"{title}\" ({url}) and open them as background tabs. Say why each is worth reading." }
+  Do something on this page…: { mode: chat, prompt: "On the page I'm on ({title}, {url}): {input}" }
+
+# Watch This Page…: describe what to wait for ("the price drops below $500", "checks pass on this PR"); an agent looks
+# in the background and tells you once it happens.
+watch:
+  every_minutes: 30        # how often each watched page is checked
+  notify: true             # a system notification when it happens (as well as a chat with the details)
 
 # Privacy
 privacy:

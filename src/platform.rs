@@ -579,3 +579,14 @@ pub fn print(wv: &WebView) {
     #[cfg(not(target_os = "macos"))]
     let _ = wv.evaluate_script("window.print()");
 }
+
+/// A system notification (for things that happen while you're looking elsewhere, like a watched page changing).
+pub fn notify(title: &str, body: &str) {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("osascript").arg("-e").arg(format!("display notification \"{}\" with title \"{}\"", esc(body), esc(title))).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("notify-send").args([title, body]).spawn();
+    #[cfg(windows)]
+    let _ = (title, body, esc);
+}

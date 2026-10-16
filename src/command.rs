@@ -279,6 +279,20 @@ pub enum Command {
         chat: String,
         agent: String,
     },
+    /// Run one of the `ai_actions` from the config.
+    AiAction {
+        name: String,
+        #[serde(default)]
+        input: Option<String>,
+    },
+    /// Have an agent check this page in the background until something happens.
+    WatchPage {
+        #[serde(default)]
+        condition: Option<String>,
+    },
+    StopWatching {
+        id: String,
+    },
     /// Install (if needed) and sign in to an agent CLI in one step.
     SetUpAgent {
         agent: String,
@@ -355,6 +369,8 @@ impl Command {
                 // An agent starting agents could loop forever; setting one up installs software.
                 | Command::NewChat { .. }
                 | Command::SendChat { .. }
+                | Command::AiAction { .. }
+                | Command::WatchPage { .. }
                 | Command::SetUpAgent { .. }
         )
     }
@@ -450,6 +466,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("stop_chat", "Stop the Agent in This Chat"),
     ("close_chat", "Close Chat"),
     ("toggle_pin_chat", "Pin / Unpin Chat"),
+    ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
     ("show_downloads", "Show Downloads Folder"),
@@ -501,6 +518,9 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("close_chat", "{ chat? }"),
     ("rename_chat", "{ chat, title }"),
     ("set_chat_agent", "{ chat, agent }"),
+    ("ai_action", "{ name, input? }  (run one of the ai_actions from the config)"),
+    ("watch_page", "{ condition? }"),
+    ("stop_watching", "{ id }"),
     ("set_up_agent", "{ agent: claude | codex | opencode | pi | cursor | hermes }  (install if needed, then sign in)"),
     ("toggle_media", "{ tab? }  (play / pause)"),
     ("run_agent", "{ name? | prompt?, agent? }"),

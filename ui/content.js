@@ -990,14 +990,20 @@ function isQuestion(q) {
 }
 const ans = { box: null, body: null, text: "", tools: [], q: "", done: false, raf: 0 };
 function closeAnswer() { if (ans.box) { ans.box.remove(); ans.box = null; } }
-function askPage(q) {
+// An AI action from Valerie: fill in what only the page knows, then ask like find does.
+function askAction(label, prompt) {
+  const sel = String(getSelection() || "").trim().slice(0, 4000);
+  if (prompt.includes("{selection}") && !sel) return toast("Select some text first");
+  askPage(prompt.split("{selection}").join(sel), label);
+}
+function askPage(q, label) {
   const limit = (cfg.ai || {}).page_text_limit || 60000;
   const text = (document.body ? document.body.innerText : "").slice(0, limit);
   closeAnswer();
   Object.assign(ans, { text: "", tools: [], q, done: false, error: "" });
   ans.box = document.createElement("div"); ans.box.className = "answer" + (fnd.map ? " with-map" : "");
   const head = document.createElement("div"); head.className = "q";
-  const qs = document.createElement("span"); qs.textContent = q;
+  const qs = document.createElement("span"); qs.textContent = label || q;
   const x = document.createElement("b"); x.textContent = "×"; x.title = "Close"; x.onclick = closeAnswer;
   head.append(qs, x);
   ans.body = document.createElement("div");
@@ -1246,7 +1252,7 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind, media, reader, request, answer, ask: (q) => { openFind(q); askPage(q); },
+    closeFind, media, reader, request, answer, askAction, ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
