@@ -106,6 +106,7 @@ pub struct SidebarConfig {
     pub swipe_between_spaces: bool,
     pub preload_on_hover: bool,
     pub preload_delay_ms: f64,
+    pub preload_at_most: f64,
     pub double_click_edge: bool,
 }
 

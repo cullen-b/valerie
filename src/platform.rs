@@ -944,14 +944,10 @@ pub fn copy_png(png: &[u8]) -> bool {
 
 /// Local date and time for file names, like "2026-10-15 at 14.03.22".
 pub fn local_timestamp() -> String {
-    #[cfg(unix)]
-    if let Ok(o) = std::process::Command::new("date").arg("+%Y-%m-%d at %H.%M.%S").output() {
-        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        if !s.is_empty() {
-            return s;
-        }
+    match local_time(crate::state::now()) {
+        Some(t) => format!("{:04}-{:02}-{:02} at {:02}.{:02}.{:02}", t.year, t.month, t.day, t.hour, t.min, t.sec),
+        None => crate::state::now().to_string(),
     }
-    crate::state::now().to_string()
 }
 
 /// Make `alert()`, `confirm()` and `prompt()` in web pages show real dialogs (pass any webview Valerie made).
@@ -1008,16 +1004,15 @@ pub fn notify(n: &Note) {
 
 /// Today's local date, weekday and time: ("2026-10-16", "Thu", "Thursday 16 October", "08:02").
 pub fn local_day() -> (String, String, String, String) {
-    #[cfg(unix)]
-    if let Ok(o) = std::process::Command::new("date").arg("+%Y-%m-%d|%a|%A %-d %B|%H:%M").output() {
-        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        let p: Vec<&str> = s.split('|').collect();
-        if p.len() == 4 {
-            return (p[0].into(), p[1].into(), p[2].into(), p[3].into());
-        }
+    match local_time(crate::state::now()) {
+        Some(t) => (
+            t.date(),
+            WEEKDAYS[t.weekday][..3].to_string(),
+            format!("{} {} {}", WEEKDAYS[t.weekday], t.day, MONTHS[t.month as usize - 1]),
+            format!("{:02}:{:02}", t.hour, t.min),
+        ),
+        None => (format!("day {}", crate::state::now() / 86400), String::new(), String::new(), String::new()),
     }
-    let d = crate::state::now() / 86400;
-    (format!("day {d}"), String::new(), String::new(), String::new())
 }
 
 /// Ask a yes/no question on a webview's window (a sheet); `done(true)` for yes. Elsewhere it answers no.
@@ -1033,18 +1028,78 @@ pub fn ask(wv: &WebView, title: &str, body: &str, yes: &str, no: &str, done: imp
 
 /// A moment (seconds) as local "Thu 09:00" (or "09:00" if it's today).
 pub fn local_time_of(secs: u64) -> String {
+    let (Some(t), Some(today)) = (local_time(secs), local_time(crate::state::now())) else { return format!("{secs}") };
+    if t.date() == today.date() {
+        format!("{:02}:{:02}", t.hour, t.min)
+    } else {
+        format!("{} {:02}:{:02}", &WEEKDAYS[t.weekday][..3], t.hour, t.min)
+    }
+}
+
+const WEEKDAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/// A moment on the computer's clock, in its time zone.
+struct LocalTime {
+    year: i32,
+    month: u32,
+    day: u32,
+    weekday: usize,
+    hour: u32,
+    min: u32,
+    sec: u32,
+}
+
+impl LocalTime {
+    fn date(&self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
+}
+
+/// Read straight from the C library (this runs every tick; starting `date` each time was a process per call).
+fn local_time(secs: u64) -> Option<LocalTime> {
     #[cfg(unix)]
     {
-        let today = local_day().0;
-        if let Ok(o) = std::process::Command::new("date").args(["-r", &secs.to_string(), "+%Y-%m-%d|%a %H:%M|%H:%M"]).output() {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            let p: Vec<&str> = s.split('|').collect();
-            if p.len() == 3 {
-                return if p[0] == today { p[2].to_string() } else { p[1].to_string() };
-            }
+        use std::ffi::{c_char, c_int, c_long};
+        #[repr(C)]
+        struct Tm {
+            sec: c_int,
+            min: c_int,
+            hour: c_int,
+            mday: c_int,
+            mon: c_int,
+            year: c_int,
+            wday: c_int,
+            yday: c_int,
+            isdst: c_int,
+            gmtoff: c_long,
+            zone: *const c_char,
         }
+        extern "C" {
+            fn tzset();
+            fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
+        }
+        let t = secs as i64;
+        let mut tm: Tm = unsafe { std::mem::zeroed() };
+        // tzset picks up a time zone change (localtime_r alone needn't).
+        if unsafe { tzset(); localtime_r(&t, &mut tm) }.is_null() {
+            return None;
+        }
+        Some(LocalTime {
+            year: tm.year + 1900,
+            month: (tm.mon + 1) as u32,
+            day: tm.mday as u32,
+            weekday: tm.wday.clamp(0, 6) as usize,
+            hour: tm.hour as u32,
+            min: tm.min as u32,
+            sec: tm.sec as u32,
+        })
     }
-    format!("{secs}")
+    #[cfg(not(unix))]
+    {
+        let _ = secs;
+        None
+    }
 }
 
 /// A saved cookie (from WebKit's Cookies.binarycookies).
@@ -1093,7 +1148,10 @@ pub fn read_binary_cookies(data: &[u8]) -> Vec<Cookie> {
 /// `com.apple.developer.web-browser.public-key-credential`; Windows hands them to Windows Hello.
 pub fn passkeys_work() -> bool {
     #[cfg(target_os = "macos")]
-    return mac::has_entitlement("com.apple.developer.web-browser.public-key-credential");
+    {
+        static WORKS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *WORKS.get_or_init(|| mac::has_entitlement("com.apple.developer.web-browser.public-key-credential"))
+    }
     #[cfg(not(target_os = "macos"))]
     true
 }
@@ -1159,6 +1217,17 @@ mod cookie_tests {
         out.extend((page.len() as u32).to_be_bytes());
         out.extend(page);
         out
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_time_matches_date() {
+        let out = std::process::Command::new("date").arg("+%Y-%m-%d|%a|%A %-d %B|%H:%M").output().unwrap();
+        let want = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let (a, b, c, d) = super::local_day();
+        assert_eq!(format!("{a}|{b}|{c}|{d}"), want);
+        assert_eq!(super::local_time_of(crate::state::now()), d);
+        assert!(super::local_time_of(crate::state::now() - 3 * 86400).starts_with(&super::WEEKDAYS[(super::local_time(crate::state::now() - 3 * 86400).unwrap().weekday)][..3]));
     }
 
     #[test]

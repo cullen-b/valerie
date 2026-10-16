@@ -154,13 +154,15 @@ function scrollable(e) {
   const s = getComputedStyle(e);
   return /(auto|scroll|overlay)/.test(s.overflowY + s.overflowX) && (e.scrollHeight > e.clientHeight + 4 || e.scrollWidth > e.clientWidth + 4);
 }
-let innerScroller = null;
+let innerScroller = null, noInnerUntil = 0;
 function scroller() {
   for (let e = document.activeElement; e; e = e.parentElement) if (scrollable(e)) return e;
   const doc = document.scrollingElement || document.documentElement;
   if (doc.scrollHeight > innerHeight + 4) return doc;
   // App-like pages scroll an inner element: pick the largest visible one (scanning is slow, so remember it).
   if (innerScroller && innerScroller.isConnected && scrollable(innerScroller)) return innerScroller;
+  // A page with nothing to scroll would otherwise be scanned again on every key press.
+  if (performance.now() < noInnerUntil) return doc;
   let best = doc, area = 0;
   for (const e of document.querySelectorAll("div, main, section, article")) {
     if (!scrollable(e)) continue;
@@ -168,6 +170,7 @@ function scroller() {
     if (a > area) { area = a; best = e; }
   }
   innerScroller = best === doc ? null : best;
+  if (!innerScroller) noInnerUntil = performance.now() + 1500;
   return best;
 }
 const step = () => cfg.vim.scroll_step || 80;
@@ -1073,7 +1076,10 @@ function cookieBanners() {
   let tries = 0, timer = 0, finished = false;
   const look = () => { timer = 0; if (!finished && (cookieBanners() || ++tries > 20)) { finished = true; cmpWatch.disconnect(); } };
   const cmpWatch = new MutationObserver(() => { if (!timer) timer = setTimeout(look, 400); });
-  const start = () => { look(); if (!finished) cmpWatch.observe(document.documentElement, { childList: true, subtree: true }); setTimeout(() => cmpWatch.disconnect(), 15000); };
+  const start = () => {
+    if (((cfg.privacy || {}).cookie_banners || "off") === "off") return;
+    look(); if (!finished) cmpWatch.observe(document.documentElement, { childList: true, subtree: true }); setTimeout(() => cmpWatch.disconnect(), 15000);
+  };
   if (document.documentElement) cookieBanners();
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 }
