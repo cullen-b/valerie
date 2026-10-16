@@ -83,18 +83,21 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("agents: {job} uses {name:?}, which isn't under agents.available"));
                 }
             }
-            for b in &c.briefs {
-                if config::parse_time(&b.at).is_none() {
-                    problems.push(format!("briefs: {:?} has at {:?}; use a time like 08:00", b.name, b.at));
+            for t in c.all_tasks() {
+                if t.schedule().is_none() {
+                    problems.push(format!("tasks: {:?} has when {:?}; try \"every day at 8am\", \"weekdays at 9\", \"every 5 minutes\", \"when Valerie starts\" or \"only when I ask\"", t.name, t.when));
                 }
-                if !b.space.is_empty() && !c.spaces.iter().any(|s| s.name == b.space) {
-                    problems.push(format!("briefs: {:?} lives in space {:?}, which isn't in `spaces`", b.name, b.space));
+                if !["", "page", "chat", "notify"].contains(&t.result.as_str()) {
+                    problems.push(format!("tasks: {:?} has result {:?}; use page, chat or notify", t.name, t.result));
                 }
-                if b.want.trim().is_empty() {
-                    problems.push(format!("briefs: {:?} needs `want` (what it should cover, in plain words)", b.name));
+                if !t.space.is_empty() && !c.spaces.iter().any(|s| s.name == t.space) {
+                    problems.push(format!("tasks: {:?} lives in space {:?}, which isn't in `spaces`", t.name, t.space));
                 }
-                if !b.agent.is_empty() && !c.agents.available.get(&b.agent).is_some_and(Option::is_some) && ai::kind(&b.agent).is_none() {
-                    problems.push(format!("briefs: {:?} uses agent {:?}, which isn't under agents.available", b.name, b.agent));
+                if t.want.trim().is_empty() {
+                    problems.push(format!("tasks: {:?} needs `want` (what to do, in plain words)", t.name));
+                }
+                if !t.agent.is_empty() && !c.agents.available.get(&t.agent).is_some_and(Option::is_some) && ai::kind(&t.agent).is_none() {
+                    problems.push(format!("tasks: {:?} uses agent {:?}, which isn't under agents.available", t.name, t.agent));
                 }
             }
             for (name, a) in c.ai_actions.iter().filter_map(|(n, a)| a.as_ref().map(|a| (n, a))) {

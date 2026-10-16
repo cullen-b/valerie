@@ -105,7 +105,7 @@ command_bar:
     setup: 6
     ai: 15
     watch: 5
-    brief: 17
+    task: 17
     history: 8
     synced: 6
     theme: 5
@@ -222,17 +222,25 @@ ai_actions:
   Find related reading: { mode: chat, prompt: "Find three good pages related to \"{title}\" ({url}) and open them as background tabs. Say why each is worth reading." }
   Do something on this page…: { mode: chat, prompt: "On the page I'm on ({title}, {url}): {input}" }
 
-# Briefs: a page an agent writes for you on a schedule, like a morning brief from your Jira. Pick "New Brief…" in the
-# command bar and describe what you want in your own words; it lands here. Each brief is a tab (in Kept, in its space)
-# that always shows the latest edition, with earlier ones linked at the bottom.
-briefs: []
+# Tasks: things your agents do for you, written in your own words. "Create Task…" in the command bar asks what and
+# when, then adds it here. A morning brief from your Jira, joining your Google Meet calls when they start, opening your
+# dashboards side by side when Valerie starts, scanning a site for something: all tasks.
+tasks: []
 #  - name: Morning brief
 #    want: "Go through my Jira and tell me what's on my plate today, most urgent first, with links."
-#    space: Work           # the space its tab lives in
-#    at: "08:00"           # when to write it, 24-hour (runs as soon as the computer is awake after that)
-#    days: weekdays        # one of: every day | weekdays | weekends | days like "mon, wed, fri"
-#    agent: ""             # which agent (a name under agents.available); empty = agents.use.tasks
-#    machine: ""           # only this computer writes it (set automatically, so synced machines don't double up)
+#    when: weekdays at 8am       # plain words: "every day at 8am" | "weekdays at 9" | "mon, wed at 5pm" |
+#                                #   "every 5 minutes" | "every 2 hours" | "when Valerie starts" | "only when I ask"
+#    result: page                # one of: page (a tab in Kept showing the latest result) | chat (a chat logging each
+#                                #   run) | notify (just a notification)
+#    space: Work                 # where its page tab lives
+#    agent: ""                   # which agent (a name under agents.available); empty = agents.use.tasks
+#    machine: ""                 # only this computer runs it (set automatically, so synced machines don't double up)
+#    enabled: true
+#  - name: Join my meetings
+#    want: "If a Google Calendar meeting with a Meet link starts in the next 2 minutes, open the Meet link and join."
+#    when: every 2 minutes
+#    result: notify
+briefs: []                     # the older name for tasks that write a page; still read
 
 # Watch This Page…: describe what to wait for ("the price drops below $500", "checks pass on this PR"); an agent looks
 # in the background and tells you once it happens.
@@ -506,14 +514,7 @@ agents:
     customize: ""          # "! make the text bigger" in the command bar: edits Valerie's settings
   model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
   space: Agents            # agents open their tabs in this space and leave yours alone
-  jobs: []
-  # jobs:
-  #   - name: morning-brief
-  #     prompt: "Open Hacker News and my GitHub notifications, then summarise what matters"
-  #     at: "08:30"        # every day at this local time, and/or
-  #     every: 6h          # repeat interval: 30m | 6h | 1d
-  #     agent: claude      # optional: overrides `default`
-  #     model: ""          # optional: overrides `model`
+  jobs: []                 # the older form of `tasks` (below): { name, prompt, at: "08:30" or every: 30m, agent }; still read
 
 
 # --------------------------------------------------------------------------------------------------------------

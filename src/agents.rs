@@ -108,8 +108,3 @@ pub fn run(r: Run) -> Finished {
         Err(e) => finished(false, format!("{e:#}")),
     }
 }
-
-/// Current local time as "HH:MM".
-pub fn local_hhmm() -> String {
-    Command::new("date").arg("+%H:%M").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
-}

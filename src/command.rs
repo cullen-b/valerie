@@ -279,18 +279,22 @@ pub enum Command {
         chat: String,
         agent: String,
     },
-    /// Set up a brief: describe it in your own words and pick a time (asked for when missing).
-    NewBrief {
+    /// Create a task: what an agent should do and when, in plain words (asked for when missing).
+    #[serde(alias = "new_brief")]
+    NewTask {
         #[serde(default)]
         want: Option<String>,
-        #[serde(default)]
-        at: Option<String>,
+        #[serde(default, alias = "at")]
+        when: Option<String>,
     },
-    /// Write a brief now instead of waiting for its time.
-    RunBrief {
+    /// Run a task now instead of waiting for its time.
+    #[serde(alias = "run_brief")]
+    RunTask {
         name: String,
     },
-    OpenBrief {
+    /// Show a task's result (its page or chat).
+    #[serde(alias = "open_brief")]
+    OpenTask {
         name: String,
     },
     /// Run one of the `ai_actions` from the config.
@@ -385,8 +389,8 @@ impl Command {
                 | Command::SendChat { .. }
                 | Command::AiAction { .. }
                 | Command::WatchPage { .. }
-                | Command::NewBrief { .. }
-                | Command::RunBrief { .. }
+                | Command::NewTask { .. }
+                | Command::RunTask { .. }
                 | Command::SetUpAgent { .. }
         )
     }
@@ -483,7 +487,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("close_chat", "Close Chat"),
     ("toggle_pin_chat", "Pin / Unpin Chat"),
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
-    ("new_brief", "New Brief… (a page an agent writes for you every day)"),
+    ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
     ("show_downloads", "Show Downloads Folder"),
@@ -537,9 +541,9 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("set_chat_agent", "{ chat, agent }"),
     ("ai_action", "{ name, input? }  (run one of the ai_actions from the config)"),
     ("watch_page", "{ condition? }"),
-    ("new_brief", "{ want?, at? }  (describe what the brief should cover; at = time like 08:00)"),
-    ("run_brief", "{ name }"),
-    ("open_brief", "{ name }"),
+    ("new_task", "{ want?, when? }  (what to do, and when in plain words: \"every day at 8am\", \"every 5 minutes\", \"when Valerie starts\")"),
+    ("run_task", "{ name }"),
+    ("open_task", "{ name }"),
     ("stop_watching", "{ id }"),
     ("set_up_agent", "{ agent: claude | codex | opencode | pi | cursor | hermes }  (install if needed, then sign in)"),
     ("toggle_media", "{ tab? }  (play / pause)"),

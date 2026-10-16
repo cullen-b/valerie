@@ -108,8 +108,10 @@ Valerie runs the agent CLIs installed on this computer (Claude Code, Codex, Open
 user's own sign-ins. Name as many as you like under `agents.available` (same CLI with different models, or any
 `command` that prints an answer) and pick one per job under `agents.use` (`chat`, `find`, `tasks`, `customize`),
 e.g. a strong model for chat and a fast one for find. "Set Up <name>" in the command bar installs a CLI and signs in.
-Briefs (`briefs:` in config.yaml) are pages an agent writes on a schedule from a plain description (`want`); to change
-what a brief covers, edit its `want`. Chats are JSON files in `chats/` here (they sync when `chats.sync` is on). Settings for the Chats space and asking
+Tasks (`tasks:` in config.yaml) are things an agent does for the user, described in plain words: `want` (what) and
+`when` ("weekdays at 8am", "every 5 minutes", "when Valerie starts", "only when I ask"), with the result as a page tab,
+a chat or a notification. A morning brief is a task; so is "join my meetings when they start". To change a task, edit
+its `want` or `when`; `check-config` tells you if `when` can't be understood. Chats are JSON files in `chats/` here (they sync when `chats.sync` is on). Settings for the Chats space and asking
 questions from find are under `chats`.
 
 ## Settings

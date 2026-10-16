@@ -92,10 +92,12 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   the selection, Key facts and dates, Tidy my tabs, Short tab titles, Find related reading, and anything you add in
   YAML (`{title}`, `{url}`, `{selection}`, `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use
   the browser).
-- **Briefs:** "New Brief…" in the command bar, then describe it in your own words ("go through my Jira and tell me
-  what's on my plate today") and pick a time. Every day an agent gathers it from your signed-in sites and writes a
-  page that sits as a tab in that space (in Kept), always showing the latest edition, with earlier ones linked and a
-  "Write it again now" link. Briefs are saved under `briefs:` in your config, so you can edit the wording any time.
+- **Tasks:** "Create Task…" in the command bar asks two things in plain words: what ("go through my Jira and tell
+  me what's on my plate today", "join my Google Meet calls when they start", "open my dashboards side by side") and
+  when ("weekdays at 8am", "every 2 minutes", "when Valerie starts", "only when I ask"). An agent with your signed-in
+  browser does it. Things to read become a tab (in Kept, always the latest, with earlier ones and "Run it again now");
+  things to do log to a chat or just notify you. Tasks live under `tasks:` in your config, so you (or your LLM) can
+  reword them any time. A morning brief is just one task.
 - **Watch This Page…:** "tell me when the price drops below $500" / "when checks pass on this PR". An agent checks in
   the background every 30 minutes (`watch.every_minutes`), notifies you once it happens, and leaves the details in Chats.
 
