@@ -379,6 +379,10 @@ pub enum Command {
     ShowDownloads,
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
+    /// Open this page in Safari, where passkeys work, then offer to bring the login back.
+    SignInWithSafari,
+    /// Copy this site's login (its cookies) from Safari into this tab's profile, then reload.
+    BringLoginFromSafari,
     SetDefaultBrowser,
     /// Run a command defined by a plugin in `<config dir>/plugins/<plugin>/plugin.yaml`.
     Plugin {
@@ -429,6 +433,7 @@ impl Command {
             Command::CopyPassword { .. }
                 | Command::DeletePassword { .. }
                 | Command::OpenDownload { .. }
+                | Command::BringLoginFromSafari
                 // An agent starting agents could loop forever; setting one up installs software.
                 | Command::NewChat { .. }
                 | Command::SendChat { .. }
@@ -542,6 +547,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
+    ("sign_in_with_safari", "Sign In with Safari (for passkeys)"),
+    ("bring_login_from_safari", "Bring Login from Safari"),
     ("set_default_browser", "Make Valerie the Default Browser"),
     ("open_config", "Open Config File"),
     ("reload_config", "Reload Config"),
