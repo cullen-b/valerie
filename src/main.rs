@@ -60,6 +60,15 @@ fn check_config() -> anyhow::Result<()> {
             if !["site", "tab"].contains(&c.tabs.zoom.as_str()) {
                 problems.push(format!("tabs: zoom is {:?}; use site or tab", c.tabs.zoom));
             }
+            if !["auto", "light", "dark", "sepia"].contains(&c.reader_view.theme.as_str()) {
+                problems.push(format!("reader_view: theme is {:?}; use auto, light, dark or sepia", c.reader_view.theme));
+            }
+            if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
+                problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));
+            }
+            if !["reject", "hide", "off"].contains(&c.privacy.cookie_banners.as_str()) {
+                problems.push(format!("privacy: cookie_banners is {:?}; use reject, hide or off", c.privacy.cookie_banners));
+            }
             if !["serif", "sans"].contains(&c.reader_view.font.as_str()) {
                 problems.push(format!("reader_view: font is {:?}; use serif or sans", c.reader_view.font));
             }
@@ -87,6 +96,7 @@ fn check_config() -> anyhow::Result<()> {
         }
         Err(e) => problems.push(format!("config.yaml: {e:#}")),
     }
+    problems.extend(config::unknown_keys(&std::fs::read_to_string(config::config_path()).unwrap_or_default()));
     let (plugins, errors) = plugins::load_all();
     problems.extend(errors.into_iter().map(|e| format!("plugin {e}")));
     if problems.is_empty() {
@@ -163,6 +173,10 @@ fn main() -> anyhow::Result<()> {
         Some("call") => {
             let Some(tool) = args.get(1) else { anyhow::bail!("usage: valerie call <tool> [json]") };
             return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));
+        }
+        Some("effective-config") => {
+            print!("# Every setting as it applies right now: Valerie's defaults with your config.yaml on top.\n{}", serde_yaml::to_string(&config)?);
+            return Ok(());
         }
         Some("default-config") => {
             print!("{}", config::DEFAULT_YAML);

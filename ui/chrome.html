@@ -43,11 +43,11 @@ body.pointer #url:hover b { color: var(--fg); }
 #url .path { opacity: .6; }
 #url .lock { font-size: 10px; opacity: .7; }
 #url .insecure { font-size: 11px; color: #ff9a6b; opacity: .85; }
-.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 10px; flex: none; }
+.grid { display: grid; grid-template-columns: repeat(var(--pin-cols, 4), 1fr); gap: 7px; margin-bottom: 10px; flex: none; }
 #favorites:empty { display: none; }
 body.dragging #favorites:empty { display: block; height: 46px; border-radius: 11px; border: 1.5px dashed var(--line); }
 body.dragging #favorites:empty::after { content: "Drop here to favorite"; display: grid; place-items: center; height: 100%; color: var(--fg-dim); font-size: 11.5px; }
-.tile { height: 46px; border-radius: 11px; background: var(--tile); display: grid; place-items: center; position: relative; transition: background .12s, transform .12s; }
+.tile { height: var(--pin-h, 46px); border-radius: 11px; background: var(--tile); display: grid; place-items: center; position: relative; transition: background .12s, transform .12s; }
 body.pointer .tile:hover { background: var(--active); }
 .tile.active { background: var(--active); box-shadow: 0 0 0 1.5px var(--accent) inset; }
 .tile img, .tile .letter { width: 20px; height: 20px; }
@@ -453,6 +453,9 @@ function render(state) {
   applyTheme(S.theme);
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
+  root.style.setProperty("--pin-cols", Math.max(1, Math.min(12, +S.sidebar.pinned_columns || 4)));
+  root.style.setProperty("--pin-h", Math.max(20, +S.sidebar.pinned_tile_height || 46) + "px");
+  document.body.style.fontFamily = S.layout.font ? `${S.layout.font}, -apple-system, system-ui, sans-serif` : "";
   const th = Math.min(120, Math.max(16, +S.sidebar.tab_height || 38));
   root.style.setProperty("--tab-h", th + "px");
   root.style.setProperty("--tab-icon", Math.round(Math.min(36, Math.max(11, th * .42))) + "px");
@@ -646,7 +649,7 @@ function springBack() {
   sc.style.transition = "transform .25s var(--ease), opacity .2s"; sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
 }
 $("#sidebar").addEventListener("wheel", (e) => {
-  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !S || S.spaces.length < 2) return;
+  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !S || S.spaces.length < 2 || S.sidebar.swipe_between_spaces === false) return;
   if (swipe.lock) return;
   swipe.acc += e.deltaX;
   const sc = $("#scroll"), off = Math.max(-1, Math.min(1, swipe.acc / 160));
@@ -680,12 +683,12 @@ addEventListener("mouseup", () => {
   resizing = false; document.body.classList.remove("resizing");
   send({ t: "resize", width: resizeW || S.layout.sidebar_width, done: true });
 });
-$("#resize").addEventListener("dblclick", () => cmd({ cmd: "cycle_sidebar_size" }));
+$("#resize").addEventListener("dblclick", () => { if (!S || S.sidebar.double_click_edge !== false) cmd({ cmd: "cycle_sidebar_size" }); });
 
 let toastTimer;
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ((S && S.toast_seconds) || 1.8) * 1000);
 }
 // Vim keys that act on tabs and spaces also work here (start page, sidebar focus, a tab still loading).
 const PAGE_ONLY = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find", "back", "forward", "reload"]);
@@ -701,7 +704,7 @@ addEventListener("keydown", (e) => {
     if (!PAGE_ONLY.has(c.cmd)) cmd(c);
   };
   if (b[next] != null && !keys.some((k) => k !== next && k.startsWith(next))) { vimBuf = ""; e.preventDefault(); return fire(b[next]); }
-  if (keys.some((k) => k.startsWith(next))) { vimBuf = next; vimTimer = setTimeout(() => { if (b[vimBuf] != null) fire(b[vimBuf]); vimBuf = ""; }, 700); return; }
+  if (keys.some((k) => k.startsWith(next))) { vimBuf = next; vimTimer = setTimeout(() => { if (b[vimBuf] != null) fire(b[vimBuf]); vimBuf = ""; }, S.vim.key_timeout_ms || 700); return; }
   vimBuf = "";
 });
 

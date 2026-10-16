@@ -47,6 +47,7 @@ window.little = {
     r.style.setProperty("--bg1", s.theme.background[0]);
     r.style.setProperty("--bg2", s.theme.background[1] || s.theme.background[0]);
     r.style.setProperty("--accent", s.theme.accent);
+    document.body.style.fontFamily = s.font ? `${s.font}, -apple-system, system-ui, sans-serif` : "";
     let h = ""; try { h = new URL(s.url).hostname.replace(/^www\./, ""); } catch {}
     const t = document.getElementById("title"); t.innerHTML = "";
     const b = document.createElement("b"); b.textContent = h; t.append(b, document.createTextNode(s.title || ""));

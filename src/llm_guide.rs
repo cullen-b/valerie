@@ -36,14 +36,50 @@ Valerie's binary: `{exe}`
 1. Decide the smallest change: a setting in `config.yaml`, a boost, or a plugin.
 2. Edit the file(s). In `config.yaml` add only the keys you change: maps (like `keybindings`, `sidebar`) merge key by
    key, lists (like `spaces`, `routes`) replace the default list entirely, and `null` removes a default entry.
-3. Validate: run `"{exe}" check-config`. It parses the config and every plugin and prints exact errors. Fix and rerun
-   until it says OK.
+3. Validate: run `"{exe}" check-config`. It parses the config and every plugin, catches misspelled setting names
+   (with the right spelling), and prints exact errors. Fix and rerun until it says OK.
+   `"{exe}" effective-config` prints every setting as it applies right now (defaults plus the user's changes).
 4. Tell the user what changed and which setting turns it back off.
 
 House rules from the owner:
 - When asked to add or remove something, do it **and** make it a setting so it can be switched back.
 - Keep `config.yaml` readable: group related keys, add a short comment for anything non-obvious.
 - Never add "press Esc to …" style messages.
+
+## Turning what people say into settings
+
+People describe what they want, not setting names. Map the wish to settings, change only those, and say what you
+changed in plain words. Some translations:
+
+| They say | Change |
+|---|---|
+| "The text is too small" / "I can't read it" | `tabs.default_zoom: 125` (every website), `sidebar.tab_height: 48`, `command_bar.font_size: 24` |
+| "Too cluttered" / "simpler" | `sidebar.nav_buttons: true`, `sidebar.url_bar: true`, `sidebar.space_switcher: false`, `sidebar.kept_section: false`, `vim.enabled: false`, `command_bar.calculator: false`, `links.show_url_on_hover: false` |
+| "I keep pressing keys by accident" | `vim.enabled: false`, remove shortcuts under `keybindings` with `null` |
+| "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0`, `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
+| "Messages vanish before I read them" | `toast_seconds: 5` |
+| "Make it private" / "stop tracking me" | `content_blocking.enabled: true`, `privacy.strip_tracking: true`, `privacy.cookie_banners: reject` |
+| "Dark mode everywhere" | `pages.dark_mode: always` (or `system` to follow the computer) |
+| "Tabs on top like Chrome" | `layout.tab_bar: top` |
+| "Bigger window" / "smaller window" | `window.width`, `window.height` |
+| "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
+| "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
+| "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
+| "Use DuckDuckGo" | `search_engine: "https://duckduckgo.com/?q=%s"` |
+
+Example: "I'm 82, my eyes aren't great, I only use email and the news, and the keyboard tricks confuse me" becomes:
+
+```yaml
+tabs: {{ default_zoom: 140, archive_after_hours: 0 }}
+sidebar: {{ tab_height: 56, space_switcher: false, kept_section: false }}
+command_bar: {{ font_size: 26, calculator: false }}
+vim: {{ enabled: false }}
+layout: {{ animation_ms: 0, font: "Verdana" }}
+toast_seconds: 5
+pages: {{ dark_mode: off }}
+```
+
+If a wish needs something no setting covers, a boost (CSS for one site) or a plugin can usually do it.
 
 ## Common recipes
 
