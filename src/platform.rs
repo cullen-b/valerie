@@ -176,6 +176,137 @@ mod mac {
         }
     }
 
+    /// Show alert / confirm / prompt as proper dialogs. WebKit sends them to the UI delegate, and wry's delegate
+    /// doesn't answer them, so `alert()` silently vanished and `confirm()` always said Cancel. The methods are added
+    /// to wry's delegate class once, after the first webview exists.
+    pub fn install_page_dialogs(wv: &WebView) {
+        use objc2::runtime::{AnyClass, Bool, Imp, Sel};
+        use objc2::sel;
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| unsafe {
+            // wry's delegate class (its runtime name isn't fixed, so take it from a live webview).
+            let delegate: *mut AnyObject = msg_send![ptr(wv), UIDelegate];
+            if delegate.is_null() {
+                return;
+            }
+            let cls = (*delegate).class();
+            let cls = cls as *const AnyClass as *mut AnyClass;
+            type Done0 = block2::Block<dyn Fn()>;
+            type DoneBool = block2::Block<dyn Fn(Bool)>;
+            type DoneText = block2::Block<dyn Fn(*mut objc2_foundation::NSString)>;
+            unsafe extern "C-unwind" fn alert(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, msg: *mut objc2_foundation::NSString, frame: *mut AnyObject, done: &Done0) {
+                let done = done.copy();
+                sheet(wv, msg, frame, &["OK"], None, move |_, _| done.call(()));
+            }
+            unsafe extern "C-unwind" fn confirm(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, msg: *mut objc2_foundation::NSString, frame: *mut AnyObject, done: &DoneBool) {
+                let done = done.copy();
+                sheet(wv, msg, frame, &["OK", "Cancel"], None, move |r, _| done.call((Bool::new(r == 1000),)));
+            }
+            unsafe extern "C-unwind" fn prompt(
+                _: *mut AnyObject,
+                _: Sel,
+                wv: *mut AnyObject,
+                msg: *mut objc2_foundation::NSString,
+                default: *mut objc2_foundation::NSString,
+                frame: *mut AnyObject,
+                done: &DoneText,
+            ) {
+                let d = if default.is_null() { String::new() } else { (*default).to_string() };
+                let done = done.copy();
+                sheet(wv, msg, frame, &["OK", "Cancel"], Some(&d), move |r, text| match text.filter(|_| r == 1000) {
+                    Some(t) => done.call((objc2::rc::Retained::autorelease_ptr(objc2_foundation::NSString::from_str(&t)),)),
+                    None => done.call((std::ptr::null_mut(),)),
+                });
+            }
+            let add = |name: Sel, imp: Imp, types: &std::ffi::CStr| {
+                objc2::ffi::class_addMethod(cls, name, imp, types.as_ptr());
+            };
+            add(sel!(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:), std::mem::transmute::<*const (), Imp>(alert as *const ()), c"v@:@@@@?");
+            add(sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), std::mem::transmute::<*const (), Imp>(confirm as *const ()), c"v@:@@@@?");
+            add(
+                sel!(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:),
+                std::mem::transmute::<*const (), Imp>(prompt as *const ()),
+                c"v@:@@@@@?",
+            );
+        });
+    }
+
+    /// An NSAlert sheet on the page's window, titled with the page's site (a sheet doesn't freeze the rest of
+    /// Valerie the way a modal alert would). `reply` gets the button (1000 = first) and any typed text.
+    unsafe fn sheet(
+        webview: *mut AnyObject,
+        msg: *mut objc2_foundation::NSString,
+        frame: *mut AnyObject,
+        buttons: &[&str],
+        input: Option<&str>,
+        reply: impl FnOnce(isize, Option<String>) + 'static,
+    ) {
+        use objc2::class;
+        use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+        let host: Option<String> = (|| {
+            let origin: *mut AnyObject = if frame.is_null() { std::ptr::null_mut() } else { msg_send![frame, securityOrigin] };
+            let h: *mut NSString = if origin.is_null() { std::ptr::null_mut() } else { msg_send![origin, host] };
+            (!h.is_null()).then(|| (*h).to_string()).filter(|s| !s.is_empty())
+        })();
+        let alert: *mut AnyObject = msg_send![class!(NSAlert), new];
+        let title = host.map_or("This page says".to_string(), |h| format!("{} says", h.trim_start_matches("www.")));
+        let _: () = msg_send![alert, setMessageText: &*NSString::from_str(&title)];
+        let body = if msg.is_null() { String::new() } else { (*msg).to_string() };
+        let _: () = msg_send![alert, setInformativeText: &*NSString::from_str(&body)];
+        for b in buttons {
+            let _: *mut AnyObject = msg_send![alert, addButtonWithTitle: &*NSString::from_str(b)];
+        }
+        let field: *mut AnyObject = match input {
+            Some(d) => {
+                let f: *mut AnyObject = msg_send![class!(NSTextField), alloc];
+                let f: *mut AnyObject = msg_send![f, initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 24.0))];
+                let _: () = msg_send![f, setStringValue: &*NSString::from_str(d)];
+                let _: () = msg_send![alert, setAccessoryView: f];
+                let win: *mut AnyObject = msg_send![alert, window];
+                let _: () = msg_send![win, setInitialFirstResponder: f];
+                f
+            }
+            None => std::ptr::null_mut(),
+        };
+        let reply = std::cell::RefCell::new(Some(reply));
+        let finish = move |code: isize| {
+            let text = (!field.is_null()).then(|| {
+                let s: *mut NSString = msg_send![field, stringValue];
+                if s.is_null() { String::new() } else { (*s).to_string() }
+            });
+            if let Some(r) = reply.borrow_mut().take() {
+                r(code, text);
+            }
+            let _: () = msg_send![alert, release];
+        };
+        let window: *mut AnyObject = if webview.is_null() { std::ptr::null_mut() } else { msg_send![webview, window] };
+        if window.is_null() {
+            let code: isize = msg_send![alert, runModal];
+            finish(code);
+        } else {
+            let block = block2::RcBlock::new(move |code: isize| finish(code));
+            let _: () = msg_send![alert, beginSheetModalForWindow: window, completionHandler: &*block];
+        }
+    }
+
+    pub fn print(wv: &WebView) {
+        use objc2::class;
+        unsafe {
+            let v = ptr(wv);
+            let info: *mut AnyObject = msg_send![class!(NSPrintInfo), sharedPrintInfo];
+            let op: *mut AnyObject = msg_send![v, printOperationWithPrintInfo: info];
+            let win: *mut AnyObject = msg_send![v, window];
+            if op.is_null() || win.is_null() {
+                return;
+            }
+            // WebKit's print operation needs a frame to lay the page out into.
+            let view: *mut AnyObject = msg_send![op, view];
+            let bounds: objc2_foundation::NSRect = msg_send![v, bounds];
+            let _: () = msg_send![view, setFrame: bounds];
+            let _: () = msg_send![op, runOperationModalForWindow: win, delegate: std::ptr::null_mut::<AnyObject>(), didRunSelector: None::<objc2::runtime::Sel>, contextInfo: std::ptr::null_mut::<std::ffi::c_void>()];
+        }
+    }
+
     pub fn copy_png(png: &[u8]) -> bool {
         use objc2::class;
         unsafe {
@@ -431,4 +562,20 @@ pub fn local_timestamp() -> String {
         }
     }
     crate::state::now().to_string()
+}
+
+/// Make `alert()`, `confirm()` and `prompt()` in web pages show real dialogs (pass any webview Valerie made).
+pub fn install_page_dialogs(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::install_page_dialogs(wv);
+    #[cfg(not(target_os = "macos"))]
+    let _ = wv;
+}
+
+/// Open the print dialog for a page.
+pub fn print(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::print(wv);
+    #[cfg(not(target_os = "macos"))]
+    let _ = wv.evaluate_script("window.print()");
 }

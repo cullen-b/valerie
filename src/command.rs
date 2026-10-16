@@ -236,6 +236,8 @@ pub enum Command {
     SearchSelection,
     /// Open the URL (or search for the text) on the clipboard in a new tab.
     PasteAndGo,
+    /// Open the print dialog for the current page.
+    Print,
     /// Close Today tabs showing the same page as another tab in this space.
     CloseDuplicateTabs,
     /// Turn Valerie's dark mode for light websites on or off for this site.
@@ -338,6 +340,7 @@ impl Command {
                 | SearchSelection
                 | ToggleDarkPage
                 | TranslatePage
+                | Print
         )
     }
 }
@@ -387,6 +390,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("search_selection", "Search Selected Text"),
     ("paste_and_go", "Paste and Go"),
     ("close_duplicate_tabs", "Close Duplicate Tabs"),
+    ("print", "Print Page…"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
     ("show_downloads", "Show Downloads Folder"),

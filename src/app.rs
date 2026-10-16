@@ -271,6 +271,7 @@ impl App {
             .with_visible(false)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
             .build_as_child(&window)?;
+        platform::install_page_dialogs(&chrome);
         let mut state = State::load(&state_path());
         state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
         state.reconcile_spaces(&config);
@@ -377,7 +378,7 @@ impl App {
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
-            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites } })
+            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "pages": self.config.pages })
     }
 
     fn content_script(&self) -> String {
@@ -436,6 +437,8 @@ impl App {
         let saving = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, PathBuf>::new()));
         let saved = saving.clone();
         let p6 = p.clone();
+        let popup_windows = self.config.links.popups == "window";
+        let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
         base
             .with_url(if url.is_empty() { "about:blank" } else { url })
             .with_visible(false)
@@ -449,9 +452,26 @@ impl App {
                 send(&p2, UserEvent::PageLoad { target, url, finished: matches!(ev, PageLoadEvent::Finished) })
             })
             .with_document_title_changed_handler(move |title| send(&p3, UserEvent::Title { target, title }))
-            .with_new_window_req_handler(move |url, _| {
+            .with_new_window_req_handler(move |url, features| {
+                // Sign-in popups ("Sign in with Google") ask for a size and need to stay linked to the page that
+                // opened them, so they get a real small window; everything else opens as a tab.
+                if popup_windows && features.size.is_some() {
+                    return NewWindowResponse::Allow;
+                }
                 send(&p4, UserEvent::NewWindow { target, url });
                 NewWindowResponse::Deny
+            })
+            .with_permission_handler(move |kind| {
+                let choice = match kind {
+                    wry::PermissionKind::Camera => camera.as_str(),
+                    wry::PermissionKind::Microphone => microphone.as_str(),
+                    _ => "ask",
+                };
+                match choice {
+                    "allow" => wry::PermissionResponse::Allow,
+                    "deny" => wry::PermissionResponse::Deny,
+                    _ => wry::PermissionResponse::Default,
+                }
             })
             .with_navigation_handler(move |url| {
                 let scheme = scheme_of(&url);
@@ -2502,6 +2522,11 @@ impl App {
                     let done = crate::github::set_up(&id, &name, &notify);
                     notify(done);
                 });
+            }
+            Command::Print => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    platform::print(v);
+                }
             }
             Command::HideElement => self.ask_page("hide_element"),
             Command::SearchSelection => self.ask_page("selection"),
