@@ -289,6 +289,24 @@ mod mac {
         }
     }
 
+    pub fn print(wv: &WebView) {
+        use objc2::class;
+        unsafe {
+            let v = ptr(wv);
+            let info: *mut AnyObject = msg_send![class!(NSPrintInfo), sharedPrintInfo];
+            let op: *mut AnyObject = msg_send![v, printOperationWithPrintInfo: info];
+            let win: *mut AnyObject = msg_send![v, window];
+            if op.is_null() || win.is_null() {
+                return;
+            }
+            // WebKit's print operation needs a frame to lay the page out into.
+            let view: *mut AnyObject = msg_send![op, view];
+            let bounds: objc2_foundation::NSRect = msg_send![v, bounds];
+            let _: () = msg_send![view, setFrame: bounds];
+            let _: () = msg_send![op, runOperationModalForWindow: win, delegate: std::ptr::null_mut::<AnyObject>(), didRunSelector: None::<objc2::runtime::Sel>, contextInfo: std::ptr::null_mut::<std::ffi::c_void>()];
+        }
+    }
+
     pub fn copy_png(png: &[u8]) -> bool {
         use objc2::class;
         unsafe {
@@ -552,4 +570,12 @@ pub fn install_page_dialogs(wv: &WebView) {
     mac::install_page_dialogs(wv);
     #[cfg(not(target_os = "macos"))]
     let _ = wv;
+}
+
+/// Open the print dialog for a page.
+pub fn print(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::print(wv);
+    #[cfg(not(target_os = "macos"))]
+    let _ = wv.evaluate_script("window.print()");
 }

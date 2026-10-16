@@ -235,6 +235,7 @@ pub struct PermissionsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PagesConfig {
     pub dark_mode: String,
+    pub loading_bar: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

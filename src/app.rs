@@ -378,7 +378,7 @@ impl App {
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
-            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites } })
+            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "pages": self.config.pages })
     }
 
     fn content_script(&self) -> String {
@@ -2522,6 +2522,11 @@ impl App {
                     let done = crate::github::set_up(&id, &name, &notify);
                     notify(done);
                 });
+            }
+            Command::Print => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    platform::print(v);
+                }
             }
             Command::HideElement => self.ask_page("hide_element"),
             Command::SearchSelection => self.ask_page("selection"),

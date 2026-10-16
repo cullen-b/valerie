@@ -80,6 +80,8 @@ function ui() {
     .pill { position: fixed; bottom: 6px; left: 6px; max-width: 55vw; padding: 5px 9px; border-radius: 8px; background: rgba(24,24,32,.9); color: rgba(255,255,255,.85);
             font-weight: 500; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
     .pill.right { left: auto; right: 6px; }
+    .loadbar { position: fixed; top: 0; left: 0; height: 2px; width: 0; background: ${cfg.accent || "#9d8cff"}; box-shadow: 0 0 6px ${cfg.accent || "#9d8cff"};
+               transition: width 2.5s cubic-bezier(.1,.7,.3,1), opacity .25s; }
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
             outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: all .06s; }`;
   shadow.appendChild(st);
@@ -757,6 +759,16 @@ addEventListener("popstate", report); addEventListener("hashchange", report);
 document.addEventListener("play", report, true); document.addEventListener("pause", report, true); document.addEventListener("volumechange", report, true);
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", report); else report();
 addEventListener("load", report);
+
+// ---------- a thin line along the top while the page loads (handy when the sidebar is hidden) ----------
+if (cfg.pages && cfg.pages.loading_bar && document.readyState === "loading" && document.documentElement) {
+  const bar = document.createElement("div"); bar.className = "loadbar"; ui().appendChild(bar);
+  requestAnimationFrame(() => requestAnimationFrame(() => (bar.style.width = "82%")));
+  addEventListener("load", () => {
+    bar.style.transition = "width .2s ease-out, opacity .25s .2s"; bar.style.width = "100%"; bar.style.opacity = "0";
+    setTimeout(() => bar.remove(), 500);
+  }, { once: true });
+}
 
 // ---------- answers to questions from Valerie (selected text, hide an element, dark mode state) ----------
 function request(kind, nonce) {

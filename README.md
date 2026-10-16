@@ -36,6 +36,7 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom (remembered per site), dev tools |
 | `⌘⇧R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
 | `⌘⇧V` / `⌘⌥⇧C` | Paste and go / copy the page as a Markdown link |
+| `⌘P` | Print |
 | `⌘,` | Open config |
 
 **Tab to search a site:** type `youtube`, `claude`, `chatgpt`, `gh`, `wiki`… in the command bar, press Tab, and
@@ -63,6 +64,10 @@ Enter copies). Hovering a link shows where it goes. Tracking junk (`utm_*`, `fbc
 open or copy. Cookie pop-ups get "Reject all" clicked for you. "Hide an Element" removes anything annoying from a site
 for good (it's saved as a line in `boosts/<site>.css`). Plus Translate Page, Copy Link to Highlighted Text, Search
 Selected Text, Close Duplicate Tabs, and dark mode for light websites (`pages.dark_mode`, or per site).
+
+**Pages behave:** `alert` / `confirm` / `prompt` show as proper sheets on the window, "Sign in with Google"-style
+pop-ups open as small linked windows so sign-ins complete (`links.popups`), sites ask before using the camera or
+microphone (`permissions`), and a thin line along the top shows a page loading (`pages.loading_bar`).
 
 ## Make Valerie yours with AI
 

@@ -203,6 +203,7 @@ permissions:
 pages:
   dark_mode: off           # make light websites dark. one of: off | system (when your computer is in dark mode) | always
                            # (sites that are already dark are left alone; toggle_dark_page flips it for one site)
+  loading_bar: true        # a thin line across the top of a page while it loads
 
 # Translate page (translate_page command)
 translate:
@@ -333,6 +334,7 @@ keybindings:
   "CmdOrCtrl+Shift+2": capture_page
   "CmdOrCtrl+Shift+M": toggle_mute
   "CmdOrCtrl+Shift+V": paste_and_go
+  "CmdOrCtrl+P": print
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
