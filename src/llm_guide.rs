@@ -65,6 +65,7 @@ changed in plain words. Some translations:
 | "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
+| "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
 | "Use DuckDuckGo" | `search_engine: "https://duckduckgo.com/?q=%s"` |
 
 Example: "I'm 82, my eyes aren't great, I only use email and the news, and the keyboard tricks confuse me" becomes:

@@ -661,6 +661,7 @@ pub struct SyncConfig {
 pub struct PasswordsConfig {
     pub enabled: bool,
     pub save_prompt_seconds: f64,
+    pub offer_passkeys: String,
     pub shared: Vec<SharedVault>,
 }
 
