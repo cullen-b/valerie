@@ -108,6 +108,9 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("ai_actions.{name}: agent {:?} isn't under agents.available", a.agent));
                 }
             }
+            if !["search", "best_match"].contains(&c.command_bar.top_result.as_str()) {
+                problems.push(format!("command_bar: top_result is {:?}; use search or best_match", c.command_bar.top_result));
+            }
             if !["ask", "allow", "deny"].contains(&c.notifications.websites.as_str()) {
                 problems.push(format!("notifications: websites is {:?}; use ask, allow or deny", c.notifications.websites));
             }

@@ -140,6 +140,8 @@ pub struct CommandBarConfig {
     pub footer_hints: bool,
     pub empty_hint: bool,
     pub calculator: bool,
+    pub top_result: String,
+    pub ask_agent_words: usize,
     pub width: f64,
     pub top: f64,
     pub font_size: f64,

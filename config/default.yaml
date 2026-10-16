@@ -86,6 +86,11 @@ command_bar:
   site_search: true        # type a site's name (e.g. "youtube"), press Tab, and search that site directly
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
+  top_result: search       # what Enter picks while you type. one of: search (search/open what you typed; matching tabs
+                           # and history are listed below it) | best_match (jump to a strongly matching tab instead)
+  ask_agent_words: 6       # a request this many words long ("summarize the reviews on this page please") puts "Ask agent"
+                           # at the top, as do questions ending in "?" two words shorter, and anything twice as long;
+                           # 0 = never (it's still listed at the bottom)
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
   width: 680               # command bar width, pixels
   top: 18                  # how far down the window it opens, percent of the window height
