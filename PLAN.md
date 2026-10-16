@@ -158,6 +158,10 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 - Auto-update from GitHub Releases (the goal): CI builds and notarizes a signed release (needs a paid Developer ID),
   Valerie checks GitHub Releases, downloads and swaps itself in, then offers a restart. For now
   `scripts/install-macos.sh` installs local builds and tells the running app to restart.
+- Passkeys on Mac: WebKit only does them for a browser Apple grants `com.apple.developer.web-browser.public-key-credential`
+  (requested by the Account Holder of an organization developer account, at developer.apple.com/contact/request/
+  macos-browsers-passkeys, with a downloadable release). Then embed the provisioning profile and add the entitlement in
+  `bundle-macos.sh` only when the profile grants it. Until then `passwords.offer_passkeys: auto` hides passkeys from sites.
 - Agent approvals for sensitive actions, action log, Notification Center results
 - Download manager panel, history page, site permissions UI
 

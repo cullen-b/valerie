@@ -334,6 +334,7 @@ fn ui(name: &str) -> String {
         "answer.html" => include_str!("../ui/answer.html"),
         "brief.html" => include_str!("../ui/brief.html"),
         "content.js" => include_str!("../ui/content.js"),
+        "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
         _ => "",
     }
     .to_string()
@@ -570,6 +571,15 @@ impl App {
                     "page_text_limit": self.config.chats.page_text_limit, "find_agent": self.config.agent_for("find").0 } })
     }
 
+    /// Whether sites are told they can use passkeys (`passwords.offer_passkeys`).
+    fn offer_passkeys(&self) -> bool {
+        match self.config.passwords.offer_passkeys.as_str() {
+            "on" => true,
+            "off" => false,
+            _ => platform::passkeys_work(),
+        }
+    }
+
     fn content_script(&self) -> String {
         format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config())
     }
@@ -636,6 +646,7 @@ impl App {
             .with_user_agent(&self.user_agent)
             .with_back_forward_navigation_gestures(true)
             .with_accept_first_mouse(true)
+            .with_initialization_script_for_main_only(if self.offer_passkeys() { String::new() } else { ui("hide-passkeys.js") }, false)
             .with_initialization_script(self.content_script())
             .with_ipc_handler(move |r| send(&p1, UserEvent::Ipc { from: Source::Page(target), msg: r.into_body() }))
             .with_on_page_load_handler(move |ev, url| {

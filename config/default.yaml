@@ -491,6 +491,9 @@ vim:
 passwords:
   enabled: true
   save_prompt_seconds: 30  # how long "Save password?" stays up before going away by itself
+  offer_passkeys: auto     # tell websites they can sign you in with a passkey. one of: auto (only when passkeys
+                           # work: on Mac that needs a permission Apple hasn't given Valerie yet, so sites ask for
+                           # your password instead of showing a passkey prompt that never finishes) | on | off
   shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared

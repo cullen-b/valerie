@@ -131,6 +131,9 @@ fn check_config() -> anyhow::Result<()> {
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
             }
+            if !["auto", "on", "off"].contains(&c.passwords.offer_passkeys.as_str()) {
+                problems.push(format!("passwords: offer_passkeys is {:?}; use auto, on or off", c.passwords.offer_passkeys));
+            }
             if !["reject", "hide", "off"].contains(&c.privacy.cookie_banners.as_str()) {
                 problems.push(format!("privacy: cookie_banners is {:?}; use reject, hide or off", c.privacy.cookie_banners));
             }

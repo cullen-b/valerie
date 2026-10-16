@@ -440,6 +440,37 @@ mod mac {
         }
     }
 
+    pub fn has_entitlement(name: &str) -> bool {
+        use std::ffi::{c_char, c_void, CString};
+        #[link(name = "Security", kind = "framework")]
+        extern "C" {
+            fn SecTaskCreateFromSelf(allocator: *const c_void) -> *const c_void;
+            fn SecTaskCopyValueForEntitlement(task: *const c_void, entitlement: *const c_void, error: *mut *const c_void) -> *const c_void;
+        }
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            fn CFStringCreateWithCString(alloc: *const c_void, s: *const c_char, encoding: u32) -> *const c_void;
+            fn CFRelease(cf: *const c_void);
+            static kCFBooleanTrue: *const c_void;
+        }
+        let Ok(name) = CString::new(name) else { return false };
+        unsafe {
+            let task = SecTaskCreateFromSelf(std::ptr::null());
+            if task.is_null() {
+                return false;
+            }
+            let key = CFStringCreateWithCString(std::ptr::null(), name.as_ptr(), 0x0800_0100);
+            let value = SecTaskCopyValueForEntitlement(task, key, std::ptr::null_mut());
+            let yes = !value.is_null() && value == kCFBooleanTrue;
+            if !value.is_null() {
+                CFRelease(value);
+            }
+            CFRelease(key);
+            CFRelease(task);
+            yes
+        }
+    }
+
     pub fn merge_bare_logins(marker: &std::path::Path, profiles: &[String]) {
         use objc2::class;
         use objc2_foundation::NSString;
@@ -949,6 +980,15 @@ pub fn read_binary_cookies(data: &[u8]) -> Vec<Cookie> {
     out
 }
 
+/// Whether passkeys can work in Valerie's pages. On Mac WebKit only does them for a browser Apple has granted
+/// `com.apple.developer.web-browser.public-key-credential`; Windows hands them to Windows Hello.
+pub fn passkeys_work() -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::has_entitlement("com.apple.developer.web-browser.public-key-credential");
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
 /// Bring logins from runs of the bare `valerie` binary (WebKit keeps those apart, under ~/Library/WebKit/valerie)
 /// into the app's own (~/Library/WebKit/dev.valerie.browser), once. A profile only the bare binary had is copied
 /// whole; one both had gets the other's cookies where they're newer. Call before any page view exists.
@@ -989,6 +1029,15 @@ mod cookie_tests {
         out.extend((page.len() as u32).to_be_bytes());
         out.extend(page);
         out
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_own_entitlements() {
+        assert!(!super::passkeys_work());
+        if let Ok(e) = std::env::var("VALERIE_EXPECT_ENTITLEMENT") {
+            assert!(super::mac::has_entitlement(&e), "{e}");
+        }
     }
 
     #[test]
