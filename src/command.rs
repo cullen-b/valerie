@@ -254,6 +254,15 @@ pub enum Command {
         text: String,
         #[serde(default)]
         agent: Option<String>,
+        /// Options picked in the composer before the chat existed.
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
+        #[serde(default)]
+        access: Option<String>,
+        #[serde(default)]
+        plan: Option<bool>,
     },
     StopChat {
         #[serde(default)]
@@ -275,9 +284,39 @@ pub enum Command {
         title: String,
     },
     /// Which agent a chat talks to from now on.
-    SetChatAgent {
+    /// Change a chat's agent, model, reasoning effort, access ("read" | "ask" | "full") or plan mode.
+    #[serde(alias = "set_chat_agent")]
+    SetChatOptions {
         chat: String,
-        agent: String,
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
+        #[serde(default)]
+        access: Option<String>,
+        #[serde(default)]
+        plan: Option<bool>,
+    },
+    /// Settle a chat (set it aside) or bring it back.
+    ToggleSettleChat {
+        #[serde(default)]
+        chat: Option<String>,
+    },
+    /// Snooze a chat: "hour" | "three_hours" | "evening" | "tomorrow" | "next_week" | "wake".
+    SnoozeChat {
+        #[serde(default)]
+        chat: Option<String>,
+        until: String,
+    },
+    MarkChatUnread {
+        chat: String,
+    },
+    /// Copy chat:<id>; pasted into another chat it brings this chat's conversation along.
+    CopyChatId {
+        #[serde(default)]
+        chat: Option<String>,
     },
     /// Create a task: what an agent should do and when, in plain words (asked for when missing).
     #[serde(alias = "new_brief")]
@@ -488,6 +527,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("stop_chat", "Stop the Agent in This Chat"),
     ("close_chat", "Close Chat"),
     ("toggle_pin_chat", "Pin / Unpin Chat"),
+    ("toggle_settle_chat", "Settle / Un-settle Chat"),
+    ("copy_chat_id", "Copy Chat ID (share its context with another chat)"),
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
     ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
@@ -541,7 +582,10 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("activate_chat", "{ chat }"),
     ("close_chat", "{ chat? }"),
     ("rename_chat", "{ chat, title }"),
-    ("set_chat_agent", "{ chat, agent }"),
+    ("set_chat_options", "{ chat, agent?, model?, effort?: low|medium|high|max, access?: read|ask|full, plan? }"),
+    ("toggle_settle_chat", "{ chat? }"),
+    ("snooze_chat", "{ chat?, until: hour | three_hours | evening | tomorrow | next_week | wake }"),
+    ("copy_chat_id", "{ chat? }"),
     ("ai_action", "{ name, input? }  (run one of the ai_actions from the config)"),
     ("watch_page", "{ condition? }"),
     ("new_task", "{ want?, when? }  (what to do, and when in plain words: \"every day at 8am\", \"every 5 minutes\", \"when Valerie starts\")"),

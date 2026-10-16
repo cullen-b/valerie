@@ -166,7 +166,7 @@ find:
 # --------------------------------------------------------------------------------------------------------------
 
 tabs:
-  archive_after_hours: 12  # unpinned tabs you haven't used for this long are archived; 0 = never
+  archive_after_hours: 24  # Today tabs you haven't used for this long close (they're archived, searchable); 0 = never
   unload_after_minutes: 60 # free the memory of tabs unused this long (they reload on click); 0 = never
   new_tab_position: top    # where new tabs appear in the list. one of: top | bottom
   autoplay_in_background: false   # let tabs opened in the background start playing video/audio before you look at them
@@ -203,6 +203,14 @@ reader_view:
 # The Chats space: conversations with your agents, to the left of your first space (⌘J opens it).
 chats:
   enabled: true            # show the Chats space
+  theme: black             # look of the Chats space: a theme name (black, midnight, ocean …) or "space" (the space you came from)
+  access: full             # what a new chat's agent may do. one of: read (only look) | ask (you approve each action in
+                           # the browser, and Claude's own tools) | full (no questions). Change it per chat in the composer.
+  effort: ""               # reasoning effort for new chats. one of: "" (the CLI's default) | low | medium | high | max
+  own_tools: true          # chat agents keep your own MCP servers, plugins and skills from that CLI, alongside Valerie's
+  auto_settle_days: 3      # chats untouched this many days move to Settled (still there, out of the way); 0 = never
+  plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
+  composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
   sync: true               # keep chats in the config folder so they sync between machines (false = this machine only)
   ask_in_find: true        # in find (/), Enter on something that reads like a question asks the find agent about the page
   find_question_words: 4   # a find query this many words long (or ending in "?") counts as a question
@@ -524,6 +532,14 @@ agents:
     #   quick:  { cli: claude, model: haiku }
     #   strong: { cli: codex, model: gpt-5 }
     #   local:  { command: ["ollama", "run", "llama3", "{prompt}"] }   # any program that prints an answer
+  models:                  # extra names for a chat's model picker; each CLI's own list is read automatically
+                           # (Cursor, OpenCode, Codex, Hermes and Pi report theirs; Claude Code uses these aliases)
+    claude: [opus, sonnet, haiku]
+    codex: []
+    opencode: []
+    pi: []
+    cursor: []
+    hermes: []
   use:                     # which agent (a name above) does each job; "" = default
     chat: ""               # Chats and "Ask …" in the command bar: can see and use your whole browser
     find: ""               # questions typed into find (/) about the page: it sees only that page and runs with as

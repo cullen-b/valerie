@@ -116,22 +116,48 @@ fn cli_tools_note(exe: &str) -> String {
     )
 }
 
+/// How one run may behave, beyond what the agent definition says.
+#[derive(Clone, Debug)]
+pub struct Opts {
+    /// In the browser and for the CLI's own tools: "read" (only look) | "ask" (the user approves each action) | "full".
+    pub access: String,
+    /// The chat this run belongs to (so Valerie can show which chat is asking).
+    pub chat: String,
+    /// Reasoning effort: "" (the CLI's default) | "low" | "medium" | "high" | "max".
+    pub effort: String,
+    /// Propose a plan and wait instead of acting.
+    pub plan: bool,
+    /// Keep the user's own MCP servers, plugins and skills alongside Valerie's tools.
+    pub own_tools: bool,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Opts { access: "full".into(), chat: String::new(), effort: String::new(), plan: false, own_tools: true }
+    }
+}
+
 /// Build the command for one turn. `session` continues an earlier conversation where the CLI supports it.
-pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, session: Option<&str>, stream: bool, work: &Path) -> Result<(Command, Format)> {
+pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, stream: bool, work: &Path, o: &Opts) -> Result<(Command, Format)> {
     let path = search_path();
     let exe = std::env::current_exe()?.to_string_lossy().to_string();
-    let model = if def.model.is_empty() { default_model } else { &def.model };
+    let model = def.model.as_str();
+    // Plan mode never acts, whatever the chat's access.
+    let access = if o.plan || mode == Mode::PageOnly { "read" } else { o.access.as_str() };
+    let effort = o.effort.as_str();
     if !def.command.is_empty() {
         // Any program: `{prompt}` and `{model}` in its arguments are filled in; it prints the answer.
         let mut c = Command::new(&def.command[0]);
         c.args(def.command[1..].iter().map(|a| a.replace("{prompt}", prompt).replace("{model}", model)));
-        c.env("PATH", &path).current_dir(work);
+        c.env("PATH", &path).env("VALERIE_ACCESS", access).env("VALERIE_CHAT", &o.chat).current_dir(work);
         return Ok((c, Format::Text));
     }
     let k = kind(&def.cli).with_context(|| format!("unknown agent CLI `{}` (use claude, codex, opencode, pi, cursor or hermes, or `command`)", def.cli))?;
     let bin = find_bin(k, &path).with_context(|| format!("{} isn't installed: run \"Set Up {}\" from the command bar", k.title, k.title))?;
     let mut c = Command::new(bin);
-    let mcp_json = || json!({ "mcpServers": { "valerie": { "command": exe, "args": ["mcp-stdio"] } } });
+    // Valerie's MCP server, told this run's access level (some CLIs start MCP servers with a scrubbed environment).
+    let mcp_args = json!(["mcp-stdio", "--access", access, "--chat", o.chat]);
+    let mcp_json = || json!({ "mcpServers": { "valerie": { "command": exe, "args": mcp_args } } });
     let format = match k.id {
         "claude" => {
             c.args(["-p", prompt]);
@@ -139,9 +165,6 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
                 c.args(["--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
             }
             match mode {
-                Mode::Browser => {
-                    c.args(["--mcp-config", &mcp_json().to_string(), "--strict-mcp-config", "--allowedTools", "mcp__valerie"]);
-                }
                 Mode::PageOnly => {
                     c.args(["--tools", "", "--strict-mcp-config"]);
                 }
@@ -151,6 +174,31 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
                     c.args(["--mcp-config", &mcp_json().to_string(), "--strict-mcp-config", "--permission-mode", "acceptEdits"]);
                     c.args(["--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", &check, &call, "mcp__valerie"]);
                 }
+                Mode::Browser => {
+                    c.args(["--mcp-config", &mcp_json().to_string()]);
+                    if !o.own_tools {
+                        c.arg("--strict-mcp-config");
+                    }
+                    // Valerie's tools check access themselves; Claude's own tools follow the chat's access.
+                    match access {
+                        _ if o.plan => {
+                            c.args(["--permission-mode", "plan", "--allowedTools", "mcp__valerie"]);
+                        }
+                        "full" => {
+                            c.arg("--dangerously-skip-permissions");
+                        }
+                        "ask" => {
+                            c.args(["--permission-prompts", "host", "--permission-prompt-tool", "mcp__valerie__approve", "--allowedTools", "mcp__valerie"]);
+                        }
+                        // Read only: Claude's reading tools and Valerie's (which refuse to act); anything else is turned down.
+                        _ => {
+                            c.args(["--permission-mode", "dontAsk", "--allowedTools", "mcp__valerie", "Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
+                        }
+                    }
+                }
+            }
+            if !effort.is_empty() {
+                c.args(["--effort", effort]);
             }
             if let Some(s) = session {
                 c.args(["--resume", s]);
@@ -165,12 +213,31 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
             if stream {
                 c.arg("--json");
             }
-            c.args(["--skip-git-repo-check", "-s", if mode == Mode::Customize { "workspace-write" } else { "read-only" }]);
+            c.arg("--skip-git-repo-check");
+            match (mode, access) {
+                (Mode::Customize, _) => {
+                    c.args(["-s", "workspace-write"]);
+                }
+                (Mode::Browser, "full") => {
+                    c.arg("--dangerously-bypass-approvals-and-sandbox");
+                }
+                (Mode::Browser, "ask") => {
+                    c.args(["-s", "workspace-write"]);
+                }
+                _ => {
+                    c.args(["-s", "read-only"]);
+                }
+            }
             if mode == Mode::PageOnly {
                 // Read-only sandbox (its commands can't write or reach the network), no web search, none of the user's MCP servers.
                 c.args(["-c", r#"web_search="disabled""#, "-c", "mcp_servers={}"]);
             } else {
-                c.args(["-c", &format!("mcp_servers.valerie.command={}", serde_json::to_string(&exe)?), "-c", r#"mcp_servers.valerie.args=["mcp-stdio"]"#]);
+                c.args(["-c", &format!("mcp_servers.valerie.command={}", serde_json::to_string(&exe)?)]);
+                c.args(["-c", &format!("mcp_servers.valerie.args={}", mcp_args)]);
+            }
+            if !effort.is_empty() {
+                let e = if effort == "max" { "high" } else { effort };
+                c.args(["-c", &format!("model_reasoning_effort=\"{e}\"")]);
             }
             if !model.is_empty() {
                 c.args(["-m", model]);
@@ -188,9 +255,19 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
             }
             let cfg = match mode {
                 Mode::PageOnly => json!({ "mcp": {}, "tools": { "*": false } }),
-                _ => json!({ "mcp": { "valerie": { "type": "local", "command": [exe, "mcp-stdio"], "enabled": true } } }),
+                _ => {
+                    // `opencode run` can't stop to ask, so "ask" and "read" both mean its own edits and commands are off.
+                    let own = if access == "full" { "allow" } else { "deny" };
+                    json!({
+                        "mcp": { "valerie": { "type": "local", "command": [exe, "mcp-stdio", "--access", access, "--chat", o.chat], "enabled": true } },
+                        "permission": { "edit": own, "bash": own },
+                    })
+                }
             };
             c.env("OPENCODE_CONFIG_CONTENT", cfg.to_string());
+            if !effort.is_empty() {
+                c.args(["--variant", effort]);
+            }
             if let Some(s) = session {
                 c.args(["--session", s]);
             }
@@ -213,12 +290,29 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
                 let dir = work.join(".cursor");
                 std::fs::create_dir_all(&dir)?;
                 std::fs::write(dir.join("mcp.json"), mcp_json().to_string())?;
+                match access {
+                    "full" => {
+                        c.arg("--force");
+                    }
+                    "ask" => {
+                        c.args(["--sandbox", "enabled"]);
+                    }
+                    _ => {
+                        c.args(["--mode", "ask"]);
+                    }
+                }
             }
             if let Some(s) = session {
                 c.args(["--resume", s]);
             }
-            if !model.is_empty() {
-                c.args(["--model", model]);
+            match (model.is_empty(), effort.is_empty()) {
+                (false, true) => {
+                    c.args(["--model", model]);
+                }
+                (false, false) => {
+                    c.args(["--model", &format!("{model}[effort={effort}]")]);
+                }
+                _ => {}
             }
             c.arg(prompt);
             Format::Cursor
@@ -228,8 +322,15 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
             if stream {
                 c.args(["--mode", "json"]);
             }
-            if mode == Mode::PageOnly {
-                c.arg("--no-tools");
+            match access {
+                _ if mode == Mode::PageOnly => {
+                    c.arg("--no-tools");
+                }
+                // Looking only: Pi's read tools, plus bash for `valerie call` (read-only by Valerie's access check).
+                "read" => {
+                    c.args(["--tools", "read,grep,find,ls,bash"]);
+                }
+                _ => {}
             }
             if !model.is_empty() {
                 c.args(["--model", model]);
@@ -242,15 +343,26 @@ pub fn build(def: &AgentDef, default_model: &str, mode: Mode, prompt: &str, sess
                 // Only the harmless "clarify" toolset, and no AGENTS.md / memory / rules injected.
                 c.args(["-t", "clarify", "--ignore-rules"]);
             }
-            if !model.is_empty() {
-                c.args(["-m", model]);
+            if !effort.is_empty() {
+                c.args(["--reasoning", effort]);
+            }
+            // Picked from Valerie's list as "provider::model".
+            match model.split_once("::") {
+                Some((prov, m)) => {
+                    c.args(["--provider", prov, "-m", m]);
+                }
+                None if !model.is_empty() => {
+                    c.args(["-m", model]);
+                }
+                None => {}
             }
             c.args(["-z", prompt]);
             Format::Text
         }
         _ => unreachable!(),
     };
-    c.env("PATH", &path).current_dir(work);
+    // `valerie call` (Pi, Hermes, scripts) reads these to tell Valerie which chat and access level it's acting for.
+    c.env("PATH", &path).env("VALERIE_ACCESS", access).env("VALERIE_CHAT", &o.chat).current_dir(work);
     Ok((c, format))
 }
 
@@ -495,6 +607,27 @@ pub struct Chat {
     /// Each agent's own conversation id, so follow-ups continue where it left off.
     #[serde(default)]
     pub sessions: std::collections::BTreeMap<String, String>,
+    /// Model, reasoning effort and access chosen in the composer ("" = the defaults).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effort: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub access: String,
+    /// Plan first: the agent proposes, the user says go.
+    #[serde(default)]
+    pub plan: bool,
+    /// Set aside (still searchable); a new message brings it back.
+    #[serde(default)]
+    pub settled: bool,
+    /// Hidden until this time (seconds), then it comes back marked unread.
+    #[serde(default)]
+    pub snoozed_until: u64,
+    #[serde(default)]
+    pub unread: bool,
+    /// Messages sent while the agent was busy, sent in order when it's done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queue: Vec<String>,
     #[serde(default)]
     pub messages: Vec<Msg>,
 }
@@ -504,6 +637,19 @@ impl Chat {
         let now = crate::state::now();
         let id = format!("{now}-{}", &crate::mcp::random_hex()[..6]);
         Chat { id, agent: agent.into(), created: now, updated: now, ..Default::default() }
+    }
+
+    /// The whole conversation as plain text (newest kept when it's too long), for sharing with another chat.
+    pub fn transcript_all(&self, max_chars: usize) -> String {
+        let mut out = String::new();
+        for m in self.messages.iter().rev() {
+            let line = format!("{}: {}\n\n", if m.role == "user" { "User" } else { "Assistant" }, m.text.trim());
+            if out.len() + line.len() > max_chars {
+                break;
+            }
+            out.insert_str(0, &line);
+        }
+        out
     }
 
     /// Earlier turns as plain text, for agents that can't continue a session themselves.

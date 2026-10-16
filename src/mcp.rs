@@ -105,12 +105,17 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
         Ok(v) => v,
         Err(e) => return respond(rq, 400, json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":e.to_string()}}).to_string()),
     };
+    // A chat's agent says which access level its chat has; everyone else (your own MCP setup, `valerie call`) is full.
+    let who = Caller {
+        access: header(&rq, "X-Valerie-Access").unwrap_or("full").to_string(),
+        chat: header(&rq, "X-Valerie-Chat").unwrap_or_default().to_string(),
+    };
     let out = match msg {
         Value::Array(batch) => {
-            let r: Vec<Value> = batch.into_iter().filter_map(|m| rpc(m, proxy)).collect();
+            let r: Vec<Value> = batch.into_iter().filter_map(|m| rpc(m, proxy, &who)).collect();
             if r.is_empty() { None } else { Some(Value::Array(r)) }
         }
-        m => rpc(m, proxy),
+        m => rpc(m, proxy, &who),
     };
     match out {
         Some(v) => respond(rq, 200, v.to_string()),
@@ -118,7 +123,30 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
     }
 }
 
-fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>) -> Option<Value> {
+/// Who's calling: the access level of the chat whose agent this is ("read" | "ask" | "full") and its id.
+struct Caller {
+    access: String,
+    chat: String,
+}
+
+/// Tools that only look; everything else changes something and needs the chat's permission.
+const LOOKING: &[&str] = &["list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats"];
+
+/// Check a tool call against the chat's access level, asking the user for "ask" chats.
+fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
+    if LOOKING.contains(&name) || name == "approve" || who.access == "full" {
+        return Ok(());
+    }
+    if who.access == "read" {
+        return Err(format!("This chat is read-only, so `{name}` isn't allowed. Tell the user what you'd do instead; they can switch the chat to Ask first or Full access."));
+    }
+    match call_wait(proxy, "confirm", json!({ "chat": who.chat, "tool": name, "args": args }), 600)?["allowed"].as_bool() {
+        Some(true) => Ok(()),
+        _ => Err(format!("The user said no to `{name}`. Don't try it again; ask them what they'd like instead.")),
+    }
+}
+
+fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Value> {
     let id = msg.get("id").cloned()?; // notifications get no response
     let method = msg["method"].as_str().unwrap_or("");
     let params = msg.get("params").cloned().unwrap_or(json!({}));
@@ -136,7 +164,19 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>) -> Option<Value> {
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            Ok(match call_tool(name, args, proxy) {
+            let result = allowed(name, &args, who, proxy).and_then(|()| match name {
+                // Claude Code's permission questions (--permission-prompt-tool): the user answers in Valerie.
+                "approve" => {
+                    let ok = call_wait(proxy, "confirm", json!({ "chat": who.chat, "tool": args["tool_name"], "args": args["input"] }), 600)?["allowed"].as_bool() == Some(true);
+                    Ok(json!(if ok {
+                        json!({ "behavior": "allow", "updatedInput": args["input"] }).to_string()
+                    } else {
+                        json!({ "behavior": "deny", "message": "The user said no." }).to_string()
+                    }))
+                }
+                _ => call_tool(name, args, proxy),
+            });
+            Ok(match result {
                 Ok(v) if v.get("__image_png").is_some() => {
                     json!({ "content": [{ "type": "image", "data": v["__image_png"], "mimeType": "image/png" }], "isError": false })
                 }
@@ -173,6 +213,11 @@ pub fn tools() -> Vec<Value> {
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     vec![
         tool("list_spaces", "List spaces (tab groups with their own profile and theme) and which is active.", json!({}), &[]),
+        tool("list_chats", "List the user's chats with Valerie's agents (ids, titles, when they were last used).", json!({}), &[]),
+        tool("read_chat", "Read a whole chat by id (the user may paste one as chat:<id> to share its context).",
+             json!({ "id": { "type": "string" } }), &["id"]),
+        tool("approve", "Ask the user to approve an action (used for permission prompts).",
+             json!({ "tool_name": { "type": "string" }, "input": { "type": "object" } }), &["tool_name"]),
         tool("list_tabs", "List tabs: favorites, pinned and today tabs, with ids, urls, titles, space and state.",
              json!({ "space": { "type": "string", "description": "Only this space" } }), &[]),
         tool("open_tab", "Open a URL (or search terms) in a new tab.", json!({
@@ -214,11 +259,16 @@ pub fn tools() -> Vec<Value> {
 
 /// Send one operation to the UI thread and wait for its answer.
 pub fn call(proxy: &EventLoopProxy<UserEvent>, op: &str, args: Value) -> Result<Value, String> {
+    call_wait(proxy, op, args, 30)
+}
+
+/// Like `call`, waiting up to `secs` (asking the user takes longer than the browser does).
+fn call_wait(proxy: &EventLoopProxy<UserEvent>, op: &str, args: Value, secs: u64) -> Result<Value, String> {
     let (tx, rx) = channel();
     proxy
         .send_event(UserEvent::Mcp(McpRequest { op: op.into(), args, reply: tx }))
         .map_err(|_| "browser is shutting down".to_string())?;
-    rx.recv_timeout(Duration::from_secs(30)).map_err(|_| "timed out waiting for the browser".to_string())?
+    rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| "timed out waiting for the browser".to_string())?
 }
 
 /// Evaluate a function body in a tab, awaiting promises.
@@ -306,7 +356,7 @@ return { url: location.href, title: document.title, elements: out };
 fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let tab = a.get("tab").and_then(|t| t.as_i64());
     match name {
-        "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" => call(proxy, name, a),
+        "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats" => call(proxy, name, a),
         "history" => {
             let cmd = match a["action"].as_str() {
                 Some("back") => "back",
@@ -446,11 +496,19 @@ mod tests {
 pub fn post_local(port: u16, token: &str, body: &str) -> std::io::Result<(u16, String)> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let mut s = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400))?;
-    s.set_read_timeout(Some(Duration::from_secs(60)))?;
+    // Long enough for the user to answer an approval question.
+    s.set_read_timeout(Some(Duration::from_secs(660)))?;
+    // A chat's agent carries its chat's access level (set by Valerie when it starts the agent).
+    let mut extra = String::new();
+    for (h, var) in [("X-Valerie-Access", "VALERIE_ACCESS"), ("X-Valerie-Chat", "VALERIE_CHAT")] {
+        if let Some(v) = std::env::var(var).ok().map(|v| v.replace(['\r', '\n'], "")).filter(|v| !v.is_empty()) {
+            extra.push_str(&format!("{h}: {v}\r\n"));
+        }
+    }
     write!(
         s,
         "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\n\
-         Accept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+         {extra}Accept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
     let mut resp = Vec::new();
@@ -487,7 +545,14 @@ pub fn forward_open(port: u16, urls: &[String]) -> bool {
 }
 
 /// `valerie mcp-stdio`: bridge for MCP clients that only speak stdio.
-pub fn stdio_bridge(port: u16) -> anyhow::Result<()> {
+pub fn stdio_bridge(port: u16, access: Option<String>, chat: Option<String>) -> anyhow::Result<()> {
+    // Some CLIs start MCP servers with a scrubbed environment, so the access level also arrives as arguments.
+    if let Some(a) = access {
+        std::env::set_var("VALERIE_ACCESS", a);
+    }
+    if let Some(c) = chat {
+        std::env::set_var("VALERIE_CHAT", c);
+    }
     let token = load_or_create_token();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();

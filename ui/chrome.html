@@ -149,7 +149,17 @@ body.size-compact #nowplaying .title { display: none; }
 .chat-ic { width: var(--tab-icon); height: var(--tab-icon); flex: none; display: grid; place-items: center; color: var(--accent); font-size: calc(var(--tab-icon) * .8); }
 .chat-ic.running { border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.row.chat .when { font-size: 11px; color: var(--fg-dim); flex: none; }
+.row.chat .when { font-size: 11px; color: var(--fg-dim); flex: none; font-variant-numeric: tabular-nums; }
+.row.chat.unread .title { font-weight: 650; }
+.row.chat .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; margin-right: 4px; }
+body.pointer .row.chat:hover .dot { display: none; }
+.chat-label.fold { cursor: default; }
+.chat-label.fold::before { content: "▾ "; } .chat-label.fold.closed::before { content: "▸ "; }
+body.pointer .chat-label.fold:hover { color: var(--fg); }
+#scroll.chats { display: flex; flex-direction: column; }
+#scroll.chats > * { flex: none; }
+.working-shelf { margin-top: auto !important; position: sticky; bottom: 0; margin: 10px -4px 0; padding: 0 4px 6px; border-top: 1px solid var(--line);
+  background: linear-gradient(color-mix(in srgb, var(--bg2) 92%, transparent), var(--bg2)); backdrop-filter: blur(8px); }
 body.pointer .row.chat:hover .when { display: none; }
 .sp.chats-sp { color: var(--accent); }
 body.size-compact .chat-label, body.size-compact .row.chat .when { display: none; }
@@ -433,11 +443,17 @@ function ago(t) {
   const s = Date.now() / 1000 - t;
   return s < 60 ? "now" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d";
 }
+function elapsed(start) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - start));
+  return s < 3600 ? Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+}
 function chatRow(c) {
-  const r = el("div", "row chat" + (c.id === S.chats.active ? " active" : ""));
+  const r = el("div", "row chat" + (c.id === S.chats.active ? " active" : "") + (c.unread ? " unread" : ""));
   const ic = el("div", "chat-ic" + (c.running ? " running" : ""), c.running ? "" : "✦");
   r.append(ic, el("div", "title", c.title));
-  if (!c.running) r.append(el("div", "when", ago(c.updated)));
+  if (c.running && c.started) { const t = el("div", "when elapsed", elapsed(c.started)); t.dataset.started = c.started; r.append(t); }
+  else if (c.unread) r.append(el("div", "dot"));
+  else r.append(el("div", "when", ago(c.updated)));
   const x = el("div", "x", "×"); x.title = "Close chat";
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_chat", chat: c.id }); };
   r.append(x);
@@ -447,14 +463,37 @@ function chatRow(c) {
   r.oncontextmenu = (e) => { e.preventDefault(); send({ t: "chat_menu", chat: c.id, x: e.clientX, y: e.clientY }); };
   return r;
 }
+// Pinned, then your chats; Snoozed and Settled fold away; chats whose agent is working sit on a shelf at the bottom.
+const chatFolds = { snoozed: true, settled: true };
 function renderChatList(sc) {
   const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New chat"));
   nt.onclick = () => cmd({ cmd: "new_chat" }); sc.append(nt);
-  const list = S.chats.list || [], pinned = list.filter((c) => c.pinned), recent = list.filter((c) => !c.pinned);
+  const list = S.chats.list || [];
+  const working = list.filter((c) => c.running), rest = list.filter((c) => !c.running);
+  const pinned = rest.filter((c) => c.pinned && !c.settled && !c.snoozed);
+  const active = rest.filter((c) => !c.pinned && !c.settled && !c.snoozed);
+  const snoozed = rest.filter((c) => c.snoozed), settled = rest.filter((c) => c.settled && !c.snoozed);
   if (pinned.length) { sc.append(el("div", "chat-label", "Pinned")); pinned.forEach((c) => sc.append(chatRow(c))); }
-  if (recent.length) { sc.append(el("div", "chat-label", pinned.length ? "Recent" : "Chats")); recent.forEach((c) => sc.append(chatRow(c))); }
+  if (active.length) { sc.append(el("div", "chat-label", "Chats")); active.forEach((c) => sc.append(chatRow(c))); }
+  const fold = (into, key, label, items) => {
+    if (!items.length) return;
+    const h = el("div", "chat-label fold" + (chatFolds[key] ? " closed" : ""), `${label} · ${items.length}`);
+    h.onclick = () => { chatFolds[key] = !chatFolds[key]; render(S); };
+    into.append(h);
+    if (!chatFolds[key]) items.forEach((c) => into.append(chatRow(c)));
+  };
+  fold(sc, "settled", "Settled", settled);
   if (!list.length) sc.append(el("div", "kept-hint", "Ask anything: your agent can see and use your browser"));
+  // Snoozed and Working live at the bottom of the sidebar.
+  if (working.length || snoozed.length) {
+    const shelf = el("div", "working-shelf");
+    fold(shelf, "snoozed", "Snoozed", snoozed);
+    if (working.length) { shelf.append(el("div", "chat-label", "Working")); working.forEach((c) => shelf.append(chatRow(c))); }
+    sc.append(shelf);
+  }
 }
+// Running chats' timers tick every second.
+setInterval(() => document.querySelectorAll(".elapsed").forEach((e) => (e.textContent = elapsed(+e.dataset.started))), 1000);
 
 // ---------- render ----------
 function applyTheme(th) {
@@ -535,6 +574,7 @@ function render(state) {
 
   const sc = $("#scroll"), top = sc.scrollTop; sc.innerHTML = "";
   const chatsOpen = !!(S.chats && S.chats.open);
+  sc.classList.toggle("chats", chatsOpen);
   if (chatsOpen) renderChatList(sc);
   else {
   const sp = S.spaces[S.active_space];

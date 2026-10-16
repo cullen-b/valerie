@@ -59,18 +59,46 @@ textarea::placeholder { color: var(--dim); }
 select { appearance: none; background: var(--faint); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 3px 22px 3px 9px; font: 12px inherit;
   background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
   background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
-#hint { flex: 1; font-size: 11.5px; color: var(--dim); text-align: right; }
+#hint { flex: 1; font-size: 11.5px; color: var(--dim); text-align: right; white-space: nowrap; overflow: hidden; }
+.ctl { appearance: none; background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 8px; padding: 3px 8px; font: 12px inherit; }
+.ctl:hover { background: var(--faint); color: var(--fg); }
+select.ctl { padding-right: 20px; background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 10px) 52%, calc(100% - 6px) 52%; background-size: 4px 4px; background-repeat: no-repeat; }
+#model { max-width: 190px; }
+option, optgroup { background: #111; color: #eee; }
+#access.full { color: var(--dim); } #access.ask { color: #f0b45a; } #access.read { color: #6fc7a0; }
+#plan.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.sep { width: 1px; height: 14px; background: var(--line); flex: none; }
+#queue { max-width: 760px; margin: 0 auto 6px; pointer-events: auto; display: none; }
+#queue div { font-size: 12px; color: var(--dim); padding: 4px 12px; border: 1px dashed var(--line); border-radius: 10px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#working { font-size: 11.5px; color: var(--accent); flex: none; font-variant-numeric: tabular-nums; }
+.msg.assistant { position: relative; }
+.copy { position: absolute; top: -2px; right: 0; display: none; font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; background: var(--bg); }
+.msg.assistant:hover .copy { display: block; } .copy:hover { color: var(--fg); }
 #send { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; font-size: 15px; display: grid; place-items: center; }
 #send:disabled { opacity: .35; }
 #send.stop { background: var(--fg); color: var(--bg); font-size: 11px; }
 </style>
 </head>
 <body>
-<div id="top"><div class="title" id="title">New chat</div><div class="agent" id="agentBadge"></div></div>
+<div id="top"><div class="title" id="title">New chat</div><div class="agent" id="agentBadge"></div><div style="flex:1"></div><div id="working"></div></div>
 <div id="scroll"><div id="log"></div></div>
-<div id="composer"><div id="box">
+<div id="composer"><div id="queue"></div><div id="box">
   <textarea id="input" rows="1" placeholder="Ask anything, or ask for something to be done…"></textarea>
-  <div id="row"><select id="agent" title="Which agent answers"></select><div id="hint">↵ send · ⇧↵ new line</div><button id="send" title="Send">↑</button></div>
+  <div id="row">
+    <select id="agent" class="ctl" title="Which agent answers"></select>
+    <select id="model" class="ctl" title="Model"></select>
+    <select id="effort" class="ctl" title="Reasoning effort">
+      <option value="">default effort</option><option value="low">low effort</option><option value="medium">medium effort</option>
+      <option value="high">high effort</option><option value="max">max effort</option>
+    </select>
+    <div class="sep"></div>
+    <select id="access" class="ctl" title="What the agent may do">
+      <option value="read">Read only</option><option value="ask">Ask first</option><option value="full">Full access</option>
+    </select>
+    <button id="plan" class="ctl" title="Plan first: the agent proposes, you say go">Plan</button>
+    <div id="hint">↵ send · ⇧↵ new line</div><button id="send" title="Send">↑</button>
+  </div>
 </div></div>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -122,6 +150,11 @@ function markdown(src, into) {
 function msgEl(m, i, live) {
   const d = el("div", "msg " + m.role); d.dataset.i = i;
   if (m.role === "user") { d.append(el("div", "bubble", m.text)); return d; }
+  if (m.text && !live) {
+    const c = el("div", "copy", "Copy"); c.title = "Copy this answer";
+    c.onclick = () => { cmd({ cmd: "copy_text", text: m.text }); c.textContent = "Copied"; setTimeout(() => (c.textContent = "Copy"), 1200); };
+    d.append(c);
+  }
   const who = el("div", "who"); who.append(el("i"), m.agent || "agent"); d.append(who);
   if (m.tools && m.tools.length) {
     const w = el("details", "work"); const counts = {};
@@ -154,22 +187,80 @@ function renderLog() {
   c.messages.forEach((m, i) => log.append(msgEl(m, i, D.running && i === c.messages.length - 1 && m.role === "assistant")));
 }
 
+// Options picked before a chat exists (they go along with its first message).
+let pending = {};
+function chatOpt(k, fallback) { const c = D.chat; return c && c.messages.length ? (c[k] ?? fallback) : (pending[k] ?? (c && c[k]) ?? fallback); }
+// The model list comes from the agent's CLI (grouped by provider where it has them).
+function fillModels(current) {
+  const info = (D.models || {})[$("#agent").value] || {}, sel = $("#model"); sel.replaceChildren();
+  const def = el("option", null, info.default_model ? "default (" + info.default_model + ")" : "default model"); def.value = ""; sel.append(def);
+  const groups = new Map();
+  (info.models || []).forEach((m) => {
+    const o = el("option", null, m.label || m.id); o.value = m.id;
+    if (!m.group) return sel.append(o);
+    if (!groups.has(m.group)) { const g = el("optgroup"); g.label = m.group; groups.set(m.group, g); sel.append(g); }
+    groups.get(m.group).append(o);
+  });
+  if (current && ![...sel.options].some((o) => o.value === current)) { const o = el("option", null, current); o.value = current; sel.append(o); }
+  sel.value = current || "";
+  fillEfforts();
+}
+// Codex says which reasoning levels each model supports; others get the usual four.
+function fillEfforts() {
+  const info = (D.models || {})[$("#agent").value] || {}, m = (info.models || []).find((x) => x.id === $("#model").value);
+  const levels = m && m.efforts && m.efforts.length ? m.efforts : ["low", "medium", "high", "max"];
+  const sel = $("#effort"), cur = sel.value; sel.replaceChildren();
+  const d = el("option", null, "default effort"); d.value = ""; sel.append(d);
+  levels.forEach((l) => { const o = el("option", null, l + " effort"); o.value = l; sel.append(o); });
+  sel.value = levels.includes(cur) ? cur : "";
+}
+function setOpt(k, v) {
+  const c = D.chat;
+  if (c && c.messages.length) cmd({ cmd: "set_chat_options", chat: c.id, [k]: v }); else pending[k] = v;
+  if (c) c[k] = v;
+}
+function renderControls() {
+  const sel = $("#agent"); sel.replaceChildren();
+  (D.agents || []).forEach((a) => { const o = el("option", null, a); o.value = a; sel.append(o); });
+  sel.value = chatOpt("agent", "") || D.default_agent;
+  $("#effort").value = chatOpt("effort", "") || D.default_effort || "";
+  fillModels(chatOpt("model", "") || "");
+  $("#effort").value = chatOpt("effort", "") || D.default_effort || "";
+  $("#plan").style.display = D.plan_button ? "" : "none";
+  $("#hint").textContent = D.composer_hint ? "↵ send · ⇧↵ new line" : "";
+  const access = chatOpt("access", "") || D.default_access || "full";
+  $("#access").value = access; $("#access").className = "ctl " + access;
+  $("#plan").classList.toggle("on", !!chatOpt("plan", false));
+  $("#agentBadge").textContent = sel.value;
+  const q = (D.chat && D.chat.queue) || [], qe = $("#queue");
+  qe.style.display = q.length ? "block" : "none"; qe.replaceChildren();
+  q.forEach((t) => qe.append(el("div", null, "Queued · " + t)));
+}
+let tick = 0;
+function renderWorking() {
+  clearInterval(tick);
+  const w = $("#working");
+  if (!D.running || !D.started) { w.textContent = ""; return; }
+  const show = () => { const s = Math.max(0, Math.floor(Date.now() / 1000 - D.started)); w.textContent = `Working ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  show(); tick = setInterval(show, 1000);
+}
 function renderAll() {
   const c = D.chat;
   $("#title").textContent = c && c.title ? c.title : "New chat";
-  const sel = $("#agent"); sel.replaceChildren();
-  (D.agents || []).forEach((a) => { const o = el("option", null, a); o.value = a; sel.append(o); });
-  sel.value = (c && c.agent) || D.default_agent;
-  $("#agentBadge").textContent = sel.value;
+  renderControls(); renderWorking();
   const btn = $("#send");
-  btn.classList.toggle("stop", !!D.running); btn.textContent = D.running ? "■" : "↑"; btn.title = D.running ? "Stop" : "Send";
+  btn.classList.toggle("stop", !!D.running); btn.textContent = D.running ? "■" : "↑"; btn.title = D.running ? "Stop (type to queue a message instead)" : "Send";
   renderLog(); toBottom();
 }
 
 function submit(text) {
   text = (text || $("#input").value).trim();
-  if (!text || D.running) return;
-  cmd({ cmd: "send_chat", chat: D.chat ? D.chat.id : null, text, agent: $("#agent").value });
+  if (!text) return;
+  // While the agent works, a message waits in the queue and goes when it's done.
+  const fresh = !(D.chat && D.chat.messages.length);
+  cmd({ cmd: "send_chat", chat: D.chat ? D.chat.id : null, text, agent: $("#agent").value,
+        ...(fresh ? { model: $("#model").value, effort: $("#effort").value, access: $("#access").value, plan: $("#plan").classList.contains("on") } : {}) });
+  pending = {};
   $("#input").value = ""; grow();
 }
 function grow() { const t = $("#input"); t.style.height = "auto"; t.style.height = Math.min(220, t.scrollHeight) + "px"; }
@@ -178,8 +269,12 @@ $("#input").addEventListener("input", grow);
 $("#input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
 });
-$("#send").onclick = () => (D.running ? cmd({ cmd: "stop_chat", chat: D.chat && D.chat.id }) : submit());
-$("#agent").onchange = () => { $("#agentBadge").textContent = $("#agent").value; if (D.chat) cmd({ cmd: "set_chat_agent", chat: D.chat.id, agent: $("#agent").value }); };
+$("#send").onclick = () => (D.running && !$("#input").value.trim() ? cmd({ cmd: "stop_chat", chat: D.chat && D.chat.id }) : submit());
+$("#agent").onchange = () => { $("#agentBadge").textContent = $("#agent").value; setOpt("agent", $("#agent").value); fillModels(""); };
+$("#model").onchange = () => { setOpt("model", $("#model").value); fillEfforts(); };
+$("#effort").onchange = () => setOpt("effort", $("#effort").value);
+$("#access").onchange = () => { $("#access").className = "ctl " + $("#access").value; setOpt("access", $("#access").value); };
+$("#plan").onclick = () => { const on = !$("#plan").classList.contains("on"); $("#plan").classList.toggle("on", on); setOpt("plan", on); };
 // Links open as tabs; the chat itself never navigates.
 document.addEventListener("click", (e) => {
   const a = e.target.closest && e.target.closest("a[href]");

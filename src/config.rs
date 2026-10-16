@@ -408,6 +408,13 @@ pub struct AgentUse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatsConfig {
     pub enabled: bool,
+    pub theme: String,
+    pub access: String,
+    pub effort: String,
+    pub own_tools: bool,
+    pub auto_settle_days: f64,
+    pub plan_button: bool,
+    pub composer_hint: bool,
     pub sync: bool,
     pub ask_in_find: bool,
     pub find_question_words: usize,
@@ -671,6 +678,7 @@ pub struct BlockingConfig {
 pub struct AgentsConfig {
     pub timeout_minutes: f64,
     pub available: BTreeMap<String, Option<AgentDef>>,
+    pub models: BTreeMap<String, Vec<String>>,
     #[serde(rename = "use")]
     pub use_for: AgentUse,
     pub default: String,
@@ -724,7 +732,7 @@ pub fn config_path() -> PathBuf {
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
-const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "ai_actions", "notifications.sites"];
+const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "agents.models", "ai_actions", "notifications.sites"];
 
 /// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
 /// ignored), each with the closest real key when there is one.
@@ -860,6 +868,7 @@ const PRESETS: &[(&str, &str, &[&str], &str)] = &[
     ("ember", "dark", &["#24130c", "#4a2412"], "#ff9a4c"),
     ("sand", "light", &["#f3e9dc", "#e8d5bf"], "#c2703d"),
     ("paper", "light", &["#f6f6f4", "#e9e9e6"], "#3d6bff"),
+    ("black", "dark", &["#000000", "#000000"], "#9a9aff"),
 ];
 
 pub fn preset(name: &str) -> Option<Theme> {
