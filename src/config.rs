@@ -30,6 +30,7 @@ pub struct Config {
     pub reader_view: ReaderConfig,
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
+    pub permissions: PermissionsConfig,
     pub pages: PagesConfig,
     pub translate: TranslateConfig,
     pub little_window: LittleWindowConfig,
@@ -108,6 +109,7 @@ pub struct LinksConfig {
     pub option_shift_click: String,
     pub context_menu: bool,
     pub show_url_on_hover: bool,
+    pub popups: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +224,12 @@ pub struct PrivacyConfig {
     pub strip_tracking: bool,
     pub tracking_params: Vec<String>,
     pub cookie_banners: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionsConfig {
+    pub camera: String,
+    pub microphone: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

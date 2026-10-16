@@ -66,6 +66,14 @@ fn check_config() -> anyhow::Result<()> {
             if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
                 problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));
             }
+            for (name, v) in [("camera", &c.permissions.camera), ("microphone", &c.permissions.microphone)] {
+                if !["ask", "allow", "deny"].contains(&v.as_str()) {
+                    problems.push(format!("permissions: {name} is {v:?}; use ask, allow or deny"));
+                }
+            }
+            if !["window", "tab"].contains(&c.links.popups.as_str()) {
+                problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
+            }
             if !["reject", "hide", "off"].contains(&c.privacy.cookie_banners.as_str()) {
                 problems.push(format!("privacy: cookie_banners is {:?}; use reject, hide or off", c.privacy.cookie_banners));
             }

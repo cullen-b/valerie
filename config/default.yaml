@@ -194,6 +194,11 @@ privacy:
                            # query parameters to remove; a trailing * matches any ending (utm_* = utm_source, utm_medium …)
   cookie_banners: reject   # cookie pop-ups. one of: reject (click "Reject all" when possible, otherwise hide) | hide | off
 
+# What sites may use. one of: ask (Valerie asks the first time a site wants it) | allow | deny
+permissions:
+  camera: ask
+  microphone: ask
+
 # How web pages look
 pages:
   dark_mode: off           # make light websites dark. one of: off | system (when your computer is in dark mode) | always
@@ -222,6 +227,8 @@ links:
   option_shift_click: peek
   context_menu: true       # Valerie's right-click menu on links (hold shift while right-clicking for the system menu)
   show_url_on_hover: true  # show where a link goes in the bottom corner while you hover it
+  popups: window           # pop-up windows a site opens at a set size, like "Sign in with Google". one of:
+                           # window (a small window that stays linked to the page, so sign-ins work) | tab
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)

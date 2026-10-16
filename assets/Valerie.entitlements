@@ -4,5 +4,8 @@
      sandbox exceptions. scripts/bundle-macos.sh adds the passkey entitlement when a provisioning profile is given. -->
 <plist version="1.0">
 <dict>
+  <!-- Video calls in web pages (the hardened runtime blocks the camera and microphone without these). -->
+  <key>com.apple.security.device.camera</key><true/>
+  <key>com.apple.security.device.audio-input</key><true/>
 </dict>
 </plist>
