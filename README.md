@@ -76,9 +76,17 @@ microphone (`permissions`), and a thin line along the top shows a page loading (
 Valerie uses the agent apps you already have, signed in with your own subscriptions: **Claude Code, Codex, OpenCode,
 Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if needed and opens its sign-in: one step.
 
-- **Chats** (`⌘J`, or swipe left past your first space): conversations with your agent, pinned and closed like tabs.
-  The agent can see and use your whole browser, so "merge my approved PRs once checks pass" or "compare the laptops
-  in my tabs" just works. Chats are saved in the config folder, so they sync.
+- **Chats** (`⌘J`, or swipe left past your first space; black by default, `chats.theme`): conversations with your
+  agent. The agent can see and use your whole browser, so "merge my approved PRs once checks pass" or "compare the
+  laptops in my tabs" just works, and it keeps your own MCP servers, plugins and skills (`chats.own_tools`).
+  - The composer picks the agent, the model (each CLI's own list), the reasoning effort, and access: **Read only**
+    (it can look but not act), **Ask first** (you approve each action in a sheet), or **Full access**.
+  - Send while it's working and your message waits in a queue. A timer shows how long it's been at it.
+  - Pin, **snooze** (an hour, this evening, tomorrow, next week…) or **settle** chats; untouched chats settle after
+    3 days (`chats.auto_settle_days`). Working and snoozed chats sit at the bottom of the sidebar; unread answers
+    get a dot.
+  - **Copy Chat ID** and paste `chat:<id>` into another chat to bring that conversation along.
+  - Chats are saved in the config folder, so they sync.
 - **Ask from the command bar:** type a question or a request; it opens in Chats (`> do this` / `? ask that` force it).
 - **Ask from find:** press `/`, type a question ("what's the return policy here?"), Enter: the answer appears right
   under the find bar, in Valerie's own panel (the page can't read it). Any agent works; it only sees that page and runs

@@ -773,3 +773,19 @@ pub fn ask(wv: &WebView, title: &str, body: &str, yes: &str, no: &str, done: imp
         done(false);
     }
 }
+
+/// A moment (seconds) as local "Thu 09:00" (or "09:00" if it's today).
+pub fn local_time_of(secs: u64) -> String {
+    #[cfg(unix)]
+    {
+        let today = local_day().0;
+        if let Ok(o) = std::process::Command::new("date").args(["-r", &secs.to_string(), "+%Y-%m-%d|%a %H:%M|%H:%M"]).output() {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let p: Vec<&str> = s.split('|').collect();
+            if p.len() == 3 {
+                return if p[0] == today { p[2].to_string() } else { p[1].to_string() };
+            }
+        }
+    }
+    format!("{secs}")
+}
