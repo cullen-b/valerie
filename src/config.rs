@@ -30,6 +30,7 @@ pub struct Config {
     pub reader_view: ReaderConfig,
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
+    pub chats: ChatsConfig,
     pub permissions: PermissionsConfig,
     pub pages: PagesConfig,
     pub translate: TranslateConfig,
@@ -177,6 +178,37 @@ pub struct ReaderConfig {
     pub width: f64,
 }
 
+/// One agent: a CLI Valerie knows (claude, codex, opencode, pi, cursor, hermes) and the model to ask for, or any
+/// command that takes a prompt and prints an answer.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentDef {
+    pub cli: String,
+    pub model: String,
+    pub command: Vec<String>,
+}
+
+/// Which agent (by name) does each job; empty = agents.default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentUse {
+    pub chat: String,
+    pub find: String,
+    pub tasks: String,
+    pub customize: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatsConfig {
+    pub enabled: bool,
+    pub sync: bool,
+    pub ask_in_find: bool,
+    pub find_question_words: usize,
+    pub page_text_limit: usize,
+    pub browser_context: bool,
+    pub suggestions: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowConfig {
     pub width: f64,
@@ -203,6 +235,34 @@ pub struct HistoryConfig {
 pub struct DownloadsConfig {
     pub folder: String,
     pub keep_in_list: usize,
+}
+
+impl Config {
+    /// The agent for a job ("chat", "find", "tasks", "customize"): its name and definition. A name that isn't under
+    /// agents.available but is a known CLI (e.g. "codex") means that CLI with the default model.
+    pub fn agent_for(&self, job: &str) -> (String, AgentDef) {
+        let u = &self.agents.use_for;
+        let pick = match job {
+            "chat" => &u.chat,
+            "find" => &u.find,
+            "tasks" => &u.tasks,
+            "customize" => &u.customize,
+            _ => &self.agents.default,
+        };
+        let name = if pick.is_empty() { self.agents.default.clone() } else { pick.clone() };
+        self.agent_named(&name)
+    }
+
+    pub fn agent_named(&self, name: &str) -> (String, AgentDef) {
+        let mut def = self.agents.available.get(name).cloned().flatten().unwrap_or_else(|| AgentDef { cli: name.to_string(), ..Default::default() });
+        if def.cli.is_empty() && def.command.is_empty() {
+            def.cli = name.to_string();
+        }
+        if def.model.is_empty() {
+            def.model = self.agents.model.clone();
+        }
+        (name.to_string(), def)
+    }
 }
 
 impl DownloadsConfig {
@@ -378,6 +438,9 @@ pub struct BlockingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentsConfig {
     pub timeout_minutes: f64,
+    pub available: BTreeMap<String, Option<AgentDef>>,
+    #[serde(rename = "use")]
+    pub use_for: AgentUse,
     pub default: String,
     /// Model passed to the agent CLI; empty = the CLI's own default.
     pub model: String,
@@ -441,7 +504,7 @@ pub fn config_path() -> PathBuf {
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
-const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights"];
+const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available"];
 
 /// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
 /// ignored), each with the closest real key when there is one.

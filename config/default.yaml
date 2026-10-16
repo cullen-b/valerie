@@ -101,6 +101,8 @@ command_bar:
     space: 18
     bookmark: 12
     download: 10
+    chat: 16
+    setup: 6
     history: 8
     synced: 6
     theme: 5
@@ -185,6 +187,20 @@ reader_view:
   font: serif              # one of: serif | sans
   font_size: 19            # text size in pixels
   width: 680               # column width in pixels
+
+# The Chats space: conversations with your agents, to the left of your first space (⌘J opens it).
+chats:
+  enabled: true            # show the Chats space
+  sync: true               # keep chats in the config folder so they sync between machines (false = this machine only)
+  ask_in_find: true        # in find (/), Enter on something that reads like a question asks the find agent about the page
+  find_question_words: 4   # a find query this many words long (or ending in "?") counts as a question
+  page_text_limit: 60000   # most characters of the page sent along with a question
+  browser_context: true    # tell chat agents which tabs you have open (titles and addresses) so they can answer about them
+  suggestions:             # ideas shown in an empty chat
+    - "What's in my open tabs?"
+    - "Summarize the page I'm on"
+    - "Find the cheapest flight in my tabs"
+    - "Merge my approved GitHub PRs once their checks pass"
 
 # Privacy
 privacy:
@@ -335,6 +351,7 @@ keybindings:
   "CmdOrCtrl+Shift+M": toggle_mute
   "CmdOrCtrl+Shift+V": paste_and_go
   "CmdOrCtrl+P": print
+  "CmdOrCtrl+J": open_chats
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
@@ -423,9 +440,30 @@ mcp:
 
 # Headless agents run on your own Claude Code / Codex / OpenCode login. Type "> task" in the command bar, or
 # schedule jobs here.
+# AI. Valerie uses the agent apps already on your computer, signed in with your own subscriptions: Claude Code,
+# Codex, OpenCode, Pi, Cursor and Hermes. Pick "Set Up <name>" in the command bar to install one and sign in (one
+# step). They power the Chats space (left of your first space), questions you type into find (/), "Ask …" in the
+# command bar (an agent that can see and use your whole browser), scheduled jobs, and "! change …" customizing.
 agents:
-  default: claude          # one of: claude | codex | opencode
+  default: claude          # the agent used when a job below doesn't name one (a name from `available`)
   timeout_minutes: 20      # stop an agent that's still running after this long
+  available:               # your agents by name. cli: one of claude | codex | opencode | pi | cursor | hermes
+    claude:   { cli: claude }      # model: "" = the CLI's own default; e.g. { cli: claude, model: opus }
+    codex:    { cli: codex }
+    opencode: { cli: opencode }    # model like "anthropic/claude-sonnet-4-5"
+    pi:       { cli: pi }
+    cursor:   { cli: cursor }
+    hermes:   { cli: hermes }
+    # Add as many as you like, e.g. a fast one for find and a strong one for chat:
+    #   quick:  { cli: claude, model: haiku }
+    #   strong: { cli: codex, model: gpt-5 }
+    #   local:  { command: ["ollama", "run", "llama3", "{prompt}"] }   # any program that prints an answer
+  use:                     # which agent (a name above) does each job; "" = default
+    chat: ""               # Chats and "Ask …" in the command bar: can see and use your whole browser
+    find: ""               # questions typed into find (/) about the page: sees only that page, no tools
+                           # (needs claude, pi, opencode or a `command` agent: those can run with no tools)
+    tasks: ""              # scheduled jobs (below)
+    customize: ""          # "! make the text bigger" in the command bar: edits Valerie's settings
   model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
   space: Agents            # agents open their tabs in this space and leave yours alone
   jobs: []

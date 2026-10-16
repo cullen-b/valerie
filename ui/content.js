@@ -80,6 +80,26 @@ function ui() {
     .pill { position: fixed; bottom: 6px; left: 6px; max-width: 55vw; padding: 5px 9px; border-radius: 8px; background: rgba(24,24,32,.9); color: rgba(255,255,255,.85);
             font-weight: 500; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
     .pill.right { left: auto; right: 6px; }
+    .find .ask { display: none; padding: 2px 7px; border-radius: 6px; background: ${cfg.accent || "#9d8cff"}; color: #fff; font-size: 11px; white-space: nowrap; }
+    .find.question .ask { display: inline-block; }
+    .find.question .count { display: none; }
+    .answer { position: fixed; top: 54px; right: 16px; width: 440px; max-width: calc(100vw - 32px); max-height: 60vh; overflow-y: auto; padding: 12px 14px;
+              border-radius: 12px; background: rgba(24,24,32,.96); color: rgba(255,255,255,.92); pointer-events: auto; box-shadow: 0 12px 32px rgba(0,0,0,.35); }
+    .answer.with-map { right: 78px; }
+    .answer * { font: 400 13px/1.55 -apple-system, system-ui, sans-serif; }
+    .answer .q { color: rgba(255,255,255,.5); font-size: 12px; margin-bottom: 6px; display: flex; gap: 8px; }
+    .answer .q span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .answer .q b { cursor: default; font-size: 13px; font-weight: 600; }
+    .answer p { margin: 0 0 8px; } .answer ul, .answer ol { margin: 0 0 8px; padding-left: 18px; }
+    .answer code { font: 12px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.08); padding: 1px 4px; border-radius: 4px; }
+    .answer pre { background: rgba(255,255,255,.06); padding: 8px; border-radius: 8px; overflow-x: auto; }
+    .answer strong { font-weight: 600; } .answer a { color: ${cfg.accent || "#9d8cff"}; text-decoration: none; }
+    .answer .err { color: #ff8f8f; }
+    .answer .tools { color: rgba(255,255,255,.45); font: 11.5px ui-monospace, Menlo, monospace; margin-bottom: 6px; }
+    .answer .foot { margin-top: 8px; display: flex; gap: 8px; align-items: center; color: rgba(255,255,255,.45); font-size: 11.5px; }
+    .answer .foot button { all: unset; padding: 4px 9px; border-radius: 7px; background: rgba(255,255,255,.1); color: #fff; font-size: 12px; }
+    .answer .dots::after { content: "…"; animation: dots 1s steps(3) infinite; }
+    @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
     .loadbar { position: fixed; top: 0; left: 0; height: 2px; width: 0; background: ${cfg.accent || "#9d8cff"}; box-shadow: 0 0 6px ${cfg.accent || "#9d8cff"};
                transition: width 2.5s cubic-bezier(.1,.7,.3,1), opacity .25s; }
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
@@ -470,17 +490,22 @@ function openFind(initial) {
     fnd.bar = document.createElement("div"); fnd.bar.className = "find" + (minimap ? " with-map" : "");
     fnd.input = document.createElement("input"); fnd.input.placeholder = "Find in page";
     fnd.count = document.createElement("span"); fnd.count.className = "count";
-    fnd.bar.append(fnd.input, fnd.count);
+    fnd.ask = document.createElement("span"); fnd.ask.className = "ask"; fnd.ask.textContent = "Ask ↵";
+    fnd.bar.append(fnd.input, fnd.count, fnd.ask);
     root.appendChild(fnd.bar);
     fnd.input.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Enter") {
         e.preventDefault(); clearTimeout(fnd.timer);
-        if (fnd.query !== fnd.input.value) runSearch(); else goToMatch(fnd.cur + (e.shiftKey ? -1 : 1));
+        if (!e.shiftKey && isQuestion(fnd.input.value)) askPage(fnd.input.value.trim());
+        else if (fnd.query !== fnd.input.value) runSearch(); else goToMatch(fnd.cur + (e.shiftKey ? -1 : 1));
       }
-      if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+      if (e.key === "Escape") { e.preventDefault(); closeAnswer(); closeFind(); }
     }, true);
-    fnd.input.addEventListener("input", () => { clearTimeout(fnd.timer); fnd.timer = setTimeout(runSearch, 90); });
+    fnd.input.addEventListener("input", () => {
+      clearTimeout(fnd.timer); fnd.timer = setTimeout(runSearch, 90);
+      fnd.bar.classList.toggle("question", isQuestion(fnd.input.value));
+    });
     if (minimap) {
       fnd.map = document.createElement("canvas"); fnd.map.className = "minimap";
       root.appendChild(fnd.map);
@@ -496,6 +521,7 @@ function openFind(initial) {
     addEventListener("resize", () => { if (fnd.bar) { buildSilhouette(); runSearch(); } });
   }
   if (initial) fnd.input.value = initial;
+  fnd.bar.classList.toggle("question", isQuestion(fnd.input.value));
   if (fnd.input.value) runSearch(); else drawMinimap();
   setTimeout(() => { fnd.input.focus(); fnd.input.select(); }, 0);
 }
@@ -954,6 +980,87 @@ document.addEventListener("click", (e) => {
   if (a && /^https?:/.test(a.href)) { const c = cleanUrl(a.href); if (c !== a.href) a.href = c; }
 }, true);
 
+// ---------- ask about this page from find: a question typed into find gets answered right under it ----------
+const QUESTION_START = /^(what|why|how|who|whom|when|where|which|whose|is|are|was|were|am|can|could|does|do|did|should|would|will|has|have|explain|summari[sz]e|tl;?dr|tell me|list|compare|translate|define|give me|find me)\b/i;
+function isQuestion(q) {
+  const a = cfg.ai || {}, t = q.trim();
+  if (!a.ask_in_find || !t) return false;
+  const words = t.split(/\s+/).length;
+  return (t.endsWith("?") && words >= 2) || (words >= (a.find_question_words || 4) && QUESTION_START.test(t)) || words >= 9;
+}
+const ans = { box: null, body: null, text: "", tools: [], q: "", done: false, raf: 0 };
+function closeAnswer() { if (ans.box) { ans.box.remove(); ans.box = null; } }
+function askPage(q) {
+  const limit = (cfg.ai || {}).page_text_limit || 60000;
+  const text = (document.body ? document.body.innerText : "").slice(0, limit);
+  closeAnswer();
+  Object.assign(ans, { text: "", tools: [], q, done: false, error: "" });
+  ans.box = document.createElement("div"); ans.box.className = "answer" + (fnd.map ? " with-map" : "");
+  const head = document.createElement("div"); head.className = "q";
+  const qs = document.createElement("span"); qs.textContent = q;
+  const x = document.createElement("b"); x.textContent = "×"; x.title = "Close"; x.onclick = closeAnswer;
+  head.append(qs, x);
+  ans.body = document.createElement("div");
+  ans.box.append(head, ans.body);
+  ui().appendChild(ans.box);
+  drawAnswer();
+  post({ t: "page_ask", question: q, text, title: document.title });
+}
+function drawAnswer() {
+  ans.raf = 0;
+  if (!ans.box) return;
+  const b = ans.body; b.replaceChildren();
+  if (ans.tools.length) { const t = document.createElement("div"); t.className = "tools"; t.textContent = "Used " + ans.tools.join(", "); b.append(t); }
+  if (ans.text) answerMarkdown(ans.text, b);
+  else if (!ans.done && !ans.error) { const w = document.createElement("div"); w.className = "dots"; w.textContent = "Reading the page"; b.append(w); }
+  if (ans.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = ans.error; b.append(e); }
+  if (ans.done && ans.text) {
+    const f = document.createElement("div"); f.className = "foot";
+    const go = document.createElement("button"); go.textContent = "Continue in Chats";
+    go.addEventListener("click", (e) => { if (!e.isTrusted) return; post({ t: "page_to_chat" }); closeAnswer(); });
+    const who = document.createElement("span"); who.textContent = ans.agent ? "Answered by " + ans.agent : "";
+    f.append(go, who); b.append(f);
+  }
+}
+// The same small Markdown as the chat view, built as DOM.
+function answerMarkdown(src, into) {
+  const add = (tag, text, parent) => { const e = document.createElement(tag); answerInline(text, e); (parent || into).append(e); return e; };
+  let list = null, para = null, code = null;
+  for (const line of src.split("\n")) {
+    if (/^```/.test(line)) { if (code) { code = null; } else { const pre = document.createElement("pre"); code = document.createElement("code"); pre.append(code); into.append(pre); } list = para = null; continue; }
+    if (code) { code.textContent += (code.textContent ? "\n" : "") + line; continue; }
+    if (!line.trim()) { list = para = null; continue; }
+    const m = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)/);
+    if (m) { if (!list) { list = document.createElement(/\d/.test(m[1]) ? "ol" : "ul"); into.append(list); } add("li", m[2], list); para = null; continue; }
+    const h = line.match(/^#{1,3}\s+(.*)/);
+    if (h) { const s = add("p", "", into); const st = document.createElement("strong"); answerInline(h[1], st); s.append(st); list = para = null; continue; }
+    if (!para) { para = add("p", line); list = null; } else { para.append(document.createElement("br")); answerInline(line, para); }
+  }
+}
+function answerInline(text, into) {
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:[^)\s]+)\))/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) into.append(text.slice(last, m.index));
+    if (m[1]) { const c = document.createElement("code"); c.textContent = m[1].slice(1, -1); into.append(c); }
+    else if (m[2]) { const s = document.createElement("strong"); s.textContent = m[2].slice(2, -2); into.append(s); }
+    else { const a = document.createElement("a"); a.textContent = m[3].slice(1, m[3].indexOf("]")); a.href = m[4]; into.append(a); }
+    last = re.lastIndex;
+  }
+  if (last < text.length) into.append(text.slice(last));
+}
+// Pieces of the answer as Valerie streams them in.
+function answer(ev) {
+  if (!ans.box || !ev) return;
+  if (ev.type === "delta") ans.text += ev.text;
+  else if (ev.type === "block") { if (ans.text && !ans.text.endsWith("\n\n")) ans.text += "\n\n"; ans.text += ev.text; }
+  else if (ev.type === "final") { if (!ans.text.trim()) ans.text = ev.text; }
+  else if (ev.type === "tool") ans.tools.push(ev.text);
+  else if (ev.type === "error") ans.error = ev.text;
+  else if (ev.type === "done") { ans.done = true; ans.agent = ev.agent; }
+  if (!ans.raf) ans.raf = requestAnimationFrame(drawAnswer);
+}
+
 // ---------- reader view: the page's article as clean text ----------
 let readerHost = null;
 function articleRoot() {
@@ -1139,7 +1246,7 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind, media, reader, request,
+    closeFind, media, reader, request, answer, ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,

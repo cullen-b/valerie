@@ -69,6 +69,21 @@ Selected Text, Close Duplicate Tabs, and dark mode for light websites (`pages.da
 pop-ups open as small linked windows so sign-ins complete (`links.popups`), sites ask before using the camera or
 microphone (`permissions`), and a thin line along the top shows a page loading (`pages.loading_bar`).
 
+## AI: Chats, questions in find, and an agent that drives your browser
+
+Valerie uses the agent apps you already have, signed in with your own subscriptions: **Claude Code, Codex, OpenCode,
+Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if needed and opens its sign-in: one step.
+
+- **Chats** (`⌘J`, or swipe left past your first space): conversations with your agent, pinned and closed like tabs.
+  The agent can see and use your whole browser, so "merge my approved PRs once checks pass" or "compare the laptops
+  in my tabs" just works. Chats are saved in the config folder, so they sync.
+- **Ask from the command bar:** type a question or a request; it opens in Chats (`> do this` / `? ask that` force it).
+- **Ask from find:** press `/`, type a question ("what's the return policy here?"), Enter: the answer appears right
+  under the find bar. It only sees that page and has no tools, since a web page could be trying to trick it.
+- **Pick an agent per job:** `agents.available` names as many as you like (same CLI with another model, or any
+  command), `agents.use` picks one for chat, find, scheduled tasks and customizing: e.g. a strong model to chat and a
+  fast one for find.
+
 ## Make Valerie yours with AI
 
 Valerie is built to be changed by your AI assistant. Its config folder (`~/.config/valerie/`) holds a generated

@@ -238,6 +238,51 @@ pub enum Command {
     PasteAndGo,
     /// Open the print dialog for the current page.
     Print,
+    /// The Chats space: conversations with your agents (left of the first space).
+    OpenChats,
+    /// Start a chat, optionally asking something right away.
+    NewChat {
+        #[serde(default)]
+        prompt: Option<String>,
+        #[serde(default)]
+        agent: Option<String>,
+    },
+    /// Send a message in a chat (the open one if none is given; a new one if none is open).
+    SendChat {
+        #[serde(default)]
+        chat: Option<String>,
+        text: String,
+        #[serde(default)]
+        agent: Option<String>,
+    },
+    StopChat {
+        #[serde(default)]
+        chat: Option<String>,
+    },
+    CloseChat {
+        #[serde(default)]
+        chat: Option<String>,
+    },
+    TogglePinChat {
+        #[serde(default)]
+        chat: Option<String>,
+    },
+    ActivateChat {
+        chat: String,
+    },
+    RenameChat {
+        chat: String,
+        title: String,
+    },
+    /// Which agent a chat talks to from now on.
+    SetChatAgent {
+        chat: String,
+        agent: String,
+    },
+    /// Install (if needed) and sign in to an agent CLI in one step.
+    SetUpAgent {
+        agent: String,
+    },
     /// Close Today tabs showing the same page as another tab in this space.
     CloseDuplicateTabs,
     /// Turn Valerie's dark mode for light websites on or off for this site.
@@ -302,7 +347,16 @@ impl Command {
 
     /// Commands that expose or destroy secrets or open local files; agents (MCP) may not run them.
     pub fn agent_forbidden(&self) -> bool {
-        matches!(self, Command::CopyPassword { .. } | Command::DeletePassword { .. } | Command::OpenDownload { .. })
+        matches!(
+            self,
+            Command::CopyPassword { .. }
+                | Command::DeletePassword { .. }
+                | Command::OpenDownload { .. }
+                // An agent starting agents could loop forever; setting one up installs software.
+                | Command::NewChat { .. }
+                | Command::SendChat { .. }
+                | Command::SetUpAgent { .. }
+        )
     }
 
     /// Commands a web page may trigger through injected vim motions. None of these can read or redirect other tabs.
@@ -391,6 +445,11 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("paste_and_go", "Paste and Go"),
     ("close_duplicate_tabs", "Close Duplicate Tabs"),
     ("print", "Print Page…"),
+    ("open_chats", "Chats"),
+    ("new_chat", "New Chat"),
+    ("stop_chat", "Stop the Agent in This Chat"),
+    ("close_chat", "Close Chat"),
+    ("toggle_pin_chat", "Pin / Unpin Chat"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
     ("show_downloads", "Show Downloads Folder"),
@@ -436,6 +495,13 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("find_in_page", "{ query? }"),
     ("toggle_mute", "{ tab? }"),
     ("copy_text", "{ text }"),
+    ("new_chat", "{ prompt?, agent? }  (ask an agent something in a new chat; it can see and use the browser)"),
+    ("send_chat", "{ text, chat?, agent? }"),
+    ("activate_chat", "{ chat }"),
+    ("close_chat", "{ chat? }"),
+    ("rename_chat", "{ chat, title }"),
+    ("set_chat_agent", "{ chat, agent }"),
+    ("set_up_agent", "{ agent: claude | codex | opencode | pi | cursor | hermes }  (install if needed, then sign in)"),
     ("toggle_media", "{ tab? }  (play / pause)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
