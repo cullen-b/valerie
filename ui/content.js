@@ -2,6 +2,57 @@
 // browser through a whitelist of harmless messages.
 if (window.__valerie || window.top !== window) return;
 
+// ---------- notifications from websites: shown by the computer, once you've allowed the site ----------
+// WebKit gives apps like Valerie no working Notification, so pages get this one; Valerie decides per site.
+const notifyHooks = { permission() {}, clicked() {} };
+(() => {
+  const site = location.hostname.replace(/^www\./, "").toLowerCase();
+  const state = () => {
+    const n = cfg.notifications || {}, s = (n.sites || {})[site];
+    return s || (n.policy === "allow" ? "granted" : n.policy === "deny" ? "denied" : "default");
+  };
+  const live = new Map(), waiting = [];
+  let seq = 0;
+  class Notification extends EventTarget {
+    constructor(title, options = {}) {
+      super();
+      Object.assign(this, { title: String(title), body: String(options.body || ""), tag: options.tag || "", icon: options.icon || "",
+        data: options.data === undefined ? null : options.data, silent: !!options.silent, onclick: null, onshow: null, onclose: null, onerror: null });
+      this._id = ++seq;
+      if (state() !== "granted") { setTimeout(() => this._fire("error")); return; }
+      live.set(this._id, this);
+      if (live.size > 50) live.delete(live.keys().next().value);
+      post({ t: "notify", id: this._id, title: this.title.slice(0, 200), body: this.body.slice(0, 500), silent: this.silent });
+      setTimeout(() => this._fire("show"));
+    }
+    _fire(type) { const e = new Event(type), h = this["on" + type]; if (typeof h === "function") h.call(this, e); this.dispatchEvent(e); }
+    close() { if (live.delete(this._id)) this._fire("close"); }
+    static get permission() { return state(); }
+    static get maxActions() { return 0; }
+    static requestPermission(callback) {
+      return new Promise((resolve) => {
+        const done = (v) => { resolve(v); if (typeof callback === "function") callback(v); };
+        if (state() !== "default") return done(state());
+        waiting.push(done);
+        post({ t: "notify_permission" });
+      });
+    }
+  }
+  try { Object.defineProperty(window, "Notification", { value: Notification, writable: true, configurable: true }); } catch (_) {}
+  // Service-worker notifications (registration.showNotification) go the same way.
+  if (window.ServiceWorkerRegistration) {
+    ServiceWorkerRegistration.prototype.showNotification = function (title, options) { new Notification(title, options); return Promise.resolve(); };
+  }
+  if (navigator.permissions && navigator.permissions.query) {
+    const query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (d) => d && (d.name === "notifications" || d.name === "push")
+      ? Promise.resolve({ state: state() === "default" ? "prompt" : state(), onchange: null, addEventListener() {}, removeEventListener() {} })
+      : query(d);
+  }
+  notifyHooks.permission = (s) => { while (waiting.length) waiting.shift()(s); };
+  notifyHooks.clicked = (id) => { const n = live.get(id); if (n) { window.focus(); n._fire("click"); } };
+})();
+
 // ---------- tabs opened in the background don't play audio/video until you first look at them ----------
 // A tab Valerie hasn't shown yet is a hidden document. Until it becomes visible, play() is held (and resumed then);
 // after that, media behaves normally (switching away doesn't pause anything).
@@ -1264,7 +1315,8 @@ document.addEventListener("visibilitychange", watchLogin);
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    closeFind, media, reader, request, askAction, keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
+    closeFind, media, reader, request, askAction,
+    notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,

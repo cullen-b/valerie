@@ -242,6 +242,16 @@ tasks: []
 #    result: notify
 briefs: []                     # the older name for tasks that write a page; still read
 
+# Notifications, shown by your computer like any app's.
+notifications:
+  from_valerie: true       # Valerie's own: a task's result is ready, a watched page changed, a chat answered while
+                           # you were in another app. Clicking one takes you to it.
+  websites: ask            # sites that want to notify you (Gmail, Slack, Calendar…). one of: ask (Valerie asks the
+                           # first time) | allow | deny. They only arrive while the site is open in a tab.
+  sites: {}                # your choice per site, e.g. { mail.google.com: allow, news.example.com: deny }; this wins
+                           # over the answers you gave when asked (toggle_site_notifications flips the site you're on)
+  sound: true              # play the notification sound
+
 # Watch This Page…: describe what to wait for ("the price drops below $500", "checks pass on this PR"); an agent looks
 # in the background and tells you once it happens.
 watch:

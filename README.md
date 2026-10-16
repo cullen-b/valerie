@@ -98,6 +98,10 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   browser does it. Things to read become a tab (in Kept, always the latest, with earlier ones and "Run it again now");
   things to do log to a chat or just notify you. Tasks live under `tasks:` in your config, so you (or your LLM) can
   reword them any time. A morning brief is just one task.
+- **Notifications:** Valerie's own (a task's page is ready, a watched page changed, a chat answered while you were
+  away) and websites' (Gmail, Slack, Calendar…: Valerie asks once per site) show as normal macOS notifications;
+  clicking one takes you to the brief, chat or tab. Settings under `notifications:`; "Notifications from This Site"
+  flips the site you're on.
 - **Watch This Page…:** "tell me when the price drops below $500" / "when checks pass on this PR". An agent checks in
   the background every 30 minutes (`watch.every_minutes`), notifies you once it happens, and leaves the details in Chats.
 

@@ -64,6 +64,10 @@ pub enum UserEvent {
     TaskDone { name: String, agent: String, text: String, error: Option<String> },
     /// "Run it again now" was clicked on a task's page.
     TaskRequested { slug: String },
+    /// A notification was clicked; its action JSON.
+    NotificationClicked(String),
+    /// The answer to "Allow this site to send notifications?".
+    NotifyPermission { tab: TabId, site: String, allowed: bool },
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -116,6 +120,12 @@ pub struct App {
     answer_label: String,
     /// Tasks running right now (by name).
     tasks_running: std::collections::HashSet<String>,
+    /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
+    window_focused: bool,
+    /// Sites asked about notifications this session (a site gets asked once).
+    notify_asked: std::collections::HashSet<String>,
+    /// Recent notifications per site, so one site can't flood you.
+    notify_times: HashMap<String, Vec<std::time::Instant>>,
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
@@ -377,6 +387,9 @@ impl App {
             answer_height: 120.0,
             answer_label: String::new(),
             tasks_running: Default::default(),
+            window_focused: true,
+            notify_asked: Default::default(),
+            notify_times: HashMap::new(),
             sync_gen: 0,
             littles: HashMap::new(),
             focused_little: None,
@@ -471,6 +484,7 @@ impl App {
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
             "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "pages": self.config.pages,
+            "notifications": { "policy": self.config.notifications.websites, "sites": self.notify_states() },
             "ai": { "ask_in_find": self.config.chats.ask_in_find, "find_question_words": self.config.chats.find_question_words,
                     "page_text_limit": self.config.chats.page_text_limit, "find_agent": self.config.agent_for("find").0 } })
     }
@@ -2701,6 +2715,17 @@ impl App {
                 self.dirty = true;
                 self.toast("Stopped watching");
             }
+            Command::ToggleSiteNotifications => {
+                let Some(site) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)) else { return };
+                let allow = self.notify_state(&site) != "granted";
+                self.state.notify_sites.insert(site.clone(), allow);
+                if let Some(v) = self.config.notifications.sites.get(&site) {
+                    self.toast(&format!("Your config says {site}: {v}, which wins over this"));
+                }
+                self.dirty = true;
+                self.refresh_content_config();
+                self.toast(&format!("Notifications from {site}: {}", if allow { "allowed" } else { "blocked" }));
+            }
             Command::OpenChats => self.open_chats(),
             Command::NewChat { prompt, agent } => {
                 let name = match &agent {
@@ -3177,6 +3202,8 @@ impl App {
             }
             (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
             (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
+            (Source::Page(Target::Tab(id)), "notify") => self.site_notification(id, &m),
+            (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
             (Source::Chat, "ready") => self.render_chat(),
             (Source::Answer, "ready") => {
                 // The panel finished loading after the question went out: replay it and what's arrived so far.
@@ -3464,6 +3491,27 @@ impl App {
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
+            UserEvent::NotificationClicked(action) => {
+                self.window.set_focus();
+                let Ok(a) = serde_json::from_str::<Value>(&action) else { return };
+                if let Some(tab) = a["tab"].as_u64().filter(|t| self.state.tabs.contains_key(t)) {
+                    self.activate(tab);
+                    if let (Some(v), Some(n)) = (self.views.get(&tab), a["note"].as_u64()) {
+                        let _ = v.evaluate_script(&format!("window.__valerie && __valerie.notificationClicked({n})"));
+                    }
+                } else if let Ok(cmd) = serde_json::from_value::<Command>(a["command"].clone()) {
+                    self.dispatch(cmd, elwt);
+                }
+            }
+            UserEvent::NotifyPermission { tab, site, allowed } => {
+                self.state.notify_sites.insert(site, allowed);
+                self.dirty = true;
+                self.refresh_content_config();
+                if let Some(v) = self.views.get(&tab) {
+                    let state = if allowed { "granted" } else { "denied" };
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.notificationPermission({state:?})"));
+                }
+            }
             UserEvent::TaskDone { name, agent, text, error } => self.task_done(name, agent, text, error),
             UserEvent::TaskRequested { slug } => {
                 if let Some(t) = self.config.all_tasks().into_iter().find(|t| t.slug() == slug) {
@@ -3475,8 +3523,13 @@ impl App {
                 self.chat_running.remove(&chat);
                 if let Some(c) = self.chats.iter().find(|c| c.id == chat) {
                     crate::ai::save_chat(&chats_dir(&self.config), c);
-                    if !(self.chats_open && self.active_chat.as_deref() == Some(chat.as_str())) {
+                    let shown = self.chats_open && self.active_chat.as_deref() == Some(chat.as_str());
+                    if !shown {
                         self.toast(&format!("✦ {} has an answer", c.title));
+                    }
+                    if !shown || !self.window_focused {
+                        let answer: String = c.messages.last().map(|m| m.text.chars().take(160).collect()).unwrap_or_default();
+                        self.notify_valerie(&format!("✦ {}", c.title), &answer, Some(json!({ "cmd": "activate_chat", "chat": c.id })));
                     }
                 }
                 self.render();
@@ -3655,6 +3708,7 @@ impl App {
         let _ = elwt;
         let main = id == self.window.id();
         match ev {
+            WindowEvent::Focused(f) if main => self.window_focused = f,
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 if main {
                     self.layout()
@@ -3688,6 +3742,12 @@ impl App {
             self.open_external(urls, elwt);
         }
         self.check_tasks(true);
+        let p = std::sync::Mutex::new(self.proxy.clone());
+        platform::notifications_init(move |action| {
+            if let Ok(p) = p.lock() {
+                send(&p, UserEvent::NotificationClicked(action));
+            }
+        });
     }
 }
 
@@ -4157,10 +4217,11 @@ impl App {
         c.messages.push(crate::ai::Msg { role: "user".into(), text: format!("Tell me when {} ({}): {}", w.title, w.url, w.condition), at: t, ..Default::default() });
         c.messages.push(crate::ai::Msg { role: "assistant".into(), text: format!("It happened. {detail}"), agent: c.agent.clone(), at: t, ..Default::default() });
         crate::ai::save_chat(&chats_dir(&self.config), &c);
+        let chat = c.id.clone();
         self.chats.insert(0, c);
         self.toast(&format!("◉ {}: it happened", w.title));
         if self.config.watch.notify {
-            platform::notify("Valerie", &format!("{}: {}", w.title, w.condition));
+            self.notify_valerie(&format!("◉ {}", w.title), &format!("It happened: {}", w.condition), Some(json!({ "cmd": "activate_chat", "chat": chat })));
         }
     }
 }
@@ -4384,7 +4445,8 @@ impl App {
                     let _ = v.load_url(&format!("valerie://task/{}", task.slug()));
                 }
                 self.toast(&format!("☀ {name} is ready"));
-                platform::notify("Valerie", &format!("{name} is ready"));
+                let first: String = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(160).collect();
+                self.notify_valerie(&format!("☀ {name} is ready"), &first, Some(json!({ "cmd": "open_task", "name": name })));
             }
             "chat" => {
                 let id = format!("task-{}", task.slug());
@@ -4406,13 +4468,16 @@ impl App {
                 self.chats.insert(0, c);
                 let short: String = text.chars().take(90).collect();
                 self.toast(&format!("⚙ {name}: {short}"));
+                if !self.window_focused {
+                    self.notify_valerie(&format!("⚙ {name}"), &short, Some(json!({ "cmd": "open_task", "name": name })));
+                }
                 self.render();
                 self.render_chat();
             }
             _ => {
                 let short: String = text.chars().take(160).collect();
                 self.toast(&format!("⚙ {name}: {short}"));
-                platform::notify(&name, &short);
+                self.notify_valerie(&format!("⚙ {name}"), &short, None);
             }
         }
     }
@@ -4484,4 +4549,82 @@ fn append_task(task: &config::TaskConfig) -> anyhow::Result<()> {
     }
     std::fs::write(&path, lines.join("\n") + "\n")?;
     Ok(())
+}
+
+// ---------------------------------------------------------------- notifications
+
+impl App {
+    /// One of Valerie's own notifications (when notifications.from_valerie is on). `command` runs when it's clicked.
+    fn notify_valerie(&self, title: &str, body: &str, command: Option<Value>) {
+        if !self.config.notifications.from_valerie {
+            return;
+        }
+        let action = command.map(|c| json!({ "command": c }).to_string());
+        platform::notify(&platform::Note { title, subtitle: "", body, action, sound: self.config.notifications.sound });
+    }
+
+    /// "granted" | "denied" | "default" for a site: the config's sites list, then the user's answers, then the policy.
+    fn notify_state(&self, site: &str) -> &'static str {
+        let n = &self.config.notifications;
+        match n.sites.get(site).map(String::as_str) {
+            Some("allow") => return "granted",
+            Some("deny") => return "denied",
+            _ => {}
+        }
+        match self.state.notify_sites.get(site) {
+            Some(true) => "granted",
+            Some(false) => "denied",
+            None => match n.websites.as_str() {
+                "allow" => "granted",
+                "deny" => "denied",
+                _ => "default",
+            },
+        }
+    }
+
+    /// Every site with a decided answer, for pages to read their own.
+    fn notify_states(&self) -> serde_json::Map<String, Value> {
+        let sites = self.state.notify_sites.keys().chain(self.config.notifications.sites.keys());
+        sites.map(|s| (s.clone(), json!(self.notify_state(s)))).filter(|(_, v)| v != "default").collect()
+    }
+
+    /// A site asked to send notifications (new Notification / requestPermission). Asked once per site per session.
+    fn notify_permission(&mut self, tab: TabId) {
+        let Some(site) = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)) else { return };
+        let state = self.notify_state(&site);
+        if state != "default" || !self.notify_asked.insert(site.clone()) {
+            if let Some(v) = self.views.get(&tab) {
+                let _ = v.evaluate_script(&format!("window.__valerie && __valerie.notificationPermission({state:?})"));
+            }
+            return;
+        }
+        let Some(v) = self.views.get(&tab) else { return };
+        let p = self.proxy.clone();
+        let body = format!("They'll show up like other apps' notifications while {site} is open in a tab. You can change this later with \"Notifications from This Site\".");
+        let s = site.clone();
+        platform::ask(v, &format!("Allow {site} to send notifications?"), &body, "Allow", "Don't Allow", move |allowed| {
+            send(&p, UserEvent::NotifyPermission { tab, site: s, allowed });
+        });
+    }
+
+    /// A site's notification. Only for allowed sites (decided here from the tab's real address, not the page's word),
+    /// and at most 12 a minute per site.
+    fn site_notification(&mut self, tab: TabId, m: &Value) {
+        let Some(site) = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)) else { return };
+        if self.notify_state(&site) != "granted" {
+            return;
+        }
+        let now_i = std::time::Instant::now();
+        let times = self.notify_times.entry(site.clone()).or_default();
+        times.retain(|t| now_i.duration_since(*t) < std::time::Duration::from_secs(60));
+        if times.len() >= 12 {
+            return;
+        }
+        times.push(now_i);
+        let title: String = m["title"].as_str().unwrap_or("").chars().take(200).collect();
+        let body: String = m["body"].as_str().unwrap_or("").chars().take(500).collect();
+        let action = json!({ "tab": tab, "note": m["id"].as_u64().unwrap_or(0) }).to_string();
+        let sound = self.config.notifications.sound && m["silent"].as_bool() != Some(true);
+        platform::notify(&platform::Note { title: if title.is_empty() { &site } else { &title }, subtitle: &site, body: &body, action: Some(action), sound });
+    }
 }
