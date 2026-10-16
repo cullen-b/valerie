@@ -73,6 +73,7 @@ pub struct SidebarConfig {
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
+    pub tab_height: f64,
     pub now_playing: bool,
 }
 

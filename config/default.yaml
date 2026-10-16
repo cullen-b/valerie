@@ -54,6 +54,7 @@ sidebar:
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
   space_switcher: true     # the space icons at the bottom
+  tab_height: 38           # height of each tab in the list, in pixels (16 tiny … 120 huge); text and icons scale with it
   now_playing: true        # a mini player above the space icons for video/audio playing in another tab
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
