@@ -91,10 +91,6 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("ai_actions.{name}: agent {:?} isn't under agents.available", a.agent));
                 }
             }
-            let (_, find) = c.agent_for("find");
-            if matches!(find.cli.as_str(), "codex" | "cursor" | "hermes") {
-                problems.push(format!("agents.use.find: {} can't run without tools, so it can't answer questions about pages; use claude, pi or opencode", find.cli));
-            }
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
             }

@@ -34,6 +34,7 @@ pub enum Source {
     Chrome,
     Overlay,
     Chat,
+    Answer,
     LittleBar(WindowId),
     Page(Target),
 }
@@ -104,6 +105,11 @@ pub struct App {
     /// Each tab's last question from find: (question, answer so far, agent), for "Open in Chats".
     page_answers: HashMap<TabId, (String, String, String)>,
     page_ask_times: Vec<std::time::Instant>,
+    /// Valerie's own panel for answers to questions from find (the page can't see into it), its tab and height.
+    answer_view: Option<WebView>,
+    answer_tab: Option<TabId>,
+    answer_height: f64,
+    answer_label: String,
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
@@ -230,6 +236,7 @@ fn ui(name: &str) -> String {
         "palette.html" => include_str!("../ui/palette.html"),
         "little.html" => include_str!("../ui/little.html"),
         "chat.html" => include_str!("../ui/chat.html"),
+        "answer.html" => include_str!("../ui/answer.html"),
         "content.js" => include_str!("../ui/content.js"),
         _ => "",
     }
@@ -317,6 +324,10 @@ impl App {
             chat_running: Default::default(),
             page_answers: HashMap::new(),
             page_ask_times: Vec::new(),
+            answer_view: None,
+            answer_tab: None,
+            answer_height: 120.0,
+            answer_label: String::new(),
             sync_gen: 0,
             littles: HashMap::new(),
             focused_little: None,
@@ -635,6 +646,19 @@ impl App {
                     let _ = v.set_bounds(rect(px, y, pw, h));
                 }
                 let _ = v.set_visible(true);
+            }
+        }
+        if let Some(av) = &self.answer_view {
+            match self.answer_tab.filter(|t| panes.contains(t)) {
+                Some(_) => {
+                    let (ax, ay, aw, ah) = self.answer_rect();
+                    let _ = av.set_bounds(rect(ax, ay, aw, ah));
+                    let _ = av.set_visible(true);
+                    platform::bring_to_front(av);
+                }
+                None => {
+                    let _ = av.set_visible(false);
+                }
             }
         }
         if let Some(cv) = &self.chat_view {
@@ -3053,7 +3077,7 @@ impl App {
                             self.state.space_mut().active = Some(id);
                         }
                     }
-                    Source::Chrome | Source::Chat => self.focused_little = None,
+                    Source::Chrome | Source::Chat | Source::Answer => self.focused_little = None,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -3104,8 +3128,34 @@ impl App {
             }
             (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
             (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
-            (Source::Page(Target::Tab(id)), "page_to_chat") => self.page_to_chat(id),
             (Source::Chat, "ready") => self.render_chat(),
+            (Source::Answer, "ready") => {
+                // The panel finished loading after the question went out: replay it and what's arrived so far.
+                if let (Some(v), Some(t)) = (&self.answer_view, self.answer_tab) {
+                    let accent = self.theme_for(self.state.active_space).accent;
+                    let _ = v.evaluate_script(&format!("answer.start({}, {})", json!(self.answer_label), json!(accent)));
+                    if let Some((_, text, _)) = self.page_answers.get(&t).filter(|a| !a.1.is_empty()) {
+                        let _ = v.evaluate_script(&format!("answer.event({})", json!({ "type": "block", "text": text })));
+                    }
+                }
+            }
+            (Source::Answer, "height") => {
+                self.answer_height = m["h"].as_f64().unwrap_or(120.0);
+                self.layout();
+            }
+            (Source::Answer, "close") | (Source::Page(Target::Tab(_)), "answer_close") => self.close_answer(),
+            (Source::Answer, "to_chat") => {
+                if let Some(t) = self.answer_tab {
+                    self.close_answer();
+                    self.page_to_chat(t);
+                }
+            }
+            (Source::Answer, "open") => {
+                if let Some(u) = m["url"].as_str().filter(|u| u.starts_with("http")) {
+                    let u = self.clean(u);
+                    self.open_tab(&u, None, false);
+                }
+            }
             (Source::Chrome, "chat_menu") => {
                 if let Some(id) = m["chat"].as_str() {
                     self.chat_menu(id.to_string(), m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
@@ -3391,14 +3441,14 @@ impl App {
                         _ => {}
                     }
                 }
-                if let Some(v) = self.views.get(&tab) {
-                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.answer({})", json!(ev)));
+                if let Some(v) = self.answer_view.as_ref().filter(|_| self.answer_tab == Some(tab)) {
+                    let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!(ev)));
                 }
             }
             UserEvent::PageAnswerDone { tab } => {
                 let agent = self.page_answers.get(&tab).map(|a| a.2.clone()).unwrap_or_default();
-                if let Some(v) = self.views.get(&tab) {
-                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.answer({})", json!({ "type": "done", "agent": agent })));
+                if let Some(v) = self.answer_view.as_ref().filter(|_| self.answer_tab == Some(tab)) {
+                    let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "done", "agent": agent })));
                 }
             }
             UserEvent::DownloadStarted { target } => {
@@ -3863,10 +3913,12 @@ impl App {
         if q.is_empty() {
             return;
         }
+        let label: String = m["label"].as_str().filter(|l| !l.is_empty()).unwrap_or(&q).chars().take(200).collect();
+        self.show_answer(tab, &label);
         let answer_error = |app: &Self, text: &str| {
-            if let Some(v) = app.views.get(&tab) {
-                let _ = v.evaluate_script(&format!("window.__valerie && __valerie.answer({})", json!({ "type": "error", "text": text })));
-                let _ = v.evaluate_script("window.__valerie && __valerie.answer({\"type\":\"done\"})");
+            if let Some(v) = &app.answer_view {
+                let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "error", "text": text })));
+                let _ = v.evaluate_script("window.answer && answer.event({\"type\":\"done\"})");
             }
         };
         let now_i = std::time::Instant::now();
@@ -3902,6 +3954,52 @@ impl App {
             }
             send(&p, UserEvent::PageAnswerDone { tab });
         });
+    }
+
+    /// Where the answer panel sits: under the find bar, at the page's top right.
+    fn answer_rect(&self) -> (f64, f64, f64, f64) {
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (x, y, w, h) = self.content_area(size.width, size.height);
+        let right = if self.config.find.minimap { 78.0 } else { 16.0 };
+        let pw = 440.0_f64.min(w - right - 16.0).max(200.0);
+        (x + w - pw - right, y + 54.0, pw, self.answer_height.clamp(60.0, (h * 0.7).max(60.0)))
+    }
+
+    fn show_answer(&mut self, tab: TabId, label: &str) {
+        if self.answer_view.is_none() {
+            let p = self.proxy.clone();
+            let built = WebViewBuilder::new()
+                .with_html(ui("answer.html"))
+                .with_visible(false)
+                .with_transparent(true)
+                .with_accept_first_mouse(true)
+                .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Answer, msg: r.into_body() }))
+                .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
+                .build_as_child(&self.window);
+            match built {
+                Ok(v) => {
+                    platform::round_corners(&v, 12.0, platform::Corners::All);
+                    self.answer_view = Some(v);
+                }
+                Err(e) => return eprintln!("valerie: answer panel: {e}"),
+            }
+        }
+        self.answer_tab = Some(tab);
+        self.answer_height = 120.0;
+        self.answer_label = label.to_string();
+        let accent = self.theme_for(self.state.active_space).accent;
+        if let Some(v) = &self.answer_view {
+            let _ = v.evaluate_script(&format!("window.answer && answer.start({}, {})", json!(label), json!(accent)));
+        }
+        self.layout();
+    }
+
+    fn close_answer(&mut self) {
+        self.answer_tab = None;
+        if let Some(v) = &self.answer_view {
+            let _ = v.set_visible(false);
+        }
+        self.focus_active();
     }
 
     /// "Open in Chats" under an answer in find: the question and answer become a chat to continue (no agent runs).

@@ -485,8 +485,9 @@ agents:
     #   local:  { command: ["ollama", "run", "llama3", "{prompt}"] }   # any program that prints an answer
   use:                     # which agent (a name above) does each job; "" = default
     chat: ""               # Chats and "Ask …" in the command bar: can see and use your whole browser
-    find: ""               # questions typed into find (/) about the page: sees only that page, no tools
-                           # (needs claude, pi, opencode or a `command` agent: those can run with no tools)
+    find: ""               # questions typed into find (/) about the page: it sees only that page and runs with as
+                           # little power as its CLI allows (no tools for claude, pi, opencode; read-only, offline
+                           # and in an empty folder for codex, cursor, hermes). Answers show in Valerie's own panel.
     tasks: ""              # scheduled jobs (below)
     customize: ""          # "! make the text bigger" in the command bar: edits Valerie's settings
   model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")

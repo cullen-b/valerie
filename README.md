@@ -79,7 +79,9 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   in my tabs" just works. Chats are saved in the config folder, so they sync.
 - **Ask from the command bar:** type a question or a request; it opens in Chats (`> do this` / `? ask that` force it).
 - **Ask from find:** press `/`, type a question ("what's the return policy here?"), Enter: the answer appears right
-  under the find bar. It only sees that page and has no tools, since a web page could be trying to trick it.
+  under the find bar, in Valerie's own panel (the page can't read it). Any agent works; it only sees that page and runs
+  with as little power as its CLI allows (no tools for Claude, Pi and OpenCode; read-only and offline for Codex,
+  Cursor and Hermes), since the page's text could be trying to trick it.
 - **Pick an agent per job:** `agents.available` names as many as you like (same CLI with another model, or any
   command), `agents.use` picks one for chat, find, scheduled tasks and customizing: e.g. a strong model to chat and a
   fast one for find.
