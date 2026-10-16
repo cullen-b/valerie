@@ -11,6 +11,8 @@ pub const STARTER_YAML: &str = include_str!("../config/starter.yaml");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub search_engine: String,
+    pub editor: String,
+    pub terminal: String,
     pub new_tab_url: String,
     pub user_agent: String,
     pub layout: Layout,
@@ -662,6 +664,7 @@ pub struct PasswordsConfig {
     pub enabled: bool,
     pub save_prompt_seconds: f64,
     pub offer_passkeys: String,
+    pub passkeys_through_safari: bool,
     pub shared: Vec<SharedVault>,
 }
 

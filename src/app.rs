@@ -73,6 +73,10 @@ pub enum UserEvent {
     ModelsFound { cli: String, models: Vec<Value> },
     /// The answer to "Allow this site to send notifications?".
     NotifyPermission { tab: TabId, site: String, allowed: bool },
+    /// "Sign in with Safari": the user came back (bring the login over) or cancelled.
+    SafariSignedIn { tab: TabId, bring: bool },
+    /// "Sign In with Safari" was picked from a site's passkey offer.
+    SafariSignIn { tab: TabId },
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
@@ -141,6 +145,8 @@ pub struct App {
     window_focused: bool,
     /// Sites asked about notifications this session (a site gets asked once).
     notify_asked: std::collections::HashSet<String>,
+    /// Sites already offered "Sign in with Safari" this session.
+    passkey_offered: std::collections::HashSet<String>,
     /// Recent notifications per site, so one site can't flood you.
     notify_times: HashMap<String, Vec<std::time::Instant>>,
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
@@ -281,6 +287,15 @@ fn boosts_dir() -> PathBuf {
 /// Lines hide_element adds to boosts/<site>.css, so show_hidden_elements can remove exactly those.
 const HIDDEN_HEADER: &str = "/* Hidden with Valerie's \"Hide an Element\". Delete a line to show that element again. */";
 const HIDDEN_MARK: &str = "/* hidden */";
+
+/// The part of a host that logins are shared across: accounts.google.com → google.com, www.bbc.co.uk → bbc.co.uk.
+fn cookie_base(host: &str) -> String {
+    let parts: Vec<&str> = host.split('.').collect();
+    let n = parts.len();
+    let two_part_suffix = n >= 3 && parts[n - 1].len() == 2 && ["co", "com", "org", "net", "ac", "gov", "edu", "ne", "or"].contains(&parts[n - 2]);
+    let keep = if two_part_suffix { 3 } else { 2 };
+    parts[n.saturating_sub(keep)..].join(".")
+}
 
 /// A URL's host without "www.", which is how boosts and per-site settings are keyed.
 fn site_of(url: &str) -> Option<String> {
@@ -471,6 +486,7 @@ impl App {
             preloaded: HashMap::new(),
             window_focused: true,
             notify_asked: Default::default(),
+            passkey_offered: Default::default(),
             notify_times: HashMap::new(),
             sync_gen: 0,
             littles: HashMap::new(),
@@ -3098,7 +3114,9 @@ impl App {
             }
             Command::OpenConfig => {
                 self.close_bar();
-                platform::open_text_file(&config::config_path())
+                if let Err(e) = platform::open_in_editor(&config::config_path(), &self.config.editor, &self.config.terminal) {
+                    self.toast(&format!("Couldn't open your settings with {}: {e}", self.config.editor));
+                }
             }
             Command::ReloadConfig => self.reload_config(),
             Command::Sync => {
@@ -3204,6 +3222,18 @@ impl App {
                     let msg = if n == 0 { format!("No saved data for {h}") } else { format!("Cleared data for {h}: reloading") };
                     send(&p, UserEvent::SiteDataCleared { message: msg, reload: n > 0 });
                 });
+            }
+            Command::SignInWithSafari => {
+                self.close_bar();
+                if let Some(t) = self.state.active_tab() {
+                    self.sign_in_with_safari(t);
+                }
+            }
+            Command::BringLoginFromSafari => {
+                self.close_bar();
+                if let Some(t) = self.state.active_tab() {
+                    self.bring_login_from_safari(t);
+                }
             }
             Command::SetPinnedUrl { tab } => {
                 if let Some(t) = self.target_tab(tab).and_then(|t| self.state.tabs.get_mut(&t)) {
@@ -3414,6 +3444,7 @@ impl App {
             (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
             (Source::Page(Target::Tab(id)), "notify") => self.site_notification(id, &m),
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
+            (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => self.render_chat(),
             (Source::Answer, "ready") => {
                 // The panel finished loading after the question went out: replay it and what's arrived so far.
@@ -3695,6 +3726,12 @@ impl App {
                 Ok(_) => {}
                 Err(e) => self.toast(&format!("{title} failed: {e}")),
             },
+            UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
+            UserEvent::SafariSignedIn { tab, bring } => {
+                if bring {
+                    self.bring_login_from_safari(tab);
+                }
+            }
             UserEvent::SiteDataCleared { message, reload } => {
                 self.toast(&message);
                 if reload {
@@ -4988,6 +5025,71 @@ impl App {
         });
     }
 
+    /// A page asked for a passkey, which Valerie can't do yet: offer Safari, once per site per session.
+    fn passkey_wanted(&mut self, tab: TabId) {
+        let Some(site) = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)) else { return };
+        trace(&format!("{site} asked for a passkey"));
+        if !self.config.passwords.passkeys_through_safari || self.preloaded.contains_key(&tab) || !self.passkey_offered.insert(site.clone()) {
+            return;
+        }
+        let Some(v) = self.views.get(&tab) else { return };
+        let p = self.proxy.clone();
+        let body = "Valerie can't use passkeys yet. Safari can: sign in there, then bring the login back here.";
+        platform::ask(v, &format!("{site} wants a passkey"), body, "Sign In with Safari", "Not Now", move |yes| {
+            if yes {
+                send(&p, UserEvent::SafariSignIn { tab });
+            }
+        });
+    }
+
+    /// Open the tab's page in Safari and wait (in a sheet) for the user to come back.
+    fn sign_in_with_safari(&mut self, tab: TabId) {
+        let Some(url) = self.state.tabs.get(&tab).map(|t| t.url.clone()).filter(|u| u.starts_with("http")) else { return };
+        let site = site_of(&url).unwrap_or_default();
+        if let Err(e) = std::process::Command::new("open").args(["-a", "Safari", &url]).spawn() {
+            return self.toast(&format!("Couldn't open Safari: {e}"));
+        }
+        let Some(v) = self.views.get(&tab) else { return };
+        let p = self.proxy.clone();
+        let body = format!("Sign in to {site} in Safari (passkeys work there), then come back and bring the login over.");
+        platform::ask(v, "Signing in with Safari", &body, "Bring Login Over", "Cancel", move |bring| {
+            send(&p, UserEvent::SafariSignedIn { tab, bring });
+        });
+    }
+
+    /// Copy the site's cookies from Safari into this tab's profile and reload it.
+    fn bring_login_from_safari(&mut self, tab: TabId) {
+        let Some(host) = self.state.tabs.get(&tab).and_then(|t| url::Url::parse(&t.url).ok()).and_then(|u| u.host_str().map(str::to_lowercase)) else { return };
+        let base = cookie_base(&host);
+        let cookies = match platform::safari_cookies() {
+            Ok(c) => c,
+            Err(std::io::ErrorKind::PermissionDenied) => {
+                let Some(v) = self.views.get(&tab) else { return };
+                let body = "Turn on Valerie in Privacy & Security > Full Disk Access, then quit and reopen Valerie. It only reads Safari's logins when you ask.";
+                platform::ask(v, "Valerie needs Full Disk Access to read Safari's logins", body, "Open Settings", "Cancel", |yes| {
+                    if yes {
+                        platform::open_external("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");
+                    }
+                });
+                return;
+            }
+            Err(e) => return self.toast(&format!("Couldn't read Safari's logins ({e})")),
+        };
+        let now = now() as f64;
+        let mine: Vec<platform::Cookie> = cookies
+            .into_iter()
+            .filter(|c| c.expires > now && { let d = c.domain.trim_start_matches('.'); d == base || d.ends_with(&format!(".{base}")) })
+            .collect();
+        if mine.is_empty() {
+            return self.toast(&format!("Safari has no login saved for {base} yet. Wait a few seconds and run \"Bring Login from Safari\""));
+        }
+        let Some(v) = self.views.get(&tab) else { return };
+        let p = self.proxy.clone();
+        platform::set_cookies(v, mine, move |n| {
+            send(&p, UserEvent::SiteDataCleared { message: format!("Brought {n} cookies for {base} from Safari: reloading"), reload: n > 0 });
+        });
+    }
+
     /// A site's notification. Only for allowed sites (decided here from the tab's real address, not the page's word),
     /// and at most 12 a minute per site.
     fn site_notification(&mut self, tab: TabId, m: &Value) {
@@ -5180,5 +5282,16 @@ impl App {
                 send(&p, UserEvent::ModelsFound { cli: cli.into(), models });
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cookie_base_keeps_the_shared_part() {
+        assert_eq!(super::cookie_base("accounts.google.com"), "google.com");
+        assert_eq!(super::cookie_base("www.bbc.co.uk"), "bbc.co.uk");
+        assert_eq!(super::cookie_base("github.com"), "github.com");
+        assert_eq!(super::cookie_base("localhost"), "localhost");
     }
 }

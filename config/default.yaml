@@ -18,6 +18,11 @@
 search_engine: "https://www.google.com/search?q=%s"   # %s is replaced by what you type
 new_tab_url: ""            # page for a new tab; empty = open the command bar instead
 user_agent: ""             # empty = Safari's user agent, so sites serve their full pages
+editor: default            # what "Open Config File" opens your settings in. one of: default (the app your computer
+                           # opens .yaml files with) | textedit | an app's name ("Visual Studio Code", Zed, Cursor,
+                           # "Sublime Text") | a terminal editor (vim, nvim, nano, emacs, hx, micro), or any command
+                           # written as "terminal: <command>", e.g. "terminal: nvim -O"
+terminal: Terminal         # the app terminal editors open in. one of: Terminal | iTerm | Ghostty | WezTerm | kitty | Alacritty
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -494,6 +499,8 @@ passwords:
   offer_passkeys: auto     # tell websites they can sign you in with a passkey. one of: auto (only when passkeys
                            # work: on Mac that needs a permission Apple hasn't given Valerie yet, so sites ask for
                            # your password instead of showing a passkey prompt that never finishes) | on | off
+  passkeys_through_safari: true  # when a site asks for a passkey, offer to sign in through Safari (where passkeys
+                           # work) and bring the login back. Also "Sign In with Safari" in the command bar. true | false
   shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared

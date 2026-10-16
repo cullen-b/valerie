@@ -161,7 +161,8 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 - Passkeys on Mac: WebKit only does them for a browser Apple grants `com.apple.developer.web-browser.public-key-credential`
   (requested by the Account Holder of an organization developer account, at developer.apple.com/contact/request/
   macos-browsers-passkeys, with a downloadable release). Then embed the provisioning profile and add the entitlement in
-  `bundle-macos.sh` only when the profile grants it. Until then `passwords.offer_passkeys: auto` hides passkeys from sites.
+  `bundle-macos.sh` only when the profile grants it. Until then `passwords.offer_passkeys: auto` hides passkeys from sites and
+  "Sign In with Safari" brings a Safari login's cookies over (needs Full Disk Access).
 - Agent approvals for sensitive actions, action log, Notification Center results
 - Download manager panel, history page, site permissions UI
 

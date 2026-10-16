@@ -31,14 +31,86 @@ pub fn open_external(target: &str) {
     }
 }
 
-/// Open a text file in the user's editor.
-pub fn open_text_file(path: &std::path::Path) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open").arg("-t").arg(path).spawn();
+/// Terminal apps a terminal editor can open in (the `terminal` setting).
+pub const TERMINALS: &[&str] = &["Terminal", "iTerm", "Ghostty", "WezTerm", "kitty", "Alacritty"];
+const TERMINAL_EDITORS: &[&str] = &["vim", "vi", "nvim", "nano", "emacs", "hx", "helix", "micro", "kak", "pico", "ed"];
+
+/// `editor` as the command to run in a terminal, if it's a terminal editor.
+fn terminal_command(editor: &str) -> Option<&str> {
+    let e = editor.trim();
+    if let Some(cmd) = e.strip_prefix("terminal:") {
+        return Some(cmd.trim());
     }
-    #[cfg(not(target_os = "macos"))]
-    open_external(&path.to_string_lossy());
+    TERMINAL_EDITORS.contains(&e.split_whitespace().next().unwrap_or("")).then_some(e)
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Open a text file the way the `editor` setting says: the default app, an app by name, or a terminal editor
+/// running in the `terminal` app.
+pub fn open_in_editor(path: &std::path::Path, editor: &str, terminal: &str) -> Result<(), String> {
+    use std::process::Command;
+    let file = path.to_string_lossy().to_string();
+    let ran = |r: std::io::Result<std::process::ExitStatus>| match r {
+        Ok(s) if s.success() => Ok(()),
+        Ok(_) => Err("it isn't installed".to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    if let Some(cmd) = terminal_command(editor) {
+        let line = format!("{cmd} {}", shell_quote(&file));
+        #[cfg(target_os = "macos")]
+        {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+            let osa = |script: String| ran(Command::new("osascript").args(["-e", &script]).status());
+            let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+            return match terminal.to_lowercase().as_str() {
+                "iterm" | "iterm2" => osa(format!(
+                    "tell application \"iTerm\"\nactivate\ncreate window with default profile command \"{}\"\nend tell",
+                    esc(&format!("{shell} -lc {}", shell_quote(&line)))
+                )),
+                "ghostty" => ran(Command::new("open").args(["-na", "Ghostty", "--args", "-e", &shell, "-lc", &line]).status()),
+                "wezterm" => ran(Command::new("open").args(["-na", "WezTerm", "--args", "start", "--", &shell, "-lc", &line]).status()),
+                "kitty" => ran(Command::new("open").args(["-na", "kitty", "--args", &shell, "-lc", &line]).status()),
+                "alacritty" => ran(Command::new("open").args(["-na", "Alacritty", "--args", "-e", &shell, "-lc", &line]).status()),
+                _ => osa(format!("tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell", esc(&line))),
+            };
+        }
+        #[cfg(target_os = "windows")]
+        return ran(Command::new("cmd").args(["/C", "start", "", "cmd", "/K", &line]).status());
+        #[cfg(all(unix, not(target_os = "macos")))]
+        return ran(Command::new("x-terminal-emulator").args(["-e", "sh", "-c", &line]).status());
+    }
+    let _ = terminal;
+    match editor.trim().to_lowercase().as_str() {
+        "default" | "" => {
+            #[cfg(target_os = "macos")]
+            {
+                // No app set for .yaml files: fall back to the plain text editor.
+                if !Command::new("open").arg(path).status().is_ok_and(|s| s.success()) {
+                    return ran(Command::new("open").arg("-t").arg(path).status());
+                }
+                Ok(())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                open_external(&file);
+                Ok(())
+            }
+        }
+        "textedit" if cfg!(target_os = "macos") => ran(Command::new("open").args(["-a", "TextEdit"]).arg(path).status()),
+        _ => {
+            #[cfg(target_os = "macos")]
+            return ran(Command::new("open").args(["-a", editor.trim()]).arg(path).status());
+            #[cfg(not(target_os = "macos"))]
+            {
+                let mut words = editor.split_whitespace();
+                let prog = words.next().unwrap_or_default();
+                Command::new(prog).args(words).arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -545,34 +617,71 @@ mod mac {
                         if have.get(&(c.domain.clone(), c.name.clone(), c.path.clone())).is_some_and(|e| *e >= c.expires) {
                             continue;
                         }
-                        let props: *mut AnyObject = msg_send![class!(NSMutableDictionary), new];
-                        let put = |k: &str, v: *mut AnyObject| {
-                            let _: () = msg_send![props, setObject: v, forKey: &*NSString::from_str(k)];
-                        };
-                        let st = |v: &str| objc2::rc::Retained::autorelease_ptr(NSString::from_str(v)) as *mut AnyObject;
-                        put("Domain", st(&c.domain));
-                        put("Name", st(&c.name));
-                        put("Path", st(if c.path.is_empty() { "/" } else { &c.path }));
-                        put("Value", st(&c.value));
-                        let date: *mut AnyObject = msg_send![class!(NSDate), dateWithTimeIntervalSince1970: c.expires];
-                        put("Expires", date);
-                        if c.secure {
-                            put("Secure", st("TRUE"));
-                        }
-                        if c.http_only {
-                            put("HttpOnly", st("TRUE"));
-                        }
-                        let cookie: *mut AnyObject = msg_send![class!(NSHTTPCookie), cookieWithProperties: props];
+                        let cookie = ns_cookie(&c);
                         if !cookie.is_null() {
                             let _: () = msg_send![jar, setCookie: cookie, completionHandler: std::ptr::null::<block2::Block<dyn Fn()>>()];
                         }
-                        let _: () = msg_send![props, release];
                     }
                 });
                 let _: () = msg_send![jar, getAllCookies: &*merge];
             }
         }
         let _ = std::fs::write(marker, report);
+    }
+
+    /// An autoreleased NSHTTPCookie (null if Foundation rejects it).
+    unsafe fn ns_cookie(c: &super::Cookie) -> *mut AnyObject {
+        use objc2::class;
+        use objc2_foundation::NSString;
+        let props: *mut AnyObject = msg_send![class!(NSMutableDictionary), new];
+        let put = |k: &str, v: *mut AnyObject| {
+            let _: () = msg_send![props, setObject: v, forKey: &*NSString::from_str(k)];
+        };
+        let st = |v: &str| objc2::rc::Retained::autorelease_ptr(NSString::from_str(v)) as *mut AnyObject;
+        put("Domain", st(&c.domain));
+        put("Name", st(&c.name));
+        put("Path", st(if c.path.is_empty() { "/" } else { &c.path }));
+        put("Value", st(&c.value));
+        let date: *mut AnyObject = msg_send![class!(NSDate), dateWithTimeIntervalSince1970: c.expires];
+        put("Expires", date);
+        if c.secure {
+            put("Secure", st("TRUE"));
+        }
+        if c.http_only {
+            put("HttpOnly", st("TRUE"));
+        }
+        let cookie: *mut AnyObject = msg_send![class!(NSHTTPCookie), cookieWithProperties: props];
+        let _: () = msg_send![props, release];
+        cookie
+    }
+
+    /// Put cookies into the web view's own cookie jar (its profile's), then call `done` with how many were set.
+    pub fn set_cookies(wv: &WebView, cookies: Vec<super::Cookie>, done: impl FnOnce(usize) + 'static) {
+        unsafe {
+            let config: *mut AnyObject = msg_send![ptr(wv), configuration];
+            let store: *mut AnyObject = msg_send![config, websiteDataStore];
+            let jar: *mut AnyObject = msg_send![store, httpCookieStore];
+            let made: Vec<*mut AnyObject> = cookies.iter().map(|c| ns_cookie(c)).filter(|c| !c.is_null()).collect();
+            let n = made.len();
+            let done = std::cell::RefCell::new(Some(done));
+            // The jar runs requests in order, so the last one finishing means they all have.
+            let finished = block2::RcBlock::new(move || {
+                if let Some(d) = done.borrow_mut().take() {
+                    d(n);
+                }
+            });
+            if made.is_empty() {
+                finished.call(());
+                return;
+            }
+            for (i, c) in made.iter().enumerate() {
+                if i + 1 == n {
+                    let _: () = msg_send![jar, setCookie: *c, completionHandler: &*finished];
+                } else {
+                    let _: () = msg_send![jar, setCookie: *c, completionHandler: std::ptr::null::<block2::Block<dyn Fn()>>()];
+                }
+            }
+        }
     }
 
     /// "b1cc7f6a-8f82-…" → its 16 bytes.
@@ -989,6 +1098,27 @@ pub fn passkeys_work() -> bool {
     true
 }
 
+/// Safari's saved cookies (it keeps them in its sandbox, which needs Full Disk Access to read).
+/// `VALERIE_SAFARI_COOKIES` points at another file, for tests.
+pub fn safari_cookies() -> Result<Vec<Cookie>, std::io::ErrorKind> {
+    let path = match std::env::var_os("VALERIE_SAFARI_COOKIES") {
+        Some(p) => std::path::PathBuf::from(p),
+        None => dirs::home_dir().ok_or(std::io::ErrorKind::NotFound)?.join("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+    };
+    std::fs::read(path).map(|d| read_binary_cookies(&d)).map_err(|e| e.kind())
+}
+
+/// Put cookies into a web view's profile; `done` gets how many were set.
+pub fn set_cookies(wv: &WebView, cookies: Vec<Cookie>, done: impl FnOnce(usize) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::set_cookies(wv, cookies, done);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, cookies);
+        done(0);
+    }
+}
+
 /// Bring logins from runs of the bare `valerie` binary (WebKit keeps those apart, under ~/Library/WebKit/valerie)
 /// into the app's own (~/Library/WebKit/dev.valerie.browser), once. A profile only the bare binary had is copied
 /// whole; one both had gets the other's cookies where they're newer. Call before any page view exists.
@@ -1029,6 +1159,16 @@ mod cookie_tests {
         out.extend((page.len() as u32).to_be_bytes());
         out.extend(page);
         out
+    }
+
+    #[test]
+    fn picks_terminal_editors() {
+        assert_eq!(super::terminal_command("vim"), Some("vim"));
+        assert_eq!(super::terminal_command("nvim -O"), Some("nvim -O"));
+        assert_eq!(super::terminal_command("terminal: less -N"), Some("less -N"));
+        assert_eq!(super::terminal_command("Visual Studio Code"), None);
+        assert_eq!(super::terminal_command("default"), None);
+        assert_eq!(super::shell_quote("/a b/it's.yaml"), "'/a b/it'\\''s.yaml'");
     }
 
     #[cfg(target_os = "macos")]

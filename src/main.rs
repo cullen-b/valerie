@@ -131,6 +131,12 @@ fn check_config() -> anyhow::Result<()> {
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
             }
+            if !platform::TERMINALS.iter().any(|t| t.eq_ignore_ascii_case(&c.terminal)) {
+                problems.push(format!("terminal is {:?}; use one of {}", c.terminal, platform::TERMINALS.join(", ")));
+            }
+            if c.editor.trim().is_empty() {
+                problems.push("editor is empty; use default, textedit, an app's name or a terminal editor like vim".into());
+            }
             if !["auto", "on", "off"].contains(&c.passwords.offer_passkeys.as_str()) {
                 problems.push(format!("passwords: offer_passkeys is {:?}; use auto, on or off", c.passwords.offer_passkeys));
             }
