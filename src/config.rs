@@ -906,6 +906,10 @@ fn yes() -> bool {
 
 /// Parse "90s", "30m", "6h", "1d" into seconds.
 
+/// Tests that point VALERIE_CONFIG_DIR somewhere take turns (the environment is shared by every test thread).
+#[cfg(test)]
+pub static TEST_DIRS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("VALERIE_CONFIG_DIR") {
         return PathBuf::from(d);

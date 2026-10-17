@@ -232,8 +232,9 @@ function compute() {
     if (wantsAgent(raw)) results.unshift(ask); else results.push(ask);
     results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
   }
-  // Results plugins already sent for this text stay (they arrive a moment after typing).
-  for (const [key, more] of Object.entries(extra)) if (more.query === raw) results.push(...more.items.slice(0, 8));
+  // Results plugins sent for this text go just under what you typed (they arrive a moment after typing).
+  const fromPlugins = Object.values(extra).filter((m) => m.query === raw).flatMap((m) => m.items.slice(0, 8));
+  if (fromPlugins.length) results.splice(results.findIndex((r) => r.kind === "go") + 1, 0, ...fromPlugins);
   sel = 0; draw();
 }
 

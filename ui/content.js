@@ -1417,6 +1417,9 @@ function pluginApi(plugin, key) {
     run: (title) => post({ t: "plugin_run", plugin, key, title: String(title) }),
   });
 }
+// Load-time scripts run once per page, even if Valerie hears about the load twice (a page rebuilt while loading).
+const ranHere = new Set();
+function once(key) { if (ranHere.has(key)) return false; ranHere.add(key); return true; }
 function pluginReply(n, ok, value) {
   const w = pluginWaits.get(n); if (!w) return;
   pluginWaits.delete(n); if (ok) w[0](value); else w[1](new Error(String(value)));
@@ -1424,7 +1427,7 @@ function pluginReply(n, ok, value) {
 
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
-    api: pluginApi, pluginReply,
+    api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); }, toast, find: openFind, hints: startHints,

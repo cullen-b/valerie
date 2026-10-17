@@ -292,6 +292,10 @@ pub struct App {
     /// Extensions the user turned down this session, and whether "Load this extension?" is showing.
     ext_denied: std::collections::HashSet<String>,
     ext_asking: bool,
+    /// Extensions still loading; pages are rebuilt once they all have (so they're in the pages).
+    ext_loading: usize,
+    /// When a page last asked for Valerie's right-click menu (a page can't keep popping menus up).
+    page_menu_at: Option<std::time::Instant>,
     /// Valerie's own words in the user's language (`language`): English → theirs.
     strings: HashMap<String, String>,
     pub quit: bool,
@@ -798,6 +802,8 @@ impl App {
             view_agents: HashMap::new(),
             ext_denied: Default::default(),
             ext_asking: false,
+            ext_loading: 0,
+            page_menu_at: None,
             strings: HashMap::new(),
             quit: false,
         })
@@ -983,7 +989,8 @@ impl App {
             let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config()));
             let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
             for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
-                let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+                let once = format!("(!window.__valerie || __valerie.once({}))", json!(format!("boost:{}", b.host)));
+                let _ = view.evaluate_script(&format!("if {once} try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
             }
         }
         for p in self.plugins.iter().filter(|p| p.active_in(&space)) {
@@ -992,6 +999,9 @@ impl App {
             if in_page && (!again || m.rerun_when_url_changes) && plugins::matches(&m.matches, url) {
                 let js = self.plugin_js(p);
                 let js = if m.run_at == "idle" { format!("(window.requestIdleCallback || setTimeout)(function () {{ {js} }});") } else { js };
+                // Once per page for a load (a page rebuilt while loading reports its load twice); every time for a
+                // change of address inside the page.
+                let js = if again { js } else { format!("if (!window.__valerie || __valerie.once({})) {{ {js} }}", json!(format!("plugin:{}", p.name))) };
                 let _ = view.evaluate_script(&js);
             }
             if again {
@@ -2153,6 +2163,10 @@ impl App {
     /// A right-click on a page that some plugin has entries for: Valerie's own menu, with the link entries too.
     fn page_menu(&mut self, target: Target, m: &Value) {
         let Target::Tab(id) = target else { return };
+        if self.page_menu_at.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400)) {
+            return;
+        }
+        self.page_menu_at = Some(std::time::Instant::now());
         let Some(v) = self.views.get(&id) else { return };
         let k = self.window.scale_factor();
         let origin = v.bounds().ok().map(|b| b.position.to_logical::<f64>(k)).map(|p| (p.x, p.y)).unwrap_or((0.0, 0.0));
@@ -2585,20 +2599,28 @@ impl App {
         let window_menu = Submenu::new(name_of("Window"), true);
         let _ = window_menu.append_items(&[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::fullscreen(None)]);
         let _ = menu.append(&app_menu);
-        if shown("Edit") {
-            let _ = menu.append(&edit);
-        }
-        for (name, g) in &groups {
-            if shown(name) && g.items().len() > 0 {
-                let _ = menu.append(g);
+        // A hidden menu moves inside the Valerie menu: out of the bar, but its shortcuts (and ⌘C / ⌘V) still work.
+        let mut tucked = false;
+        let mut place = |name: &str, g: &Submenu| {
+            if g.items().is_empty() {
+                return;
             }
+            if shown(name) {
+                let _ = menu.append(g);
+            } else {
+                if !tucked {
+                    let _ = app_menu.append(&PredefinedMenuItem::separator());
+                    tucked = true;
+                }
+                let _ = app_menu.append(g);
+            }
+        };
+        place("Edit", &edit);
+        for (name, g) in &groups {
+            place(name, g);
         }
-        if plugin_menu.items().len() > 0 && shown("Plugins") {
-            let _ = menu.append(&plugin_menu);
-        }
-        if shown("Window") {
-            let _ = menu.append(&window_menu);
-        }
+        place("Plugins", &plugin_menu);
+        place("Window", &window_menu);
         // The menu is also where keyboard shortcuts live, so every platform needs it attached.
         #[cfg(target_os = "macos")]
         {
@@ -4719,16 +4741,19 @@ impl App {
                 }
                 self.load_extensions(true);
             }
-            UserEvent::ExtensionLoaded { name, result, announce } => match result {
-                Ok(()) => {
-                    // Pages made before this don't have it: rebuild them (on screen now, the rest when shown).
-                    self.rebuild_views();
-                    if announce {
-                        self.toast(&format!("Extension loaded: {name}"));
-                    }
+            UserEvent::ExtensionLoaded { name, result, announce } => {
+                self.ext_loading = self.ext_loading.saturating_sub(1);
+                match result {
+                    Ok(()) if announce => self.toast(&format!("Extension loaded: {name}")),
+                    Ok(()) => {}
+                    Err(e) => self.toast(&format!("Extension {name}: {e}")),
                 }
-                Err(e) => self.toast(&format!("Extension {name}: {e}")),
-            },
+                // Pages made before this don't have it: once the last one's in, rebuild them (on screen now, the rest
+                // when they're shown).
+                if self.ext_loading == 0 && !crate::extensions::loaded().is_empty() {
+                    self.rebuild_views();
+                }
+            }
             UserEvent::ClearSiteAnswered { site, ok, reply } => {
                 if !ok {
                     let _ = reply.send(Err("The user said no. Don't try again.".into()));
@@ -7049,10 +7074,18 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
 /// Save the config folder's settings, plugins and styles so an AI's change can be undone (the last 10 are kept).
 pub fn snapshot_config(why: &str) {
     let dir = undo_dir().join(format!("{}-{}", now(), why.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').take(40).collect::<String>().trim().replace(' ', "-")));
-    for item in UNDO_ITEMS {
-        let _ = copy_tree(&config::config_dir().join(item), &dir.join(item));
-    }
     let _ = std::fs::create_dir_all(&dir);
+    // What didn't exist yet: undoing removes those again (anything else missing from the snapshot is left alone).
+    let mut absent = Vec::new();
+    for item in UNDO_ITEMS {
+        let live = config::config_dir().join(item);
+        if !live.exists() {
+            absent.push(*item);
+        } else if copy_tree(&live, &dir.join(item)).is_err() {
+            let _ = std::fs::remove_dir_all(dir.join(item));
+        }
+    }
+    let _ = std::fs::write(dir.join(".absent"), absent.join("\n"));
     let mut all: Vec<PathBuf> = std::fs::read_dir(undo_dir()).into_iter().flatten().flatten().map(|e| e.path()).collect();
     all.sort();
     while all.len() > 10 {
@@ -7092,11 +7125,15 @@ fn restore_snapshot() -> Result<String, String> {
         let _ = std::fs::remove_dir_all(all.pop().unwrap());
     }
     let Some(last) = all.pop() else { return Err("there's nothing to undo".into()) };
+    let absent = std::fs::read_to_string(last.join(".absent")).unwrap_or_default();
     for item in UNDO_ITEMS {
         let (saved, live) = (last.join(item), cfg.join(item));
+        if !saved.exists() && !absent.lines().any(|l| l == *item) {
+            continue;
+        }
         if live.is_dir() {
             std::fs::remove_dir_all(&live).map_err(|e| e.to_string())?;
-        } else if live.is_file() && saved.exists() {
+        } else if live.is_file() {
             std::fs::remove_file(&live).map_err(|e| e.to_string())?;
         }
         copy_tree(&saved, &live).map_err(|e| e.to_string())?;
@@ -7240,6 +7277,7 @@ impl App {
                 continue;
             }
             if self.state.extension_grants.get(&e.name) == Some(&e.print) {
+                self.ext_loading += 1;
                 let (p, name) = (self.proxy.clone(), e.name.clone());
                 crate::extensions::load(e.name.clone(), &e.dir, move |result| send(&p, UserEvent::ExtensionLoaded { name, result, announce }));
             } else if !self.ext_asking {
@@ -7275,13 +7313,14 @@ impl App {
                 "waiting for you to allow it"
             };
             let sub = format!("{} {} · {status}", e.title, e.version);
-            if on && crate::extensions::has_action(&e.name) {
+            let before = items.len();
+            if on && e.button {
                 items.push(json!({ "kind": "plugin", "title": format!("{}: button / popup", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name } }));
             }
-            if on && crate::extensions::options_url(&e.name).is_some() {
+            if on && e.options {
                 items.push(json!({ "kind": "plugin", "title": format!("{}: options", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name, "options": true } }));
             }
-            if !on || items.is_empty() {
+            if items.len() == before {
                 items.push(json!({ "kind": "plugin", "title": e.title, "sub": sub, "cmd": { "cmd": "copy_text", "text": e.dir.to_string_lossy() } }));
             }
         }
@@ -7591,6 +7630,40 @@ mod custom_tests {
         assert_eq!(download_rule(&d, "Cat.PNG", "https://x.com/c.png", "").unwrap().folder, "~/Pictures");
         assert_eq!(download_rule(&d, "a.zip", "https://objects.githubusercontent.com/a.zip", "https://github.com/x").unwrap().folder, "~/Code");
         assert!(download_rule(&d, "a.zip", "https://x.com/a.zip", "https://x.com").is_none());
+    }
+
+    #[test]
+    fn undo_puts_back_exactly_what_changed() {
+        let _turn = config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("valerie-undo-{}", crate::mcp::random_hex()));
+        std::env::set_var("VALERIE_CONFIG_DIR", tmp.join("config"));
+        std::env::set_var("VALERIE_DATA_DIR", tmp.join("data"));
+        let cfg = config::config_dir();
+        std::fs::create_dir_all(cfg.join("plugins/mine")).unwrap();
+        std::fs::write(cfg.join("config.yaml"), "a: 1\n").unwrap();
+        std::fs::write(cfg.join("plugins/mine/plugin.yaml"), "x").unwrap();
+        snapshot_config("Customize: change things");
+        // The AI edits config.yaml and adds ui/ and a plugin.
+        std::fs::write(cfg.join("config.yaml"), "a: 2\n").unwrap();
+        std::fs::create_dir_all(cfg.join("ui")).unwrap();
+        std::fs::write(cfg.join("ui/chrome.css"), "x{}").unwrap();
+        std::fs::create_dir_all(cfg.join("plugins/new")).unwrap();
+        // Asking an AI to undo takes a snapshot of how things are now first: undo skips it.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        snapshot_config("Customize: undo");
+        assert_eq!(restore_snapshot().unwrap(), "Customize change things");
+        assert_eq!(std::fs::read_to_string(cfg.join("config.yaml")).unwrap(), "a: 1\n");
+        assert!(!cfg.join("ui").exists() && !cfg.join("plugins/new").exists());
+        assert!(cfg.join("plugins/mine/plugin.yaml").exists());
+        assert!(restore_snapshot().is_err());
+        // A snapshot without a folder in it (and not saying it was absent) leaves that folder alone.
+        std::fs::create_dir_all(undo_dir().join("5-partial")).unwrap();
+        std::fs::write(undo_dir().join("5-partial/config.yaml"), "a: 3\n").unwrap();
+        restore_snapshot().unwrap();
+        assert!(cfg.join("plugins/mine/plugin.yaml").exists());
+        std::env::remove_var("VALERIE_CONFIG_DIR");
+        std::env::remove_var("VALERIE_DATA_DIR");
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[test]

@@ -15,6 +15,9 @@ pub struct Found {
     pub wants: Vec<String>,
     /// A fingerprint of its manifest: a changed manifest is asked about again.
     pub print: String,
+    /// It has a toolbar button (which may open a popup), and an options page.
+    pub button: bool,
+    pub options: bool,
 }
 
 pub fn dir(config: &crate::config::ExtensionsConfig) -> PathBuf {
@@ -50,7 +53,9 @@ pub fn find(root: &Path) -> Vec<Found> {
             }
             wants.sort();
             wants.dedup();
-            Some(Found { name, dir, title, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text) })
+            let button = ["action", "browser_action", "page_action"].iter().any(|k| m.get(*k).is_some());
+            let options = m.get("options_page").is_some() || m.get("options_ui").is_some();
+            Some(Found { name, dir, title, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -224,15 +229,6 @@ mod mac {
         }
         Ok(())
     }
-
-    /// Whether the extension has a button (a toolbar action).
-    pub fn has_action(name: &str) -> bool {
-        let Some(ctx) = context(name) else { return false };
-        unsafe {
-            let action: *mut AnyObject = msg_send![&*ctx, actionForTab: std::ptr::null_mut::<AnyObject>()];
-            !action.is_null()
-        }
-    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -248,9 +244,6 @@ mod other {
     }
     pub fn options_url(_name: &str) -> Option<String> {
         None
-    }
-    pub fn has_action(_name: &str) -> bool {
-        false
     }
 }
 

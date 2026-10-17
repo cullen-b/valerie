@@ -464,6 +464,7 @@ mod tests {
 
     #[test]
     fn bundled_plugins_update_only_untouched_files() {
+        let _turn = crate::config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("valerie-plugins-{}", crate::mcp::random_hex()));
         std::env::set_var("VALERIE_CONFIG_DIR", &tmp);
         let yt = plugins_dir().join("youtube-speed");
