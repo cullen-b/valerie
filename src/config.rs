@@ -59,6 +59,129 @@ pub struct Config {
     pub content_blocking: BlockingConfig,
     pub passwords: PasswordsConfig,
     pub themes: BTreeMap<String, Theme>,
+    pub ui: UiConfig,
+    pub menu: MenuConfig,
+    pub context_menu: ContextMenuConfig,
+    pub mouse: MouseConfig,
+    pub gestures: GesturesConfig,
+    pub app: AppConfig,
+    pub global_keybindings: BTreeMap<String, Option<Binding>>,
+    pub rules: Vec<NetRule>,
+    pub sites: BTreeMap<String, Option<SiteSettings>>,
+    pub language: String,
+    pub extensions: ExtensionsConfig,
+}
+
+/// Your own CSS for Valerie's windows (ui/*.css in the config folder).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfig {
+    pub custom_css: bool,
+}
+
+/// The menu bar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuConfig {
+    pub hide: Vec<String>,
+    pub rename: BTreeMap<String, Option<String>>,
+    pub commands: BTreeMap<String, Option<String>>,
+    pub quit_shortcut: String,
+    pub confirm_quit: bool,
+}
+
+/// Valerie's right-click menus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextMenuConfig {
+    pub hide: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseConfig {
+    pub back_button: Option<Binding>,
+    pub forward_button: Option<Binding>,
+    pub middle_click_tab: Option<Binding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GesturesConfig {
+    pub swipe_to_go_back: bool,
+    pub pinch_to_zoom: bool,
+}
+
+/// Valerie outside its window: the Dock and the menu bar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub icon: String,
+    pub dock_menu: Vec<Binding>,
+    pub menu_bar_icon: String,
+    pub menu_bar_menu: Vec<Binding>,
+}
+
+/// A network rule: block, redirect, hide or add a header. Exactly one of block / redirect / hide / header.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetRule {
+    /// Requests to stop: Adblock syntax ("||ads.example.com^") or an address with * wildcards.
+    pub block: String,
+    /// Pages to send elsewhere (an address with * wildcards) …
+    pub redirect: String,
+    /// … and where: the address, where each * is what the matching * in `redirect` matched.
+    pub to: String,
+    /// Elements to hide (a CSS selector).
+    pub hide: String,
+    /// A request header to add ("Name: value") to pages you open.
+    pub header: String,
+    /// Which sites it applies to (hosts like "example.com", "*.edu"); empty = every site.
+    pub site: String,
+}
+
+/// Settings for one site (`sites:`); anything left out follows the global setting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SiteSettings {
+    pub camera: Option<String>,
+    pub microphone: Option<String>,
+    pub notifications: Option<String>,
+    pub user_agent: Option<String>,
+    pub zoom: Option<f64>,
+    pub autoplay: Option<bool>,
+    pub dark_mode: Option<String>,
+    pub vim: Option<bool>,
+    pub links: Option<BTreeMap<String, String>>,
+    pub unload: Option<bool>,
+    pub ad_blocking: Option<bool>,
+    pub popups: Option<String>,
+    pub cookie_banners: Option<String>,
+}
+
+impl SiteSettings {
+    /// Fill in what `more` sets (it wins).
+    fn overlay(&mut self, more: &SiteSettings) {
+        macro_rules! take {
+            ($($f:ident),*) => { $( if more.$f.is_some() { self.$f = more.$f.clone(); } )* };
+        }
+        take!(camera, microphone, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
+    }
+}
+
+/// The `sites:` settings for an address: every matching entry, the most specific (longest pattern) winning.
+pub fn site_settings_for(sites: &BTreeMap<String, Option<SiteSettings>>, url: &str) -> SiteSettings {
+    let mut hits: Vec<(&String, &SiteSettings)> = sites
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+        .filter(|(k, _)| url.starts_with("http") && crate::plugins::matches(&[(*k).clone()], url))
+        .collect();
+    hits.sort_by_key(|(k, _)| k.len());
+    let mut out = SiteSettings::default();
+    for (_, s) in hits {
+        out.overlay(s);
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionsConfig {
+    pub enabled: bool,
+    pub folder: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +222,7 @@ pub struct SidebarConfig {
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
+    pub order: Vec<String>,
     pub tab_height: f64,
     pub now_playing: bool,
     pub compact_width: f64,
@@ -439,6 +563,10 @@ pub struct WindowConfig {
     pub screen_fraction: f64,
     pub min_width: f64,
     pub min_height: f64,
+    pub always_on_top: bool,
+    pub opacity: f64,
+    pub vibrancy: String,
+    pub traffic_lights: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -459,6 +587,24 @@ pub struct HistoryConfig {
 pub struct DownloadsConfig {
     pub folder: String,
     pub keep_in_list: usize,
+    pub ask: bool,
+    pub open_when_done: bool,
+    pub rules: Vec<DownloadRule>,
+}
+
+/// Where files of a kind (or from a site) go.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DownloadRule {
+    /// File names to match, e.g. "*.pdf" or "*.{jpg,png}"; empty = any.
+    #[serde(rename = "match")]
+    pub pattern: String,
+    /// Sites it came from (hosts); empty = any.
+    pub site: String,
+    /// Folder to save into (~ allowed); empty = the usual folder.
+    pub folder: String,
+    pub open: Option<bool>,
+    pub ask: Option<bool>,
 }
 
 impl Config {
@@ -499,6 +645,20 @@ impl Config {
         };
         let name = if pick.is_empty() { self.agents.default.clone() } else { pick.clone() };
         self.agent_named(&name)
+    }
+
+    /// The user's own instructions for agents doing `job` (chat, find, tasks, customize), ready to go after Valerie's
+    /// own rules; empty when they have none.
+    pub fn extra_instructions(&self, job: &str) -> String {
+        let mine: Vec<&str> = [self.agents.instructions.as_str(), self.agents.instructions_for.get(job).map(String::as_str).unwrap_or("")]
+            .into_iter()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if mine.is_empty() {
+            return String::new();
+        }
+        format!("\n\nThe user's own instructions for you (follow them unless they conflict with the rules above):\n{}", mine.join("\n"))
     }
 
     pub fn agent_named(&self, name: &str) -> (String, AgentDef) {
@@ -581,6 +741,9 @@ pub struct SpaceConfig {
     pub theme: Option<ThemeRef>,
     #[serde(default)]
     pub icon: Option<String>,
+    /// Settings that apply while this space is the one you're in (same shape as config.yaml).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,6 +876,10 @@ pub struct AgentsConfig {
     pub model: String,
     pub space: String,
     pub jobs: Vec<AgentJob>,
+    /// Added to every agent's instructions (after Valerie's own safety rules).
+    pub instructions: String,
+    /// Added for one job: chat, find, tasks, customize.
+    pub instructions_for: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -738,6 +905,10 @@ fn yes() -> bool {
 }
 
 /// Parse "90s", "30m", "6h", "1d" into seconds.
+
+/// Tests that point VALERIE_CONFIG_DIR somewhere take turns (the environment is shared by every test thread).
+#[cfg(test)]
+pub static TEST_DIRS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("VALERIE_CONFIG_DIR") {
@@ -840,7 +1011,10 @@ pub fn config_path() -> PathBuf {
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
-const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "agents.models", "ai_actions", "notifications.sites"];
+const FREE_FORM: &[&str] = &[
+    "keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "agents.models",
+    "ai_actions", "notifications.sites", "global_keybindings", "sites", "menu.rename", "menu.commands", "agents.instructions_for",
+];
 
 /// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
 /// ignored), each with the closest real key when there is one.
@@ -885,7 +1059,7 @@ pub fn unknown_keys(user_text: &str) -> Vec<String> {
     out
 }
 
-fn merge(base: &mut Value, over: Value) {
+pub fn merge(base: &mut Value, over: Value) {
     match (base, over) {
         (Value::Mapping(b), Value::Mapping(o)) => {
             for (k, v) in o {
@@ -918,12 +1092,25 @@ impl Config {
     }
 
     pub fn parse(text: &str) -> Result<Config> {
+        Ok(serde_yaml::from_value(Self::merged(text)?)?)
+    }
+
+    /// The defaults with the user's file on top, as YAML (what spaces' `settings` go on top of).
+    pub fn merged(text: &str) -> Result<Value> {
         let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
         let user: Value = serde_yaml::from_str(text)?;
         if !user.is_null() {
             merge(&mut base, user);
         }
-        Ok(serde_yaml::from_value(base)?)
+        Ok(base)
+    }
+
+    /// These settings with a space's own `settings` on top (None when it has none).
+    pub fn for_space(&self, base: &Value, space: &str) -> Option<Result<Config>> {
+        let over = self.spaces.iter().find(|s| s.name == space)?.settings.clone()?;
+        let mut v = base.clone();
+        merge(&mut v, serde_yaml::to_value(over).ok()?);
+        Some(serde_yaml::from_value(v).map_err(|e| anyhow::anyhow!("space {space:?} settings: {e}")))
     }
 
     pub fn theme(&self, r: Option<&ThemeRef>) -> Theme {

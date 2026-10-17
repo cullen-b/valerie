@@ -24,6 +24,11 @@ Scripts that run inside web pages (`ui/content.js`, plugin `script.js`) must bui
 `textContent`, never `innerHTML`: sites with Trusted Types (YouTube, Google) throw on it and the feature silently
 breaks there.
 
+## Page scripts: send through `post()`
+
+`ui/content.js` talks to Valerie with `post()`, which writes JSON itself. Don't send messages with `JSON.stringify` of an
+object: it hands the object to the page's `Object.prototype.toJSON` first, and the page could read nonces or plugin keys.
+
 ## Keep the settings file readable for people and LLMs
 
 `config/default.yaml` is the reference for every option; users mostly edit their own small

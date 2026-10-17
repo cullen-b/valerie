@@ -24,6 +24,9 @@ body::before { /* soft accent glow */
   background: radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
 }
 .bgfade { position: fixed; inset: 0; pointer-events: none; transition: opacity .4s ease; }
+/* window.vibrancy: the desktop shows through, frosted, behind a lighter wash of the theme */
+html.vibrant body { background: linear-gradient(160deg, color-mix(in srgb, var(--bg1) 58%, transparent), color-mix(in srgb, var(--bg2) 58%, transparent)); }
+html.vibrant { background: transparent; }
 #sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; transition: opacity .12s; }
 #sidebar.hidden { opacity: 0; transition: opacity .15s .2s; }
 body.right #sidebar { right: 0; }
@@ -204,6 +207,17 @@ body.right #toast { left: auto; right: 12px; }
 #empty h1 { font-size: 44px; font-weight: 700; letter-spacing: -1.5px; opacity: .9; }
 #empty h1 span { color: var(--accent); }
 #empty svg { width: 84px; height: 84px; opacity: .22; }
+#empty iframe { width: 100%; height: 100%; border: 0; display: block; }
+/* plugin widgets: buttons and live text from plugins' `sidebar` entries */
+#widgets { flex: none; display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+#widgets:empty { display: none; }
+.widget { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border-radius: 9px; background: var(--tile); color: var(--fg); font-size: 12.5px; }
+.widget .wicon { width: 16px; text-align: center; flex: none; }
+.widget .wtext { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.widget.clickable { cursor: pointer; }
+body.pointer .widget.clickable:hover { background: var(--active); }
+body.size-compact .widget .wtext { display: none; }
+body.size-compact .widget { justify-content: center; padding: 5px 0; }
 kbd { font: 12px -apple-system, system-ui; padding: 2px 6px; border-radius: 5px; background: var(--tile); border: 1px solid var(--line); }
 /* top tab bar mode */
 #topbar { display: none; position: fixed; top: 0; left: 0; right: 0; height: 40px; align-items: center; gap: 6px; padding: 0 8px 0 80px; }
@@ -232,6 +246,7 @@ body.pointer #topbar .chip:hover { background: var(--hover); }
   </div>
   <div id="url"></div>
   <div id="favorites" class="grid"></div>
+  <div id="widgets"></div>
   <div id="scroll"></div>
   <div id="nowplaying"></div>
   <div id="bottom"></div>
@@ -270,6 +285,12 @@ function icon(t, cls = "ico", slot = "side") {
   }
   iconNodes.set(key, { src, ch, node }); iconsUsed.add(key);
   return node;
+}
+// mouse.middle_click_tab: a command that acts on the tab (null = nothing).
+function middleClick(t) {
+  const a = S.mouse ? S.mouse.middle_click_tab : "close_tab";
+  if (a == null) return;
+  cmd({ ...(typeof a === "string" ? { cmd: a } : a), tab: t.id });
 }
 const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.includes(S.active));
 const click = (fn) => (e) => { if (!suppressClick) fn(e); };
@@ -345,7 +366,7 @@ function tile(t, list, index) {
   f.append(icon(t)); f.title = t.title || t.url;
   if (t.playing) f.append(audio(t));
   f.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
-  f.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
+  f.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
   source(f, t.id, list, index);
   preloadOnHover(f, t);
@@ -365,7 +386,7 @@ function tabRow(t, list, index) {
   r.append(x);
   r.title = t.url;
   r.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
-  r.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
+  r.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   r.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
   source(r, t.id, list, index);
   preloadOnHover(r, t);
@@ -540,6 +561,7 @@ function slideIn(dir) {
 function render(state) {
   S = state; iconsUsed = new Set();
   applyTheme(S.theme);
+  document.documentElement.classList.toggle("vibrant", !!S.vibrancy && S.vibrancy !== "none");
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
   root.style.setProperty("--pin-cols", Math.max(1, Math.min(12, +S.sidebar.pinned_columns || 4)));
@@ -556,7 +578,7 @@ function render(state) {
   $("#sidebar").classList.toggle("hidden", hidden);
   const O = S.sidebar;
   const empty = $("#empty");
-  empty.style.display = S.active ? "none" : "grid";
+  empty.style.display = S.active ? "none" : S.start_page.startsWith("plugin:") ? "block" : "grid";
   renderStart(empty, S.start_page);
   const sw = S.layout.tab_bar === "side" && !hidden ? S.layout.sidebar_width : 0;
   empty.style.left = S.layout.sidebar_position === "left" ? sw + "px" : "0";
@@ -585,17 +607,27 @@ function render(state) {
     S.favorites.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); fav.append(f); });
   } else delete fav.dataset.drop;
 
+  renderWidgets();
+  // sidebar.order: the fixed parts move with CSS order; the scrolling parts (space name, pinned, kept, today) are
+  // built in that order inside the list, which sits where the first of them is.
+  const order = (O.order || []).concat(SIDEBAR_PARTS.filter((p) => !(O.order || []).includes(p)));
+  const slot = Math.min(...SCROLLING.map((p) => order.indexOf(p)).filter((i) => i >= 0));
+  for (const [part, sel] of Object.entries(FIXED)) { const i = order.indexOf(part); $(sel).style.order = String((i < 0 ? 50 : i) + 1); }
+  $("#scroll").style.order = String(slot + 1);
+  $("#drag").style.order = "0"; $("#resize").style.order = "99";
   const sc = $("#scroll"), top = sc.scrollTop; sc.innerHTML = "";
   const chatsOpen = !!(S.chats && S.chats.open);
   sc.classList.toggle("chats", chatsOpen);
   if (chatsOpen) renderChatList(sc);
   else {
+  const parts = {};
+  const into = (name) => (parts[name] = parts[name] || document.createDocumentFragment());
   const sp = S.spaces[S.active_space];
   if (O.space_name) {
     const title = el("div", "space-title");
     title.append(el("span", "icon", sp.icon || "●"), el("span", null, sp.name));
     title.ondblclick = () => prompt_("Rename space", sp.name, { cmd: "rename_space" }, "name");
-    sc.append(title);
+    into("space_name").append(title);
   }
 
   const icons = S.layout.pinned_style !== "list";
@@ -621,9 +653,9 @@ function render(state) {
   const fly = $("#pinfly"); fly.replaceChildren();
   if (S.layout.sidebar_size === "compact" && O.compact_pinned !== "icons" && (S.pinned.length || strayFavs.length)) {
     const f = pinFolder([...strayFavs, ...flat(S.pinned)]);
-    sc.append(f); fly.append(...pins.childNodes);
+    into("pinned").append(f); fly.append(...pins.childNodes);
     if (fly.classList.contains("open")) openFly(f);
-  } else { sc.append(...pins.childNodes); fly.classList.remove("open"); }
+  } else { into("pinned").append(...pins.childNodes); fly.classList.remove("open"); }
   if (O.kept_section !== false) {
     const kept = el("div", "kept" + (S.kept.length ? "" : " empty"));
     zone(kept, { kind: "area", list: "kept", index: S.kept.length, payload: { section: "kept" } });
@@ -632,21 +664,22 @@ function render(state) {
       const r = tabRow(n, "kept", i); zone(r, { kind: "row", list: "kept", index: i, payload: { section: "kept", tab: n.id } }); kept.append(r);
     });
     if (!S.kept.length) kept.append(el("div", "kept-hint", "Drag here to keep"));
-    sc.append(kept);
+    into("kept").append(kept);
   }
   const div = el("div", "divider");
   if (S.today.length && O.clear_button !== "never") {
     const clr = el("span", O.clear_button === "hover" ? "hover" : null, "Clear");
     clr.onclick = () => cmd({ cmd: "clear_today_tabs" }); div.append(clr);
   } else if (O.today_label) div.append(el("span", null, "Today"));
-  sc.append(div);
+  into("today").append(div);
   zone(div, { kind: "area", list: "today", index: 0, payload: { section: "today" } });
   if (O.new_tab_button) {
     const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New Tab"));
-    nt.onclick = () => cmd({ cmd: "new_tab" }); sc.append(nt);
+    nt.onclick = () => cmd({ cmd: "new_tab" }); into("today").append(nt);
     zone(nt, { kind: "area", list: "today", index: 0, payload: { section: "today" } });
   }
-  S.today.forEach((t, i) => { const r = tabRow(t, "today", i); zone(r, { kind: "row", list: "today", index: i, payload: { section: "today", tab: t.id } }); sc.append(r); });
+  S.today.forEach((t, i) => { const r = tabRow(t, "today", i); zone(r, { kind: "row", list: "today", index: i, payload: { section: "today", tab: t.id } }); into("today").append(r); });
+  for (const part of order.filter((p) => SCROLLING.includes(p))) if (parts[part]) sc.append(parts[part]);
   const tail = el("div"); tail.style.minHeight = "60px"; tail.style.flex = "1";
   zone(tail, { kind: "area", list: "today", index: S.today.length, payload: { section: "today" } }); sc.append(tail);
   }
@@ -687,14 +720,56 @@ function render(state) {
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }
 
+// Parts of the sidebar, in their default order (sidebar.order rearranges them).
+const SIDEBAR_PARTS = ["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
+const SCROLLING = ["space_name", "pinned", "kept", "today"];
+const FIXED = { url: "#url", favorites: "#favorites", widgets: "#widgets", now_playing: "#nowplaying", spaces: "#bottom" };
+
+// Buttons and live text from plugins (their `sidebar` entries).
+function renderWidgets() {
+  const box = $("#widgets"); box.replaceChildren();
+  for (const w of S.widgets || []) {
+    const clickable = !!(w.command || w.url);
+    const d = el("div", "widget" + (clickable ? " clickable" : ""));
+    if (w.icon) d.append(el("span", "wicon", w.icon));
+    d.append(el("span", "wtext", w.text)); d.title = w.title + " · " + w.plugin;
+    if (w.command) d.onclick = () => cmd({ cmd: "plugin", plugin: w.plugin, command: w.command });
+    else if (w.url) d.onclick = () => cmd({ cmd: "new_tab", url: w.url });
+    box.append(d);
+  }
+}
+
 // The logo mark from the app icon, tinted with the space's colours.
 const LOGO = '<svg viewBox="0 0 1024 1024"><path d="M318 340 L462 700 Q512 812 562 700 L706 340" fill="none" stroke="currentColor" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/><circle cx="742" cy="716" r="54" fill="currentColor"/></svg>';
 let startMode = null;
 function renderStart(node, mode) {
-  if (mode === startMode) return;
-  startMode = mode;
+  const key = mode + "\n" + (S.start_html || "");
+  if (key === startMode) return postTheme();
+  startMode = key;
+  node.classList.toggle("plugin-start", mode.startsWith("plugin:"));
+  if (mode.startsWith("plugin:")) {
+    // A plugin's start.html, sandboxed: it can only open sites and run its own plugin's commands.
+    const f = document.createElement("iframe");
+    f.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox");
+    f.srcdoc = S.start_html || "<p style='font:14px system-ui;color:#888;padding:40px'>No start.html in plugin " + mode.slice(7) + "</p>";
+    f.onload = postTheme;
+    node.replaceChildren(f);
+    return;
+  }
   node.innerHTML = mode === "logo" ? LOGO : mode === "wordmark" ? "<h1>valerie<span>.</span></h1>" : "";
 }
+function postTheme() {
+  const f = $("#empty iframe");
+  if (f && f.contentWindow) f.contentWindow.postMessage({ valerie: "theme", theme: S.theme, font: S.layout.font }, "*");
+}
+addEventListener("message", (e) => {
+  const f = $("#empty iframe"), m = e.data || {};
+  if (!f || e.source !== f.contentWindow || !S.start_page.startsWith("plugin:")) return;
+  const plugin = S.start_page.slice(7).trim();
+  if (typeof m.open === "string" && /^https?:\/\//.test(m.open)) cmd({ cmd: "new_tab", url: m.open });
+  else if (typeof m.search === "string") cmd({ cmd: "go", input: m.search, new_tab: true });
+  else if (typeof m.run === "string") cmd({ cmd: "plugin", plugin, command: m.run });
+});
 
 function renderTop() {
   const tb = $("#topbar"); tb.innerHTML = "";
@@ -741,7 +816,7 @@ $("#reload").onclick = () => cmd({ cmd: "reload" });
 $("#url").onclick = () => cmd({ cmd: "open_command_bar", mode: "current" });
 $("#sidebar").addEventListener("mouseleave", () => { if (S && S.peek) send({ t: "unpeek" }); });
 $("#drag").onmousedown = (e) => { if (e.target.id === "drag") send({ t: "drag" }); };
-$("#empty").onclick = () => cmd({ cmd: "new_tab" });
+$("#empty").onclick = (e) => { if (!$("#empty").classList.contains("plugin-start")) cmd({ cmd: "new_tab" }); };
 
 // ---------- two-finger swipe between spaces: the list follows your fingers, then commits or springs back ----------
 const swipe = { acc: 0, timer: 0, lock: false, unlock: 0 };
@@ -817,7 +892,19 @@ addEventListener("mousemove", () => document.body.classList.add("pointer"), { pa
 document.documentElement.addEventListener("mouseleave", () => { document.body.classList.remove("pointer"); closeFly(); });
 function pointerOut() { if (!resizing && !(drag && drag.active)) { document.body.classList.remove("pointer"); closeFly(); } }
 
-window.valerie = { render, toast, pointerOut };
+// Key sequences: after the first key of one, the next key pressed here goes to Valerie.
+let seqUntil = 0;
+addEventListener("keydown", (e) => {
+  if (!seqUntil || ["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
+  const live = performance.now() < seqUntil; seqUntil = 0;
+  if (!live) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const k = e.code.replace(/^Key/, "").replace(/^Digit/, "").replace(/^Arrow/, "");
+  send({ t: "seq_key", key: [e.metaKey && "Cmd", e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", k].filter(Boolean).join("+") });
+}, true);
+function nextKey() { seqUntil = performance.now() + 2000; }
+
+window.valerie = { render, toast, pointerOut, nextKey };
 send({ t: "ready" });
 </script>
 </body>

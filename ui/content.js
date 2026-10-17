@@ -57,7 +57,8 @@ const notifyHooks = { permission() {}, clicked() {} };
 // A tab Valerie hasn't shown yet is a hidden document. Until it becomes visible, play() is held (and resumed then);
 // after that, media behaves normally (switching away doesn't pause anything).
 (() => {
-  if (CFG.tabs && CFG.tabs.autoplay_in_background) return;
+  const C0 = withSite(CFG);
+  if (C0.tabs && C0.tabs.autoplay_in_background) return;
   if (document.visibilityState === "visible") return;
   const realPlay = HTMLMediaElement.prototype.play;
   const waiting = new Map(); // element -> [resolve, reject] for the promise play() returned
@@ -88,12 +89,77 @@ const notifyHooks = { permission() {}, clicked() {} };
   document.addEventListener("visibilitychange", release);
 })();
 // Capture natives before page scripts run, so pages can't intercept what we send or fill.
-const stringify = JSON.stringify;
+const stringify = JSON.stringify, keysOf = Object.keys, isArray = Array.isArray;
 const ipcPost = window.ipc ? window.ipc.postMessage.bind(window.ipc) : null;
-const post = (o) => { try { (ipcPost || ((m) => window.ipc.postMessage(m)))(stringify(o)); } catch (_) {} };
+// Our own JSON writer: JSON.stringify would hand each object to a page's Object.prototype.toJSON first, letting the page
+// read what Valerie sends (nonces, plugin keys). Strings and numbers go through stringify, which never asks them.
+function toJson(v, depth = 0) {
+  if (v === null || v === undefined || depth > 20) return "null";
+  const t = typeof v;
+  if (t === "string" || t === "number" || t === "boolean") return stringify(v);
+  if (t !== "object") return "null";
+  if (isArray(v)) { let s = "["; for (let i = 0; i < v.length; i++) s += (i ? "," : "") + toJson(v[i], depth + 1); return s + "]"; }
+  let s = "{", first = true;
+  for (const k of keysOf(v)) { if (v[k] === undefined || typeof v[k] === "function") continue; s += (first ? "" : ",") + stringify(String(k)) + ":" + toJson(v[k], depth + 1); first = false; }
+  return s + "}";
+}
+const post = (o) => { try { (ipcPost || ((m) => window.ipc.postMessage(m)))(toJson(o)); } catch (_) {} };
 const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
 const PAGE_ACTIONS = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find"]);
-let cfg = CFG, mode = "normal", buffer = "", bufferTimer = 0;
+let cfg = withSite(CFG), mode = "normal", buffer = "", bufferTimer = 0;
+
+// ---------- `sites:` settings for this site win over the global ones ----------
+function withSite(c) {
+  const sites = c.sites || {}, h = location.hostname.toLowerCase();
+  const keys = Object.keys(sites).filter((k) => sites[k] && /^https?:/.test(location.href) &&
+    (k.includes("://") ? globMatch(k, location.href) : globMatch(k, h) || globMatch("*." + k, h))).sort((a, b) => a.length - b.length);
+  if (!keys.length) return c;
+  const s = Object.assign({}, ...keys.map((k) => sites[k])), out = { ...c };
+  if (s.autoplay != null) out.tabs = { ...c.tabs, autoplay_in_background: s.autoplay };
+  if (s.vim != null) out.vim = { ...c.vim, enabled: s.vim };
+  if (s.links) out.links = { ...c.links, ...s.links };
+  if (s.cookie_banners) out.privacy = { ...c.privacy, cookie_banners: s.cookie_banners };
+  if (s.dark_mode) out.site_dark = s.dark_mode;
+  return out;
+}
+
+// ---------- redirect rules: a page that matches one is replaced before it shows (links clicked on pages) ----------
+(() => {
+  const captures = (pat, text) => {
+    const re = new RegExp("^" + pat.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("(.*?)") + "$", "i");
+    const m = re.exec(text); return m ? m.slice(1) : null;
+  };
+  for (const r of cfg.redirects || []) {
+    if (r.site && !pluginMatches([r.site])) continue;
+    const caps = captures(r.from, location.href);
+    if (!caps) continue;
+    let i = 0; const to = r.to.replace(/\*/g, () => caps[i++] || "");
+    if (to !== location.href && !captures(r.from, to) && /^https?:\/\//.test(to)) { location.replace(to); break; }
+  }
+})();
+
+// ---------- key sequences: after the first key of one, the next key pressed here goes to Valerie ----------
+let seqUntil = 0;
+function nextKey() { seqUntil = performance.now() + 2000; }
+function keyName(e) {
+  const k = e.code.replace(/^Key/, "").replace(/^Digit/, "").replace(/^Arrow/, "");
+  return [e.metaKey && "Cmd", e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", k].filter(Boolean).join("+");
+}
+addEventListener("keydown", (e) => {
+  if (!seqUntil || !e.isTrusted || ["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
+  const live = performance.now() < seqUntil; seqUntil = 0;
+  if (!live) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  post({ t: "seq_key", key: keyName(e) });
+}, true);
+
+// ---------- the mouse's back and forward buttons ----------
+addEventListener("mouseup", (e) => {
+  if (!e.isTrusted || (e.button !== 3 && e.button !== 4)) return;
+  const m = cfg.mouse || {}, a = e.button === 3 ? m.back_button : m.forward_button;
+  if (a == null) return;
+  e.preventDefault(); e.stopImmediatePropagation(); run(a);
+}, true);
 
 // ---------- shadow-DOM UI host (hints, find bar, toasts) ----------
 let shadow = null;
@@ -140,11 +206,31 @@ function ui() {
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
             outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: all .06s; }`;
   shadow.appendChild(st);
+  shadow.appendChild(userStyle());
   return shadow;
+}
+// The user's own ui/page.css, after Valerie's styles in each of its shadow roots (find bar, hints, menus, reader…).
+const userStyles = [];
+function userStyle() {
+  const st = document.createElement("style"); st.className = "valerie-user-css"; st.textContent = cfg.ui_css || "";
+  userStyles.push(st); return st;
+}
+function applyUserCss() { for (const st of userStyles) if (st.textContent !== (cfg.ui_css || "")) st.textContent = cfg.ui_css || ""; }
+// Valerie's words in the user's language (`language`): exact text, or patterns with {} for the parts that change.
+function tr(text) {
+  const S = cfg.strings; if (!S) return text;
+  if (S[text] != null) return S[text];
+  for (const k in S) {
+    if (k.indexOf("{}") < 0) continue;
+    const parts = k.split("{}").map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const m = new RegExp("^" + parts.join("(.*?)") + "$").exec(text);
+    if (m) { let out = S[k]; for (const g of m.slice(1)) out = out.replace("{}", g); return out; }
+  }
+  return text;
 }
 
 function toast(msg) {
-  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; ui().appendChild(t);
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = tr(msg); ui().appendChild(t);
   setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 250); }, (cfg.toast_seconds || 1.5) * 1000);
 }
 
@@ -763,7 +849,8 @@ function pluginMatches(patterns) {
 function applyBoostCss() {
   const h = location.hostname.toLowerCase(), b = cfg.boost_css || {};
   const css = Object.keys(b).filter((k) => h === k || h.endsWith("." + k)).map((k) => b[k])
-    .concat((cfg.plugin_css || []).filter((p) => pluginMatches(p.matches)).map((p) => p.css)).join("\n");
+    .concat((cfg.plugin_css || []).filter((p) => pluginMatches(p.matches) && (!(p.spaces || []).length || p.spaces.includes(cfg.space))).map((p) => p.css))
+    .concat((cfg.hide_rules || []).filter((r) => !r.site || pluginMatches([r.site])).map((r) => r.selector + " { display: none !important; }")).join("\n");
   let st = document.getElementById("__valerie_boost");
   if (!css) { if (st) st.remove(); return; }
   if (!st) { st = document.createElement("style"); st.id = "__valerie_boost"; (document.head || document.documentElement).appendChild(st); }
@@ -816,9 +903,16 @@ function legacyCopy(text, done) {
   document.documentElement.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (_) {} t.remove();
 }
 document.addEventListener("contextmenu", (e) => {
-  if (!e.isTrusted || e.shiftKey || !(cfg.links || {}).context_menu) return;
-  const a = linkAt(e);
-  if (!a) return;
+  if (!e.isTrusted || e.shiftKey) return;
+  // Plugins with entries for what was right-clicked: Valerie shows its own menu with them (shift-click for the system's).
+  const a = linkAt(e), img = e.target.closest && e.target.closest("img"), sel = String(getSelection() || "").trim();
+  const here = [a && "link", img && img.src && "image", sel && "selection", "page"].filter(Boolean);
+  const plug = cfg.plugin_contexts || [];
+  if (here.some((k) => plug.includes(k)) && (here.some((k) => k !== "page" && plug.includes(k)) || !editable(e.target))) {
+    e.preventDefault(); e.stopImmediatePropagation(); hideLinkMenu();
+    return post({ t: "context_menu", x: e.clientX, y: e.clientY, link: a ? a.href : null, image: img ? img.src : null, selection: sel.slice(0, 5000) || null, page: location.href });
+  }
+  if (!(cfg.links || {}).context_menu || !a) return;
   e.preventDefault(); e.stopImmediatePropagation();
   hideLinkMenu(); hideMenu();
   const url = a.href;
@@ -828,7 +922,8 @@ document.addEventListener("contextmenu", (e) => {
     ["Peek", "peek"], ["Open in Little Window", "little_window"], ["Copy Link", "copy"],
   ];
   for (const [label, mode] of items) {
-    const d = document.createElement("div"); d.textContent = label;
+    if ((cfg.hide_menu || []).includes(label)) continue;
+    const d = document.createElement("div"); d.textContent = tr(label);
     d.addEventListener("mousedown", (ev) => {
       if (!ev.isTrusted || ev.button !== 0) return;
       ev.preventDefault(); hideLinkMenu();
@@ -992,6 +1087,7 @@ function pickHide(nonce) {
 
 // ---------- dark mode for light websites ----------
 function darkWanted() {
+  if (cfg.site_dark) return cfg.site_dark === "always" ? "forced" : false;
   const d = cfg.dark || {}, site = location.hostname.replace(/^www\./, "").toLowerCase();
   if (d.sites && site in d.sites) return d.sites[site] ? "forced" : false;
   return d.mode === "always" || (d.mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches) ? "auto" : false;
@@ -1204,7 +1300,7 @@ function reader() {
     if (k === "figcaption") e.className = "figcaption";
     e.textContent = text; col.append(e);
   }
-  sh.append(st, col);
+  sh.append(st, userStyle(), col);
   document.documentElement.append(host);
   readerHost = host; host.focus();
 }
@@ -1295,10 +1391,10 @@ function offerSave(host, username, nonce, vaults) {
   if (offered === nonce) return;
   offered = nonce;
   const box = document.createElement("div"); box.className = "save";
-  const p = document.createElement("p"); p.textContent = "Save password" + (username ? " for " + username : "") + " on " + host + "?";
+  const p = document.createElement("p"); p.textContent = tr("Save password" + (username ? " for " + username : "") + " on " + host + "?");
   box.append(p);
   const button = (label, cls, msg) => {
-    const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls;
+    const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
     b.addEventListener("click", (e) => { if (!e.isTrusted) return; box.remove(); if (msg) post(msg); });
     box.append(b);
   };
@@ -1319,11 +1415,44 @@ const watchLogin = () => {
 watchLogin();
 document.addEventListener("visibilitychange", watchLogin);
 
+// ---------- plugin scripts: `valerie.run(title)` and `valerie.call(tool, args)` ----------
+// Each plugin's script is handed a key in the code Valerie runs (pages can't read that), and its messages go out
+// through natives captured before the page's own scripts ran, so the page can't borrow a plugin's powers.
+const PromiseCtor = Promise, randomFill = crypto.getRandomValues.bind(crypto), pluginWaits = new Map();
+// The message is put together from strings: JSON.stringify would call a page's Object.prototype.toJSON with the
+// whole message (key included); on plain strings it never looks one up.
+function pluginSend(fields, args) {
+  let s = '{"key":' + stringify(fields.key);
+  for (const k of ["t", "plugin", "id", "tool", "title"]) if (fields[k] != null) s += ',"' + k + '":' + stringify(String(fields[k]));
+  s += ',"args":' + (args === undefined ? "{}" : toJson(args));
+  try { (ipcPost || ((m) => window.ipc.postMessage(m)))(s + "}"); } catch (_) {}
+}
+function pluginApi(plugin, key) {
+  plugin = String(plugin); key = String(key);
+  const id = () => { const a = new Uint32Array(4); randomFill(a); return a[0] + "-" + a[1] + "-" + a[2] + "-" + a[3]; };
+  return Object.freeze({
+    call: (tool, args) => new PromiseCtor((resolve, reject) => {
+      const n = id(); pluginWaits.set(n, [resolve, reject]);
+      pluginSend({ t: "plugin_call", plugin, key, id: n, tool }, args || {});
+    }),
+    run: (title) => pluginSend({ t: "plugin_run", plugin, key, title }),
+  });
+}
+// Load-time scripts run once per page, even if Valerie hears about the load twice (a page rebuilt while loading).
+const ranHere = new Set();
+function once(key) { if (ranHere.has(key)) return false; ranHere.add(key); return true; }
+function pluginReply(n, ok, value) {
+  const w = pluginWaits.get(n); if (!w) return;
+  pluginWaits.delete(n); if (ok) w[0](value); else w[1](new Error(String(value)));
+}
+
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
+    api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); }, toast, find: openFind, hints: startHints,
+    nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
   }),

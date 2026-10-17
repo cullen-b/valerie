@@ -196,6 +196,12 @@ pub struct State {
     /// Finished downloads, newest first.
     #[serde(default)]
     pub downloads: Vec<Download>,
+    /// Browser tools each plugin's page script was allowed to use (plugin → its `permissions` when approved).
+    #[serde(default)]
+    pub plugin_grants: BTreeMap<String, Vec<String>>,
+    /// Browser extensions the user allowed (folder name → fingerprint of the manifest they allowed).
+    #[serde(default)]
+    pub extension_grants: BTreeMap<String, String>,
 }
 
 

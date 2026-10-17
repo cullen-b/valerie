@@ -863,6 +863,361 @@ mod mac {
             }
         }
     }
+
+    pub fn allow_magnification(wv: &WebView, on: bool) {
+        unsafe {
+            let _: () = msg_send![ptr(wv), setAllowsMagnification: on];
+        }
+    }
+
+    pub fn set_window_opacity(window: &tao::window::Window, alpha: f64) {
+        use tao::platform::macos::WindowExtMacOS;
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            let _: () = msg_send![w, setAlphaValue: alpha];
+        }
+    }
+
+    thread_local! {
+        static EFFECT: std::cell::Cell<*mut AnyObject> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+    }
+
+    /// Frosted glass behind the sidebar view (`material`: 0 = none). The sidebar's webview stops drawing its own
+    /// background so the glass shows through wherever its page is see-through.
+    pub fn set_vibrancy(window: &tao::window::Window, sidebar: &WebView, material: isize) {
+        use objc2::class;
+        use tao::platform::macos::WindowExtMacOS;
+        let content = window.ns_view() as *mut AnyObject;
+        unsafe {
+            let old = EFFECT.with(|e| e.replace(std::ptr::null_mut()));
+            if !old.is_null() {
+                let _: () = msg_send![old, removeFromSuperview];
+                let _: () = msg_send![old, release];
+            }
+            let no_bg = objc2_foundation::NSNumber::numberWithBool(material == 0);
+            let _: () = msg_send![ptr(sidebar), setValue: &*no_bg, forKey: &*objc2_foundation::NSString::from_str("drawsBackground")];
+            if material == 0 || content.is_null() {
+                return;
+            }
+            let frame: objc2_foundation::NSRect = msg_send![content, bounds];
+            let v: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
+            let v: *mut AnyObject = msg_send![v, initWithFrame: frame];
+            let _: () = msg_send![v, setMaterial: material];
+            let _: () = msg_send![v, setBlendingMode: 0isize]; // behind the window
+            let _: () = msg_send![v, setState: 1isize]; // always active
+            let _: () = msg_send![v, setAutoresizingMask: 18usize]; // width and height follow the window
+            let _: () = msg_send![content, addSubview: v, positioned: -1isize, relativeTo: std::ptr::null_mut::<AnyObject>()];
+            EFFECT.with(|e| e.set(v));
+        }
+    }
+
+    pub fn set_app_icon(path: Option<&std::path::Path>) {
+        use objc2::class;
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let img: *mut AnyObject = match path {
+                Some(p) => {
+                    let a: *mut AnyObject = msg_send![class!(NSImage), alloc];
+                    let s = objc2_foundation::NSString::from_str(&p.to_string_lossy());
+                    msg_send![a, initWithContentsOfFile: &*s]
+                }
+                None => std::ptr::null_mut(),
+            };
+            let _: () = msg_send![app, setApplicationIconImage: img];
+        }
+    }
+
+    thread_local! {
+        static DOCK_MENU: std::cell::Cell<*mut AnyObject> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+        static STATUS_ITEM: std::cell::Cell<*mut AnyObject> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+    }
+
+    /// The Dock icon's right-click menu (an NSMenu, or null for none).
+    pub fn set_dock_menu(menu: *mut AnyObject) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::{class, sel};
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        DOCK_MENU.with(|d| d.set(menu));
+        ONCE.call_once(|| unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let delegate: *mut AnyObject = msg_send![app, delegate];
+            if delegate.is_null() {
+                return;
+            }
+            unsafe extern "C-unwind" fn dock_menu(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> *mut AnyObject {
+                DOCK_MENU.with(|d| d.get())
+            }
+            let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
+            objc2::ffi::class_addMethod(cls, sel!(applicationDockMenu:), std::mem::transmute::<*const (), Imp>(dock_menu as *const ()), c"@@:@".as_ptr());
+        });
+    }
+
+    /// An icon at the right of the menu bar showing `title` and opening `menu` (empty title removes it).
+    pub fn set_status_item(title: &str, menu: *mut AnyObject) {
+        use objc2::class;
+        unsafe {
+            let bar: *mut AnyObject = msg_send![class!(NSStatusBar), systemStatusBar];
+            let mut item = STATUS_ITEM.with(|s| s.get());
+            if title.is_empty() {
+                if !item.is_null() {
+                    let _: () = msg_send![bar, removeStatusItem: item];
+                    let _: () = msg_send![item, release];
+                    STATUS_ITEM.with(|s| s.set(std::ptr::null_mut()));
+                }
+                return;
+            }
+            if item.is_null() {
+                item = msg_send![bar, statusItemWithLength: -1.0f64];
+                let _: *mut AnyObject = msg_send![item, retain];
+                STATUS_ITEM.with(|s| s.set(item));
+            }
+            let button: *mut AnyObject = msg_send![item, button];
+            if !button.is_null() {
+                let _: () = msg_send![button, setTitle: &*objc2_foundation::NSString::from_str(title)];
+            }
+            let _: () = msg_send![item, setMenu: menu];
+        }
+    }
+
+    /// Ask where to save a file (a save panel); None when cancelled.
+    pub fn save_panel(name: &str, folder: &std::path::Path) -> Option<std::path::PathBuf> {
+        use objc2::class;
+        unsafe {
+            let panel: *mut AnyObject = msg_send![class!(NSSavePanel), savePanel];
+            let _: () = msg_send![panel, setNameFieldStringValue: &*objc2_foundation::NSString::from_str(name)];
+            let dir: *mut AnyObject = msg_send![class!(NSURL), fileURLWithPath: &*objc2_foundation::NSString::from_str(&folder.to_string_lossy()), isDirectory: true];
+            let _: () = msg_send![panel, setDirectoryURL: dir];
+            let r: isize = msg_send![panel, runModal];
+            if r != 1 {
+                return None;
+            }
+            let url: *mut AnyObject = msg_send![panel, URL];
+            let path: *mut objc2_foundation::NSString = if url.is_null() { std::ptr::null_mut() } else { msg_send![url, path] };
+            (!path.is_null()).then(|| std::path::PathBuf::from((*path).to_string()))
+        }
+    }
+
+    // ---------- shortcuts that work in every app (Carbon hot keys: no special permission needed) ----------
+    #[repr(C)]
+    struct EventTypeSpec {
+        class: u32,
+        kind: u32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct HotKeyId {
+        signature: u32,
+        id: u32,
+    }
+    #[link(name = "Carbon", kind = "framework")]
+    extern "C" {
+        fn GetApplicationEventTarget() -> *mut std::ffi::c_void;
+        fn InstallEventHandler(
+            target: *mut std::ffi::c_void,
+            handler: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, *mut std::ffi::c_void) -> i32,
+            count: u32,
+            types: *const EventTypeSpec,
+            data: *mut std::ffi::c_void,
+            out: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn RegisterEventHotKey(code: u32, modifiers: u32, id: HotKeyId, target: *mut std::ffi::c_void, options: u32, out: *mut *mut std::ffi::c_void) -> i32;
+        fn UnregisterEventHotKey(key: *mut std::ffi::c_void) -> i32;
+        fn GetEventParameter(event: *mut std::ffi::c_void, name: u32, kind: u32, out_kind: *mut u32, size: usize, out_size: *mut usize, data: *mut std::ffi::c_void) -> i32;
+    }
+    static HOTKEY_FN: std::sync::Mutex<Option<Box<dyn Fn(u32) + Send>>> = std::sync::Mutex::new(None);
+    thread_local! {
+        static HOTKEYS: std::cell::RefCell<Vec<*mut std::ffi::c_void>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    const fn four(s: &[u8; 4]) -> u32 {
+        (s[0] as u32) << 24 | (s[1] as u32) << 16 | (s[2] as u32) << 8 | s[3] as u32
+    }
+    extern "C" fn on_hotkey(_: *mut std::ffi::c_void, event: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+        let mut id = HotKeyId { signature: 0, id: 0 };
+        let ok = unsafe { GetEventParameter(event, four(b"----"), four(b"hkid"), std::ptr::null_mut(), std::mem::size_of::<HotKeyId>(), std::ptr::null_mut(), &mut id as *mut _ as *mut _) };
+        if ok == 0 {
+            if let Some(f) = HOTKEY_FN.lock().ok().as_ref().and_then(|g| g.as_ref()) {
+                f(id.id);
+            }
+        }
+        0
+    }
+
+    /// Register global shortcuts as (macOS key code, Carbon modifiers); `on` gets the index of the one pressed.
+    /// Returns the ones that couldn't be registered (taken by another app or the system).
+    pub fn set_global_hotkeys(keys: &[(u32, u32)], on: impl Fn(u32) + Send + 'static) -> Vec<usize> {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        if let Ok(mut f) = HOTKEY_FN.lock() {
+            *f = Some(Box::new(on));
+        }
+        let mut failed = Vec::new();
+        unsafe {
+            ONCE.call_once(|| {
+                let spec = EventTypeSpec { class: four(b"keyb"), kind: 5 };
+                let mut r = std::ptr::null_mut();
+                InstallEventHandler(GetApplicationEventTarget(), on_hotkey, 1, &spec, std::ptr::null_mut(), &mut r);
+            });
+            HOTKEYS.with(|h| {
+                for k in h.borrow_mut().drain(..) {
+                    UnregisterEventHotKey(k);
+                }
+                for (i, (code, mods)) in keys.iter().enumerate() {
+                    let mut r = std::ptr::null_mut();
+                    let id = HotKeyId { signature: four(b"VALR"), id: i as u32 };
+                    if RegisterEventHotKey(*code, *mods, id, GetApplicationEventTarget(), 0, &mut r) == 0 {
+                        h.borrow_mut().push(r);
+                    } else {
+                        failed.push(i);
+                    }
+                }
+            });
+        }
+        failed
+    }
+}
+
+/// Seconds since the keyboard or mouse was last used (0 where that can't be known).
+pub fn idle_seconds() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+        }
+        // kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType
+        unsafe { CGEventSourceSecondsSinceLastEventType(0, u32::MAX) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    0.0
+}
+
+/// Bring Valerie in front of other apps.
+pub fn activate_app() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::{class, msg_send};
+        let app: *mut objc2::runtime::AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, activateIgnoringOtherApps: true];
+    }
+}
+
+/// Pinch to zoom a page in and out (gestures.pinch_to_zoom).
+pub fn allow_magnification(wv: &WebView, on: bool) {
+    #[cfg(target_os = "macos")]
+    mac::allow_magnification(wv, on);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, on);
+}
+
+/// How solid the whole window is (window.opacity).
+pub fn set_window_opacity(window: &tao::window::Window, alpha: f64) {
+    #[cfg(target_os = "macos")]
+    mac::set_window_opacity(window, alpha.clamp(0.3, 1.0));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, alpha);
+}
+
+/// Frosted glass behind the sidebar (window.vibrancy): "none" | "sidebar" | "window".
+pub fn set_vibrancy(window: &tao::window::Window, sidebar: &WebView, kind: &str) {
+    // NSVisualEffectMaterial: sidebar = 7, under-window background = 21.
+    let material = match kind {
+        "sidebar" => 7,
+        "window" => 21,
+        _ => 0,
+    };
+    #[cfg(target_os = "macos")]
+    mac::set_vibrancy(window, sidebar, material);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, sidebar, material);
+}
+
+/// Valerie's Dock icon from a picture file (None = the usual icon).
+pub fn set_app_icon(path: Option<&std::path::Path>) {
+    #[cfg(target_os = "macos")]
+    mac::set_app_icon(path);
+    #[cfg(not(target_os = "macos"))]
+    let _ = path;
+}
+
+/// The Dock icon's right-click menu.
+pub fn set_dock_menu(menu: Option<&muda::Menu>) {
+    #[cfg(target_os = "macos")]
+    {
+        use muda::ContextMenu;
+        mac::set_dock_menu(menu.map_or(std::ptr::null_mut(), |m| m.ns_menu() as *mut objc2::runtime::AnyObject));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = menu;
+}
+
+/// An icon in the menu bar (empty title = none) that opens `menu`.
+pub fn set_status_item(title: &str, menu: Option<&muda::Menu>) {
+    #[cfg(target_os = "macos")]
+    {
+        use muda::ContextMenu;
+        mac::set_status_item(title, menu.map_or(std::ptr::null_mut(), |m| m.ns_menu() as *mut objc2::runtime::AnyObject));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (title, menu);
+}
+
+/// Ask where to save a download; None = cancelled (or not possible here: then the usual folder is used).
+pub fn save_panel(name: &str, folder: &std::path::Path) -> Option<Option<std::path::PathBuf>> {
+    #[cfg(target_os = "macos")]
+    return Some(mac::save_panel(name, folder));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (name, folder);
+        None
+    }
+}
+
+/// macOS key code and Carbon modifier bits for a shortcut like "Ctrl+Alt+Space" (None if it can't be a global one).
+#[allow(deprecated)]
+pub fn hotkey_code(accel: &str) -> Option<(u32, u32)> {
+    use muda::accelerator::{Accelerator, Code, Modifiers};
+    let a: Accelerator = accel.parse().ok()?;
+    let m = a.modifiers();
+    let mut mods = 0u32;
+    if m.contains(Modifiers::SUPER) || m.contains(Modifiers::META) {
+        mods |= 1 << 8;
+    }
+    if m.contains(Modifiers::SHIFT) {
+        mods |= 1 << 9;
+    }
+    if m.contains(Modifiers::ALT) {
+        mods |= 1 << 11;
+    }
+    if m.contains(Modifiers::CONTROL) {
+        mods |= 1 << 12;
+    }
+    let code = match a.key() {
+        Code::KeyA => 0x00, Code::KeyS => 0x01, Code::KeyD => 0x02, Code::KeyF => 0x03, Code::KeyH => 0x04, Code::KeyG => 0x05,
+        Code::KeyZ => 0x06, Code::KeyX => 0x07, Code::KeyC => 0x08, Code::KeyV => 0x09, Code::KeyB => 0x0B, Code::KeyQ => 0x0C,
+        Code::KeyW => 0x0D, Code::KeyE => 0x0E, Code::KeyR => 0x0F, Code::KeyY => 0x10, Code::KeyT => 0x11, Code::Digit1 => 0x12,
+        Code::Digit2 => 0x13, Code::Digit3 => 0x14, Code::Digit4 => 0x15, Code::Digit6 => 0x16, Code::Digit5 => 0x17,
+        Code::Equal => 0x18, Code::Digit9 => 0x19, Code::Digit7 => 0x1A, Code::Minus => 0x1B, Code::Digit8 => 0x1C,
+        Code::Digit0 => 0x1D, Code::BracketRight => 0x1E, Code::KeyO => 0x1F, Code::KeyU => 0x20, Code::BracketLeft => 0x21,
+        Code::KeyI => 0x22, Code::KeyP => 0x23, Code::Enter => 0x24, Code::KeyL => 0x25, Code::KeyJ => 0x26, Code::Quote => 0x27,
+        Code::KeyK => 0x28, Code::Semicolon => 0x29, Code::Backslash => 0x2A, Code::Comma => 0x2B, Code::Slash => 0x2C,
+        Code::KeyN => 0x2D, Code::KeyM => 0x2E, Code::Period => 0x2F, Code::Tab => 0x30, Code::Space => 0x31, Code::Backquote => 0x32,
+        Code::Backspace => 0x33, Code::Escape => 0x35, Code::F1 => 0x7A, Code::F2 => 0x78, Code::F3 => 0x63, Code::F4 => 0x76,
+        Code::F5 => 0x60, Code::F6 => 0x61, Code::F7 => 0x62, Code::F8 => 0x64, Code::F9 => 0x65, Code::F10 => 0x6D, Code::F11 => 0x67,
+        Code::F12 => 0x6F, Code::ArrowLeft => 0x7B, Code::ArrowRight => 0x7C, Code::ArrowDown => 0x7D, Code::ArrowUp => 0x7E,
+        _ => return None,
+    };
+    Some((code, mods))
+}
+
+/// Register shortcuts that work in every app; `on` gets the index of the one pressed. Returns the indexes that
+/// couldn't be registered.
+pub fn set_global_hotkeys(keys: &[(u32, u32)], on: impl Fn(u32) + Send + 'static) -> Vec<usize> {
+    #[cfg(target_os = "macos")]
+    return mac::set_global_hotkeys(keys, on);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = on;
+        (0..keys.len()).collect()
+    }
 }
 
 pub fn bring_to_front(wv: &WebView) {

@@ -23,6 +23,9 @@ editor: default            # what "Open Config File" opens your settings in. one
                            # "Sublime Text") | a terminal editor (vim, nvim, nano, emacs, hx, micro), or any command
                            # written as "terminal: <command>", e.g. "terminal: nvim -O"
 terminal: Terminal         # the app terminal editors open in. one of: Terminal | iTerm | Ghostty | WezTerm | kitty | Alacritty
+language: ""               # the language of Valerie's own words, as a code like es, fr, de or ja. Valerie reads
+                           # strings/<code>.yaml in this folder ("English words": "your words" for each thing it says;
+                           # `valerie strings` lists them). empty = English
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -49,6 +52,16 @@ layout:
   split_unfocused_opacity: 0.72   # how see-through the other panes get when split_focus is dim or both (0–1)
   split_border_width: 2    # thickness of the focused pane's border when split_focus is border or both, pixels
 
+# Your own look for Valerie's windows: CSS files in the `ui` folder next to this file, applied after Valerie's own
+# styles and updated the moment you save them:
+#   ui/chrome.css   the sidebar, top tab bar and start page      ui/palette.css  the command bar
+#   ui/chat.css     the Chats space                              ui/little.css   little windows' bar
+#   ui/answer.css   answers under the find bar                   ui/welcome.css  the welcome guide
+#   ui/plugins.css  the plugin marketplace
+#   ui/page.css     what Valerie draws inside web pages (find bar, link hints, menus, toasts, reader view)
+# The guide (`valerie llm-guide`) lists their class names and colour variables.
+ui:
+  custom_css: true         # use those files. true | false
 window:
   remember: true           # reopen at the size and place you left it
   width: 0                 # size of the window the first time it opens, pixels; 0 = fill most of the screen
@@ -56,6 +69,10 @@ window:
   screen_fraction: 0.92    # with width/height at 0: how much of the screen the window covers (0.5 – 1)
   min_width: 480           # the window can't be made smaller than this
   min_height: 360
+  always_on_top: false     # keep Valerie above other apps' windows. true | false
+  opacity: 1               # how solid the whole window is, 0.3 – 1 (below 1 you see what's behind it)
+  vibrancy: none           # frosted glass behind the sidebar (macOS). one of: none | sidebar | window (the whole window)
+  traffic_lights: auto     # the red / yellow / green window buttons. one of: auto (hidden while the sidebar is) | show | hide
 
 toast_seconds: 1.8         # how long the little messages ("Copied URL", "Zoom 110%") stay up
 
@@ -75,6 +92,9 @@ sidebar:
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
   space_switcher: true     # the space icons at the bottom
+  order: [url, favorites, widgets, space_name, pinned, kept, today, now_playing, spaces]
+                           # top-to-bottom order of the sidebar's parts (widgets are plugins' buttons). space_name,
+                           # pinned, kept and today scroll together. Parts left out keep their place at the end.
   tab_height: 38           # height of each tab in the list, in pixels (16 tiny … 120 huge); text and icons scale with it
   now_playing: true        # a mini player above the space icons for video/audio playing in another tab
   compact_width: 78        # sidebar width in its icons-only size, pixels (leave room for the window buttons)
@@ -88,7 +108,8 @@ sidebar:
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
 
-start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
+start_page: logo           # what an empty space shows. one of: logo | wordmark | blank | plugin:<name> (that plugin's
+                           # start.html, which can open sites and run the plugin's commands)
 escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
                            # "press Esc to exit full screen" banner, whatever this is set to.
 welcome: true              # the welcome guide (AI, sync, describe your browser, a tour) the first time Valerie opens;
@@ -204,6 +225,12 @@ history:
 downloads:
   folder: ""               # where downloads and page captures go (e.g. "~/Desktop"); empty = your Downloads folder
   keep_in_list: 100        # finished downloads listed in the command bar
+  ask: false               # ask where to save each download. true | false
+  open_when_done: false    # open each file when it has finished downloading. true | false
+  rules: []                # where files go by kind or by site; the first match wins, e.g.
+  #  - { match: "*.pdf", folder: "~/Documents/PDFs", open: true }
+  #  - { site: github.com, folder: "~/Code/downloads" }
+  #  - { match: "*.{dmg,pkg}", ask: true }
 
 # Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
 reader_view:
@@ -344,6 +371,17 @@ little_window:
 # Profiles, spaces and link routing
 # --------------------------------------------------------------------------------------------------------------
 
+# Settings for one site at a time; anything left out follows the settings above. A host covers its subdomains.
+#   sites:
+#     meet.google.com: { camera: allow, microphone: allow }
+#     youtube.com: { autoplay: false, zoom: 110, unload: false }
+#     news.ycombinator.com: { dark_mode: always }
+# Each site can set: camera, microphone, notifications (ask | allow | deny) · user_agent (text) · zoom (percent) ·
+# autoplay (true | false: video in tabs opened in the background) · dark_mode (off | always) · vim (true | false) ·
+# links ({ cmd_click: new_tab, … } like `links`) · unload (false keeps its tabs in memory) · ad_blocking (true | false)
+# · popups (window | tab) · cookie_banners (reject | hide | off)
+sites: {}
+
 # Profiles keep cookies, logins and site data separate. Each space uses one profile.
 profiles:
   - name: Personal
@@ -354,6 +392,8 @@ profiles:
 #   theme: a preset (midnight | rose | forest | ocean | grape | ember | sand | paper) or your own:
 #          { mode: dark, background: ["#1b1e2b", "#2a2140"], accent: "#ff7ab6", foreground: "#e8e6f0" }
 #   icon:  any emoji or symbol
+#   settings: any settings from this file that apply while you're in this space, e.g.
+#             settings: { pages: { dark_mode: always }, vim: { enabled: false }, search_engine: "https://kagi.com/search?q=%s" }
 spaces:
   - name: Personal
     profile: Personal
@@ -391,6 +431,7 @@ routes:
 
 # App shortcuts. Value: a command name, or a command with options like { cmd: switch_space, index: 0 }.
 # Modifiers: CmdOrCtrl (⌘ on Mac, Ctrl elsewhere), Cmd, Ctrl, Alt, Shift. Set a shortcut to null to turn it off.
+# A key sequence is keys separated by spaces: "CmdOrCtrl+K CmdOrCtrl+S" means ⌘K, then ⌘S.
 keybindings:
   "CmdOrCtrl+D": open_command_bar
   # "CmdOrCtrl+T": new_tab           # off by default; uncomment to open the command bar with ⌘T as well
@@ -440,6 +481,35 @@ keybindings:
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
+
+# Shortcuts that work in every app, even when Valerie isn't in front (macOS). Same format as keybindings, e.g.
+#   "Ctrl+Alt+Space": open_command_bar       # brings Valerie forward with the command bar open
+global_keybindings: {}
+
+# The menu bar at the top of the screen. Its menus: Valerie, Edit, Tabs, Spaces, View, Tools, Plugins, Window.
+menu:
+  hide: []                 # menus to leave out of the bar, e.g. [Tools, Plugins]; their shortcuts keep working (the menu
+                           # moves inside the Valerie menu)
+  rename: {}               # new names for menus, e.g. { Tools: More, Spaces: Desks }
+  commands: {}             # which menu a command sits in, by command name, e.g. { reader_view: View, print: Tabs }; a new
+                           # name makes a new menu; null takes a command without a shortcut out of the menus
+  quit_shortcut: "CmdOrCtrl+Q"   # the shortcut for Quit; "" = none (Quit stays in the Valerie menu)
+  confirm_quit: false      # ask "Quit Valerie?" before quitting. true | false
+
+# Valerie's right-click menus (on links, tabs and folders). Plugins add their own entries (`context_menu` on a command).
+context_menu:
+  hide: []                 # entries to leave out, by their words, e.g. ["Open in Little Window", "Peek", "New Folder…"]
+
+# Mouse buttons. Each is a command (like under keybindings) or null for nothing.
+mouse:
+  back_button: back        # the mouse's back button (the 4th button) on a page; on pages only commands that can't
+  forward_button: forward  # touch other tabs work (back, forward, next_tab, zoom_in …)
+  middle_click_tab: close_tab   # middle-clicking a tab in the sidebar (the command acts on that tab)
+
+# Trackpad gestures.
+gestures:
+  swipe_to_go_back: true   # two-finger swipe sideways on a page goes back / forward. true | false
+  pinch_to_zoom: false     # pinch to zoom into a page (like Safari). true | false
 
 # Vim keys inside web pages. They're ignored while you type in a text field (Escape leaves the field).
 # Value: a page action (scroll_down | scroll_up | scroll_left | scroll_right | half_page_down | half_page_up | top |
@@ -519,6 +589,17 @@ content_blocking:
   allow: ["docs.google.com", "drive.google.com", "mail.google.com", "calendar.google.com", "meet.google.com"]
   refresh_days: 7
 
+# Your own network rules, checked in order. Each is one of:
+#   - block: "||ads.example.com^"           # stop requests: Adblock syntax, or an address with * wildcards (macOS)
+#   - redirect: "https://www.reddit.com/*"  # open another address instead (pages you open, before they load) …
+#     to: "https://old.reddit.com/*"        # … where each * is what the matching * in `redirect` matched
+#   - hide: "#comments, .promo"             # hide elements on pages (CSS selectors)
+#   - header: "DNT: 1"                      # send this header with pages you open from Valerie (typed addresses, new
+#                                           #   tabs, links Valerie opens); a page's own requests aren't changed
+# Add `site: example.com` to a rule to limit it to that site. The lists under content_blocking.lists may also be Adblock
+# filter lists (EasyList and the like): Valerie understands hosts files and Adblock syntax.
+rules: []
+
 
 # --------------------------------------------------------------------------------------------------------------
 # AI agents
@@ -566,6 +647,12 @@ agents:
     customize: ""          # "! make the text bigger" in the command bar: edits Valerie's settings
   model: ""                # empty = the CLI's default model (e.g. "sonnet", "gpt-5", "anthropic/claude-sonnet-4")
   space: Agents            # agents open their tabs in this space and leave yours alone
+  instructions: ""         # extra instructions for every agent, after Valerie's own safety rules (e.g. "Answer in Spanish.")
+  instructions_for:        # extra instructions for one job, after `instructions`
+    chat: ""               # Chats and "Ask …"
+    find: ""               # questions typed into find
+    tasks: ""              # tasks and watched pages
+    customize: ""          # "! change …" requests
   jobs: []                 # the older form of `tasks` (below): { name, prompt, at: "08:30" or every: 30m, agent }; still read
 
 
@@ -606,3 +693,16 @@ plugin_marketplace:
 
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}
+
+# Valerie in the Dock and the menu bar (macOS).
+app:
+  icon: ""                 # a picture (PNG, JPEG or ICNS; ~ allowed) to use as Valerie's Dock icon; empty = the usual one
+  dock_menu: []            # commands in the Dock icon's right-click menu, e.g. [new_tab, { cmd: switch_space, name: Work }]
+  menu_bar_icon: ""        # text or an emoji for an icon at the right of the menu bar (e.g. "✦"); empty = no icon
+  menu_bar_menu: [open_command_bar, new_tab, open_chats]   # what that icon's menu offers
+
+# Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
+# each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
+extensions:
+  enabled: true            # load the extensions in that folder. true | false
+  folder: ""               # where they live; empty = the extensions folder next to this file
