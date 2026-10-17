@@ -115,6 +115,27 @@ button.feat { cursor: pointer; } button.feat b::after { content: " →"; color: 
 .wx div { padding: 16px 8px; border-radius: 12px; background: var(--rule); text-align: center; font-size: 13px; color: var(--ink2); }
 .wx b { display: block; font-size: 24px; margin: 4px 0; color: var(--ink); }
 
+/* ---------- work pages: tickets, calendar, a meeting, a channel ---------- */
+.list { margin-top: 26px; border-top: 1px solid var(--rule); }
+.li { display: flex; align-items: center; gap: 14px; padding: 13px 4px; border-bottom: 1px solid var(--rule); font-size: 14.5px; transition: opacity .3s; }
+.li .id, .li time { width: 62px; flex: none; font: 12px ui-monospace, Menlo, monospace; color: var(--ink2); }
+.li .grow { flex: 1; min-width: 0; } .li small { display: block; color: var(--ink2); font-size: 12.5px; } .li .grow b { margin-right: 8px; }
+.li.done .grow { text-decoration: line-through; color: var(--ink2); } .li.past { opacity: .45; }
+.li.flash { animation: hl 1s; } @keyframes hl { from { background: color-mix(in srgb, var(--accent) 24%, transparent); } }
+.tag { flex: none; font: 600 11.5px -apple-system, system-ui, sans-serif; padding: 3px 9px; border-radius: 99px; border: 0; background: var(--rule); color: var(--ink2); white-space: nowrap; }
+.tag.merged { color: #8b5cf6; background: rgba(139,92,246,.13); } .tag.done { color: #16a34a; background: rgba(22,163,74,.13); }
+button.tag { cursor: pointer; }
+.try { margin-top: 26px; }
+.pg[data-tab="meet"] { height: 100%; }
+.meet { height: 100%; min-height: 420px; background: #101014; color: #eee; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.people { flex: 1; display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: repeat(3, 1fr); gap: 10px; }
+.pp { position: relative; border-radius: 14px; background: #1d1d24; display: grid; place-items: center; font-size: 20px; font-weight: 650; }
+.pp.share { grid-row: span 3; background: linear-gradient(135deg, #2a2340, #1b2a3a); font: 500 15px/1.5 -apple-system, system-ui, sans-serif; text-align: center; color: rgba(255,255,255,.8); }
+.pp .mic { position: absolute; right: 10px; bottom: 8px; font-size: 11px; font-weight: 500; color: rgba(255,255,255,.6); } .pp .mic.off { color: #f87171; }
+.mbar { display: flex; justify-content: center; gap: 10px; }
+.mbar button { all: unset; cursor: pointer; padding: 9px 18px; border-radius: 99px; background: #2a2a33; font-size: 13.5px; font-weight: 600; }
+.mbar button.off, .mbar .leave { background: #dc2626; }
+
 /* ---------- the config file the AI edits ---------- */
 #yaml { position: absolute; right: 22px; bottom: 22px; width: 330px; z-index: 6; border-radius: 13px; overflow: hidden; background: #121118ee;
   backdrop-filter: blur(14px); color: #e8e7ef; box-shadow: 0 20px 60px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.08); font: 12px/1.6 ui-monospace, Menlo, monospace;
@@ -208,7 +229,12 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
         <div class="inner">
           <h2>An AI that can <em>use</em> your browser.</h2>
           <p class="sub">It opens tabs, reads pages and fills things in, with the access you choose.</p>
-          <button class="btn primary" id="watch">▶ Watch it work</button>
+          <div class="ctas">
+            <button class="btn primary" data-run="weather">▶ Check the weather</button>
+            <button class="btn" data-run="tickets">▶ Close finished tickets</button>
+            <button class="btn" data-run="meeting">▶ Join my next meeting</button>
+            <button class="btn" data-run="catchup">▶ Catch me up on #launch</button>
+          </div>
           <p class="fine">Claude Code, Codex, Cursor, or a free AI Valerie sets up for you.</p>
         </div>
       </section>
@@ -245,7 +271,49 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
         </div>
       </section>
 
-      <section class="pg" data-tab="weather" data-title="Lisbon · 10-day forecast" hidden>
+      <section class="pg" data-tab="tickets" data-title="Sprint 42 · Tickets" data-url="tracker.acme.dev/sprint-42" hidden>
+        <div class="inner">
+          <h2>Sprint 42</h2>
+          <div class="list" id="ticketlist"></div>
+          <div class="try"><button class="btn sm primary" data-run="tickets">▶ Ask: close tickets whose PRs merged</button></div>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="calendar" data-title="Calendar · Today" data-url="calendar.acme.dev/today" hidden>
+        <div class="inner">
+          <h2>Today</h2>
+          <div class="list">
+            <div class="li past"><time>9:30</time><div class="grow">Standup</div></div>
+            <div class="li" id="nextmeet"><time>11:00</time><div class="grow">Design review<small>In 2 minutes · Priya, Sam, Lee</small></div><button class="btn sm primary" id="join">Join</button></div>
+            <div class="li"><time>14:00</time><div class="grow">1:1 with Sam</div></div>
+            <div class="li"><time>16:30</time><div class="grow">Launch go/no-go</div></div>
+          </div>
+          <div class="try"><button class="btn sm primary" data-run="meeting">▶ Ask: join my next meeting, muted</button></div>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="launch" data-title="#launch · Chat" data-url="chat.acme.dev/launch" hidden>
+        <div class="inner">
+          <h2>#launch</h2>
+          <p class="sub">38 new since yesterday</p>
+          <div class="list">
+            <div class="li"><time>9:12</time><div class="grow"><b>Dana</b>Moving launch to Thursday 10am so legal can finish.</div></div>
+            <div class="li"><time>10:40</time><div class="grow"><b>Lee</b>Pricing page is signed off ✅</div></div>
+            <div class="li"><time>13:05</time><div class="grow"><b>Dana</b>@you can you update the release notes by Wednesday?</div></div>
+            <div class="li"><time>15:51</time><div class="grow"><b>Sam</b>Load test passed at 3× normal traffic.</div></div>
+          </div>
+          <div class="try"><button class="btn sm primary" data-run="catchup">▶ Ask: what did I miss?</button></div>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="meet" data-title="Design review · Meet" data-url="meet.acme.dev/design-review" hidden>
+        <div class="meet">
+          <div class="people"><div class="pp share"><div>Priya is presenting<br><b>Onboarding flow v3</b></div></div><div class="pp">S</div><div class="pp">L</div><div class="pp">You<span class="mic" id="mic"></span></div></div>
+          <div class="mbar"><button id="mute">Mute</button><button class="leave" id="leave">Leave</button></div>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="weather" data-title="Lisbon · 10-day forecast" data-url="weather.com/lisbon" hidden>
         <div class="inner">
           <h2>Lisbon</h2>
           <p class="sub">Light rain Saturday evening.</p>
@@ -268,17 +336,21 @@ const $ = (s) => document.querySelector(s);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const SPACES = [
-  { name: "Personal", accent: "#9d8cff", bg1: "#171a2b", bg2: "#2a1f3d" },
-  { name: "Work", accent: "#5fb3ff", bg1: "#0f1a28", bg2: "#132a3c" },
-  { name: "School", accent: "#4fd6a0", bg1: "#0e1d19", bg2: "#17302a" },
-];
-const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀" };
 const BASE_TABS = ["home", "agents", "features", "install"];
+const SPACES = [
+  { name: "Personal", accent: "#9d8cff", bg1: "#171a2b", bg2: "#2a1f3d", tabs: [...BASE_TABS], tab: "home" },
+  { name: "Work", accent: "#5fb3ff", bg1: "#0f1a28", bg2: "#132a3c", tabs: ["tickets", "calendar", "launch"], tab: "tickets" },
+  { name: "School", accent: "#4fd6a0", bg1: "#0e1d19", bg2: "#17302a", tabs: [...BASE_TABS], tab: "home" },
+];
+const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉" };
+// Tabs an agent opens, and where you land when they close.
+const AGENT_TABS = { weather: "agents", meet: "calendar" };
 const page = (id) => document.querySelector(`.pg[data-tab="${id}"]`);
 const narrow = matchMedia("(max-width: 760px)");
 const DEFAULTS = { accent: null, tabH: 38, top: false, right: false, dark: false, serif: false };
-const M = { space: 0, tab: "home", split: null, tabs: [...BASE_TABS], ...DEFAULTS };
+const M = { space: 0, split: null, ...DEFAULTS,
+  get tabs() { return SPACES[this.space].tabs; }, set tabs(v) { SPACES[this.space].tabs = v; },
+  get tab() { return SPACES[this.space].tab; }, set tab(v) { SPACES[this.space].tab = v; } };
 
 function render() {
   const sp = SPACES[M.space], root = document.documentElement.style, b = document.body.classList;
@@ -289,7 +361,7 @@ function render() {
   $("#spname").textContent = sp.name;
   const tabs = $("#tabs"), shown = [...tabs.children].map((r) => r.dataset.id); tabs.replaceChildren();
   for (const id of M.tabs) {
-    const r = el("button", "row" + (id === M.tab ? " on" : "") + (id === M.split ? " split" : "") + (id === "weather" ? " agent" : "") + (shown.length && !shown.includes(id) ? " new" : ""));
+    const r = el("button", "row" + (id === M.tab ? " on" : "") + (id === M.split ? " split" : "") + (id in AGENT_TABS ? " agent" : "") + (shown.length && !shown.includes(id) ? " new" : ""));
     r.dataset.id = id;
     r.setAttribute("role", "tab"); r.setAttribute("aria-selected", id === M.tab);
     const ic = el("span", "ic");
@@ -304,11 +376,13 @@ function render() {
     p.hidden = id !== M.tab && id !== M.split;
   }
   document.body.classList.toggle("split-on", !!M.split);
-  const url = $("#url"); url.replaceChildren(el("b", null, location.host || "valerie"), el("span", "path", M.tab === "home" ? "" : "/" + M.tab), el("kbd", null, "⌘K"));
+  const [host, ...path] = (page(M.tab).dataset.url || (location.host || "valerie") + (M.tab === "home" ? "" : "/" + M.tab)).split("/");
+  $("#url").replaceChildren(el("b", null, host), el("span", "path", path.length ? "/" + path.join("/") : ""), el("kbd", null, "⌘K"));
   tabs.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  if (M.tab !== "weather") history.replaceState(null, "", M.tab === "home" ? location.pathname : "#" + M.tab);
+  if (BASE_TABS.includes(M.tab)) history.replaceState(null, "", M.tab === "home" ? location.pathname : "#" + M.tab);
 }
 function show(id) {
+  if (!M.tabs.includes(id)) { const s = SPACES.findIndex((sp) => sp.tabs.includes(id)); if (s < 0) return; M.space = s; M.split = null; }
   if (M.split === id) M.split = M.tab;
   if (M.tab !== id) { M.tab = id; $("#card1").scrollTop = 0; }
   render();
@@ -316,7 +390,7 @@ function show(id) {
 function go(space, dir) {
   if (space === M.space) return;
   const t = $("#tabs"); t.style.setProperty("--swap", (dir ?? space - M.space) > 0 ? "14px" : "-14px");
-  M.space = space; t.classList.add("swap"); render(); requestAnimationFrame(() => requestAnimationFrame(() => t.classList.remove("swap")));
+  M.space = space; M.split = null; t.classList.add("swap"); render(); requestAnimationFrame(() => requestAnimationFrame(() => t.classList.remove("swap")));
 }
 function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 1600); }
 
@@ -364,37 +438,89 @@ $("#ask").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(e.targ
 $("#askgo").onclick = (e) => { e.preventDefault(); ask($("#ask").value); };
 $("#yclose").onclick = () => ($("#yaml").hidden = true);
 
-// ---------- an agent at work: it opens a real tab here, reads it and closes it ----------
+// ---------- an agent at work: it acts on this page's own tabs ----------
+const TICKETS = [["VAL-231", "Login redirect loops on Safari", "merged"], ["VAL-238", "CSV export drops the time zone", "merged"],
+  ["VAL-240", "Dark mode for settings", "open"], ["VAL-244", "Onboarding copy pass", ""], ["VAL-245", "Rate-limit the sync API", "merged"]];
+const done = new Set();
+function drawTickets(flash) {
+  const list = $("#ticketlist"); list.replaceChildren();
+  for (const [id, title, pr] of TICKETS) {
+    const row = el("div", "li" + (done.has(id) ? " done" : "") + (id === flash ? " flash" : ""));
+    const state = el("button", "tag" + (done.has(id) ? " done" : ""), done.has(id) ? "✓ Done" : pr ? "In review" : "Todo");
+    state.onclick = () => { done.has(id) ? done.delete(id) : done.add(id); drawTickets(); };
+    row.append(el("span", "id", id), el("div", "grow", title), pr ? el("span", "tag" + (pr === "merged" ? " merged" : ""), "PR " + pr) : "", state);
+    list.append(row);
+  }
+}
+let muted = false;
+function drawMeet() { $("#mute").textContent = muted ? "Unmute" : "Mute"; $("#mute").classList.toggle("off", muted); $("#mic").textContent = muted ? "mic off" : "mic on"; $("#mic").className = "mic" + (muted ? " off" : ""); }
+function openTab(id) { const here = SPACES[M.space], sp = here.tabs.includes(AGENT_TABS[id]) ? here : SPACES.find((x) => x.tabs.includes(AGENT_TABS[id])); if (!sp.tabs.includes(id)) sp.tabs.push(id); show(id); }
+function dropTab(id) {
+  for (const sp of SPACES) if (sp.tabs.includes(id)) { sp.tabs = sp.tabs.filter((t) => t !== id); if (sp.tab === id) sp.tab = AGENT_TABS[id]; }
+  if (M.split === id) M.split = null;
+  render();
+}
+const joinMeeting = (mute) => { muted = mute; drawMeet(); openTab("meet"); };
+const press = (sel) => { const b = $(sel); b.classList.add("flash"); setTimeout(() => b.classList.remove("flash"), 900); };
+
+// Each step: ["me", text] · ["tool", name, detail, ms] · ["do", fn, ms] · ["ai", text]
+const SCRIPTS = {
+  weather: { start: "agents", steps: [
+    ["me", "What's the weather in Lisbon this weekend? Close the tab when you're done."],
+    ["tool", "open_tab", "weather.com/lisbon", 300], ["do", () => openTab("weather"), 900],
+    ["tool", "read_page", "Lisbon · 10-day forecast", 1100],
+    ["tool", "close_tab", "weather.com/lisbon", 200], ["do", () => dropTab("weather"), 400],
+    ["ai", "Warm and mostly sunny: 19–23°C, with light rain Saturday evening. Bring a light jacket."]] },
+  tickets: { start: "tickets", reset: () => { done.clear(); drawTickets(); }, steps: [
+    ["me", "Close every ticket whose PR merged, with a note linking the PR."],
+    ["tool", "read_page", "Sprint 42 · 5 tickets, 3 PRs merged", 1000],
+    ...["VAL-231", "VAL-238", "VAL-245"].flatMap((id) => [["tool", "click", id + " › Done", 250], ["do", () => { done.add(id); drawTickets(id); }, 650]]),
+    ["tool", "comment", "“Fixed in the linked PR” on all three", 700],
+    ["ai", "Closed VAL-231, VAL-238 and VAL-245, each with a link to its PR. VAL-240's PR is still open, so I left it."]] },
+  meeting: { start: "calendar", reset: () => dropTab("meet"), steps: [
+    ["me", "Join my next meeting, muted."],
+    ["tool", "read_page", "Calendar · Design review at 11:00", 900],
+    ["tool", "click", "Design review › Join", 250], ["do", () => press("#nextmeet"), 700],
+    ["tool", "open_tab", "meet.acme.dev/design-review", 250], ["do", () => joinMeeting(false), 900],
+    ["tool", "click", "Mute microphone", 250], ["do", () => { muted = true; drawMeet(); }, 600],
+    ["ai", "You're in Design review with your mic off. Priya is presenting the new onboarding flow."]] },
+  catchup: { start: "launch", steps: [
+    ["me", "What did I miss in #launch? Anything I need to do?"],
+    ["tool", "read_page", "#launch · 38 new messages", 1200],
+    ["tool", "create_task", "Update the release notes · due Wednesday", 700],
+    ["ai", "Three things:\n• Launch moved to Thursday 10am.\n• Legal signed off on the pricing page.\n• Dana needs the release notes updated by Wednesday. I added that to your tasks."]] },
+};
 let run = 0;
-async function agent() {
-  const me = ++run, alive = () => me === run, msgs = $("#msgs");
+async function agent(key) {
+  const me = ++run, alive = () => me === run, msgs = $("#msgs"), script = SCRIPTS[key];
+  script.reset?.(); show(script.start);
   $("#chat").hidden = false; document.body.classList.add("chatting"); msgs.replaceChildren();
-  const say = (cls, text) => { const m = el("div", "msg " + cls, text); msgs.append(m); msgs.scrollTop = 1e6; return m; };
-  const tool = async (name, arg, ms = 700) => { const t = el("div", "tool"); t.append(el("b", null, name), " " + arg); msgs.append(t); await wait(ms); };
-  say("me", "What's the weather in Lisbon this weekend? Close the tab when you're done.");
-  await wait(800); if (!alive()) return;
-  await tool("open_tab", "weather.com/lisbon", 300); if (!alive()) return;
-  if (!M.tabs.includes("weather")) M.tabs.push("weather");
-  show("weather"); await wait(900); if (!alive()) return;
-  await tool("read_page", "Lisbon · 10-day forecast", 1100); if (!alive()) return;
-  await tool("close_tab", "weather.com/lisbon", 200); if (!alive()) return;
-  M.tabs = M.tabs.filter((t) => t !== "weather"); if (M.split === "weather") M.split = null;
-  show("agents"); await wait(400); if (!alive()) return;
-  const a = "Warm and mostly sunny: 19–23°C, with light rain Saturday evening. Bring a light jacket.", m = say("ai", "");
-  for (let i = 0; i <= a.length; i += 3) { if (!alive()) return; m.textContent = a.slice(0, i); await wait(14); }
-  m.textContent = a;
-  const again = el("button", "again", "↻ Play again"); again.onclick = agent; msgs.append(again);
+  const add = (node) => { msgs.append(node); msgs.scrollTop = 1e6; return node; };
+  for (const [kind, a, b, ms] of script.steps) {
+    if (!alive()) return;
+    if (kind === "me") { add(el("div", "msg me", a)); await wait(800); }
+    else if (kind === "tool") { const t = el("div", "tool"); t.append(el("b", null, a), " " + b); add(t); await wait(ms); }
+    else if (kind === "do") { a(); await wait(b); }
+    else {
+      const m = add(el("div", "msg ai", ""));
+      for (let i = 0; i <= a.length; i += 3) { if (!alive()) return; m.textContent = a.slice(0, i); msgs.scrollTop = 1e6; await wait(14); }
+      m.textContent = a;
+    }
+  }
+  const again = el("button", "again", "↻ Play again"); again.onclick = () => agent(key); add(again);
 }
-function closeChat() {
-  run++; $("#chat").hidden = true; document.body.classList.remove("chatting");
-  if (M.tabs.includes("weather")) { M.tabs = M.tabs.filter((t) => t !== "weather"); if (M.split === "weather") M.split = null; if (M.tab === "weather") M.tab = "agents"; render(); }
-}
-$("#watch").onclick = agent; $("#cclose").onclick = closeChat;
+function closeChat() { run++; $("#chat").hidden = true; document.body.classList.remove("chatting"); dropTab("weather"); }
+for (const b of document.querySelectorAll("[data-run]")) b.onclick = () => agent(b.dataset.run);
+$("#cclose").onclick = closeChat;
+$("#join").onclick = () => joinMeeting(false);
+$("#mute").onclick = () => { muted = !muted; drawMeet(); };
+$("#leave").onclick = () => dropTab("meet");
+drawTickets();
 
 // ---------- feature demos ----------
 function toggleSplit() {
   if (M.split) M.split = null;
-  else M.split = M.tabs.find((t) => t !== M.tab && t !== "weather" && t !== "features") || M.tabs.find((t) => t !== M.tab);
+  else M.split = M.tabs.find((t) => t !== M.tab && !(t in AGENT_TABS) && t !== "features") || M.tabs.find((t) => t !== M.tab);
   render();
 }
 const DEMOS = {
@@ -413,7 +539,9 @@ for (const b of document.querySelectorAll(".cmd button")) b.onclick = () => {
 const DMG = "https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg";
 const COMMANDS = [
   ["↓", "Download Valerie", "", () => (location.href = DMG)],
-  ["✦", "Watch an Agent Work", "", () => { show("agents"); agent(); }],
+  ["✦", "Watch an Agent Work", "", () => agent("weather")],
+  ["◎", "Close Finished Tickets", "", () => agent("tickets")],
+  ["◉", "Join Next Meeting", "", () => agent("meeting")],
   ["◫", "Split View", "⌃⇧=", () => DEMOS.split()],
   ["◐", "Next Space", "⌃→", () => DEMOS.space()],
   ["⧉", "Copy URL", "⌘⇧C", () => copyUrl()],
