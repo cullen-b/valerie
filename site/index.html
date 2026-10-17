@@ -764,20 +764,29 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Two-finger swipes on the sidebar switch spaces, as in Valerie: the list follows your fingers, then commits or springs
-// back. After a switch the trackpad's leftover momentum is ignored until it stops.
-const swipe = { acc: 0, lock: false, timer: 0, unlock: 0 };
+// back. A trackpad keeps sending fading momentum after a swipe; that's ignored, but a new swipe (a pause, a turn, or a
+// push that keeps growing after the momentum has faded; one-off spikes are merged events) counts straight away.
+const SWIPE = 80, swipe = { acc: 0, lock: 0, peak: 0, last: 0, at: 0, timer: 0, rises: 0, faded: false };
 const follow = (off) => { const t = $("#tabs"); t.style.transition = off ? "none" : ""; t.style.transform = off ? `translateX(${-off * 56}px)` : ""; t.style.opacity = off ? 1 - Math.abs(off) * 0.55 : ""; };
 $("#sidebar").addEventListener("wheel", (e) => {
-  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerWidth : 1, dx = e.deltaX * k;
+  if (Math.abs(dx) <= Math.abs(e.deltaY * k)) return;
   e.preventDefault();
-  if (swipe.lock) { clearTimeout(swipe.unlock); swipe.unlock = setTimeout(() => (swipe.lock = false), 220); return; }
-  swipe.acc += e.deltaX; clearTimeout(swipe.timer);
-  if (Math.abs(swipe.acc) > 160) {
-    const d = swipe.acc > 0 ? 1 : -1; swipe.acc = 0; swipe.lock = true; follow(0);
-    swipe.unlock = setTimeout(() => (swipe.lock = false), 220);
+  const now = performance.now(), a = Math.abs(dx), gap = now - swipe.at; swipe.at = now;
+  if (swipe.lock) {
+    swipe.rises = a > swipe.last * 1.25 + 1 ? swipe.rises + 1 : 0;
+    if (swipe.last < swipe.peak * 0.4) swipe.faded = true;
+    const fresh = gap > 120 || (Math.sign(dx) !== swipe.lock && a > 1) || (swipe.faded && swipe.rises >= 3);
+    swipe.peak = Math.max(swipe.peak, a);
+    if (!fresh) { swipe.last = a; return; }
+    swipe.lock = 0; swipe.acc = 0;
+  }
+  swipe.last = a; swipe.acc += dx; clearTimeout(swipe.timer);
+  if (Math.abs(swipe.acc) > SWIPE) {
+    const d = Math.sign(swipe.acc); Object.assign(swipe, { acc: 0, lock: d, peak: a, rises: 0, faded: false }); follow(0);
     go((M.space + d + SPACES.length) % SPACES.length, d); return;
   }
-  follow(Math.max(-1, Math.min(1, swipe.acc / 160)));
+  follow(Math.max(-1, Math.min(1, swipe.acc / SWIPE)));
   swipe.timer = setTimeout(() => { swipe.acc = 0; follow(0); }, 140);
 }, { passive: false });
 
