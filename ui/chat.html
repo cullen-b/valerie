@@ -193,7 +193,8 @@ function chatOpt(k, fallback) { const c = D.chat; return c && c.messages.length 
 // The model list comes from the agent's CLI (grouped by provider where it has them).
 function fillModels(current) {
   const info = (D.models || {})[$("#agent").value] || {}, sel = $("#model"); sel.replaceChildren();
-  const def = el("option", null, info.default_model ? "default (" + info.default_model + ")" : "default model"); def.value = ""; sel.append(def);
+  // The model it uses when none is picked, by name (the app's own setting, or "Auto" when the app decides).
+  const def = el("option", null, (info.default_model || "Auto") + " (default)"); def.value = ""; sel.append(def);
   const groups = new Map();
   (info.models || []).forEach((m) => {
     const o = el("option", null, m.label || m.id); o.value = m.id;
@@ -210,7 +211,7 @@ function fillEfforts() {
   const info = (D.models || {})[$("#agent").value] || {}, m = (info.models || []).find((x) => x.id === $("#model").value);
   const levels = m && m.efforts && m.efforts.length ? m.efforts : ["low", "medium", "high", "max"];
   const sel = $("#effort"), cur = sel.value; sel.replaceChildren();
-  const d = el("option", null, "default effort"); d.value = ""; sel.append(d);
+  const d = el("option", null, (info.default_effort || "auto") + " effort (default)"); d.value = ""; sel.append(d);
   levels.forEach((l) => { const o = el("option", null, l + " effort"); o.value = l; sel.append(o); });
   sel.value = levels.includes(cur) ? cur : "";
 }

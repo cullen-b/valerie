@@ -3879,6 +3879,8 @@ impl App {
                     Ok(()) => {
                         self.reload_config();
                         self.welcome_send(&json!({ "type": "free", "step": "done", "model": model }));
+                        self.welcome_send(&json!({ "type": "models", "models": self.agent_models() }));
+                        self.discover_models(); // OpenCode may be new: read its model list
                     }
                     Err(e) => self.welcome_send(&json!({ "type": "free", "step": "failed", "detail": format!("couldn't save the setting: {e}") })),
                 }
@@ -3927,6 +3929,9 @@ impl App {
             UserEvent::ModelsFound { cli, models } => {
                 self.found_models.insert(cli, models);
                 self.render_chat();
+                if self.welcome_open {
+                    self.welcome_send(&json!({ "type": "models", "models": self.agent_models() }));
+                }
             }
             UserEvent::NotificationClicked(action) => {
                 self.window.set_focus();
@@ -4394,28 +4399,34 @@ impl App {
         self.focus_active();
     }
 
-    fn render_chat(&self) {
-        let Some(v) = &self.chat_view else { return };
-        let chat = self.active_chat.as_ref().and_then(|id| self.chats.iter().find(|c| &c.id == id));
-        let agents: Vec<&String> = self.config.agents.available.iter().filter(|(_, d)| d.is_some()).map(|(n, _)| n).collect();
-        // Model names to offer, by agent name (from its CLI's list plus what the CLI reports).
-        let models: serde_json::Map<String, Value> = self
-            .config
+    /// Model names to offer, by agent name (its CLI's own list plus agents.models), with the model and effort it uses
+    /// when none is picked: Valerie's setting, else the CLI's own.
+    fn agent_models(&self) -> serde_json::Map<String, Value> {
+        self.config
             .agents
             .available
             .iter()
             .filter_map(|(n, d)| d.as_ref().map(|d| (n, d)))
             .map(|(n, d)| {
-                // The CLI's own list, plus any names from agents.models it doesn't already have.
                 let mut list = self.found_models.get(&d.cli).cloned().unwrap_or_default();
                 for m in self.config.agents.models.get(&d.cli).into_iter().flatten() {
                     if !list.iter().any(|x| x["id"] == json!(m)) {
                         list.push(json!({ "id": m, "label": m }));
                     }
                 }
-                (n.clone(), json!({ "cli": d.cli, "default_model": d.model, "models": list }))
+                let (cli_model, cli_effort) = crate::ai::cli_defaults(&d.cli);
+                let model = if d.model.is_empty() { cli_model } else { d.model.clone() };
+                let effort = if self.config.chats.effort.is_empty() { cli_effort } else { self.config.chats.effort.clone() };
+                (n.clone(), json!({ "cli": d.cli, "default_model": model, "default_effort": effort, "models": list }))
             })
-            .collect();
+            .collect()
+    }
+
+    fn render_chat(&self) {
+        let Some(v) = &self.chat_view else { return };
+        let chat = self.active_chat.as_ref().and_then(|id| self.chats.iter().find(|c| &c.id == id));
+        let agents: Vec<&String> = self.config.agents.available.iter().filter(|(_, d)| d.is_some()).map(|(n, _)| n).collect();
+        let models = self.agent_models();
         let data = json!({
             "chat": chat, "running": chat.is_some_and(|c| self.chat_running.contains(&c.id)),
             "started": chat.and_then(|c| self.chat_started.get(&c.id)), "agents": agents, "models": models,
@@ -5269,6 +5280,7 @@ impl App {
         }
         json!({
             "version": crate::update::current(), "agents": agents, "default_agent": self.config.agents.default,
+            "models": self.agent_models(), "free_models": crate::ai::FREE_MODELS, "effort": self.config.chats.effort,
             "sync": self.config.sync.repo, "imports": crate::import::found(), "keys": keys,
             "accent": self.theme_for(self.state.active_space).accent, "font": self.config.layout.font,
             "done": self.state.welcome_done,
@@ -5303,6 +5315,29 @@ impl App {
                     Ok(()) => {
                         self.reload_config();
                         self.welcome_send(&json!({ "type": "using", "id": id }));
+                    }
+                    Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
+                }
+            }
+            // The model the chosen agent uses ("" = its own default) and how hard it thinks.
+            "set_model" => {
+                let Some(id) = m["id"].as_str().filter(|id| crate::ai::kind(id).is_some()) else { return };
+                let model: String = m["model"].as_str().unwrap_or("").chars().filter(|c| !c.is_control() && *c != '"').take(120).collect();
+                let value = if model.is_empty() { format!("{{ cli: {id} }}") } else { format!("{{ cli: {id}, model: {} }}", json!(model)) };
+                match config::set_setting(&["agents", "available", id], &value) {
+                    Ok(()) => {
+                        self.reload_config();
+                        self.welcome_send(&json!({ "type": "models", "models": self.agent_models() }));
+                    }
+                    Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
+                }
+            }
+            "set_effort" => {
+                let effort = m["effort"].as_str().filter(|e| ["", "low", "medium", "high", "max"].contains(e)).unwrap_or("");
+                match config::set_setting(&["chats", "effort"], &json!(effort).to_string()) {
+                    Ok(()) => {
+                        self.reload_config();
+                        self.welcome_send(&json!({ "type": "models", "models": self.agent_models() }));
                     }
                     Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
                 }

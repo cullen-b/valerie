@@ -76,6 +76,12 @@ button[disabled] { opacity: .4; pointer-events: none; }
 .free .text { flex: 1; } .free .text small { display: block; color: var(--dim); font-size: 13.5px; margin-top: 2px; }
 .free.recommend { box-shadow: 0 0 0 1px var(--accent), 0 14px 40px color-mix(in srgb, var(--accent) 25%, transparent); }
 .more { margin-top: 12px; }
+.tune { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: end; }
+.tune label { display: block; font-size: 12.5px; color: var(--dim); margin-bottom: 6px; font-weight: 600; }
+select { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 10px 34px 10px 12px; border-radius: 11px; background: rgba(0,0,0,.28) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' fill='none'/%3E%3C/svg%3E") no-repeat right 12px center;
+  border: 1px solid var(--line); color: var(--fg); font-size: 14px; }
+select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.tune .hint { grid-column: 1 / -1; color: var(--faint); font-size: 12.5px; margin-top: -4px; }
 /* sync */
 .sync { display: grid; grid-template-columns: 1fr 260px; gap: 28px; align-items: center; }
 .macs { position: relative; height: 180px; }
@@ -126,7 +132,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 function btn(text, cls, on) { const b = el("button", cls, text); b.onclick = on; return b; }
 
 let W = null;                      // data from Valerie
-const S = { step: 0, dir: 1, agents: {}, chosen: "", free: null, sync: null, imported: {}, qi: 0, answers: {}, request: "", custom: null };
+const S = { step: 0, dir: 1, agents: {}, chosen: "", free: null, sync: null, imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
 const STEPS = ["hello", "import", "ai", "sync", "yours", "tour"];
 
 // ---------- shortcut labels from the user's keybindings ----------
@@ -224,10 +230,46 @@ function aiStep(root) {
   else if (fs && fs.step === "done") f.append(el("span", "chip ok", "✓ In use"));
   else f.append(btn(fs ? "Try again" : "Set up free AI", "primary", () => { S.free = { step: "progress", detail: "Starting…" }; draw(); send({ t: "free_ai" }); }));
   root.append(f);
+  if (chosenWorks()) root.append(tuneCard());
   const more = el("details", "more"); const sum = el("summary", null, "More AI apps (Cursor, Pi, Hermes)"); sum.style.color = "var(--dim)"; sum.style.cursor = "default";
   const g2 = el("div", "grid"); g2.style.marginTop = "12px";
   W.agents.filter((a) => !MAIN_AGENTS.includes(a.id)).forEach((a) => g2.append(card(a)));
   more.append(sum, g2); root.append(more);
+}
+
+// Model and effort for the chosen AI. OpenCode's free models come first, the best few marked.
+function tuneCard() {
+  const info = (W.models || {})[S.chosen] || {}, c = el("div", "card tune");
+  const ml = el("div"), msel = el("select");
+  ml.append(el("label", null, "Model"), msel);
+  const opt = (v, t) => { const o = el("option", null, t); o.value = v; return o; };
+  msel.append(opt("", `${info.default_model ? info.default_model.replace(/^opencode\//, "") : "Auto"} (${agentTitle(S.chosen)}'s default)`));
+  let list = (info.models || []).map((m) => ({ id: m.id, label: m.label || m.id, group: m.group }));
+  if (S.chosen === "opencode") {
+    const free = list.filter((m) => /-free$/.test(m.id)), rank = (id) => { const i = (W.free_models || []).indexOf(id.replace(/^opencode\//, "")); return i < 0 ? 99 : i; };
+    free.sort((a, b) => rank(a.id) - rank(b.id));
+    const g = el("optgroup"); g.label = "Free (no account needed)";
+    free.forEach((m, i) => g.append(opt(m.id, (rank(m.id) < 3 ? "★ " : "") + m.id.replace(/^opencode\//, "") + (rank(m.id) < 3 ? "  (recommended)" : ""))));
+    if (free.length) msel.append(g);
+    list = list.filter((m) => !/-free$/.test(m.id));
+    if (list.length) { const g2 = el("optgroup"); g2.label = "With your own account or keys"; list.forEach((m) => g2.append(opt(m.id, m.label))); msel.append(g2); }
+  } else {
+    const groups = new Map();
+    list.forEach((m) => { if (!m.group) return msel.append(opt(m.id, m.label)); if (!groups.has(m.group)) { const g = el("optgroup"); g.label = m.group; groups.set(m.group, g); msel.append(g); } groups.get(m.group).append(opt(m.id, m.label)); });
+  }
+  msel.value = S.model[S.chosen] || "";
+  msel.onchange = () => { S.model[S.chosen] = msel.value; send({ t: "set_model", id: S.chosen, model: msel.value }); };
+  const el2 = el("div"), esel = el("select");
+  el2.append(el("label", null, "Thinking effort"), esel);
+  esel.append(opt("", `${info.default_effort || "auto"} (default)`));
+  [["low", "Low: fastest"], ["medium", "Medium"], ["high", "High: more careful"], ["max", "Max: slowest, most thorough"]].forEach(([v, t]) => esel.append(opt(v, t)));
+  esel.value = S.effort || "";
+  esel.onchange = () => { S.effort = esel.value; send({ t: "set_effort", effort: esel.value }); };
+  c.append(ml, el2);
+  c.append(el("div", "hint", S.chosen === "opencode"
+    ? "★ marks the free models that do best. Free models may keep what you send them, so pick a paid model for private work. Change any time in Chats."
+    : "Used by Chats and Valerie's other AI features. Change any time, per chat, in Chats."));
+  return c;
 }
 
 function syncStep(root) {
@@ -399,6 +441,7 @@ window.welcome = {
     if (d.accent) document.documentElement.style.setProperty("--accent", d.accent);
     if (d.font) document.body.style.fontFamily = `${d.font}, -apple-system, system-ui, sans-serif`;
     S.chosen = d.default_agent || "";
+    S.effort = d.effort || "";
     draw();
     send({ t: "probe" });
   },
@@ -406,8 +449,9 @@ window.welcome = {
   event(ev) {
     if (ev.type === "agent") { S.agents[ev.id] = { works: ev.works, detail: ev.detail }; pickDefault(); }
     else if (ev.type === "using") S.chosen = ev.id;
-    else if (ev.type === "free") { S.free = ev; if (ev.step === "done") { S.agents.opencode = { works: true }; const a = W.agents.find((x) => x.id === "opencode"); if (a) a.installed = true; S.chosen = "opencode"; } }
+    else if (ev.type === "free") { S.free = ev; if (ev.step === "done") { S.agents.opencode = { works: true }; const a = W.agents.find((x) => x.id === "opencode"); if (a) a.installed = true; S.chosen = "opencode"; S.model.opencode = ev.model; } }
     else if (ev.type === "imported") S.imported[ev.source] = ev;
+    else if (ev.type === "models") { W.models = ev.models; if (document.activeElement && document.activeElement.tagName === "SELECT") return; }
     else if (ev.type === "sync") { S.sync = ev; if (ev.step === "done") W.sync = ev.repo; }
     else if (ev.type === "customized") S.custom = { state: "done", ok: ev.ok, summary: ev.summary };
     draw();

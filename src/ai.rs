@@ -567,7 +567,54 @@ pub fn probe(def: &AgentDef) -> Result<()> {
 }
 
 /// Free models OpenCode offers without an account, best first; anything else ending in "-free" comes after.
-const FREE_MODELS: &[&str] = &["deepseek-v4.1-flash-free", "glm-5.3-flash-free", "nemotron-3-ultra-free", "mimo-v2.6-flash-free", "beam-free"];
+/// (Nemotron 3 tests best in the community comparisons; the newer flash models answered well when checked.)
+pub const FREE_MODELS: &[&str] = &["nemotron-3-ultra-free", "deepseek-v4.1-flash-free", "glm-5.3-flash-free", "mimo-v2.6-flash-free", "beam-free"];
+
+/// The model and reasoning effort a CLI uses when Valerie doesn't name one, read from its own settings
+/// (empty when it doesn't say, which means the CLI decides).
+pub fn cli_defaults(cli: &str) -> (String, String) {
+    let home = dirs::home_dir().unwrap_or_default();
+    let read = |rel: &str| std::fs::read_to_string(home.join(rel)).unwrap_or_default();
+    let json = |rel: &str| serde_json::from_str::<Value>(&read(rel)).unwrap_or(Value::Null);
+    let s = |v: &Value| v.as_str().unwrap_or("").to_string();
+    match cli {
+        "claude" => {
+            let j = json(".claude/settings.json");
+            let model = s(&j["model"]);
+            // Effort is kept per full model id ("claude-opus-5-5"); the setting may be an alias ("opus").
+            let effort = j["modelSettings"].as_object().and_then(|m| {
+                m.iter().find(|(id, _)| !model.is_empty() && (id.as_str() == model || id.contains(&format!("-{model}-")))).map(|(_, v)| s(&v["effortLevel"]))
+            });
+            (model, effort.unwrap_or_default())
+        }
+        "codex" => {
+            let toml = read(".codex/config.toml");
+            let key = |k: &str| {
+                toml.lines().take_while(|l| !l.trim_start().starts_with('[')).find_map(|l| {
+                    let (a, b) = l.split_once('=')?;
+                    (a.trim() == k).then(|| b.trim().trim_matches('"').to_string())
+                })
+            };
+            (key("model").unwrap_or_default(), key("model_reasoning_effort").unwrap_or_default())
+        }
+        "opencode" => {
+            let j = [".config/opencode/opencode.json", ".config/opencode/config.json"].iter().map(|f| json(f)).find(|j| !j.is_null()).unwrap_or(Value::Null);
+            (s(&j["model"]), String::new())
+        }
+        "cursor" => {
+            let j = json(".cursor/cli-config.json");
+            let m = &j["model"];
+            (if m["displayName"].is_string() { s(&m["displayName"]) } else { s(m) }, String::new())
+        }
+        "hermes" => {
+            let y: serde_yaml::Value = serde_yaml::from_str(&read(".hermes/config.yaml")).unwrap_or(serde_yaml::Value::Null);
+            let m = &y["model"];
+            let name = m.as_str().or_else(|| m["default"].as_str()).or_else(|| m["model"].as_str()).unwrap_or("");
+            (name.to_string(), String::new())
+        }
+        _ => (String::new(), String::new()),
+    }
+}
 
 /// For people without an AI subscription: install OpenCode (no Terminal needed) and find a free model that answers.
 /// Returns that model ("opencode/…"). `step` hears what's happening.
@@ -810,5 +857,17 @@ mod free_ai_tests {
         let model = super::set_up_free(&|s| eprintln!("step: {s}")).unwrap();
         eprintln!("model: {model}");
         assert!(model.starts_with("opencode/") && model.ends_with("-free"));
+    }
+}
+
+#[cfg(test)]
+mod cli_default_tests {
+    /// Prints what each CLI on this machine uses by default (reads the user's own settings files).
+    #[test]
+    #[ignore]
+    fn print_cli_defaults() {
+        for k in super::KINDS {
+            eprintln!("{:<9} {:?}", k.id, super::cli_defaults(k.id));
+        }
     }
 }
