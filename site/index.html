@@ -764,26 +764,29 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Two-finger swipes on the sidebar switch spaces, as in Valerie: the list follows your fingers, then commits or springs
-// back. A trackpad keeps sending fading momentum after a swipe; that's ignored, but a new swipe (a pause, a turn, or a
-// push that keeps growing after the momentum has faded; one-off spikes are merged events) counts straight away.
-const SWIPE = 80, swipe = { acc: 0, lock: 0, peak: 0, last: 0, at: 0, timer: 0, rises: 0, faded: false };
+// back. A trackpad keeps sending fading momentum after a swipe, which is ignored. Momentum only ever fades, so a new
+// swipe shows as a turn, a pause, or two events in a row well above the smallest momentum seen. When the page is busy
+// the browser merges events: they arrive late carrying several frames' distance, so late events are scaled back.
+const SWIPE = 80, swipe = { acc: 0, lock: 0, low: 0, armed: false, strong: false, prev: 0, last: 0, at: 0, timer: 0 };
 const follow = (off) => { const t = $("#tabs"); t.style.transition = off ? "none" : ""; t.style.transform = off ? `translateX(${-off * 56}px)` : ""; t.style.opacity = off ? 1 - Math.abs(off) * 0.55 : ""; };
 $("#sidebar").addEventListener("wheel", (e) => {
   const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerWidth : 1, dx = e.deltaX * k;
   if (Math.abs(dx) <= Math.abs(e.deltaY * k)) return;
   e.preventDefault();
-  const now = performance.now(), a = Math.abs(dx), gap = now - swipe.at; swipe.at = now;
+  const now = e.timeStamp || performance.now(), gap = now - swipe.at, a = Math.abs(dx); swipe.at = now;
   if (swipe.lock) {
-    swipe.rises = a > swipe.last * 1.25 + 1 ? swipe.rises + 1 : 0;
-    if (swipe.last < swipe.peak * 0.4) swipe.faded = true;
-    const fresh = gap > 120 || (Math.sign(dx) !== swipe.lock && a > 1) || (swipe.faded && swipe.rises >= 3);
-    swipe.peak = Math.max(swipe.peak, a);
-    if (!fresh) { swipe.last = a; return; }
-    swipe.lock = 0; swipe.acc = 0;
+    const each = gap > 24 ? a * 16 / Math.min(gap, 160) : a;   // a late event is several merged ones
+    // the fingers may still be speeding up when a swipe commits: wait for the first slowdown before judging
+    if (!swipe.armed && each < swipe.last) { swipe.armed = true; swipe.low = a; }
+    const turned = Math.sign(dx) !== swipe.lock && a > 1, strong = swipe.armed && each > swipe.low * 1.5 + 2;
+    const fresh = gap > 120 || turned || (strong && swipe.strong);
+    swipe.strong = strong; swipe.last = each;
+    if (!fresh) { if (swipe.armed) swipe.low = Math.min(swipe.low, a); swipe.prev = dx; return; }
+    swipe.acc = turned || gap > 120 ? 0 : swipe.prev; swipe.lock = 0;
   }
   swipe.last = a; swipe.acc += dx; clearTimeout(swipe.timer);
   if (Math.abs(swipe.acc) > SWIPE) {
-    const d = Math.sign(swipe.acc); Object.assign(swipe, { acc: 0, lock: d, peak: a, rises: 0, faded: false }); follow(0);
+    const d = Math.sign(swipe.acc); Object.assign(swipe, { acc: 0, lock: d, armed: false, strong: false }); follow(0);
     go((M.space + d + SPACES.length) % SPACES.length, d); return;
   }
   follow(Math.max(-1, Math.min(1, swipe.acc / SWIPE)));
