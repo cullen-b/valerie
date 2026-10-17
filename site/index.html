@@ -468,7 +468,7 @@ const RULES = [
   [has("solarized"), (s) => { A.theme(s, "Solarized", ["#002b36", "#073642"], "#b58900"); A.tone(s, "sepia"); }],
   [has("gruvbox"), (s) => { A.theme(s, "Gruvbox", ["#282828", "#3c3836"], "#fabd2f"); A.dark(s, true); }],
   [has("catppuccin", "mocha"), (s) => { A.theme(s, "Catppuccin", ["#1e1e2e", "#313244"], "#cba6f7"); A.dark(s, true); }],
-  [has("tokyo ?night"), (s) => { A.theme(s, "Tokyo Night", ["#1a1b26", "#24283b"], "#7aa2f7"); A.dark(s, true); }],
+  [has("tokyo( at)? ?night"), (s) => { A.theme(s, "Tokyo Night", ["#1a1b26", "#24283b"], "#7aa2f7"); A.dark(s, true); }],
   [has("monokai"), (s) => { A.theme(s, "Monokai", ["#272822", "#3e3d32"], "#a6e22e"); A.dark(s, true); }],
   [/\b(midnight|rose|forest|ocean|grape|ember|sand|paper)\b/, (s, m) => A.theme(s, m[1])],
   [has("black", "pitch black", "oled", "all black"), (s) => A.theme(s, "black")],
@@ -484,12 +484,14 @@ const RULES = [
   [has("cyberpunk", "neon", "blade runner"), (s) => { A.theme(s, "Cyberpunk", ["#0d0221", "#2a0a4a"], "#ff2a6d"); A.dark(s, true); A.radius(s, 0); }],
   [has("vaporwave", "synthwave", "outrun", "aesthetic"), (s) => { A.theme(s, "Vaporwave", ["#2b1055", "#5b2a86"], "#ff71ce"); A.font(s, "times"); }],
   [has("hacker", "hackers", "matrix", "terminal", "neo"), (s) => { A.theme(s, "black"); A.accent(s, "#39ff14", "phosphor green"); A.tone(s, "terminal"); A.font(s, "mono"); A.radius(s, 0); }],
-  [has("retro", "90s", "nineties", "windows 95", "win95", "windows 98", "geocities", "old school", "y2k"), (s) => {
+  [has("retro", "90s", "nineties", "199\\d", "1980s", "80s", "my dad'?s computer", "windows 95", "win95", "windows 98", "geocities", "old school", "y2k"), (s) => {
     A.theme(s, "Windows 95", ["#008080", "#008080"], "#000080"); A.tone(s, "retro", "it's 1995"); A.font(s, "retro"); A.radius(s, 0); }],
   [has("apple", "cupertino", "macos", "mac os", "like a mac", "jony ive"), (s) => { A.theme(s, "paper"); A.accent(s, "#0071e3", "Apple blue"); A.font(s, "rounded"); A.radius(s, 18); }],
-  [has("cozy", "cosy", "hygge", "comfy", "warm and fuzzy"), (s) => { A.theme(s, "sand"); A.tone(s, "sepia"); A.font(s, "serif"); A.radius(s, 22); }],
+  [has("cozy", "cosy", "hygge", "comfy", "warm and fuzzy", "sunday", "rainy", "rainy day", "lazy", "coffee"), (s) => { A.theme(s, "sand"); A.tone(s, "sepia"); A.font(s, "serif"); A.radius(s, 22); }],
   [has("corporate", "professional", "serious", "boring", "enterprise", "for work", "my boss"), (s) => { A.theme(s, "paper"); A.font(s, "helvetica"); A.radius(s, 4); }],
   [has("fun", "playful", "silly", "goofy", "whimsical", "for kids", "kid"), (s) => { A.accent(s, "#ff4fa3", "bubblegum"); A.font(s, "comic"); A.radius(s, 28); A.tabs(s, 46); }],
+  [has("expensive", "luxury", "luxurious", "rich", "bougie", "premium", "billionaire"), (s) => { A.theme(s, "Luxury", ["#0b0b0b", "#1a1610"], "#d4af37"); A.font(s, "serif"); A.radius(s, 6); }],
+  [/\bcats?\b.*\b(keyboard|keys|laptop)\b/, (s) => { M.flip = true; M.party = true; A.font(s, "comic"); A.plugin(s, "cat-mode", "your cat's choices, kept as a plugin"); }],
   [has("newspaper", "new york times", "nyt", "editorial", "magazine"), (s) => { A.tone(s, "sepia"); A.font(s, "times"); A.radius(s, 0); }],
   // layout
   [has("chrome", "firefox", "edge", "brave", "safari", "top", "horizontal", "like every other browser", "normal browser"), (s, m) => A.top(s, ["chrome", "firefox", "edge", "brave", "safari"].includes(m[1]) ? `tabs along the top, like ${m[1][0].toUpperCase() + m[1].slice(1)}` : null)],
@@ -524,7 +526,7 @@ const RULES = [
   [has("contrast", "high contrast", "accessible", "accessibility", "low vision"), (s) => A.tone(s, "contrast", "high-contrast pages")],
   // plugins for things with no setting
   [has("upside down", "upside-down", "australia", "australian", "flip", "flipped", "backwards", "chaos", "prank"), (s) => { M.flip = true; A.plugin(s, "upside-down", "there's no setting for this… so your AI wrote a plugin"); }],
-  [has("party", "disco", "rainbow", "rave", "pride", "celebrate", "lsd", "trippy", "🎉", "🌈"), (s) => { M.party = true; A.plugin(s, "party-mode", "no setting for a party, so your AI wrote a plugin"); }],
+  [has("party", "disco", "rainbow", "rave", "pride", "celebrate", "birthday", "bday", "lsd", "trippy", "🎉", "🌈"), (s) => { M.party = true; A.plugin(s, "party-mode", "no setting for a party, so your AI wrote a plugin"); }],
   // things you can't see, which the real browser does
   [/\b(open|send|put|keep|route)\b.*?\b(youtube|github|reddit|canvas|netflix|figma|notion|slack|linear|twitter|instagram|gmail|docs|amazon|[a-z0-9-]+\.(?:com|edu|org|net|io|dev|app|gov|so))\b.*\b(in|to|on)\b.*\b(work|school|personal)\b/, (s, m, t, note) => {
     const site = SITES[m[2]] || m[2], space = m[4][0].toUpperCase() + m[4].slice(1);
@@ -532,9 +534,10 @@ const RULES = [
   [/\b(edu|school sites|university|college|homework)\b.*\b(school)\b/, (s, m, t, note) => { s("route:*.edu", 'routes: [{ match: "*.edu", space: School }]', "air traffic control"); note("Every .edu link now opens in School."); }],
   [has("cookie", "cookies", "cookie banners", "gdpr", "consent"), (s, m, t, note) => { s("privacy.cookie_banners", "privacy: { cookie_banners: reject }", "already on: Valerie clicks “Reject all”"); note("Cookie banners get rejected for you. (It was already on.)"); }],
   [has("ads", "ad", "adblock", "ad blocker", "trackers", "tracking"), (s, m, t, note) => { s("content_blocking.enabled", "content_blocking: { enabled: true }", "ads and trackers blocked, already on"); note("Ads and trackers are already blocked."); }],
-  [/\b(\d+)\s*(hour|hours|day|days|week|weeks)\b/, (s, m, t, note) => {
+  [/\b(\d+|an?|one|two|three|four|five|six|seven)\s*(hour|hours|day|days|week|weeks|month|months)\b/, (s, m, t, note) => {
     if (!/\b(tab|tabs|close|archive|clean)\b/.test(t)) return;
-    const h = +m[1] * ({ hour: 1, day: 24, week: 168 }[m[2].replace(/s$/, "")]); s("tabs.archive_after_hours", `tabs: { archive_after_hours: ${h} }`, "old tabs tidy themselves away"); note(`Tabs you haven't touched in ${m[1]} ${m[2]} now archive themselves.`); }],
+    const n = /\d/.test(m[1]) ? +m[1] : { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 }[m[1]];
+    const h = n * ({ hour: 1, day: 24, week: 168, month: 720 }[m[2].replace(/s$/, "")]); s("tabs.archive_after_hours", `tabs: { archive_after_hours: ${h} }`, "old tabs tidy themselves away"); note(`Tabs you haven't touched in ${m[1]} ${m[2]} now tidy themselves away.`); }],
   [/\bnever\b.*\b(close|archive)\b|\bkeep (all )?my tabs\b|\btab hoarder\b/, (s, m, t, note) => { s("tabs.archive_after_hours", "tabs: { archive_after_hours: 0 }", "tabs stay forever"); note("Your tabs will never close themselves."); }],
   [has("vim", "vi", "hjkl", "neovim", "nvim"), (s, m, t, note) => { s("vim.enabled", "vim: { enabled: true }", "j/k scroll, f for link hints"); note("Vim keys are on. Try j, k, J and K on this page."); }],
 ];
@@ -554,7 +557,11 @@ function colorIn(raw, set) {
 }
 function toHex(c) { COLORWORD.fillStyle = "#000"; COLORWORD.fillStyle = c; return COLORWORD.fillStyle; }
 
-const SUGGEST = ["Like Spotify", "My grandma can't read this", "Windows 95", "Hacker mode", "Upside down", "It's 2am", "Open YouTube in School", "Reset"];
+// Clickable examples, a few at a time; the fun is in what it understands.
+const EXAMPLES = ["My boss is walking by", "I'm a vampire", "It's my birthday!", "Make it look expensive", "My dad's computer in 1997",
+  "Sunday morning with coffee", "My cat walked on the keyboard", "Barbie, but upside down", "Tokyo at night", "Hacker in a movie",
+  "Grandma's visiting", "Newspaper on a train", "Make it IKEA", "Send Reddit to Work", "I'm left-handed", "Comic Sans, unironically",
+  "Spooky season", "Under the sea 🌊", "Like Spotify", "Fat tabs", "Close tabs after a week of ignoring them", "Make it tomato"];
 const IDEAS = ["tabs on top", "make it cozy", "like Netflix", "comic sans", "dracula", "hot pink", "I'm left-handed", "party mode", "square corners",
   "close tabs after 3 days", "less clutter", "🌊", "cyberpunk", "like a newspaper", "sidebar on the right", "too bright"];
 let added = [], busy = false;
@@ -586,7 +593,12 @@ function ask(text) {
     if (notes.length) toast(notes.join(" "));
   }, 550);
 }
-for (const s of SUGGEST) { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; $("#chips").append(c); }
+function dealChips() {
+  const pick = [...EXAMPLES].sort(() => Math.random() - 0.5).slice(0, 6), chips = $("#chips"); chips.replaceChildren();
+  for (const s of [...pick, "Reset"]) { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; chips.append(c); }
+  const more = el("button", "chip", "↻ More ideas"); more.onclick = dealChips; chips.append(more);
+}
+dealChips();
 $("#ask").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(e.target.value); });
 $("#askgo").onclick = (e) => { e.preventDefault(); ask($("#ask").value); };
 $("#yclose").onclick = () => ($("#yaml").hidden = true);
