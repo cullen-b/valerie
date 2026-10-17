@@ -173,8 +173,11 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
                 Mode::Customize => {
                     let check = format!("Bash({exe} check-config)");
                     let call = format!("Bash({exe} call:*)");
+                    // The plugin marketplace: look and install, but sharing is the user's call.
+                    let search = format!("Bash({exe} plugins search:*)");
+                    let install = format!("Bash({exe} plugins install:*)");
                     c.args(["--mcp-config", &mcp_json().to_string(), "--strict-mcp-config", "--permission-mode", "acceptEdits"]);
-                    c.args(["--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", &check, &call, "mcp__valerie"]);
+                    c.args(["--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", &check, &call, &search, &install, "mcp__valerie"]);
                 }
                 Mode::Browser => {
                     c.args(["--mcp-config", &mcp_json().to_string()]);
@@ -261,7 +264,10 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
                 Mode::Customize => json!({
                     "mcp": { "valerie": { "type": "local", "command": [exe, "mcp-stdio", "--access", "full"], "enabled": true } },
                     "permission": { "edit": "allow", "external_directory": "deny",
-                                    "bash": { "*": "deny", format!("{exe} check-config*"): "allow", "valerie check-config*": "allow" } },
+                                    "bash": { "*": "deny", format!("{exe} check-config*"): "allow", "valerie check-config*": "allow",
+                                              // OpenCode matches arguments word by word: "x *" covers "x anything".
+                                              format!("{exe} plugins search *"): "allow", format!("{exe} plugins install *"): "allow",
+                                              "valerie plugins search *": "allow", "valerie plugins install *": "allow" } },
                 }),
                 _ => {
                     // `opencode run` can't stop to ask, so "ask" and "read" both mean its own edits and commands are off.

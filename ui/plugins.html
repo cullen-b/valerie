@@ -1,0 +1,184 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- The plugin marketplace: Valerie's own view over the window (not a web page, so no site can install or share).
+     Browse and install plugins people shared, manage your own, and share yours. Built with createElement/textContent. -->
+<style>
+:root { --accent: #9d8cff; --bg: #0b0a10; --card: rgba(255,255,255,.045); --card2: rgba(255,255,255,.075); --line: rgba(255,255,255,.09);
+  --fg: #efeef7; --dim: rgba(239,238,247,.58); --faint: rgba(239,238,247,.36); --ok: #6ee7a8; --warn: #f5c56b; --bad: #ff8f8f; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
+#glow { position: fixed; inset: -20%; pointer-events: none; background: radial-gradient(900px 500px at 15% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%); }
+#drag { position: fixed; top: 0; left: 0; right: 0; height: 30px; z-index: 5; }
+header { position: relative; z-index: 6; max-width: 1040px; margin: 0 auto; padding: 42px 40px 0; }
+.top { display: flex; align-items: center; gap: 14px; }
+h1 { font-size: 34px; letter-spacing: -.9px; margin: 0; font-weight: 740; flex: 1; }
+.x { all: unset; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; color: var(--dim); background: var(--card); }
+.x:hover { color: var(--fg); background: var(--card2); }
+.sub { color: var(--dim); margin: 6px 0 18px; }
+.bar { display: flex; gap: 10px; align-items: center; }
+.tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.tabs button { all: unset; padding: 7px 14px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--dim); }
+.tabs button.on { background: var(--card2); color: var(--fg); }
+.tabs .n { color: var(--faint); font-weight: 500; margin-left: 4px; }
+input { all: unset; flex: 1; padding: 10px 14px; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid var(--line); font-size: 14.5px; user-select: text; }
+input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+main { position: absolute; inset: 186px 0 0; overflow-y: auto; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 8px 40px 50px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; min-height: 150px; transition: border-color .2s; }
+.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.head { display: flex; align-items: center; gap: 10px; }
+.ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-weight: 750; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); flex: none; }
+.title { flex: 1; min-width: 0; } .title b { display: block; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title small { color: var(--faint); font-size: 12.5px; }
+.desc { color: var(--dim); font-size: 14px; flex: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 11.5px; padding: 2px 8px; border-radius: 99px; background: var(--card2); color: var(--dim); }
+.chip.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.chip.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.foot .grow { flex: 1; }
+button.b { all: unset; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; font-size: 13.5px; font-weight: 650; background: var(--card2); }
+button.b:hover { background: rgba(255,255,255,.13); } button.b:active { transform: scale(.97); }
+button.b.primary { background: var(--accent); color: #0b0a10; } button.b.primary:hover { filter: brightness(1.08); }
+button.b.ghost { background: none; color: var(--dim); } button.b.ghost:hover { color: var(--bad); }
+button.b[disabled] { opacity: .5; pointer-events: none; }
+.switch { all: unset; width: 34px; height: 20px; border-radius: 10px; background: var(--card2); position: relative; transition: background .2s; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--fg); transition: transform .2s; }
+.switch.on { background: var(--accent); } .switch.on::after { transform: translateX(14px); background: #0b0a10; }
+.empty { text-align: center; color: var(--dim); padding: 50px 20px; }
+.empty b { display: block; color: var(--fg); font-size: 17px; margin-bottom: 6px; }
+.share { margin-top: 18px; display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 16px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 13%, transparent), var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.share .t { flex: 1; color: var(--dim); font-size: 14px; } .share b { color: var(--fg); display: block; font-size: 15px; }
+.err { color: var(--bad); font-size: 13px; }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--card2); border-top-color: currentColor; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="glow"></div>
+<div id="drag"></div>
+<header>
+  <div class="top"><h1>Plugins</h1><button class="x" id="close" title="Close">×</button></div>
+  <div class="sub">Little add-ons people made for Valerie. Install one with a click, or ask your AI to make you one.</div>
+  <div class="bar"><div class="tabs" id="tabs"></div><input id="q" placeholder="Search plugins…" autocomplete="off"></div>
+</header>
+<main id="main"><div class="wrap" id="list"></div></main>
+<script>
+const send = (o) => window.ipc.postMessage(JSON.stringify(o));
+const $ = (s) => document.querySelector(s);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function btn(text, cls, on) { const b = el("button", "b " + (cls || ""), text); b.onclick = on; return b; }
+const S = { tab: "browse", index: null, indexError: "", local: [], busy: {}, notes: {}, repo: "" };
+const pretty = (n) => n.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+const versionOf = (e) => (e.files || []).map((f) => (f.sha256 || "").slice(0, 8)).join("");
+
+function words(q) { return q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1); }
+function hits(text, q) { const w = words(q); return !w.length || w.every((x) => text.toLowerCase().includes(x)); }
+
+function browseCard(e) {
+  const c = el("div", "card"), local = S.local.find((p) => p.name === e.name), busy = S.busy[e.name];
+  const head = el("div", "head"), title = el("div", "title");
+  title.append(el("b", null, pretty(e.name)), el("small", null, e.author ? "by " + e.author : ""));
+  head.append(el("div", "ico", pretty(e.name)[0]), title);
+  c.append(head, el("div", "desc", e.description));
+  const chips = el("div", "chips");
+  (e.matches.length ? e.matches.slice(0, 3) : ["every site"]).forEach((m) => chips.append(el("span", "chip" + (e.matches.length ? "" : " warn"), m)));
+  if (e.programs && e.programs.length) chips.append(el("span", "chip warn", "runs programs"));
+  if (e.commands && e.commands.length) chips.append(el("span", "chip", e.commands.length + " command" + (e.commands.length > 1 ? "s" : "")));
+  c.append(chips);
+  const foot = el("div", "foot");
+  if (S.notes[e.name]) foot.append(el("span", S.notes[e.name].ok === false ? "err" : "chip ok", S.notes[e.name].text));
+  foot.append(el("span", "grow"));
+  if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
+  else if (!local) foot.append(btn("Install", "primary", () => { S.busy[e.name] = "Installing"; draw(); send({ t: "install", name: e.name }); }));
+  else if (local.market_version && local.market_version !== versionOf(e)) foot.append(btn("Update", "primary", () => { S.busy[e.name] = "Updating"; draw(); send({ t: "install", name: e.name }); }));
+  else foot.append(el("span", "chip ok", "✓ Installed"));
+  c.append(foot);
+  return c;
+}
+
+function mineCard(p) {
+  const c = el("div", "card"), inIndex = (S.index || []).find((e) => e.name === p.name), busy = S.busy[p.name];
+  const head = el("div", "head"), title = el("div", "title");
+  title.append(el("b", null, pretty(p.name)), el("small", null, p.builtin ? "comes with Valerie" : p.market_version ? "from the marketplace" : "yours"));
+  const sw = el("button", "switch" + (p.enabled ? " on" : "")); sw.title = p.enabled ? "On" : "Off";
+  sw.onclick = () => send({ t: "toggle", name: p.name, enabled: !p.enabled });
+  head.append(el("div", "ico", pretty(p.name)[0]), title, sw);
+  c.append(head, el("div", "desc", p.description || "(no description)"));
+  const foot = el("div", "foot");
+  if (S.notes[p.name]) {
+    const n = S.notes[p.name];
+    if (n.url) { const a = el("a", "chip ok", "✓ Shared: see the pull request"); a.href = n.url; a.style.textDecoration = "none"; foot.append(a); }
+    else foot.append(el("span", n.ok === false ? "err" : "chip ok", n.text));
+  }
+  foot.append(el("span", "grow"));
+  if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
+  else {
+    if (p.market_version && inIndex && versionOf(inIndex) !== p.market_version) foot.append(btn("Update", "primary", () => { S.busy[p.name] = "Updating"; draw(); send({ t: "install", name: p.name }); }));
+    const shared = S.notes[p.name] && S.notes[p.name].url;
+    if (!p.market_version && !p.builtin && !shared) foot.append(btn(inIndex ? "Share update" : "Share", "primary", () => { S.busy[p.name] = "Sharing"; draw(); send({ t: "share", name: p.name }); }));
+    foot.append(btn("Remove", "ghost", () => send({ t: "remove", name: p.name })));
+  }
+  c.append(foot);
+  return c;
+}
+
+function draw() {
+  const q = $("#q").value, list = $("#list"); list.replaceChildren();
+  const tabs = $("#tabs"); tabs.replaceChildren();
+  [["browse", "Browse", S.index ? S.index.length : null], ["mine", "Your plugins", S.local.length]].forEach(([id, label, n]) => {
+    const b = el("button", S.tab === id ? "on" : "", label); if (n != null) b.append(el("span", "n", String(n)));
+    b.onclick = () => { S.tab = id; draw(); }; tabs.append(b);
+  });
+  if (S.tab === "browse") {
+    if (S.index === null) { list.append(el("div", "empty", S.indexError ? "Couldn't reach the marketplace: " + S.indexError : "Loading the marketplace…")); if (S.indexError) list.append(Object.assign(btn("Try again", "", () => { S.indexError = ""; draw(); send({ t: "refresh" }); }), { style: "display:block;margin:0 auto" })); return; }
+    const shown = S.index.filter((e) => hits(`${e.name} ${e.description} ${(e.matches || []).join(" ")} ${(e.commands || []).join(" ")}`, q));
+    if (!shown.length) { const em = el("div", "empty"); em.append(el("b", null, "Nothing like that yet"), "Ask your AI to make it: type ! and describe it in the command bar. Then share it here for everyone."); list.append(em); }
+    else { const g = el("div", "grid"); shown.forEach((e) => g.append(browseCard(e))); list.append(g); }
+  } else {
+    const shown = S.local.filter((p) => hits(`${p.name} ${p.description}`, q));
+    if (!S.local.length) { const em = el("div", "empty"); em.append(el("b", null, "No plugins yet"), "Install one from Browse, or ask your AI to make one: type ! and describe it in the command bar."); list.append(em); }
+    else { const g = el("div", "grid"); shown.forEach((p) => g.append(mineCard(p))); list.append(g); }
+    const own = S.local.filter((p) => !p.market_version && !p.builtin);
+    if (own.length) {
+      const s = el("div", "share"), t = el("div", "t");
+      t.append(el("b", null, "Made something cool? Share it."), "Valerie opens a pull request from your GitHub account; once it's reviewed, anyone can install it.");
+      s.append(t); list.append(s);
+    }
+  }
+}
+
+$("#q").addEventListener("input", draw);
+$("#close").onclick = () => send({ t: "close" });
+$("#drag").addEventListener("mousedown", (e) => { if (e.button === 0) send({ t: "drag" }); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") send({ t: "close" }); if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("#q").focus(); } });
+document.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[href]"); if (a) { e.preventDefault(); send({ t: "open", url: a.href }); } });
+
+window.market = {
+  init(d) {
+    S.local = d.plugins || []; S.repo = d.repo || "";
+    if (d.accent) document.documentElement.style.setProperty("--accent", d.accent);
+    if (d.font) document.body.style.fontFamily = `${d.font}, -apple-system, system-ui, sans-serif`;
+    draw(); $("#q").focus();
+  },
+  event(ev) {
+    if (ev.type === "index") { S.index = ev.plugins || []; S.indexError = ""; }
+    else if (ev.type === "index_error") { S.index = null; S.indexError = ev.detail || "unknown error"; }
+    else if (ev.type === "local") S.local = ev.plugins || [];
+    else if (ev.type === "tab") S.tab = ev.tab;
+    else if (ev.type === "sharing") S.busy[ev.name] = "Sharing";
+    else if (ev.type === "installed") { delete S.busy[ev.name]; S.notes[ev.name] = ev.ok ? { text: "✓ Installed" } : { ok: false, text: ev.detail || "Couldn't install" }; }
+    else if (ev.type === "removed") { if (ev.name) delete S.notes[ev.name]; }
+    else if (ev.type === "shared") { delete S.busy[ev.name]; S.notes[ev.name] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
+    draw();
+  },
+};
+send({ t: "ready" });
+</script>
+</body>
+</html>

@@ -10,6 +10,9 @@ use std::path::PathBuf;
 pub struct Manifest {
     #[serde(default)]
     pub description: String,
+    /// Who made it (their GitHub username), for the plugin marketplace.
+    #[serde(default)]
+    pub author: String,
     #[serde(default = "yes")]
     pub enabled: bool,
     /// Sites `style.css` / `script.js` apply to: hosts ("github.com", "*.edu") or URL globs. Empty = every site.
@@ -89,6 +92,11 @@ pub fn load_all() -> (Vec<Plugin>, Vec<String>) {
     (plugins, errors)
 }
 
+/// Whether the plugin in `dir` loads (its plugin.yaml parses and its commands are valid).
+pub fn check_dir(dir: &std::path::Path) -> Result<()> {
+    load(dir)?.map(|_| ()).context("there's no plugin.yaml")
+}
+
 fn load(dir: &std::path::Path) -> Result<Option<Plugin>> {
     let manifest_path = dir.join("plugin.yaml");
     if !manifest_path.exists() {
@@ -162,6 +170,11 @@ pub fn run_script(dir: &std::path::Path, script: &str, env: &[(&str, String)]) -
 }
 
 /// Plugins that ship with Valerie. Each is installed once; after that the folder is the user's to edit or delete.
+/// Whether a plugin ships with Valerie (so it isn't the user's to share).
+pub fn is_bundled(name: &str) -> bool {
+    BUNDLED.iter().any(|(n, _)| *n == name)
+}
+
 const BUNDLED: &[(&str, &[(&str, &str)])] = &[(
     "youtube-speed",
     &[

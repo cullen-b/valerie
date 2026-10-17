@@ -67,6 +67,7 @@ changed in plain words. Some translations:
 | "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
+| "Find me a plugin for…" / "is there a plugin that…" | `"{exe}" plugins search <words>`, then `"{exe}" plugins install <name>`; "Plugins" in the command bar browses them |
 | "Don't update by yourself" / "ask before updating" | `updates.install: ask` (or `off` to only be told) |
 | "Open my settings in VS Code" / "in vim" | `editor: "Visual Studio Code"` (any app's name), or `editor: vim` with `terminal: Ghostty` (or Terminal, iTerm, WezTerm, kitty, Alacritty) |
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
@@ -171,6 +172,21 @@ What each piece can do:
 
 Plugins that ship with Valerie (like `youtube-speed`) are copied into `plugins/` once and then belong to the user:
 edit them, disable them with `enabled: false`, or delete them.
+
+### The plugin marketplace
+
+People share plugins in a public marketplace ("Plugins" in the command bar; repo `cullen-b/valerie-plugins`).
+
+- **Before you make a plugin, look there first:** `"{exe}" plugins search <a few words about what it does>`. If one
+  already does it (or nearly), tell the user and offer to install it instead: `"{exe}" plugins install <name>`.
+  Better to install or improve an existing one than to make a near-duplicate.
+- **After you make one, encourage the user to share it.** Say it's a cool plugin others could use, and ask if they'd
+  like to put it in the marketplace. Only if they say yes, run `"{exe}" plugins share <name>`: it opens a pull request
+  from their GitHub account (the marketplace's maintainers review it before it goes live) and prints its address.
+  Never share without asking. If you can't ask (a one-shot change), mention in your summary that they can share it;
+  Valerie also offers to share new plugins by itself.
+- Shared plugins need a folder name of lowercase words with hyphens, a one-line `description` in `plugin.yaml`, and
+  readable text files only. Valerie fills in `author` with their GitHub name.
 
 ## Controlling the browser from code
 

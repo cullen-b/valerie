@@ -598,5 +598,11 @@ updates:
   feed: "https://github.com/cullen-b/valerie/releases/latest/download/latest.json"   # where releases are described
                            # (a fork can point this at its own releases)
 
+# The plugin marketplace: plugins people shared ("Plugins" in the command bar to browse and install them).
+plugin_marketplace:
+  index: "https://raw.githubusercontent.com/cullen-b/valerie-plugins/main/index.json"   # where the list of plugins comes from
+  repo: cullen-b/valerie-plugins   # where "Share Plugin" sends yours (as a pull request the maintainers review)
+  offer_to_share: true     # when your AI makes a new plugin, offer to share it in the marketplace. true | false
+
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}

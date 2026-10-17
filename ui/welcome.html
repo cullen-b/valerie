@@ -117,6 +117,19 @@ textarea { min-height: 96px; white-space: pre-wrap; } textarea:focus, input:focu
 kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 3px 7px; border-radius: 6px; background: var(--card2); border: 1px solid var(--line); color: var(--fg); }
 .feat .foot .grow { flex: 1; }
 .note { color: var(--faint); font-size: 13px; margin-top: 18px; }
+.skiplink { all: unset; display: inline-block; margin-top: 16px; color: var(--faint); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.skiplink:hover { color: var(--dim); }
+/* "are you sure?" before skipping AI setup */
+#modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(5,4,9,.62); backdrop-filter: blur(6px); animation: fade .2s ease; }
+@keyframes fade { from { opacity: 0; } }
+.dialog { width: min(480px, 90vw); padding: 26px 26px 22px; border-radius: 20px; background: #15141c; border: 1px solid var(--line); box-shadow: 0 30px 90px rgba(0,0,0,.6); animation: pop .25s cubic-bezier(.2,.8,.2,1); }
+@keyframes pop { from { transform: scale(.96); opacity: 0; } }
+.dialog .mark { width: 54px; height: 54px; border-radius: 17px; font-size: 26px; margin: 0 0 16px; animation: none; }
+.dialog .mark::after { display: none; }
+.dialog h2 { font-size: 22px; margin: 0 0 8px; }
+.dialog p { color: var(--dim); margin: 0 0 10px; font-size: 14.5px; }
+.dialog ul { color: var(--dim); font-size: 14px; margin: 0 0 18px; padding-left: 18px; } .dialog li { margin: 3px 0; }
+.dialog .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -235,6 +248,27 @@ function aiStep(root) {
   const g2 = el("div", "grid"); g2.style.marginTop = "12px";
   W.agents.filter((a) => !MAIN_AGENTS.includes(a.id)).forEach((a) => g2.append(card(a)));
   more.append(sum, g2); root.append(more);
+  if (!chosenWorks()) root.append(btn("Skip AI setup", "skiplink", () => confirmSkipAi()));
+}
+
+// Skipping AI setup is allowed, but only after hearing what it costs.
+function confirmSkipAi() {
+  if ($("#modal")) return;
+  const m = el("div"); m.id = "modal";
+  const d = el("div", "dialog");
+  d.append(el("div", "mark", "✦"), el("h2", null, "Valerie is better with an AI"),
+    el("p", null, "Without one, you'd miss the things that make Valerie different:"));
+  const ul = el("ul");
+  ["Answers about any page, right in find", "Chats that open tabs and do things for you", "Daily briefs and tasks that run on their own", "Changing Valerie just by describing what you want"].forEach((t) => ul.append(el("li", null, t)));
+  d.append(ul, el("p", null, "Free AI takes about a minute and needs no account. You can always set one up later from Welcome Tour."));
+  const close = () => m.remove();
+  const row = el("div", "row");
+  row.append(btn("Back", "ghost", close),
+    btn("Skip anyway", "", () => { close(); S.skippedAi = true; go(S.step + 1); }),
+    btn("Set up free AI", "primary", () => { close(); S.free = { step: "progress", detail: "Starting…" }; draw(); send({ t: "free_ai" }); }));
+  d.append(row); m.append(d);
+  m.addEventListener("mousedown", (e) => { if (e.target === m) close(); });
+  document.body.append(m);
 }
 
 // Model and effort for the chosen AI. OpenCode's free models come first, the best few marked.
@@ -380,6 +414,7 @@ const FEATURES = [
   { ico: "⌨", t: "Keyboard everything", d: "j and k scroll, f puts a letter on every link to click it by keyboard, and every key can be changed." },
   { ico: "◎", t: "Watch a page", d: "\"Tell me when it's back in stock\": Valerie checks and notifies you.", cmd: { cmd: "watch_page" } },
   { ico: "✂", t: "Make sites behave", d: "Cookie banners rejected, tracking stripped from links, reader view, dark mode for any site, hide any element." },
+  { ico: "⧉", t: "Plugins", d: "Add-ons people made and shared: install one with a click, or have your AI make one and share it.", cmd: { cmd: "plugin_marketplace" } },
   { ico: "✎", t: "Change anything by asking", d: "Every setting lives in one readable file that your AI edits for you. Try ! bigger tabs in the command bar.", cmd: { cmd: "open_config" } },
 ];
 function tourStep(root) {
@@ -400,7 +435,10 @@ function tourStep(root) {
 
 // ---------- frame ----------
 function visibleSteps() { return STEPS.filter((s) => s !== "import" || (W && W.imports && W.imports.length)); }
-function go(i) { const vs = visibleSteps(); S.dir = i >= S.step ? 1 : -1; S.step = Math.max(0, Math.min(vs.length - 1, i)); draw(); $("#stage").scrollTop = 0; }
+function go(i) {
+  const vs = visibleSteps();
+  if (vs[S.step] === "ai" && i > S.step && !chosenWorks() && !S.skippedAi) return confirmSkipAi();
+  S.dir = i >= S.step ? 1 : -1; S.step = Math.max(0, Math.min(vs.length - 1, i)); draw(); $("#stage").scrollTop = 0; }
 function draw() {
   if (!W) return;
   const vs = visibleSteps(), name = vs[S.step];
@@ -430,6 +468,7 @@ function draw() {
 
 document.getElementById("drag").addEventListener("mousedown", (e) => { if (e.button === 0) send({ t: "drag" }); });
 document.addEventListener("keydown", (e) => {
+  if ($("#modal")) { if (e.key === "Escape") $("#modal").remove(); return; }
   if (e.target.matches("input, textarea")) return;
   if (e.key === "ArrowRight" || e.key === "Enter") { const b = [...document.querySelectorAll("#foot button")].pop(); if (b && !b.disabled) b.click(); }
   if (e.key === "ArrowLeft" && S.step > 0) go(S.step - 1);

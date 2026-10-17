@@ -15,6 +15,7 @@ mod sync;
 mod github;
 mod ai;
 mod update;
+mod market;
 
 use config::Config;
 
@@ -137,6 +138,12 @@ fn check_config() -> anyhow::Result<()> {
             }
             if c.editor.trim().is_empty() {
                 problems.push("editor is empty; use default, textedit, an app's name or a terminal editor like vim".into());
+            }
+            if !c.plugin_marketplace.index.starts_with("https://") && !c.plugin_marketplace.index.starts_with("file://") {
+                problems.push(format!("plugin_marketplace: index is {:?}; it has to be an https:// address", c.plugin_marketplace.index));
+            }
+            if c.plugin_marketplace.repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
+                problems.push(format!("plugin_marketplace: repo is {:?}; write it as owner/name", c.plugin_marketplace.repo));
             }
             if !["auto", "ask", "off"].contains(&c.updates.install.as_str()) {
                 problems.push(format!("updates: install is {:?}; use auto, ask or off", c.updates.install));
@@ -263,6 +270,50 @@ fn main() -> anyhow::Result<()> {
             return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));
         }
         // Which AI apps answer right now (installed, signed in, plan active).
+        // The plugin marketplace from the command line (for people and their AI assistants).
+        Some("plugins") => {
+            use anyhow::Context;
+            let index = || market::fetch(&config.plugin_marketplace.index);
+            match args.get(1).map(String::as_str) {
+                Some("search") => {
+                    let q = args[2..].join(" ");
+                    let all = index()?;
+                    let hits = market::search(&all, &q);
+                    if hits.is_empty() {
+                        println!("No plugin like that in the marketplace yet.");
+                    }
+                    for e in hits.iter().take(10) {
+                        println!("{:<24} {}{}", e.name, e.description, if e.programs.is_empty() { "" } else { "  [runs programs]" });
+                    }
+                }
+                Some("install") => {
+                    let name = args.get(2).context("usage: valerie plugins install <name>")?;
+                    let all = index()?;
+                    let e = all.iter().find(|e| &e.name == name).with_context(|| format!("no plugin called {name} in the marketplace"))?;
+                    if !e.programs.is_empty() {
+                        println!("{name} runs these on your computer:\n{}", e.programs.join("\n---\n"));
+                    }
+                    let dir = market::install(e, &plugins::plugins_dir())?;
+                    println!("Installed {name} in {} (Valerie picks it up by itself).", dir.display());
+                }
+                Some("share") => {
+                    let name = args.get(2).context("usage: valerie plugins share <name>")?;
+                    let dir = plugins::plugins_dir().join(name);
+                    let token = github::token().context("sign in to GitHub first: run Set Up Sync in Valerie, or `gh auth login`")?;
+                    let all = index().unwrap_or_default();
+                    println!("Shared: {}", market::share(&dir, &config.plugin_marketplace.repo, &all, &token)?);
+                }
+                _ => {
+                    let all = index()?;
+                    let mine: Vec<String> = plugins::load_all().0.into_iter().map(|p| p.name).collect();
+                    for e in &all {
+                        println!("{:<24} {}{}", e.name, e.description, if mine.contains(&e.name) { "  (installed)" } else { "" });
+                    }
+                    println!("\nvalerie plugins search <words> | install <name> | share <name>");
+                }
+            }
+            return Ok(());
+        }
         Some("check-agents") => {
             let path = ai::search_path();
             for k in ai::KINDS {
