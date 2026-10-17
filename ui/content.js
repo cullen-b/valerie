@@ -89,9 +89,21 @@ const notifyHooks = { permission() {}, clicked() {} };
   document.addEventListener("visibilitychange", release);
 })();
 // Capture natives before page scripts run, so pages can't intercept what we send or fill.
-const stringify = JSON.stringify;
+const stringify = JSON.stringify, keysOf = Object.keys, isArray = Array.isArray;
 const ipcPost = window.ipc ? window.ipc.postMessage.bind(window.ipc) : null;
-const post = (o) => { try { (ipcPost || ((m) => window.ipc.postMessage(m)))(stringify(o)); } catch (_) {} };
+// Our own JSON writer: JSON.stringify would hand each object to a page's Object.prototype.toJSON first, letting the page
+// read what Valerie sends (nonces, plugin keys). Strings and numbers go through stringify, which never asks them.
+function toJson(v, depth = 0) {
+  if (v === null || v === undefined || depth > 20) return "null";
+  const t = typeof v;
+  if (t === "string" || t === "number" || t === "boolean") return stringify(v);
+  if (t !== "object") return "null";
+  if (isArray(v)) { let s = "["; for (let i = 0; i < v.length; i++) s += (i ? "," : "") + toJson(v[i], depth + 1); return s + "]"; }
+  let s = "{", first = true;
+  for (const k of keysOf(v)) { if (v[k] === undefined || typeof v[k] === "function") continue; s += (first ? "" : ",") + stringify(String(k)) + ":" + toJson(v[k], depth + 1); first = false; }
+  return s + "}";
+}
+const post = (o) => { try { (ipcPost || ((m) => window.ipc.postMessage(m)))(toJson(o)); } catch (_) {} };
 const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
 const PAGE_ACTIONS = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find"]);
 let cfg = withSite(CFG), mode = "normal", buffer = "", bufferTimer = 0;
@@ -1407,14 +1419,23 @@ document.addEventListener("visibilitychange", watchLogin);
 // Each plugin's script is handed a key in the code Valerie runs (pages can't read that), and its messages go out
 // through natives captured before the page's own scripts ran, so the page can't borrow a plugin's powers.
 const PromiseCtor = Promise, randomFill = crypto.getRandomValues.bind(crypto), pluginWaits = new Map();
+// The message is put together from strings: JSON.stringify would call a page's Object.prototype.toJSON with the
+// whole message (key included); on plain strings it never looks one up.
+function pluginSend(fields, args) {
+  let s = '{"key":' + stringify(fields.key);
+  for (const k of ["t", "plugin", "id", "tool", "title"]) if (fields[k] != null) s += ',"' + k + '":' + stringify(String(fields[k]));
+  s += ',"args":' + (args === undefined ? "{}" : toJson(args));
+  try { (ipcPost || ((m) => window.ipc.postMessage(m)))(s + "}"); } catch (_) {}
+}
 function pluginApi(plugin, key) {
-  const id = () => { const a = new Uint32Array(4); randomFill(a); return a.join("-"); };
+  plugin = String(plugin); key = String(key);
+  const id = () => { const a = new Uint32Array(4); randomFill(a); return a[0] + "-" + a[1] + "-" + a[2] + "-" + a[3]; };
   return Object.freeze({
     call: (tool, args) => new PromiseCtor((resolve, reject) => {
       const n = id(); pluginWaits.set(n, [resolve, reject]);
-      post({ t: "plugin_call", plugin, key, id: n, tool: String(tool), args: args || {} });
+      pluginSend({ t: "plugin_call", plugin, key, id: n, tool }, args || {});
     }),
-    run: (title) => post({ t: "plugin_run", plugin, key, title: String(title) }),
+    run: (title) => pluginSend({ t: "plugin_run", plugin, key, title }),
   });
 }
 // Load-time scripts run once per page, even if Valerie hears about the load twice (a page rebuilt while loading).

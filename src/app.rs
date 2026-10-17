@@ -282,6 +282,8 @@ pub struct App {
     status_menu: Option<Menu>,
     /// global_keybindings in the order they were registered.
     global_keys: Vec<Command>,
+    /// The window / Dock icon / global shortcut settings last applied (they're only redone when they change).
+    app_print: String,
     /// The settings before any space's own `settings` (defaults + config.yaml), and the space they're applied for.
     base_config: serde_yaml::Value,
     config_space: Option<String>,
@@ -548,7 +550,9 @@ fn ui_custom(page: &str, config: &Config) -> Value {
 
 /// A UI page with the user's own CSS and words built in.
 fn ui_page(page: &str, config: &Config) -> String {
-    format!("{}\n<script>{}\n__valerieUi.apply({});</script>", ui(page), ui("custom.js"), ui_custom(page, config))
+    // "</" would end the <script> early if someone's CSS or words contain it.
+    let data = ui_custom(page, config).to_string().replace("</", "<\\/");
+    format!("{}\n<script>{}\n__valerieUi.apply({data});</script>", ui(page), ui("custom.js"))
 }
 
 /// wry hands back the JS result JSON-encoded; our scripts return JSON strings, so unwrap up to twice.
@@ -796,6 +800,7 @@ impl App {
             dock_menu: None,
             status_menu: None,
             global_keys: Vec::new(),
+            app_print: String::new(),
             base_config: serde_yaml::Value::Null,
             config_space: None,
             sites_shared: Default::default(),
@@ -2193,6 +2198,11 @@ impl App {
             e.push(Some(("Search for Selection".into(), json!({ "cmd": "go", "input": sel.chars().take(300).collect::<String>(), "new_tab": true }))));
         }
         e.extend(self.plugin_menu_items(&kinds, &ctx));
+        // What the system's page menu would have had (shift-right-click still shows that one).
+        e.push(None);
+        e.push(Some(("Back".into(), json!({ "cmd": "back", "tab": id }))));
+        e.push(Some(("Reload Page".into(), json!({ "cmd": "reload", "tab": id }))));
+        e.push(Some(("Inspect Element".into(), json!({ "cmd": "dev_tools" }))));
         while matches!(e.first(), Some(None)) {
             e.remove(0);
         }
@@ -2666,6 +2676,11 @@ impl App {
 
     /// Window, Dock and system-wide settings that apply to the app as a whole (window.*, app.*, global_keybindings).
     fn apply_app_settings(&mut self) {
+        let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();
+        if print == self.app_print {
+            return;
+        }
+        self.app_print = print;
         let w = &self.config.window;
         self.window.set_always_on_top(w.always_on_top);
         platform::set_window_opacity(&self.window, if w.opacity <= 0.0 { 1.0 } else { w.opacity });
