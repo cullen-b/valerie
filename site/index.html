@@ -136,13 +136,17 @@ h2 { font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spacing: -1.4p
 .feat b { display: block; font-size: 16.5px; margin-bottom: 6px; } .feat span { color: var(--dim); font-size: 14.5px; }
 .install { padding: 90px 0; }
 .ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.way { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+.way { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .way .tag { align-self: flex-start; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px; background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .way p { color: var(--dim); font-size: 14.5px; margin: 0; flex: 1; }
 .cmd { display: flex; align-items: center; gap: 8px; background: #0b0a10; border: 1px solid var(--line); border-radius: 11px; padding: 9px 10px 9px 12px; }
 .cmd code { flex: 1; font: 12.5px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
 .cmd button { all: unset; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 7px; background: rgba(255,255,255,.08); }
 .cmd button:hover { background: var(--accent); color: #0b0a10; }
+.tip { display: flex; gap: 14px; align-items: flex-start; margin-top: 18px; padding: 16px 18px; border-radius: 16px; font-size: 14.5px; color: var(--dim);
+  background: color-mix(in srgb, var(--accent) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.tip b { color: var(--fg); } .tip .ic { color: var(--accent); font-size: 18px; line-height: 1.4; }
+.tip code { font: 12.5px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 6px; color: var(--fg); }
 .fine { color: var(--faint); font-size: 13.5px; margin-top: 20px; max-width: 760px; }
 footer { border-top: 1px solid var(--line); padding: 34px 0 60px; color: var(--faint); font-size: 14px; }
 footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; } footer a { color: var(--dim); text-decoration: none; } footer a:hover { color: var(--fg); }
@@ -247,6 +251,9 @@ footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; } footer a { color: va
     <div class="way reveal"><b>Homebrew</b><p>No need to <code>brew upgrade</code>: Valerie updates itself.</p>
       <div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div></div>
   </div>
+  <div class="tip reveal"><span class="ic">✦</span><div><b>Tip: sign in to your AI app first.</b> Setup goes fastest if the AI you use is already signed in on this Mac:
+    Claude Code, Codex or Cursor (in Terminal: <code>claude</code>, <code>codex login</code> or <code>cursor-agent login</code>). Valerie finds it and uses it straight away.
+    No AI app? Valerie sets up a free one for you during setup.</div></div>
   <p class="fine">Valerie isn't notarized by Apple yet, so the first time you open a downloaded or Homebrew copy, macOS may say it can't check it. Click Done, then System Settings › Privacy &amp; Security › Open Anyway. That's once; the Terminal line doesn't need it.</p>
 </div></section>
 
