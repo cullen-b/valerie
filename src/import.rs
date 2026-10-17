@@ -72,6 +72,11 @@ pub fn import(source: &str) -> Result<Imported> {
     }
 }
 
+/// The browsers on this computer Valerie can import from.
+pub fn found() -> Vec<&'static str> {
+    SOURCES.iter().copied().filter(|s| locate(s).is_some()).collect()
+}
+
 fn locate(source: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let path = match source {

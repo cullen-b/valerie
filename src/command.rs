@@ -354,6 +354,8 @@ pub enum Command {
     Restart,
     /// Look for a newer Valerie now, and install it (or open its download page where Valerie can't update itself).
     CheckForUpdates,
+    /// The welcome guide: AI, sync, describing your browser in your own words, and a tour of what Valerie does.
+    Welcome,
     /// scripts/install-macos.sh says a new version is in /Applications.
     UpdateInstalled,
     /// Allow or stop notifications from the site you're on.
@@ -445,6 +447,7 @@ impl Command {
                 | Command::RunTask { .. }
                 | Command::SetUpAgent { .. }
                 | Command::CheckForUpdates
+                | Command::Welcome
         )
     }
 
@@ -544,6 +547,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
     ("restart", "Restart Valerie (use a newly installed version)"),
     ("check_for_updates", "Check for Updates"),
+    ("welcome", "Welcome Tour (set up AI and sync, make Valerie yours, see what it does)"),
     ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),

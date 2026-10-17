@@ -19,6 +19,7 @@ pub struct Config {
     pub sidebar: SidebarConfig,
     pub start_page: String,
     pub escape_hints: bool,
+    pub welcome: bool,
     pub command_bar: CommandBarConfig,
     pub site_search: BTreeMap<String, Option<SiteSearch>>,
     pub find: FindConfig,
@@ -744,6 +745,87 @@ pub fn data_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_default().join("Valerie")
 }
 
+/// Set one setting in the user's config.yaml (`path` like ["agents", "default"], `value` written as YAML), keeping
+/// the rest of the file and its comments. Only falls back to rewriting the file if the key sits inside a one-line
+/// `{ … }` block.
+pub fn set_setting(path: &[&str], value: &str) -> Result<()> {
+    let file = config_path();
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    let new = match set_in_text(&text, path, value) {
+        Some(t) => t,
+        None => {
+            let mut v: serde_yaml::Value = serde_yaml::from_str(&text).unwrap_or(serde_yaml::Value::Mapping(Default::default()));
+            let mut at = &mut v;
+            for k in path {
+                if !at.get(*k).is_some_and(|x| x.is_mapping()) {
+                    at[*k] = serde_yaml::Value::Mapping(Default::default());
+                }
+                at = &mut at[*k];
+            }
+            *at = serde_yaml::from_str(value)?;
+            serde_yaml::to_string(&v)?
+        }
+    };
+    std::fs::write(&file, new)?;
+    Ok(())
+}
+
+/// `set_setting` on text; None when a parent key holds a one-line value it can't edit in place.
+fn set_in_text(text: &str, path: &[&str], value: &str) -> Option<String> {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let indent_of = |l: &str| l.len() - l.trim_start().len();
+    let blank = |l: &str| l.trim().is_empty() || l.trim_start().starts_with('#');
+    let (mut start, mut end, mut indent) = (0, lines.len(), 0);
+    for (depth, key) in path.iter().enumerate() {
+        let last = depth + 1 == path.len();
+        let found = (start..end).find(|&i| {
+            let l = &lines[i];
+            !blank(l) && indent_of(l) == indent && l.trim_start().strip_prefix(*key).is_some_and(|r| r.starts_with(':'))
+        });
+        match found {
+            Some(i) => {
+                let rest = lines[i].trim_start()[key.len() + 1..].to_string();
+                let rest = rest.split(" #").next().unwrap_or("").trim().to_string();
+                if last {
+                    lines[i] = format!("{}{key}: {value}", " ".repeat(indent));
+                    return Some(lines.join("\n") + "\n");
+                }
+                if !rest.is_empty() {
+                    return None;
+                }
+                let block_end = (i + 1..end).find(|&j| !blank(&lines[j]) && indent_of(&lines[j]) <= indent).unwrap_or(end);
+                let child = (i + 1..block_end).find(|&j| !blank(&lines[j])).map(|j| indent_of(&lines[j])).unwrap_or(indent + 2);
+                (start, end, indent) = (i + 1, block_end, child);
+            }
+            None => {
+                // Add the missing keys at the end of the parent block (or the file).
+                let mut add = Vec::new();
+                let mut ind = indent;
+                for (k, key) in path[depth..].iter().enumerate() {
+                    if depth + k + 1 == path.len() {
+                        add.push(format!("{}{key}: {value}", " ".repeat(ind)));
+                    } else {
+                        add.push(format!("{}{key}:", " ".repeat(ind)));
+                        ind += 2;
+                    }
+                }
+                let mut at = end;
+                while at > start && lines[at - 1].trim().is_empty() {
+                    at -= 1;
+                }
+                if depth == 0 && at > 0 {
+                    add.insert(0, String::new());
+                }
+                for (k, l) in add.into_iter().enumerate() {
+                    lines.insert(at + k, l);
+                }
+                return Some(lines.join("\n") + "\n");
+            }
+        }
+    }
+    None
+}
+
 pub fn config_path() -> PathBuf {
     config_dir().join("config.yaml")
 }
@@ -900,6 +982,22 @@ pub fn preset(name: &str) -> Option<Theme> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sets_settings_in_place() {
+        let text = "# mine\nprofiles:\n  - name: Me\nagents:\n  default: claude   # who answers\n  available:\n    claude: { cli: claude }\n\nsync: { repo: x }\n";
+        let t = super::set_in_text(text, &["agents", "default"], "opencode").unwrap();
+        assert!(t.contains("  default: opencode\n") && t.contains("# mine") && t.contains("    claude: { cli: claude }"));
+        let t = super::set_in_text(&t, &["agents", "available", "opencode"], "{ cli: opencode, model: \"opencode/x-free\" }").unwrap();
+        assert!(t.contains("    claude: { cli: claude }\n    opencode: { cli: opencode, model: \"opencode/x-free\" }\n"), "{t}");
+        let t = super::set_in_text(&t, &["welcome"], "false").unwrap();
+        assert!(t.ends_with("sync: { repo: x }\n\nwelcome: false\n"), "{t}");
+        assert!(super::set_in_text(&t, &["sync", "repo"], "y").is_none());
+        let t = super::set_in_text("", &["agents", "default"], "pi").unwrap();
+        assert_eq!(t, "agents:\n  default: pi\n");
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&super::set_in_text(text, &["agents", "available", "pi"], "{ cli: pi }").unwrap()).unwrap();
+        assert_eq!(parsed["agents"]["available"]["pi"]["cli"], "pi");
+    }
+
     use super::*;
 
     #[test]

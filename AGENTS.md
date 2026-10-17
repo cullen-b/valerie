@@ -62,6 +62,8 @@ the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`),
   and spaces (e.g. `profiles: [{ name: Test }]`, `spaces: [{ name: Test, profile: Test }]`): cookies and site
   storage are keyed by profile name, so a test using "Personal" reads and writes the owner's real logins. Drive them through the MCP server
   (token in `$VALERIE_DATA_DIR/mcp-token`); the `screenshot` tool shows a page.
+- Agents a test instance starts (customize, chats, tasks) run with that instance's folders, but they can still read
+  the owner's real `~/.config/valerie`. After testing one, check that the real config didn't change.
 - The agent shell can't capture the screen. Check UI changes by loading `ui/*.html` in Playwright with a stubbed
   `window.ipc` and mock state.
 - `cargo check --target x86_64-pc-windows-msvc` type-checks the Windows build; CI builds macOS, Linux, Windows.

@@ -39,6 +39,8 @@ Valerie's binary: `{exe}`
 3. Validate: run `"{exe}" check-config`. It parses the config and every plugin, catches misspelled setting names
    (with the right spelling), and prints exact errors. Fix and rerun until it says OK.
    `"{exe}" effective-config` prints every setting as it applies right now (defaults plus the user's changes).
+   `"{exe}" check-agents` asks each installed AI app a one-line question and says which ones answer (for "my AI
+   doesn't work"); `agents.default` picks the one Valerie uses.
 4. Tell the user what changed and which setting turns it back off.
 
 House rules from the owner:
