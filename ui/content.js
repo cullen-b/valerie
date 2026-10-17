@@ -849,7 +849,7 @@ function pluginMatches(patterns) {
 function applyBoostCss() {
   const h = location.hostname.toLowerCase(), b = cfg.boost_css || {};
   const css = Object.keys(b).filter((k) => h === k || h.endsWith("." + k)).map((k) => b[k])
-    .concat((cfg.plugin_css || []).filter((p) => pluginMatches(p.matches)).map((p) => p.css))
+    .concat((cfg.plugin_css || []).filter((p) => pluginMatches(p.matches) && (!(p.spaces || []).length || p.spaces.includes(cfg.space))).map((p) => p.css))
     .concat((cfg.hide_rules || []).filter((r) => !r.site || pluginMatches([r.site])).map((r) => r.selector + " { display: none !important; }")).join("\n");
   let st = document.getElementById("__valerie_boost");
   if (!css) { if (st) st.remove(); return; }

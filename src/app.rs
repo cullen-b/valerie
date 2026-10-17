@@ -866,7 +866,7 @@ impl App {
             .plugins
             .iter()
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
-            .map(|p| json!({ "matches": p.manifest.matches, "css": p.css }))
+            .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
@@ -889,8 +889,15 @@ impl App {
         }
     }
 
-    fn content_script(&self) -> String {
-        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config())
+    /// The page settings for one page: page_config plus the space it's in (plugins can be limited to spaces).
+    fn page_config_for(&self, target: Target, base: &Value) -> Value {
+        let mut c = base.clone();
+        c["space"] = json!(self.space_name(self.space_of_target(target)));
+        c
+    }
+
+    fn content_script(&self, target: Target) -> String {
+        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config_for(target, &self.page_config()))
     }
 
     /// The space a page belongs to (little windows and Peek count as the space they were opened from).
@@ -991,7 +998,7 @@ impl App {
         let Some(view) = self.view_for(target) else { return };
         let space = self.space_name(self.space_of_target(target));
         if !again {
-            let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config()));
+            let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config_for(target, &self.page_config())));
             let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
             for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
                 let once = format!("(!window.__valerie || __valerie.once({}))", json!(format!("boost:{}", b.host)));
@@ -1089,7 +1096,7 @@ impl App {
             .with_back_forward_navigation_gestures(self.config.gestures.swipe_to_go_back)
             .with_accept_first_mouse(true)
             .with_initialization_script_for_main_only(if self.offer_passkeys() { String::new() } else { ui("hide-passkeys.js") }, false)
-            .with_initialization_script(self.content_script())
+            .with_initialization_script(self.content_script(target))
             .with_ipc_handler(move |r| send(&p1, UserEvent::Ipc { from: Source::Page(target), msg: r.into_body() }))
             .with_on_page_load_handler(move |ev, url| {
                 if let Ok(mut c) = current.lock() {
@@ -2352,16 +2359,16 @@ impl App {
 
     fn refresh_content_config(&self) {
         let cfg = self.page_config();
-        for v in self.views.values() {
-            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+        for (id, v) in &self.views {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config_for(Target::Tab(*id), &cfg)));
         }
     }
 
     /// Page settings for just the pages on screen (the sidebar peeking only matters to them; others catch up on load).
     fn refresh_pane_config(&self) {
         let cfg = self.page_config();
-        for v in self.panes().iter().filter_map(|t| self.views.get(t)) {
-            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+        for (id, v) in self.panes().iter().filter_map(|t| self.views.get(t).map(|v| (*t, v))) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config_for(Target::Tab(id), &cfg)));
         }
     }
 

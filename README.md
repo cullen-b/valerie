@@ -140,8 +140,20 @@ in `~/.config/valerie/plugins/youtube-speed/plugin.yaml`.
 
 **Plugins** are folders in `~/.config/valerie/plugins/` with a readable `plugin.yaml` (see `plugins/_example/`):
 command-bar commands with optional shortcuts that run built-in action macros, JavaScript in the page, or local
-scripts in any language; `style.css` / `script.js` for matching sites; and hooks when pages load. Local code drives
-the browser with `valerie call <tool> '<json>'` (for example `valerie call read_page '{}'`).
+scripts in any language; `style.css` / `script.js` for matching sites (before the site's own code, in frames, again
+when a web app changes its address); hooks for browser events (a tab opens, a download finishes, you go idle…);
+right-click entries, sidebar buttons with live text, live command-bar results and a start page; and output as a
+toast, a page, a list to pick from, a notification or the clipboard. Page scripts reach the browser through
+`valerie.call(tool, args)` with the tools their plugin lists (you're asked once). Local code drives the browser with
+`valerie call <tool> '<json>'` (for example `valerie call read_page '{}'`).
+
+**Almost everything else is a setting**, so an assistant can change it from a sentence: Valerie's own look
+(`ui/chrome.css` and friends), its language (`language` + `strings/<code>.yaml`), the sidebar's order, the menu bar,
+right-click menus, mouse buttons, gestures and key sequences, per-site settings (`sites:` camera, zoom, user agent,
+autoplay…), per-space settings, network rules (block with Adblock syntax or EasyList, redirect, hide, add headers),
+download rules, the window (always on top, see-through, frosted), the Dock and menu bar icons, shortcuts that work in
+every app, extra instructions for your agents, and Safari-style browser extensions (macOS 15.4+). Every AI change can
+be undone with **Undo Last Customization**.
 
 ## Headless agents
 

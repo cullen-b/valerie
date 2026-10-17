@@ -260,7 +260,8 @@ What each piece can do:
   sandboxed; `parent.postMessage({{ open: "https://…" }}, "*")` opens a site, `{{ search: "words" }}` searches, and
   `{{ run: "<command title>" }}` runs one of the plugin's commands. It gets the theme as a message
   `{{ valerie: "theme", theme: {{ background, accent, mode }} }}`.
-- **spaces**: `[Work]` makes the whole plugin apply only in those spaces.
+- **spaces**: `[Work]` makes the plugin apply only in those spaces: its page scripts and styles, events, command-bar
+  entries, searches and sidebar buttons (its menu bar entries stay).
 - **on_page_load**: shell commands run when a matching page finishes loading.
 - **settings**: the plugin's own options. `script.js` gets them as a `settings` object, so users (or you) can tune a
   plugin by editing its `plugin.yaml` instead of its code.
