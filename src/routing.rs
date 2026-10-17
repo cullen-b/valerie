@@ -24,6 +24,63 @@ pub fn glob(pattern: &str, text: &str) -> bool {
     p[pi..].iter().all(|c| *c == '*')
 }
 
+/// What each `*` in `pattern` matched in `text` (None if it doesn't match). Lazy: each * takes as little as it can.
+pub fn captures(pattern: &str, text: &str) -> Option<Vec<String>> {
+    fn go(p: &[char], t: &[char], out: &mut Vec<String>) -> bool {
+        match p.first() {
+            None => t.is_empty(),
+            Some('*') => (0..=t.len()).any(|n| {
+                out.push(t[..n].iter().collect());
+                if go(&p[1..], &t[n..], out) {
+                    return true;
+                }
+                out.pop();
+                false
+            }),
+            Some(c) => t.first().is_some_and(|x| x.to_lowercase().eq(c.to_lowercase())) && go(&p[1..], &t[1..], out),
+        }
+    }
+    let (p, t): (Vec<char>, Vec<char>) = (pattern.chars().collect(), text.chars().collect());
+    if p.iter().filter(|c| **c == '*').count() > 8 {
+        return None; // keep the search small
+    }
+    let mut out = Vec::new();
+    go(&p, &t, &mut out).then_some(out)
+}
+
+/// The address a `redirect` rule sends `url` to, if one matches (a rule whose result would match it again is skipped).
+pub fn redirect(rules: &[crate::config::NetRule], url: &str) -> Option<String> {
+    for r in rules.iter().filter(|r| !r.redirect.trim().is_empty() && !r.to.trim().is_empty()) {
+        if !r.site.trim().is_empty() && !crate::plugins::matches(&[r.site.trim().to_string()], url) {
+            continue;
+        }
+        let Some(caps) = captures(r.redirect.trim(), url) else { continue };
+        let mut out = String::new();
+        let mut caps = caps.into_iter();
+        for c in r.to.trim().chars() {
+            if c == '*' {
+                out.push_str(&caps.next().unwrap_or_default());
+            } else {
+                out.push(c);
+            }
+        }
+        if out != url && captures(r.redirect.trim(), &out).is_none() && (out.starts_with("http://") || out.starts_with("https://")) {
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// Headers from `header` rules for pages at this address ("Name: value").
+pub fn headers(rules: &[crate::config::NetRule], url: &str) -> Vec<(String, String)> {
+    rules
+        .iter()
+        .filter(|r| !r.header.trim().is_empty() && (r.site.trim().is_empty() || crate::plugins::matches(&[r.site.trim().to_string()], url)))
+        .filter_map(|r| r.header.split_once(':').map(|(n, v)| (n.trim().to_string(), v.trim().to_string())))
+        .filter(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        .collect()
+}
+
 /// Air Traffic Control: the space a URL should open in, if any rule matches.
 pub fn route<'a>(routes: &'a [Route], url: &str) -> Option<&'a str> {
     let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
@@ -123,5 +180,22 @@ mod tracking_tests {
         assert_eq!(super::strip_tracking("https://a.com/x?utm_source=t&id=3&fbclid=9", &p), "https://a.com/x?id=3");
         assert_eq!(super::strip_tracking("https://a.com/x?utm_medium=e", &p), "https://a.com/x");
         assert_eq!(super::strip_tracking("https://a.com/x?q=a+b&page=2", &p), "https://a.com/x?q=a+b&page=2");
+    }
+}
+
+#[cfg(test)]
+mod rule_tests {
+    use crate::config::NetRule;
+
+    #[test]
+    fn redirects_fill_in_what_the_stars_matched() {
+        let rules = [NetRule { redirect: "https://www.reddit.com/*".into(), to: "https://old.reddit.com/*".into(), ..Default::default() },
+                     NetRule { redirect: "*://*.loop.com/*".into(), to: "https://a.loop.com/*".into(), ..Default::default() }];
+        assert_eq!(super::redirect(&rules, "https://www.reddit.com/r/rust?x=1").as_deref(), Some("https://old.reddit.com/r/rust?x=1"));
+        assert_eq!(super::redirect(&rules, "https://old.reddit.com/r/rust"), None);
+        assert_eq!(super::redirect(&rules, "https://b.loop.com/x"), None, "a result that matches again would loop");
+        let h = [NetRule { header: "DNT: 1".into(), ..Default::default() }, NetRule { header: "X-Only: yes".into(), site: "a.com".into(), ..Default::default() }];
+        assert_eq!(super::headers(&h, "https://b.com/"), vec![("DNT".to_string(), "1".to_string())]);
+        assert_eq!(super::headers(&h, "https://www.a.com/").len(), 2);
     }
 }

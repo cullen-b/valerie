@@ -27,6 +27,10 @@ Everything is plain files in this folder and Valerie reloads them the moment you
 | `plugins/<name>/plugin.yaml` | A plugin: commands, shortcuts, page scripts/styles, hooks. See `plugins/_example/`. |
 | `plugins/<name>/style.css`, `script.js` | Applied to the sites listed in that plugin's `matches`. |
 | `boosts/<host>.css`, `boosts/<host>.js` | Quick per-site CSS/JS without a plugin (e.g. `boosts/github.com.css`). |
+| `ui/chrome.css`, `ui/palette.css`, `ui/chat.css`, `ui/little.css`, `ui/answer.css`, `ui/welcome.css`, `ui/plugins.css` | The user's own CSS for Valerie's windows (sidebar, command bar, Chats…). Live; see "Restyling Valerie itself". |
+| `ui/page.css` | CSS for what Valerie draws inside web pages: find bar, link hints, menus, toasts, reader view. |
+| `strings/<language>.yaml` | Valerie's words in another language (`language: es`). `"{exe}" strings` prints every word to translate. |
+| `extensions/<name>/` | Unpacked browser extensions (folders with a manifest.json), macOS 15.4+. |
 | `NOTES.md` | Your own notes for next time (this file, AGENTS.md, is regenerated). |
 
 Valerie's binary: `{exe}`
@@ -41,7 +45,12 @@ Valerie's binary: `{exe}`
    `"{exe}" effective-config` prints every setting as it applies right now (defaults plus the user's changes).
    `"{exe}" check-agents` asks each installed AI app a one-line question and says which ones answer (for "my AI
    doesn't work"); `agents.default` picks the one Valerie uses.
-4. Tell the user what changed and which setting turns it back off.
+4. Check how it looks when it's about Valerie's own look: `"{exe}" call screenshot_ui '{{"part": "sidebar"}}'` saves a
+   picture of the sidebar (also command_bar, chats, welcome, plugins); `"{exe}" call read_ui '{{}}'` lists its elements,
+   ids and classes.
+5. Tell the user what changed and which setting turns it back off. Every AI change can be undone: "Undo Last
+   Customization" in the command bar (or `"{exe}" call run_command '{{"command": {{"cmd": "undo_customization"}}}}'`)
+   puts the settings, plugins, boosts, ui/ and strings/ back as they were before the last change (again goes further back).
 
 House rules from the owner:
 - When asked to add or remove something, do it **and** make it a setting so it can be switched back.
@@ -73,6 +82,25 @@ changed in plain words. Some translations:
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
 | "Use DuckDuckGo" | `search_engine: "https://duckduckgo.com/?q=%s"` |
+| "Make the sidebar look like …" / "rounder tabs" / "a different font for tab titles" | CSS in `ui/chrome.css` (see "Restyling Valerie itself") |
+| "Make the find bar / link hints bigger" | CSS in `ui/page.css` |
+| "Put Valerie in Spanish" | `language: es` plus `strings/es.yaml` (translate the output of `"{exe}" strings`) |
+| "Keep Valerie on top" / "see-through window" / "frosted sidebar" | `window.always_on_top: true`, `window.opacity: 0.9`, `window.vibrancy: sidebar` |
+| "Hide the Tools menu" / "rename Spaces to Desks" / "don't quit with ⌘Q" | `menu.hide: [Tools]`, `menu.rename: {{ Spaces: Desks }}`, `menu.quit_shortcut: ""` or `menu.confirm_quit: true` |
+| "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
+| "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
+| "Use old Reddit" | `rules: [{{ redirect: "https://www.reddit.com/*", to: "https://old.reddit.com/*" }}]` |
+| "Block this tracker" / "use EasyList" | `rules: [{{ block: "||tracker.example^" }}]`; add the list's address to `content_blocking.lists` |
+| "Hide comments on this site" | `rules: [{{ hide: '#comments', site: example.com }}]` (or `boosts/<host>.css`) |
+| "Dark sites in my Work space only" / "different search engine at school" | that space's `settings:` under `spaces`, e.g. `settings: {{ pages: {{ dark_mode: always }} }}` |
+| "Ask me where to save downloads" / "PDFs into Documents" | `downloads.ask: true`, `downloads.rules: [{{ match: "*.pdf", folder: "~/Documents" }}]` |
+| "Mouse back button" / "middle-click shouldn't close tabs" | `mouse.back_button: back`, `mouse.middle_click_tab: null` |
+| "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
+| "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
+| "An icon in the menu bar" / "things in the Dock menu" / "a different Dock icon" | `app.menu_bar_icon: "✦"`, `app.dock_menu: [new_tab, new_window]`, `app.icon: "~/Pictures/icon.png"` |
+| "Answer me in French" / "always be brief" (the AI) | `agents.instructions: "Answer in French."` (or `agents.instructions_for.chat`) |
+| "⌘K then ⌘S" style shortcuts | a key sequence in `keybindings`: `"CmdOrCtrl+K CmdOrCtrl+S": sync` |
+| "Put that back" / "undo what you just did" | the `undo_customization` command |
 
 Example: "I'm 82, my eyes aren't great, I only use email and the news, and the keyboard tricks confuse me" becomes:
 
@@ -100,6 +128,40 @@ If a wish needs something no setting covers, a boost (CSS for one site) or a plu
 - **Send a site to a space**: an entry in `routes` (this list replaces the default list, so copy the existing routes).
 - **Restyle a site**: a CSS file in `boosts/<host>.css`.
 - **Anything with logic** (several steps, page scripts, local programs): a plugin in `plugins/<name>/`.
+- **Something that should happen by itself** ("pin every Figma tab", "mute YouTube when I switch away", "save every PDF
+  I download to Notion"): a plugin with `events`.
+- **A new right-click entry, sidebar button, command-bar search, menu entry or start page**: a plugin (see Plugins).
+
+## Restyling Valerie itself
+
+Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie's styles, so the user's rules win; use
+`!important` only when a rule doesn't take). `ui.custom_css: false` turns them all off. After a change, look with
+`screenshot_ui` and `read_ui`.
+
+- `ui/chrome.css`: the sidebar, top tab bar and start page. Colour variables on `:root`: `--bg1`, `--bg2` (background
+  gradient), `--accent`, `--fg`, `--fg-dim`, `--hover`, `--active`, `--line`, `--tile`; sizes `--sw` (sidebar width),
+  `--tab-h`, `--tab-icon`, `--tab-font`, `--pin-cols`, `--pin-h`. `:root.light` is set for light themes; `body` has
+  `left`/`right`, `top` (tabs on top) and `size-full` / `size-medium` / `size-compact`. Parts: `#sidebar`, `.drag`
+  (title bar), `.navbtn`, `#url`, `#favorites`, `.grid`, `.tile` (pinned icons), `#widgets`, `.widget`, `#scroll`,
+  `.space-title`, `.row` (a tab; `.active`, `.unloaded`, `.loading`, `.split`), `.row .title`, `.row .x` (close),
+  `.folder`, `.kids`, `.kept`, `.divider`, `.newtab`, `#nowplaying`, `#bottom`, `.sp` (space icons; `.active`),
+  `#topbar`, `.chip`, `#empty` (start page), `#toast`, `.pinfolder`, `#pinfly`, Chats: `.row.chat`, `.chat-label`.
+- `ui/palette.css`: the command bar. Variables `--accent`, `--bg`, `--fg`, `--dim`, `--sel`, `--line`, `--width`,
+  `--top`, `--input-size`. Parts: `#backdrop`, `#card`, `#inputrow`, `#q` (the text box), `#list`, `.item` (`.sel`),
+  `.item .t` (title), `.item .u` (address), `.item .kind`, `.item .ic`, `.section`, `#foot`, `mark` (matched text).
+- `ui/chat.css`: Chats. Variables `--bg`, `--fg`, `--dim`, `--faint`, `--line`, `--card`, `--accent`. Parts: `#top`,
+  `#log`, `.msg.user .bubble`, `.msg.assistant`, `.md` (answers), `.work` (tool steps), `#composer`, `#box`,
+  `textarea`, `.ctl`, `#send`, `#empty`, `.chip`.
+- `ui/little.css`: the bar on little windows: `#title`, `.btn`, `#open`, `#pick`.
+- `ui/page.css`: what Valerie draws inside pages: `.hint` (link hints), `.toast`, `.menu` (link menu), `.find`
+  (find bar) and `.find input`, `.minimap`, `.pill` (link address on hover), `.save` (save password), `.loadbar`,
+  `.pick` (hide-an-element highlight); reader view: `main`, `.site`, `h1`, `p`.
+
+## Valerie in another language
+
+Set `language: xx` and write `strings/xx.yaml`: `"English words": "your words"`. `"{exe}" strings` prints every word
+Valerie shows (menus, the sidebar, the command bar, messages), ready to fill in; `{{}}` stands for a name or number
+(`"Copied {{}}": "Copié {{}}"`). Leave out what you don't translate. Web pages aren't affected (that's `translate`).
 
 ## Sync between machines
 
@@ -159,6 +221,15 @@ A plugin is a folder in `plugins/` with a `plugin.yaml`. Copy `plugins/_example/
 
 What each piece can do:
 - **actions**: run built-in commands in order (macros).
+- **confirm**: a question asked first ("Delete all my tabs?"); No cancels.
+- **menu**: which menu bar menu the command goes in (default Plugins; a new name makes a new menu).
+- **context_menu**: right-click menus it appears in: `link`, `selection`, `image`, `page` (on web pages), `tab`, `folder`
+  (in the sidebar). It gets what was clicked as `VALERIE_LINK`, `VALERIE_SELECTION`, `VALERIE_IMAGE`, `VALERIE_PAGE`,
+  `VALERIE_CLICKED_TAB` (that tab's address) or `VALERIE_FOLDER`; `js` gets it as a `context` object.
+- **command_bar: false**: keep it out of the command bar (for right-click-only commands).
+- **output** for `run`: `toast` | `tab` (plain text) | `html` (the output is a web page, opened in a tab) | `list` (a JSON
+  list `[{{"title", "url"?, "sub"?, "copy"?, "command"?}}]` or "title<TAB>url" lines, shown in the command bar to pick
+  from; `command` runs another command of the plugin) | `notify` (a system notification) | `clipboard` | `none`.
 - **js**: runs inside the current page as a function body; `return` a value to show it as a toast. It has the page's
   powers only (DOM, fetch to the page's own site).
 - **run**: a shell command run in the plugin folder, any language. It gets `VALERIE_URL`, `VALERIE_TITLE` and
@@ -166,6 +237,30 @@ What each piece can do:
   a new tab (`output: tab`) or nothing (`output: none`).
 - **style.css / script.js**: injected into pages matching `matches` (hosts like `github.com` cover subdomains;
   patterns with `://` match whole URLs). CSS updates live; script.js runs after each page load.
+  - `run_at: start` runs script.js before the site's own code (to catch or change things early), `idle` once the page
+    has settled; default `loaded`.
+  - `all_frames: true` also runs script.js and style.css in frames inside the page (embedded players, editors).
+  - `rerun_when_url_changes: true` runs script.js again when a web app changes its address without reloading (GitHub,
+    YouTube, Gmail), so it works on every "page" of it.
+  - script.js gets a `valerie` object: `valerie.run("<title of a command in this plugin>")`, and
+    `await valerie.call("<tool>", {{ …arguments }})` for the browser tools listed below (e.g. `list_tabs`, `open_tab`,
+    `read_page`, `run_command`). List the tools it uses under `permissions:` in plugin.yaml; the user is asked once,
+    the first time. Tools that act on a tab act on the page the script is in unless given `tab`.
+- **events**: things to do when something happens: `on:` one of {events}. Optional `matches` (sites), then `actions`
+  (built-in commands; ones that act on a tab act on the event's tab, e.g. `on: tab_opened, matches: [figma.com],
+  actions: [toggle_pin]`) and/or `run` (gets `VALERIE_EVENT`, `VALERIE_URL`, `VALERIE_TAB`, `VALERIE_SPACE`,
+  `VALERIE_FILE` for downloads). `idle` takes `minutes`.
+- **search**: live results in the command bar: `{{ title, keyword?, run }}`. `run` gets what's typed as
+  `VALERIE_QUERY` (without the keyword) and prints a JSON list like `output: list`. With a `keyword` (e.g. `gh`) it's
+  only asked when what's typed starts with that word.
+- **sidebar**: buttons and live text in the sidebar: `{{ title, icon?, command? | url?, text_from?, every_seconds? }}`.
+  `text_from` is a shell command whose first line of output becomes the text (refreshed every `every_seconds`).
+  `sidebar.order` in config.yaml places them (`widgets`).
+- **start.html**: with `start_page: plugin:<name>` in config.yaml, an empty space shows the plugin's start.html. It runs
+  sandboxed; `parent.postMessage({{ open: "https://…" }}, "*")` opens a site, `{{ search: "words" }}` searches, and
+  `{{ run: "<command title>" }}` runs one of the plugin's commands. It gets the theme as a message
+  `{{ valerie: "theme", theme: {{ background, accent, mode }} }}`.
+- **spaces**: `[Work]` makes the whole plugin apply only in those spaces.
 - **on_page_load**: shell commands run when a matching page finishes loading.
 - **settings**: the plugin's own options. `script.js` gets them as a `settings` object, so users (or you) can tune a
   plugin by editing its `plugin.yaml` instead of its code.
@@ -196,6 +291,7 @@ at what the user has open (it talks to Valerie's built-in MCP server, which also
 Tools:
 "#,
         example = crate::plugins::EXAMPLE,
+        events = crate::plugins::EVENTS.iter().map(|(n, what)| format!("`{n}` ({what})")).collect::<Vec<_>>().join(", "),
     );
     for t in crate::mcp::tools() {
         let _ = writeln!(g, "- `{}`: {}", t["name"].as_str().unwrap_or(""), t["description"].as_str().unwrap_or("").split(". No-option").next().unwrap_or(""));
@@ -210,10 +306,18 @@ Examples:
 "{exe}" call run_command '{{"command": {{"cmd": "switch_space", "name": "Work"}}}}'
 ```
 
+## Browser extensions
+
+Unpacked web extensions (a folder with a manifest.json, as for Safari or Chrome "load unpacked") go in `extensions/`
+(macOS 15.4 or later). Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
+and opens their popups and options pages. `extensions.enabled: false` turns them all off.
+
 ## Limits
 
 - Passwords can't be read by agents, plugins or `valerie call`.
-- Page-side `script.js` can't trigger privileged browser commands; put those in a command's `actions` or `run`.
+- Page-side `script.js` only reaches the browser through `valerie.call`, with the tools in its plugin's `permissions`
+  (which the user approves); pages themselves can't use a plugin's key.
+- Clearing a site's data (`clear_site_data`) always asks the user.
 - Data (tabs, history) lives in `{data}`; don't edit it by hand while Valerie is running.
 "#,
         data = data_dir().display(),
@@ -247,4 +351,90 @@ pub fn install() {
         let _ = std::fs::write(example.join("plugin.yaml"), crate::plugins::EXAMPLE);
         let _ = std::fs::write(example.join("style.css"), "/* Applied to the sites in `matches` while the plugin is enabled. */\n");
     }
+}
+
+/// Quoted text in a source file that reads like words people see ("Copy Link", "Search or enter URL…").
+fn visible_strings(src: &str, out: &mut std::collections::BTreeSet<String>) {
+    let chars: Vec<char> = src.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '"' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut j = start;
+        while j < chars.len() && chars[j] != '"' && chars[j] != '\n' {
+            j += if chars[j] == '\\' { 2 } else { 1 };
+        }
+        let s: String = chars[start..j.min(chars.len())].iter().collect();
+        i = j + 1;
+        let first = s.chars().next().unwrap_or(' ');
+        let looks = first.is_uppercase()
+            && s.chars().any(|c| c.is_lowercase())
+            && (2..=90).contains(&s.chars().count())
+            && (s.contains(' ') || s.chars().count() <= 14)
+            && !s.contains(['{', '}', '<', '>', '=', ';', '#', '\\', '$', '`', '_'])
+            && !["px", "rgba", "var(", "http", "Cmd", "Ctrl+", "Alt+", "Shift+", "Key", "Digit", "Arrow"].iter().any(|x| s.contains(x));
+        if looks {
+            out.insert(s);
+        }
+    }
+}
+
+/// Messages Valerie shows (toasts), with {} where a name or number goes.
+fn toast_strings(src: &str, out: &mut std::collections::BTreeSet<String>) {
+    for part in src.split("toast(").skip(1) {
+        let p = part.trim_start().trim_start_matches('&').trim_start_matches("format!(").trim_start();
+        let Some(rest) = p.strip_prefix('"') else { continue };
+        let Some(end) = rest.find('"') else { continue };
+        let mut s = String::new();
+        let mut depth = 0;
+        for c in rest[..end].chars() {
+            match c {
+                '{' => {
+                    if depth == 0 {
+                        s.push_str("{}");
+                    }
+                    depth += 1;
+                }
+                '}' => depth -= 1,
+                c if depth == 0 => s.push(c),
+                _ => {}
+            }
+        }
+        if s.chars().any(|c| c.is_alphabetic()) && !s.contains('\\') {
+            out.insert(s);
+        }
+    }
+}
+
+/// Valerie's own words as a strings/<language>.yaml to translate (`valerie strings`), generated from the code.
+pub fn strings_template() -> String {
+    let mut words = std::collections::BTreeSet::new();
+    for (_, t) in CATALOG {
+        words.insert(t.to_string());
+    }
+    for m in ["Valerie", "Edit", "Tabs", "Spaces", "View", "Tools", "Plugins", "Window", "Settings…", "Quit Valerie", "Quit Valerie?", "Quit", "Cancel"] {
+        words.insert(m.to_string());
+    }
+    for src in [
+        include_str!("../ui/chrome.html"),
+        include_str!("../ui/palette.html"),
+        include_str!("../ui/chat.html"),
+        include_str!("../ui/little.html"),
+        include_str!("../ui/answer.html"),
+        include_str!("../ui/plugins.html"),
+        include_str!("../ui/content.js"),
+    ] {
+        visible_strings(src, &mut words);
+    }
+    toast_strings(include_str!("app.rs"), &mut words);
+    let map: std::collections::BTreeMap<String, String> = words.into_iter().map(|w| (w.clone(), w)).collect();
+    format!(
+        "# Valerie's words, to translate. Save as strings/<language>.yaml in the config folder (e.g. strings/es.yaml), set\n\
+         # `language: es` in config.yaml, and replace each right-hand side with your words. {{}} stands for a name or a\n\
+         # number that changes; keep it in your version. Lines you leave out (or don't change) stay in English.\n{}",
+        serde_yaml::to_string(&map).unwrap_or_default()
+    )
 }

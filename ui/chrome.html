@@ -24,6 +24,9 @@ body::before { /* soft accent glow */
   background: radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
 }
 .bgfade { position: fixed; inset: 0; pointer-events: none; transition: opacity .4s ease; }
+/* window.vibrancy: the desktop shows through, frosted, behind a lighter wash of the theme */
+html.vibrant body { background: linear-gradient(160deg, color-mix(in srgb, var(--bg1) 58%, transparent), color-mix(in srgb, var(--bg2) 58%, transparent)); }
+html.vibrant { background: transparent; }
 #sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; transition: opacity .12s; }
 #sidebar.hidden { opacity: 0; transition: opacity .15s .2s; }
 body.right #sidebar { right: 0; }
@@ -283,6 +286,12 @@ function icon(t, cls = "ico", slot = "side") {
   iconNodes.set(key, { src, ch, node }); iconsUsed.add(key);
   return node;
 }
+// mouse.middle_click_tab: a command that acts on the tab (null = nothing).
+function middleClick(t) {
+  const a = S.mouse ? S.mouse.middle_click_tab : "close_tab";
+  if (a == null) return;
+  cmd({ ...(typeof a === "string" ? { cmd: a } : a), tab: t.id });
+}
 const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.includes(S.active));
 const click = (fn) => (e) => { if (!suppressClick) fn(e); };
 
@@ -357,7 +366,7 @@ function tile(t, list, index) {
   f.append(icon(t)); f.title = t.title || t.url;
   if (t.playing) f.append(audio(t));
   f.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
-  f.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
+  f.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
   source(f, t.id, list, index);
   preloadOnHover(f, t);
@@ -377,7 +386,7 @@ function tabRow(t, list, index) {
   r.append(x);
   r.title = t.url;
   r.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
-  r.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_tab", tab: t.id }); };
+  r.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   r.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
   source(r, t.id, list, index);
   preloadOnHover(r, t);
@@ -552,6 +561,7 @@ function slideIn(dir) {
 function render(state) {
   S = state; iconsUsed = new Set();
   applyTheme(S.theme);
+  document.documentElement.classList.toggle("vibrant", !!S.vibrancy && S.vibrancy !== "none");
   const root = document.documentElement, b = document.body;
   root.style.setProperty("--sw", S.layout.sidebar_width + "px");
   root.style.setProperty("--pin-cols", Math.max(1, Math.min(12, +S.sidebar.pinned_columns || 4)));
@@ -882,7 +892,19 @@ addEventListener("mousemove", () => document.body.classList.add("pointer"), { pa
 document.documentElement.addEventListener("mouseleave", () => { document.body.classList.remove("pointer"); closeFly(); });
 function pointerOut() { if (!resizing && !(drag && drag.active)) { document.body.classList.remove("pointer"); closeFly(); } }
 
-window.valerie = { render, toast, pointerOut };
+// Key sequences: after the first key of one, the next key pressed here goes to Valerie.
+let seqUntil = 0;
+addEventListener("keydown", (e) => {
+  if (!seqUntil || ["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
+  const live = performance.now() < seqUntil; seqUntil = 0;
+  if (!live) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const k = e.code.replace(/^Key/, "").replace(/^Digit/, "").replace(/^Arrow/, "");
+  send({ t: "seq_key", key: [e.metaKey && "Cmd", e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", k].filter(Boolean).join("+") });
+}, true);
+function nextKey() { seqUntil = performance.now() + 2000; }
+
+window.valerie = { render, toast, pointerOut, nextKey };
 send({ t: "ready" });
 </script>
 </body>

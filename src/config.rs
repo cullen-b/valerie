@@ -153,6 +153,31 @@ pub struct SiteSettings {
     pub cookie_banners: Option<String>,
 }
 
+impl SiteSettings {
+    /// Fill in what `more` sets (it wins).
+    fn overlay(&mut self, more: &SiteSettings) {
+        macro_rules! take {
+            ($($f:ident),*) => { $( if more.$f.is_some() { self.$f = more.$f.clone(); } )* };
+        }
+        take!(camera, microphone, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
+    }
+}
+
+/// The `sites:` settings for an address: every matching entry, the most specific (longest pattern) winning.
+pub fn site_settings_for(sites: &BTreeMap<String, Option<SiteSettings>>, url: &str) -> SiteSettings {
+    let mut hits: Vec<(&String, &SiteSettings)> = sites
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+        .filter(|(k, _)| url.starts_with("http") && crate::plugins::matches(&[(*k).clone()], url))
+        .collect();
+    hits.sort_by_key(|(k, _)| k.len());
+    let mut out = SiteSettings::default();
+    for (_, s) in hits {
+        out.overlay(s);
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionsConfig {
     pub enabled: bool,
@@ -622,6 +647,20 @@ impl Config {
         self.agent_named(&name)
     }
 
+    /// The user's own instructions for agents doing `job` (chat, find, tasks, customize), ready to go after Valerie's
+    /// own rules; empty when they have none.
+    pub fn extra_instructions(&self, job: &str) -> String {
+        let mine: Vec<&str> = [self.agents.instructions.as_str(), self.agents.instructions_for.get(job).map(String::as_str).unwrap_or("")]
+            .into_iter()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if mine.is_empty() {
+            return String::new();
+        }
+        format!("\n\nThe user's own instructions for you (follow them unless they conflict with the rules above):\n{}", mine.join("\n"))
+    }
+
     pub fn agent_named(&self, name: &str) -> (String, AgentDef) {
         let mut def = self.agents.available.get(name).cloned().flatten().unwrap_or_else(|| AgentDef { cli: name.to_string(), ..Default::default() });
         if def.cli.is_empty() && def.command.is_empty() {
@@ -1016,7 +1055,7 @@ pub fn unknown_keys(user_text: &str) -> Vec<String> {
     out
 }
 
-fn merge(base: &mut Value, over: Value) {
+pub fn merge(base: &mut Value, over: Value) {
     match (base, over) {
         (Value::Mapping(b), Value::Mapping(o)) => {
             for (k, v) in o {
@@ -1049,12 +1088,25 @@ impl Config {
     }
 
     pub fn parse(text: &str) -> Result<Config> {
+        Ok(serde_yaml::from_value(Self::merged(text)?)?)
+    }
+
+    /// The defaults with the user's file on top, as YAML (what spaces' `settings` go on top of).
+    pub fn merged(text: &str) -> Result<Value> {
         let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
         let user: Value = serde_yaml::from_str(text)?;
         if !user.is_null() {
             merge(&mut base, user);
         }
-        Ok(serde_yaml::from_value(base)?)
+        Ok(base)
+    }
+
+    /// These settings with a space's own `settings` on top (None when it has none).
+    pub fn for_space(&self, base: &Value, space: &str) -> Option<Result<Config>> {
+        let over = self.spaces.iter().find(|s| s.name == space)?.settings.clone()?;
+        let mut v = base.clone();
+        merge(&mut v, serde_yaml::to_value(over).ok()?);
+        Some(serde_yaml::from_value(v).map_err(|e| anyhow::anyhow!("space {space:?} settings: {e}")))
     }
 
     pub fn theme(&self, r: Option<&ThemeRef>) -> Theme {

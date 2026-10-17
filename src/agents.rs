@@ -27,6 +27,8 @@ pub struct Run {
     pub customize: bool,
     /// Give up after this long.
     pub timeout: Duration,
+    /// The user's own instructions (agents.instructions), after Valerie's.
+    pub extra: String,
 }
 
 #[derive(Clone)]
@@ -37,17 +39,17 @@ pub struct Finished {
     pub summary: String,
 }
 
-fn preamble(space: &str, task: &str) -> String {
+fn preamble(space: &str, task: &str, extra: &str) -> String {
     format!(
         "You are a headless agent working inside the user's Valerie browser through the `valerie` MCP tools. \
          Open the tabs you need in the space named \"{space}\" (open_tab with space=\"{space}\"), work in the background, \
          and do not close or change the user's other tabs unless the task asks for it. Do not submit purchases, \
-         payments or irreversible forms; stop and report instead. Finish with a short plain-text summary of what you found or did.\n\n\
+         payments or irreversible forms; stop and report instead. Finish with a short plain-text summary of what you found or did.{extra}\n\n\
          Task: {task}"
     )
 }
 
-fn customize_preamble(task: &str) -> String {
+fn customize_preamble(task: &str, extra: &str) -> String {
     format!(
         "You are customising the user's Valerie web browser. The current folder is Valerie's config folder. Read AGENTS.md \
          here first: it explains the settings file, plugins, commands and how to validate. Make the change the user asks for \
@@ -55,7 +57,8 @@ fn customize_preamble(task: &str) -> String {
          Then run the check-config command from AGENTS.md and fix any errors until it passes. If the change needs a new \
          plugin, first search the plugin marketplace as AGENTS.md explains; if a plugin already does it, install that \
          instead and say so. Finish with a short summary of what you changed and how to turn it off; if you made a new \
-         plugin, end by saying it's something others might like and that they can share it in the plugin marketplace.\n\nThe user's request: {task}"
+         plugin, end by saying it's something others might like and that they can share it in the plugin marketplace. \
+         If the user asks to undo or put back an earlier change, run `valerie call run_command '{{\"command\": {{\"cmd\": \"undo_customization\"}}}}'`.{extra}\n\nThe user's request: {task}"
     )
 }
 
@@ -70,9 +73,9 @@ pub fn run(r: Run) -> Finished {
     let timeout = r.timeout;
     let result = (|| -> Result<bool> {
         let prompt = if r.customize {
-            customize_preamble(&r.prompt)
+            customize_preamble(&r.prompt, &r.extra)
         } else {
-            format!("{}\n\n{}", crate::ai::control_note(&r.def), preamble(&r.space, &r.prompt))
+            format!("{}\n\n{}", crate::ai::control_note(&r.def), preamble(&r.space, &r.prompt, &r.extra))
         };
         let cwd = if r.customize { crate::config::config_dir() } else { work.clone() };
         let mode = if r.customize { crate::ai::Mode::Customize } else { crate::ai::Mode::Browser };

@@ -31,6 +31,7 @@ USAGE:
   valerie default-config  print every config option with its default
   valerie llm-guide       print the guide that lets an AI assistant customise Valerie
   valerie check-config    validate config.yaml and every plugin (prints exact errors)
+  valerie strings         print Valerie's words, ready to translate into strings/<language>.yaml
   valerie call <tool> [json]  call a browser tool, e.g. valerie call list_tabs '{}'  
   valerie paths           show config and data locations";
 
@@ -40,7 +41,8 @@ fn check_config() -> anyhow::Result<()> {
         Ok(c) => {
             for (key, binding) in &c.keybindings {
                 if let Some(b) = binding {
-                    if key.parse::<muda::accelerator::Accelerator>().is_err() {
+                    // A key sequence is shortcuts separated by spaces.
+                    if key.split_whitespace().any(|k| k.parse::<muda::accelerator::Accelerator>().is_err()) || key.trim().is_empty() {
                         problems.push(format!("keybindings: {key:?} is not a valid shortcut"));
                     }
                     if b.command().is_none() {
@@ -182,6 +184,7 @@ fn check_config() -> anyhow::Result<()> {
                     problems.push(format!("routes: {:?} sends links to space {:?}, which isn't in `spaces`", r.pattern, r.space));
                 }
             }
+            problems.extend(check_new_settings(&c));
         }
         Err(e) => problems.push(format!("config.yaml: {e:#}")),
     }
@@ -197,6 +200,152 @@ fn check_config() -> anyhow::Result<()> {
         }
         std::process::exit(1)
     }
+}
+
+/// Checks for the settings that change Valerie's menus, sites, rules, window and the rest.
+fn check_new_settings(c: &Config) -> Vec<String> {
+    let mut p = Vec::new();
+    let one_of = |p: &mut Vec<String>, what: String, v: &str, allowed: &[&str]| {
+        if !allowed.contains(&v) {
+            p.push(format!("{what} is {v:?}; use {}", allowed.join(", ")));
+        }
+    };
+    const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
+    for part in &c.sidebar.order {
+        one_of(&mut p, "sidebar: order has".into(), part, PARTS);
+    }
+    const MENUS: &[&str] = &["Valerie", "Edit", "Tabs", "Spaces", "View", "Tools", "Plugins", "Window"];
+    for m in &c.menu.hide {
+        if !MENUS.iter().any(|x| x.eq_ignore_ascii_case(m)) {
+            p.push(format!("menu: hide has {m:?}; menus are {}", MENUS.join(", ")));
+        }
+    }
+    if c.menu.hide.iter().any(|m| m.eq_ignore_ascii_case("Valerie")) {
+        p.push("menu: the Valerie menu can't be hidden (it holds Quit)".into());
+    }
+    if !c.menu.quit_shortcut.trim().is_empty() && c.menu.quit_shortcut.parse::<muda::accelerator::Accelerator>().is_err() {
+        p.push(format!("menu: quit_shortcut {:?} isn't a shortcut (e.g. \"CmdOrCtrl+Q\", or \"\" for none)", c.menu.quit_shortcut));
+    }
+    for name in c.menu.commands.keys() {
+        if command::Command::from_name(name).is_none() && !command::WITH_ARGS.iter().any(|(n, _)| n == name) {
+            p.push(format!("menu: commands has {name:?}, which isn't a command (see `valerie llm-guide`)"));
+        }
+    }
+    for (what, b) in [("back_button", &c.mouse.back_button), ("forward_button", &c.mouse.forward_button), ("middle_click_tab", &c.mouse.middle_click_tab)] {
+        if b.as_ref().is_some_and(|b| b.command().is_none()) {
+            p.push(format!("mouse: {what} isn't a command"));
+        }
+    }
+    for (what, list) in [("dock_menu", &c.app.dock_menu), ("menu_bar_menu", &c.app.menu_bar_menu)] {
+        if let Some(b) = list.iter().find(|b| b.command().is_none()) {
+            p.push(format!("app: {what} has {b:?}, which isn't a command"));
+        }
+    }
+    let icon = c.app.icon.trim();
+    if !icon.is_empty() {
+        let path = icon.strip_prefix("~/").map(|r| dirs::home_dir().unwrap_or_default().join(r)).unwrap_or_else(|| icon.into());
+        if !path.exists() {
+            p.push(format!("app: icon {icon:?} isn't a file"));
+        }
+    }
+    for (key, b) in c.global_keybindings.iter().filter_map(|(k, b)| b.as_ref().map(|b| (k, b))) {
+        if platform::hotkey_code(key).is_none() {
+            p.push(format!("global_keybindings: {key:?} can't be a global shortcut (use modifiers and a letter, digit, F-key, arrow or Space)"));
+        }
+        if b.command().is_none() {
+            p.push(format!("global_keybindings: {key:?} has an unknown command {b:?}"));
+        }
+    }
+    for (i, r) in c.rules.iter().enumerate() {
+        let kinds = [&r.block, &r.redirect, &r.hide, &r.header].iter().filter(|k| !k.trim().is_empty()).count();
+        if kinds != 1 {
+            p.push(format!("rules: rule {} needs exactly one of block, redirect, hide or header", i + 1));
+        }
+        if !r.redirect.trim().is_empty() && !r.to.starts_with("http") {
+            p.push(format!("rules: rule {} redirects but `to` isn't an http(s) address", i + 1));
+        }
+        if !r.to.is_empty() && r.redirect.trim().is_empty() {
+            p.push(format!("rules: rule {} has `to` without `redirect`", i + 1));
+        }
+        if !r.header.trim().is_empty() && routing::headers(std::slice::from_ref(r), "https://x/").is_empty() && r.site.is_empty() {
+            p.push(format!("rules: rule {} header should look like \"Name: value\"", i + 1));
+        }
+        if !r.block.trim().is_empty() && blocking::user_block_rules(std::slice::from_ref(r)).0.is_empty() && blocking::user_block_rules(std::slice::from_ref(r)).1.is_empty() {
+            p.push(format!("rules: rule {} block {:?} can't be used (it's a regular expression, matches everything, or uses an option Valerie can't do)", i + 1, r.block));
+        }
+    }
+    const LINK_KEYS: &[&str] = &["middle_click", "cmd_click", "shift_click", "option_click", "cmd_shift_click", "option_shift_click"];
+    const LINK_ACTIONS: &[&str] = &["background_tab", "new_tab", "split", "peek", "little_window", "default"];
+    for (site, s) in c.sites.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))) {
+        for (k, v) in [("camera", &s.camera), ("microphone", &s.microphone), ("notifications", &s.notifications)] {
+            if let Some(v) = v {
+                one_of(&mut p, format!("sites.{site}: {k}"), v, &["ask", "allow", "deny"]);
+            }
+        }
+        if let Some(v) = &s.dark_mode {
+            one_of(&mut p, format!("sites.{site}: dark_mode"), v, &["off", "always"]);
+        }
+        if let Some(v) = &s.popups {
+            one_of(&mut p, format!("sites.{site}: popups"), v, &["window", "tab"]);
+        }
+        if let Some(v) = &s.cookie_banners {
+            one_of(&mut p, format!("sites.{site}: cookie_banners"), v, &["reject", "hide", "off"]);
+        }
+        if s.zoom.is_some_and(|z| !(25.0..=500.0).contains(&z)) {
+            p.push(format!("sites.{site}: zoom is a percent from 25 to 500"));
+        }
+        for (k, v) in s.links.iter().flatten() {
+            one_of(&mut p, format!("sites.{site}: links key"), k, LINK_KEYS);
+            one_of(&mut p, format!("sites.{site}: links.{k}"), v, LINK_ACTIONS);
+        }
+    }
+    let lang = c.language.trim();
+    if !lang.is_empty() && lang != "en" && !config::config_dir().join("strings").join(format!("{lang}.yaml")).exists() {
+        p.push(format!("language is {lang:?} but there's no strings/{lang}.yaml in the config folder (`valerie strings` prints what to translate)"));
+    } else if !lang.is_empty() && lang != "en" {
+        let path = config::config_dir().join("strings").join(format!("{lang}.yaml"));
+        if let Err(e) = serde_yaml::from_str::<std::collections::HashMap<String, String>>(&std::fs::read_to_string(&path).unwrap_or_default()) {
+            p.push(format!("strings/{lang}.yaml: {e} (it should be \"English\": \"yours\" pairs)"));
+        }
+    }
+    one_of(&mut p, "window: vibrancy".into(), &c.window.vibrancy, &["none", "sidebar", "window"]);
+    one_of(&mut p, "window: traffic_lights".into(), &c.window.traffic_lights, &["auto", "show", "hide"]);
+    if !(0.3..=1.0).contains(&c.window.opacity) {
+        p.push(format!("window: opacity is {}; use a number from 0.3 to 1", c.window.opacity));
+    }
+    for r in &c.downloads.rules {
+        if r.pattern.trim().is_empty() && r.site.trim().is_empty() {
+            p.push("downloads: a rule needs `match` (like \"*.pdf\") or `site`".into());
+        }
+    }
+    if let Some(name) = c.start_page.strip_prefix("plugin:") {
+        if !plugins::plugins_dir().join(name.trim()).join("start.html").exists() {
+            p.push(format!("start_page: plugin {:?} has no start.html", name.trim()));
+        }
+    } else {
+        one_of(&mut p, "start_page".into(), &c.start_page, &["logo", "wordmark", "blank"]);
+    }
+    for k in c.agents.instructions_for.keys() {
+        one_of(&mut p, "agents: instructions_for has".into(), k, &["chat", "find", "tasks", "customize"]);
+    }
+    let base = config::Config::merged(&std::fs::read_to_string(config::config_path()).unwrap_or_default()).unwrap_or_default();
+    for s in &c.spaces {
+        if let Some(over) = &s.settings {
+            if let Some(Err(e)) = c.for_space(&base, &s.name) {
+                p.push(format!("{e:#}"));
+            }
+            for u in config::unknown_keys(&serde_yaml::to_string(over).unwrap_or_default()) {
+                p.push(format!("spaces: {:?} settings: {u}", s.name));
+            }
+        }
+    }
+    let ext = extensions::dir(&c.extensions);
+    for e in std::fs::read_dir(&ext).into_iter().flatten().flatten().filter(|e| e.path().is_dir()) {
+        if !extensions::find(&ext).iter().any(|f| f.dir == e.path()) {
+            p.push(format!("extensions: {} has no readable manifest.json", e.file_name().to_string_lossy()));
+        }
+    }
+    p
 }
 
 fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
@@ -266,6 +415,10 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("check-config") => return check_config(),
+        Some("strings") => {
+            print!("{}", llm_guide::strings_template());
+            return Ok(());
+        }
         Some("call") => {
             let Some(tool) = args.get(1) else { anyhow::bail!("usage: valerie call <tool> [json]") };
             return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));

@@ -401,11 +401,17 @@ enabled: false
 
 # Sites that style.css and script.js (next to this file) apply to. Empty = every site.
 matches: ["news.ycombinator.com"]
+run_at: loaded               # when script.js runs. one of: start (before the site's code) | loaded | idle
+all_frames: false            # also run in frames inside the page
+rerun_when_url_changes: false   # run again when a web app changes its address without reloading
+permissions: [list_tabs]     # browser tools script.js may use with `await valerie.call("list_tabs", {})` (asked once)
+spaces: []                   # only in these spaces; empty = every space
 
 commands:
   # A macro: built-in commands in order (see `valerie llm-guide` for the full list).
   - title: "Morning: open my dashboards"
     key: "CmdOrCtrl+Shift+M"
+    menu: Tabs               # which menu bar menu it's in (default Plugins)
     actions:
       - { cmd: switch_space, name: Work }
       - { cmd: new_tab, url: "https://linear.app" }
@@ -416,9 +422,11 @@ commands:
     js: "return document.body.innerText.split(/\\s+/).length + ' words'"
 
   # A local script in any language. It can call back into the browser with `valerie call <tool> '<json>'`.
-  - title: "Save page to reading list"
-    run: 'echo "$VALERIE_TITLE — $VALERIE_URL" >> ~/reading-list.txt && echo "Saved"'
-    output: toast            # one of: toast | tab | none
+  - title: "Save link to reading list"
+    run: 'echo "${VALERIE_LINK:-$VALERIE_URL}" >> ~/reading-list.txt && echo "Saved"'
+    output: toast            # one of: toast | tab | html | list | notify | clipboard | none
+    context_menu: [link, page]   # also on the right-click menu of links and pages (VALERIE_LINK is the link)
+    confirm: "Add it to your reading list?"   # asked first
 
 # Options for this plugin; script.js reads them from the `settings` object (e.g. settings.greeting).
 settings:
@@ -428,6 +436,26 @@ settings:
 on_page_load:
   - matches: ["arxiv.org"]
     run: 'echo "$VALERIE_URL" >> ~/papers-seen.txt'
+
+# Things to do when something happens in the browser.
+events:
+  - on: tab_opened
+    matches: ["figma.com"]
+    actions: [toggle_pin]    # acts on the tab that opened
+
+# Live command-bar results while you type "hn <words>".
+search:
+  - title: Hacker News
+    keyword: hn
+    run: 'curl -s "https://hn.algolia.com/api/v1/search?query=$(printf %s "$VALERIE_QUERY" | sed "s/ /%20/g")" | python3 -c "import json,sys; print(json.dumps([{\"title\": h[\"title\"], \"url\": h.get(\"url\") or \"https://news.ycombinator.com/item?id=\" + h[\"objectID\"]} for h in json.load(sys.stdin)[\"hits\"][:8]]))"'
+
+# A button with live text in the sidebar.
+sidebar:
+  - title: Reading list
+    icon: "📚"
+    text_from: 'echo "$(wc -l < ~/reading-list.txt | tr -d \" \") to read"'
+    every_seconds: 60
+    command: "Save link to reading list"
 "#;
 
 #[cfg(test)]
@@ -465,6 +493,8 @@ mod tests {
     fn example_manifest_parses_and_matches() {
         let m: Manifest = serde_yaml::from_str(EXAMPLE).unwrap();
         assert_eq!(m.commands.len(), 3);
+        assert_eq!((m.events.len(), m.search.len(), m.sidebar.len()), (1, 1, 1));
+        assert_eq!(m.commands[2].context_menu, ["link", "page"]);
         assert_eq!(m.settings["greeting"], "Hello from a plugin");
         let yt: Manifest = serde_yaml::from_str(BUNDLED[0].1[0].1).unwrap();
         assert!(yt.commands.iter().all(|c| c.actions.iter().all(|a| a.command().is_some())));

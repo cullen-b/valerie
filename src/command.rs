@@ -422,6 +422,12 @@ pub enum Command {
         #[serde(default)]
         query: Option<String>,
     },
+    /// Open a link the way Valerie's link menu does: new_tab | background_tab | split | peek | little_window.
+    OpenLink {
+        url: String,
+        #[serde(default)]
+        mode: String,
+    },
     /// A key of a key sequence ("CmdOrCtrl+K CmdOrCtrl+S") was pressed; Valerie waits for the rest.
     KeySequence {
         first: String,
