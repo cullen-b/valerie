@@ -36,6 +36,7 @@ pub enum Source {
     Chat,
     Answer,
     Welcome,
+    Market,
     LittleBar(WindowId),
     Page(Target),
 }
@@ -86,6 +87,10 @@ pub enum UserEvent {
     ToWelcome(Value),
     /// Free AI is set up: OpenCode with this model.
     FreeAiReady(String),
+    /// The plugin marketplace's list arrived (or couldn't be fetched).
+    MarketIndex(Result<Vec<crate::market::Entry>, String>),
+    /// Something for the marketplace view to show (install progress, a share's pull request…).
+    ToMarket(Value),
     /// Time to look for an update (a while after launch).
     CheckUpdates,
     /// The release feed was read (`manual`: the user asked).
@@ -135,6 +140,12 @@ pub struct App {
     /// The welcome guide, over the whole window while it's open.
     welcome_view: Option<WebView>,
     welcome_open: bool,
+    /// The plugin marketplace, over the whole window while it's open.
+    market_view: Option<WebView>,
+    market_open: bool,
+    market_index: Vec<crate::market::Entry>,
+    /// Plugins already here (or already offered for sharing): only new ones get the "share it?" offer.
+    known_plugins: std::collections::HashSet<String>,
     /// Chats whose agent is answering right now.
     chat_running: std::collections::HashSet<String>,
     /// When each running chat's agent started (for the Working section's timers).
@@ -381,6 +392,7 @@ fn ui(name: &str) -> String {
         "chat.html" => include_str!("../ui/chat.html"),
         "answer.html" => include_str!("../ui/answer.html"),
         "welcome.html" => include_str!("../ui/welcome.html"),
+        "plugins.html" => include_str!("../ui/plugins.html"),
         "brief.html" => include_str!("../ui/brief.html"),
         "content.js" => include_str!("../ui/content.js"),
         "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
@@ -506,6 +518,10 @@ impl App {
             chat_view: None,
             welcome_view: None,
             welcome_open: false,
+            market_view: None,
+            market_open: false,
+            market_index: Vec::new(),
+            known_plugins: Default::default(),
             chat_running: Default::default(),
             chat_started: HashMap::new(),
             found_models: Default::default(),
@@ -899,6 +915,15 @@ impl App {
                 let _ = cv.set_visible(false);
             }
         }
+        if let Some(mv) = &self.market_view {
+            if self.market_open {
+                let _ = mv.set_bounds(full);
+                let _ = mv.set_visible(true);
+                platform::bring_to_front(mv);
+            } else {
+                let _ = mv.set_visible(false);
+            }
+        }
         if let Some(wv) = &self.welcome_view {
             if self.welcome_open {
                 let _ = wv.set_bounds(full);
@@ -996,6 +1021,10 @@ impl App {
             return;
         }
         if let Some(v) = self.welcome_view.as_ref().filter(|_| self.welcome_open) {
+            let _ = v.focus();
+            return;
+        }
+        if let Some(v) = self.market_view.as_ref().filter(|_| self.market_open) {
             let _ = v.focus();
             return;
         }
@@ -2938,6 +2967,20 @@ impl App {
                 self.close_bar();
                 self.open_welcome();
             }
+            Command::PluginMarketplace => {
+                self.close_bar();
+                self.open_market();
+            }
+            Command::SharePlugin { name } => {
+                self.close_bar();
+                match name.filter(|n| !n.trim().is_empty()) {
+                    Some(n) => self.share_plugin(n),
+                    None => {
+                        self.open_market();
+                        self.market_send(&json!({ "type": "tab", "tab": "mine" }));
+                    }
+                }
+            }
             Command::CheckForUpdates => {
                 self.close_bar();
                 self.check_updates(true);
@@ -3481,7 +3524,7 @@ impl App {
                             self.state.space_mut().active = Some(id);
                         }
                     }
-                    Source::Chrome | Source::Chat | Source::Answer | Source::Welcome => self.focused_little = None,
+                    Source::Chrome | Source::Chat | Source::Answer | Source::Welcome | Source::Market => self.focused_little = None,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -3555,6 +3598,7 @@ impl App {
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => self.render_chat(),
             (Source::Welcome, _) => self.welcome_message(&m, elwt),
+            (Source::Market, _) => self.market_message(&m, elwt),
             (Source::Answer, "ready") => {
                 // The panel finished loading after the question went out: replay it and what's arrived so far.
                 if let (Some(v), Some(t)) = (&self.answer_view, self.answer_tab) {
@@ -3811,6 +3855,7 @@ impl App {
                 if f.name.starts_with("Welcome") {
                     self.welcome_send(&json!({ "type": "customized", "ok": f.ok, "summary": f.summary }));
                 }
+                self.offer_to_share();
                 self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, f.name));
                 self.agent_runs.insert(0, f);
                 self.agent_runs.truncate(30);
@@ -3872,6 +3917,34 @@ impl App {
                 }
             }
             UserEvent::ToWelcome(ev) => self.welcome_send(&ev),
+            UserEvent::ToMarket(ev) => {
+                if ev["type"] == "shared" {
+                    match ev["url"].as_str() {
+                        Some(url) => {
+                            self.toast("Shared: your pull request is open (the marketplace's maintainers review it)");
+                            if !self.market_open {
+                                self.open_tab(url, None, true);
+                            }
+                        }
+                        None => self.toast(&format!("Couldn't share {}: {}", ev["name"].as_str().unwrap_or("it"), ev["detail"].as_str().unwrap_or(""))),
+                    }
+                }
+                if ev["type"] == "installed" || ev["type"] == "removed" {
+                    self.reload_config();
+                }
+                self.market_send(&ev);
+                if ev["type"] == "installed" || ev["type"] == "removed" {
+                    let data = self.market_installed();
+                    self.market_send(&json!({ "type": "local", "plugins": data }));
+                }
+            }
+            UserEvent::MarketIndex(r) => match r {
+                Ok(entries) => {
+                    self.market_index = entries;
+                    self.market_send(&json!({ "type": "index", "plugins": self.market_index }));
+                }
+                Err(e) => self.market_send(&json!({ "type": "index_error", "detail": e })),
+            },
             UserEvent::FreeAiReady(model) => {
                 let set = config::set_setting(&["agents", "available", "opencode"], &format!("{{ cli: opencode, model: {} }}", json!(model)))
                     .and_then(|_| config::set_setting(&["agents", "default"], "opencode"));
@@ -3962,6 +4035,7 @@ impl App {
             }
             UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt),
             UserEvent::ChatDone { chat } => {
+                self.offer_to_share();
                 self.chat_running.remove(&chat);
                 self.chat_started.remove(&chat);
                 let shown = self.chats_open && self.active_chat.as_deref() == Some(chat.as_str()) && self.window_focused;
@@ -4201,6 +4275,7 @@ impl App {
     /// Launch: only what the active space needs. The window appears once it's on screen (or after 1.5s at most);
     /// everything else happens after that, in `after_reveal`.
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        self.known_plugins = self.plugins.iter().map(|p| p.name.clone()).collect();
         trace("start");
         self.build_menu();
         let a = self.state.active_space;
@@ -5213,6 +5288,203 @@ impl App {
         let s = site.clone();
         platform::ask(v, &format!("Allow {site} to send notifications?"), &body, "Allow", "Don't Allow", move |allowed| {
             send(&p, UserEvent::NotifyPermission { tab, site: s, allowed });
+        });
+    }
+
+    // ---------------------------------------------------------------- plugin marketplace
+
+    fn open_market(&mut self) {
+        if self.market_view.is_none() {
+            let (p, p2) = (self.proxy.clone(), self.proxy.clone());
+            let built = WebViewBuilder::new()
+                .with_html(ui("plugins.html"))
+                .with_visible(false)
+                .with_accept_first_mouse(true)
+                .with_devtools(true)
+                .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Market, msg: r.into_body() }))
+                .with_navigation_handler(move |url| {
+                    if url.starts_with("about:") || url.starts_with("data:") {
+                        return true;
+                    }
+                    send(&p2, UserEvent::Ipc { from: Source::Market, msg: json!({ "t": "open", "url": url }).to_string() });
+                    false
+                })
+                .build_as_child(&self.window);
+            match built {
+                Ok(v) => self.market_view = Some(v),
+                Err(e) => return eprintln!("valerie: plugin marketplace view: {e}"),
+            }
+        } else {
+            self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
+            self.fetch_market();
+        }
+        self.market_open = true;
+        self.layout();
+        self.focus_active();
+    }
+
+    fn market_send(&self, ev: &Value) {
+        if let Some(v) = self.market_view.as_ref() {
+            let _ = v.evaluate_script(&format!("window.market && market.event({ev})"));
+        }
+    }
+
+    fn fetch_market(&self) {
+        let (url, p) = (self.config.plugin_marketplace.index.clone(), self.proxy.clone());
+        std::thread::spawn(move || send(&p, UserEvent::MarketIndex(crate::market::fetch(&url).map_err(|e| format!("{e:#}")))));
+    }
+
+    /// Plugins in the config folder, with where they came from (the marketplace's version, if from there).
+    fn market_installed(&self) -> Vec<Value> {
+        self.plugins
+            .iter()
+            .filter(|p| !p.name.starts_with('_'))
+            .map(|p| json!({ "name": p.name, "description": p.manifest.description, "enabled": p.manifest.enabled, "builtin": plugins::is_bundled(&p.name),
+                             "market_version": crate::market::installed_version(&p.dir), "matches": p.manifest.matches }))
+            .collect()
+    }
+
+    fn market_message(&mut self, m: &Value, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let name = m["name"].as_str().unwrap_or("").to_string();
+        match m["t"].as_str().unwrap_or("") {
+            "ready" => {
+                let accent = self.theme_for(self.state.active_space).accent;
+                let data = json!({ "plugins": self.market_installed(), "accent": accent, "font": self.config.layout.font, "repo": self.config.plugin_marketplace.repo });
+                if let Some(v) = &self.market_view {
+                    let _ = v.evaluate_script(&format!("window.market && market.init({data})"));
+                }
+                self.fetch_market();
+            }
+            "refresh" => self.fetch_market(),
+            // Plugins that run programs, or touch every site, say so and ask first.
+            "install" => {
+                let Some(e) = self.market_index.iter().find(|e| e.name == name).cloned() else { return };
+                let (p, dir) = (self.proxy.clone(), plugins::plugins_dir());
+                let go = move || {
+                    std::thread::spawn(move || {
+                        let r = crate::market::install(&e, &dir);
+                        let ev = json!({ "type": "installed", "name": e.name, "ok": r.is_ok(), "detail": r.err().map(|x| format!("{x:#}")) });
+                        send(&p, UserEvent::ToMarket(ev));
+                    });
+                };
+                let entry = self.market_index.iter().find(|e| e.name == name);
+                let risky = entry.is_some_and(|e| !e.programs.is_empty() || e.matches.is_empty());
+                match (entry, self.market_view.as_ref()) {
+                    (Some(e), Some(v)) if risky => {
+                        let mut body = String::new();
+                        if e.matches.is_empty() {
+                            body.push_str("It works on every site you visit.\n\n");
+                        }
+                        if !e.programs.is_empty() {
+                            body.push_str("It can run these on your computer:\n\n");
+                            body.push_str(&e.programs.iter().map(|x| x.chars().take(400).collect::<String>()).collect::<Vec<_>>().join("\n\n"));
+                            body.push_str("\n\n");
+                        }
+                        body.push_str("Only install plugins you trust.");
+                        platform::ask(v, &format!("Install {name}?"), &body, "Install", "Cancel", move |yes| {
+                            if yes {
+                                go();
+                            }
+                        });
+                    }
+                    _ => go(),
+                }
+            }
+            "remove" => {
+                let Some(p) = self.plugins.iter().find(|p| p.name == name) else { return };
+                let (dir, px) = (p.dir.clone(), self.proxy.clone());
+                let Some(v) = self.market_view.as_ref() else { return };
+                platform::ask(v, &format!("Remove {name}?"), "Its folder is deleted from your plugins.", "Remove", "Cancel", move |yes| {
+                    if yes {
+                        let r = std::fs::remove_dir_all(&dir);
+                        send(&px, UserEvent::ToMarket(json!({ "type": "removed", "name": dir.file_name().map(|n| n.to_string_lossy().to_string()), "ok": r.is_ok() })));
+                    }
+                });
+            }
+            "toggle" => {
+                let Some(p) = self.plugins.iter().find(|p| p.name == name) else { return };
+                let on = m["enabled"].as_bool().unwrap_or(true);
+                let file = p.dir.join("plugin.yaml");
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let line = format!("enabled: {on}");
+                let new = if text.lines().any(|l| l.starts_with("enabled:")) {
+                    text.lines().map(|l| if l.starts_with("enabled:") { line.clone() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n"
+                } else {
+                    format!("{line}\n{text}")
+                };
+                if std::fs::write(&file, new).is_ok() {
+                    self.reload_config();
+                    self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
+                }
+            }
+            "share" => self.share_plugin(name),
+            "open" => {
+                if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("https://")) {
+                    self.close_market();
+                    self.open_tab(url, None, true);
+                }
+            }
+            "close" => self.close_market(),
+            "drag" => {
+                let _ = self.window.drag_window();
+            }
+            _ => {}
+        }
+        let _ = elwt;
+    }
+
+    fn close_market(&mut self) {
+        self.market_open = false;
+        self.layout();
+        self.focus_active();
+    }
+
+    /// Share a plugin as a pull request to the marketplace, signing in to GitHub first if needed.
+    fn share_plugin(&mut self, name: String) {
+        let dir = plugins::plugins_dir().join(&name);
+        if !dir.join("plugin.yaml").exists() {
+            return self.toast(&format!("There's no plugin called {name}"));
+        }
+        self.toast(&format!("Sharing {name}…"));
+        self.market_send(&json!({ "type": "sharing", "name": name }));
+        let (p, repo, index, client_id) = (self.proxy.clone(), self.config.plugin_marketplace.repo.clone(), self.config.plugin_marketplace.index.clone(), self.config.sync.github_client_id.clone());
+        std::thread::spawn(move || {
+            let notify = |s: crate::github::Step| {
+                if let crate::github::Step::Code { code, url } = s {
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(code.clone()));
+                    send(&p, UserEvent::Toast(format!("Paste the code {code} on GitHub (it's on your clipboard) to sign in")));
+                    send(&p, UserEvent::Ipc { from: Source::Market, msg: json!({ "t": "open", "url": url }).to_string() });
+                }
+            };
+            let result = crate::github::sign_in(&client_id, &notify).and_then(|token| {
+                let all = crate::market::fetch(&index).unwrap_or_default();
+                crate::market::share(&dir, &repo, &all, &token)
+            });
+            let ev = match result {
+                Ok(url) => json!({ "type": "shared", "name": name, "url": url }),
+                Err(e) => json!({ "type": "shared", "name": name, "detail": format!("{e:#}") }),
+            };
+            send(&p, UserEvent::ToMarket(ev));
+        });
+    }
+
+    /// After an agent run: a plugin of the user's own that wasn't here before gets one offer to share it.
+    fn offer_to_share(&mut self) {
+        let (plugins, _) = plugins::load_all();
+        let new: Vec<String> = plugins
+            .iter()
+            .filter(|p| !self.known_plugins.contains(&p.name) && !p.name.starts_with('_') && !plugins::is_bundled(&p.name) && !p.dir.join(crate::market::STAMP).exists())
+            .map(|p| p.name.clone())
+            .collect();
+        self.known_plugins.extend(plugins.iter().map(|p| p.name.clone()));
+        let Some(name) = new.into_iter().next().filter(|_| self.config.plugin_marketplace.offer_to_share) else { return };
+        trace(&format!("offering to share the new plugin {name}"));
+        let p = self.proxy.clone();
+        let body = "Nice work! Share it in the plugin marketplace so other people can use it too? Valerie opens a pull request from your GitHub account, and it goes live once it's reviewed.";
+        platform::ask(&self.chrome, &format!("You made a plugin: {name}"), body, "Share It", "Not Now", move |yes| {
+            if yes {
+                send(&p, UserEvent::Ipc { from: Source::Market, msg: json!({ "t": "share", "name": name }).to_string() });
+            }
         });
     }
 

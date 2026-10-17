@@ -54,6 +54,7 @@ pub struct Config {
     pub mcp: McpConfig,
     pub sync: SyncConfig,
     pub updates: UpdatesConfig,
+    pub plugin_marketplace: MarketplaceConfig,
     pub agents: AgentsConfig,
     pub content_blocking: BlockingConfig,
     pub passwords: PasswordsConfig,
@@ -649,6 +650,13 @@ pub struct VimConfig {
 pub struct McpConfig {
     pub enabled: bool,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketplaceConfig {
+    pub index: String,
+    pub repo: String,
+    pub offer_to_share: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

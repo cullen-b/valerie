@@ -52,8 +52,10 @@ fn customize_preamble(task: &str) -> String {
         "You are customising the user's Valerie web browser. The current folder is Valerie's config folder. Read AGENTS.md \
          here first: it explains the settings file, plugins, commands and how to validate. Make the change the user asks for \
          by editing config.yaml and/or plugins/ (smallest change that works; make new behaviour switchable with a setting). \
-         Then run the check-config command from AGENTS.md and fix any errors until it passes. Finish with a short summary \
-         of what you changed and how to turn it off.\n\nThe user's request: {task}"
+         Then run the check-config command from AGENTS.md and fix any errors until it passes. If the change needs a new \
+         plugin, first search the plugin marketplace as AGENTS.md explains; if a plugin already does it, install that \
+         instead and say so. Finish with a short summary of what you changed and how to turn it off; if you made a new \
+         plugin, end by saying it's something others might like and that they can share it in the plugin marketplace.\n\nThe user's request: {task}"
     )
 }
 
