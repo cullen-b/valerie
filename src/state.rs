@@ -184,6 +184,9 @@ pub struct State {
     /// When Valerie last looked for an update (unix seconds).
     #[serde(default)]
     pub update_checked: u64,
+    /// The welcome guide was finished or skipped.
+    #[serde(default)]
+    pub welcome_done: bool,
     /// Answers to "Allow this site to send notifications?" (site → allowed).
     #[serde(default)]
     pub notify_sites: BTreeMap<String, bool>,

@@ -262,6 +262,23 @@ fn main() -> anyhow::Result<()> {
             let Some(tool) = args.get(1) else { anyhow::bail!("usage: valerie call <tool> [json]") };
             return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));
         }
+        // Which AI apps answer right now (installed, signed in, plan active).
+        Some("check-agents") => {
+            let path = ai::search_path();
+            for k in ai::KINDS {
+                let status = if ai::find_bin(k, &path).is_none() {
+                    "not installed".to_string()
+                } else {
+                    let (_, def) = config.agent_named(k.id);
+                    match ai::probe(&def) {
+                        Ok(()) => format!("works{}", if def.model.is_empty() { String::new() } else { format!(" ({})", def.model) }),
+                        Err(e) => format!("doesn't answer: {e:#}"),
+                    }
+                };
+                println!("{:<12} {status}", k.title);
+            }
+            return Ok(());
+        }
         Some("effective-config") => {
             print!("# Every setting as it applies right now: Valerie's defaults with your config.yaml on top.\n{}", serde_yaml::to_string(&config)?);
             return Ok(());

@@ -4,88 +4,414 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Valerie: the browser you change by asking</title>
-<meta name="description" content="A fast, endlessly configurable browser written in Rust, with agents built in. Free for Mac, Linux and Windows.">
+<meta name="description" content="A fast browser for Mac you shape by asking. Spaces, a command bar, vim keys and AI agents that can use your browser. Free.">
+<meta property="og:title" content="Valerie: the browser you change by asking">
+<meta property="og:description" content="Describe the browser you want. Valerie's AI makes it so.">
+<meta property="og:image" content="https://cullen-b.github.io/valerie/icon.png">
 <link rel="icon" href="icon.png">
 <style>
-:root { --bg: #0d0c12; --card: #16151d; --line: rgba(255,255,255,.08); --fg: #ecebf5; --dim: rgba(236,235,245,.6); --accent: #9d8cff; }
+:root { --bg: #09080d; --card: rgba(255,255,255,.04); --card2: rgba(255,255,255,.07); --line: rgba(255,255,255,.08);
+  --fg: #efeef6; --dim: rgba(239,238,246,.62); --faint: rgba(239,238,246,.38); --accent: #9d8cff; --ok: #6ee7a8; }
 * { box-sizing: border-box; }
-body { margin: 0; background: radial-gradient(1200px 600px at 50% -200px, #2a2250 0%, var(--bg) 60%); color: var(--fg);
-  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; min-height: 100vh; }
-main { max-width: 860px; margin: 0 auto; padding: 72px 24px 96px; }
-header { text-align: center; }
-header img { width: 112px; height: 112px; filter: drop-shadow(0 12px 40px rgba(157,140,255,.35)); }
-h1 { font-size: 48px; line-height: 1.05; letter-spacing: -1.4px; margin: 18px 0 10px; }
-.lead { font-size: 20px; color: var(--dim); max-width: 620px; margin: 0 auto 30px; }
-.cta { display: inline-flex; gap: 10px; align-items: center; padding: 14px 24px; border-radius: 14px; background: var(--accent);
-  color: #0d0c12; font-weight: 650; text-decoration: none; font-size: 17px; box-shadow: 0 10px 30px rgba(157,140,255,.35); }
-.cta:hover { filter: brightness(1.08); }
-.ver { color: var(--dim); font-size: 13px; margin-top: 12px; min-height: 20px; }
-h2 { font-size: 13px; letter-spacing: .7px; text-transform: uppercase; color: var(--dim); margin: 64px 0 14px; }
-.ways { display: grid; gap: 14px; }
-.way { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
-.way b { display: block; margin-bottom: 4px; }
-.way p { margin: 0 0 10px; color: var(--dim); font-size: 14.5px; }
-.cmd { display: flex; align-items: center; gap: 10px; background: #0b0a10; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-.cmd code { flex: 1; font: 13.5px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: nowrap; }
-.cmd button { all: unset; cursor: pointer; font-size: 12.5px; padding: 4px 10px; border-radius: 7px; background: rgba(255,255,255,.08); }
-.cmd button:hover { background: var(--accent); color: #0d0c12; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
-.feat { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
-.feat b { display: block; margin-bottom: 4px; } .feat span { color: var(--dim); font-size: 14.5px; }
-a { color: var(--accent); }
-.note { color: var(--dim); font-size: 13.5px; }
-footer { margin-top: 72px; color: var(--dim); font-size: 13px; text-align: center; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: inherit; }
+.wrap { max-width: 1140px; margin: 0 auto; padding: 0 28px; }
+.glow { position: absolute; inset: 0 0 auto; height: 1100px; pointer-events: none; z-index: 0;
+  background: radial-gradient(900px 560px at 50% -120px, color-mix(in srgb, var(--accent) 34%, transparent), transparent 70%),
+              radial-gradient(600px 400px at 85% 420px, rgba(80,200,255,.10), transparent 70%); }
+nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(18px) saturate(1.4); background: rgba(9,8,13,.62); border-bottom: 1px solid transparent; transition: border-color .3s; }
+nav.scrolled { border-bottom-color: var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 62px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 750; letter-spacing: -.3px; text-decoration: none; font-size: 17px; }
+.brand img { width: 28px; height: 28px; }
+nav .links { display: flex; gap: 22px; margin-left: auto; font-size: 14.5px; color: var(--dim); }
+nav .links a { text-decoration: none; } nav .links a:hover { color: var(--fg); }
+.btn { display: inline-flex; align-items: center; gap: 9px; padding: 12px 20px; border-radius: 13px; font-weight: 650; text-decoration: none; font-size: 15.5px;
+  background: var(--card2); border: 1px solid var(--line); cursor: pointer; transition: transform .15s, filter .15s, background .15s; color: var(--fg); font-family: inherit; }
+.btn:hover { background: rgba(255,255,255,.11); } .btn:active { transform: scale(.98); }
+.btn.primary { background: var(--accent); color: #0b0a10; border-color: transparent; box-shadow: 0 12px 36px color-mix(in srgb, var(--accent) 38%, transparent); }
+.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.btn.sm { padding: 8px 14px; font-size: 14px; border-radius: 11px; }
+section { position: relative; z-index: 1; }
+.hero { text-align: center; padding: 58px 0 10px; }
+.pill { display: inline-flex; gap: 8px; align-items: center; padding: 6px 14px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); font-size: 13.5px; color: var(--dim); margin-bottom: 26px; }
+.pill b { color: var(--ok); font-weight: 650; }
+h1 { font-size: clamp(40px, 6.2vw, 74px); line-height: 1.02; letter-spacing: -2.6px; margin: 0 0 20px; font-weight: 780; }
+h1 em { font-style: normal; background: linear-gradient(100deg, var(--accent), #7ed8ff 60%, #ffb3e6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { font-size: clamp(17px, 1.8vw, 20px); color: var(--dim); max-width: 680px; margin: 0 auto 28px; }
+.ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.meta { color: var(--faint); font-size: 13.5px; margin-top: 14px; }
+
+/* ---------- the demo ---------- */
+.demo { padding: 26px 0 90px; }
+.asker { max-width: 860px; margin: 0 auto 22px; }
+.askbar { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border-radius: 18px; background: rgba(20,19,28,.85);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 0 6px color-mix(in srgb, var(--accent) 9%, transparent); }
+.askbar .bang { color: var(--accent); font-weight: 800; font-size: 20px; }
+.askbar input { flex: 1; background: none; border: 0; outline: 0; color: var(--fg); font: inherit; font-size: 17px; min-width: 0; }
+.askbar input::placeholder { color: var(--faint); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.chip { padding: 7px 14px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); color: var(--dim); font-size: 14px; cursor: pointer; transition: all .15s; }
+.chip:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: var(--card2); }
+.stagewrap { display: grid; grid-template-columns: 1fr 300px; gap: 18px; align-items: start; }
+.yaml { background: #0e0d14; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; font: 12.5px/1.65 ui-monospace, Menlo, monospace; }
+.yaml .head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--dim); font: 12.5px -apple-system, system-ui, sans-serif; }
+.yaml .head .st { margin-left: auto; color: var(--faint); }
+.yaml .head .st.busy { color: var(--accent); } .yaml .head .st.ok { color: var(--ok); }
+.yaml pre { margin: 0; padding: 12px 14px; min-height: 360px; white-space: pre-wrap; color: rgba(239,238,246,.78); }
+.yaml .add { background: rgba(110,231,168,.10); color: var(--ok); display: block; margin: 0 -14px; padding: 0 14px; animation: flash .9s; }
+.yaml .cm { color: var(--faint); }
+@keyframes flash { from { background: rgba(110,231,168,.35); } }
+.note { color: var(--faint); font-size: 13px; padding: 10px 14px; border-top: 1px solid var(--line); font-family: -apple-system, system-ui, sans-serif; }
+
+/* mock window */
+.win { --tab-h: 34px; --sb: 236px; --mock-accent: var(--accent); --space-bg: #17141f; position: relative; height: 520px; border-radius: 16px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.12); box-shadow: 0 40px 120px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.4);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--mock-accent) 22%, var(--space-bg)), var(--space-bg) 70%);
+  display: grid; grid-template-columns: var(--sb) 1fr; transition: background .6s; font-size: 13px; }
+.win.right { grid-template-columns: 1fr var(--sb); }
+.win.right .sb { order: 2; } .win.right .page { order: 1; margin: 10px 0 10px 10px; }
+.win.top { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+.win.serif .page, .win.serif .sb { font-family: Georgia, "Iowan Old Style", serif; }
+.sb { display: flex; flex-direction: column; padding: 12px 10px 10px; gap: 8px; min-width: 0; transition: all .4s; }
+.lights { display: flex; gap: 7px; padding: 2px 4px 6px; } .lights i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.url { padding: 7px 10px; border-radius: 9px; background: rgba(255,255,255,.07); color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.pins { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pins div { height: 38px; border-radius: 10px; background: rgba(255,255,255,.07); display: grid; place-items: center; font-weight: 700; font-size: 13px; cursor: pointer; transition: background .2s; }
+.pins div:hover { background: rgba(255,255,255,.12); }
+.label { color: var(--faint); font-size: 11px; font-weight: 650; letter-spacing: .5px; text-transform: uppercase; padding: 6px 6px 0; }
+.tabs { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.tab { height: var(--tab-h); display: flex; align-items: center; gap: 9px; padding: 0 9px; border-radius: 9px; color: rgba(239,238,246,.82); cursor: pointer; transition: height .4s cubic-bezier(.2,.8,.2,1), background .15s; white-space: nowrap; overflow: hidden; }
+.tab:hover { background: rgba(255,255,255,.06); }
+.tab.on { background: rgba(255,255,255,.13); color: #fff; }
+.fav { width: 16px; height: 16px; border-radius: 5px; flex: none; }
+.spaces { margin-top: auto; display: flex; gap: 8px; justify-content: center; padding-top: 6px; }
+.spaces button { all: unset; width: 9px; height: 9px; border-radius: 5px; background: rgba(255,255,255,.25); cursor: pointer; transition: all .3s; }
+.spaces button.on { width: 24px; background: var(--mock-accent); }
+.win.top .sb { flex-direction: row; align-items: center; padding: 10px 12px 0; gap: 8px; }
+.win.top .sb .pins, .win.top .sb .label, .win.top .sb .spaces { display: none; }
+.win.top .sb .url { order: 9; width: 210px; flex: none; }
+.win.top .tabs { flex-direction: row; flex: 1; }
+.win.top .tab { flex: 1; max-width: 180px; height: 32px; }
+.page { margin: 10px 10px 10px 0; border-radius: 12px; background: #fbfaf7; color: #1e1d22; overflow: hidden; position: relative; transition: filter .5s, background .4s; }
+.win.top .page { margin: 8px 10px 10px; }
+.win.darkpage .page { filter: invert(.92) hue-rotate(180deg); }
+.article { padding: 34px 44px; }
+.article .kick { font-size: 11px; font-weight: 750; letter-spacing: .8px; text-transform: uppercase; color: #b35c2e; }
+.article h3 { font-size: 26px; line-height: 1.15; margin: 8px 0 10px; letter-spacing: -.5px; }
+.article .by { color: #8a8790; font-size: 12px; margin-bottom: 18px; }
+.article .img { height: 120px; border-radius: 10px; background: linear-gradient(120deg, #f1c58f, #e98a6c 50%, #9a7ad6); margin-bottom: 18px; }
+.article p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.65; color: #45434b; }
+/* command bar inside the mock */
+.cbar { position: absolute; left: 50%; top: 70px; width: min(520px, 86%); transform: translateX(-50%) scale(.97); opacity: 0; pointer-events: none;
+  background: #1b1a23; border: 1px solid rgba(255,255,255,.12); border-radius: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.55); transition: opacity .18s, transform .18s; z-index: 5; overflow: hidden; isolation: isolate; }
+.cbar.open { opacity: 1; transform: translateX(-50%) scale(1); pointer-events: auto; }
+.cbar input { width: 100%; padding: 16px 18px; background: none; border: 0; border-bottom: 1px solid var(--line); outline: 0; color: var(--fg); font: inherit; font-size: 16px; }
+.res { padding: 6px; max-height: 280px; overflow: hidden; }
+.r { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; color: var(--dim); cursor: pointer; }
+.r.sel { background: color-mix(in srgb, var(--mock-accent) 30%, transparent); color: #fff; }
+.r .ic { width: 22px; text-align: center; opacity: .9; } .r .k { margin-left: auto; font-size: 11.5px; color: var(--faint); }
+.hint { position: absolute; right: 16px; bottom: 14px; z-index: 4; font-size: 12px; color: #6d6a75; background: rgba(255,255,255,.85); padding: 5px 10px; border-radius: 8px; cursor: pointer; }
+.hint kbd { font: 600 11px ui-monospace, Menlo, monospace; }
+
+/* ---------- sections ---------- */
+h2 { font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spacing: -1.4px; margin: 0 0 14px; font-weight: 760; }
+.kicker { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: .9px; text-transform: uppercase; margin-bottom: 12px; }
+.lead { color: var(--dim); font-size: 18px; max-width: 620px; margin: 0 0 30px; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; align-items: center; padding: 90px 0; }
+.chat { background: #110f17; border: 1px solid var(--line); border-radius: 18px; padding: 18px; min-height: 380px; box-shadow: 0 30px 90px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 88%; padding: 11px 14px; border-radius: 14px; font-size: 14.5px; line-height: 1.5; animation: rise .35s ease; }
+.msg.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 26%, #1c1a25); }
+.msg.ai { background: rgba(255,255,255,.05); white-space: pre-wrap; }
+.tool { align-self: flex-start; font: 12px ui-monospace, Menlo, monospace; color: var(--dim); background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; animation: rise .3s ease; }
+.tool b { color: var(--accent); font-weight: 600; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.replay { align-self: center; margin-top: auto; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.feat { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; transition: transform .2s, border-color .2s; }
+.feat:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.feat .ic { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-size: 18px; margin-bottom: 14px; }
+.feat b { display: block; font-size: 16.5px; margin-bottom: 6px; } .feat span { color: var(--dim); font-size: 14.5px; }
+.install { padding: 90px 0; }
+.ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.way { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+.way .tag { align-self: flex-start; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px; background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.way p { color: var(--dim); font-size: 14.5px; margin: 0; flex: 1; }
+.cmd { display: flex; align-items: center; gap: 8px; background: #0b0a10; border: 1px solid var(--line); border-radius: 11px; padding: 9px 10px 9px 12px; }
+.cmd code { flex: 1; font: 12.5px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.cmd button { all: unset; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 7px; background: rgba(255,255,255,.08); }
+.cmd button:hover { background: var(--accent); color: #0b0a10; }
+.fine { color: var(--faint); font-size: 13.5px; margin-top: 20px; max-width: 760px; }
+footer { border-top: 1px solid var(--line); padding: 34px 0 60px; color: var(--faint); font-size: 14px; }
+footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; } footer a { color: var(--dim); text-decoration: none; } footer a:hover { color: var(--fg); }
+.reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.8,.2,1); }
+.reveal.in { opacity: 1; transform: none; }
+@media (max-width: 900px) {
+  .stagewrap, .split { grid-template-columns: 1fr; } .grid, .ways { grid-template-columns: 1fr; } nav .links { display: none; }
+  nav .btn { margin-left: auto; } .hint { display: none; }
+  .win { --sb: 170px; height: 460px; } .article { padding: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <img src="icon.png" alt="">
-    <h1>Valerie</h1>
-    <p class="lead">A fast browser you change by asking. Spaces, pinned tabs, a command bar and vim keys, on Safari's engine, with agents that can see and use your browser.</p>
-    <a class="cta" id="dl" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Download for Mac</a>
-    <div class="ver" id="ver">Apple silicon and Intel · macOS 14 or later · free</div>
-  </header>
+<div class="glow"></div>
+<nav id="nav"><div class="wrap">
+  <a class="brand" href="#"><img src="icon.png" alt="">Valerie</a>
+  <div class="links"><a href="#try">Try it</a><a href="#agents">Agents</a><a href="#features">Features</a><a href="#install">Install</a><a href="https://github.com/cullen-b/valerie">GitHub</a></div>
+  <a class="btn sm primary" href="#install">Download</a>
+</div></nav>
 
-  <h2>Install</h2>
-  <div class="ways">
-    <div class="way">
-      <b>One line in Terminal (the smoothest)</b>
-      <p>Downloads the latest Valerie, checks it's genuine, puts it in Applications and opens it.</p>
-      <div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div>
-    </div>
-    <div class="way">
-      <b>Homebrew</b>
-      <p>Valerie updates itself after that, so there's no need to <code>brew upgrade</code> it.</p>
-      <div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div>
-    </div>
-    <div class="way">
-      <b>Download</b>
-      <p>Open the <a href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">disk image</a> and drag Valerie to Applications. Linux and Windows builds are on the <a href="https://github.com/cullen-b/valerie/releases/latest">releases page</a>.</p>
-    </div>
-    <p class="note">The first time you open a downloaded or Homebrew copy, macOS may say it can't check Valerie for malware (Valerie isn't notarized by Apple yet).
-      Click Done, then open System Settings › Privacy &amp; Security and click <b>Open Anyway</b>. That's once; updates after that install themselves. The Terminal line doesn't need this.</p>
+<section class="hero"><div class="wrap">
+  <div class="pill"><b>●</b> <span id="ver">Free · open source · updates itself</span></div>
+  <h1>The browser you<br><em>change by asking.</em></h1>
+  <p class="sub">Tell Valerie how you want it and its AI rewires itself on the spot. Spaces, a command bar, vim keys, and agents that can actually use your browser, on Safari's fast engine.</p>
+  <div class="ctas">
+    <a class="btn primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Download for Mac</a>
+    <a class="btn" href="#try">Try it right here ↓</a>
   </div>
+  <div class="meta">Apple silicon and Intel · macOS 14 or later · Linux and Windows builds too</div>
+</div></section>
 
-  <h2>Why Valerie</h2>
+<section class="demo" id="try"><div class="wrap">
+  <div class="asker">
+    <div class="askbar"><span class="bang">!</span><input id="ask" placeholder="Describe a change… try “make it green” or “tabs on top”" autocomplete="off"><button class="btn sm primary" id="askgo">Ask</button></div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div class="stagewrap">
+    <div class="win" id="win">
+      <div class="sb" id="sb">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="url" id="url" title="Open the command bar">valerie.app/read/slow-web</div>
+        <div class="pins" id="pins"></div>
+        <div class="label" id="tlabel">Today</div>
+        <div class="tabs" id="tabs"></div>
+        <div class="spaces" id="spaces"></div>
+      </div>
+      <div class="page" id="page">
+        <div class="article">
+          <div class="kick" id="akick">Essay</div>
+          <h3 id="atitle">The case for a slower, kinder web</h3>
+          <div class="by">8 min read</div>
+          <div class="img"></div>
+          <p>Every browser asks you to adapt to it. Its buttons, its menus, its idea of where things go. What if it worked the other way around, and the browser adapted to you?</p>
+          <p>Say what you want in plain words. Bigger text for tired eyes, tabs where you expect them, the colors you like. And it simply happens.</p>
+        </div>
+        <div class="hint" id="hint">Press <kbd>⌘K</kbd> for the command bar</div>
+      </div>
+      <div class="cbar" id="cbar"><input id="cq" placeholder="Search tabs, history and commands…  (! to change Valerie, ? to ask AI)" autocomplete="off"><div class="res" id="res"></div></div>
+    </div>
+    <div class="yaml">
+      <div class="head">✎ config.yaml <span class="st" id="st">your settings</span></div>
+      <pre id="yaml"></pre>
+      <div class="note" id="ynote">Every change your AI makes is a readable line in one file. Undo is deleting it.</div>
+    </div>
+  </div>
+</div></section>
+
+<section id="agents"><div class="wrap split">
+  <div class="reveal">
+    <div class="kicker">Agents built in</div>
+    <h2>An AI that can use your browser, not just talk about it.</h2>
+    <p class="lead">Chats can open tabs, read pages, click and fill things in, with the access you choose: read only, ask first, or full. Ask questions about any page right in find. Schedule a morning brief. Have it watch a page and tap you when something changes.</p>
+    <p class="lead" style="font-size:15.5px">Works with Claude Code, Codex, Cursor and more. No subscription? Valerie sets up free AI for you.</p>
+  </div>
+  <div class="chat reveal" id="chat"></div>
+</div></section>
+
+<section id="features"><div class="wrap" style="padding: 40px 0 20px">
+  <div class="reveal"><div class="kicker">Everything else</div><h2>Arc's best ideas, made yours.</h2><p class="lead">All of it configurable, all of it from the keyboard if you like.</p></div>
   <div class="grid">
-    <div class="feat"><b>Change anything by asking</b><span>Every setting lives in one readable file, written so an AI can edit it for you.</span></div>
-    <div class="feat"><b>Agents built in</b><span>Chats that can open tabs, read pages and do the clicking, with the access you choose.</span></div>
-    <div class="feat"><b>Arc's best ideas</b><span>Spaces, pinned tabs and folders, a command bar, little windows and split view.</span></div>
-    <div class="feat"><b>Fast and light</b><span>Rust on the system's own web engine: Safari's speed and battery life on a Mac.</span></div>
-    <div class="feat"><b>Syncs through GitHub</b><span>Settings and tabs on every machine, in a private repo you own.</span></div>
-    <div class="feat"><b>Updates itself</b><span>New versions install quietly and start the next time you open Valerie.</span></div>
+    <div class="feat reveal"><div class="ic">◐</div><b>Spaces</b><span>Separate sets of tabs, each with its own color and logins. Swipe to switch.</span></div>
+    <div class="feat reveal"><div class="ic">⌘</div><b>One command bar</b><span>Tabs, history, the web, every command, a calculator, and your AI, all in one box.</span></div>
+    <div class="feat reveal"><div class="ic">⤒</div><b>Tabs that tidy themselves</b><span>Pin what matters. Everything else archives itself after a day.</span></div>
+    <div class="feat reveal"><div class="ic">⌨</div><b>Keyboard everything</b><span>Vim keys, link hints, and every shortcut is yours to change.</span></div>
+    <div class="feat reveal"><div class="ic">◫</div><b>Split view and little windows</b><span>Tabs side by side. Links from other apps open small and get out of the way.</span></div>
+    <div class="feat reveal"><div class="ic">✂</div><b>Sites that behave</b><span>Cookie banners rejected, trackers stripped, ads blocked, dark mode for any site.</span></div>
+    <div class="feat reveal"><div class="ic">⇄</div><b>Sync through GitHub</b><span>Settings and tabs on every Mac, in a private repo you own.</span></div>
+    <div class="feat reveal"><div class="ic">⚡</div><b>Fast and light</b><span>Rust on the system's own web engine: Safari's speed and battery life.</span></div>
+    <div class="feat reveal"><div class="ic">↻</div><b>Updates itself</b><span>Quietly, in the background. The new version is there next time you open it.</span></div>
   </div>
+</div></section>
 
-  <footer>Open source on <a href="https://github.com/cullen-b/valerie">GitHub</a>.</footer>
-</main>
+<section class="install" id="install"><div class="wrap">
+  <div class="reveal"><div class="kicker">Install</div><h2>Get Valerie</h2><p class="lead">Free and open source. Pick whichever way you like. After that, Valerie keeps itself up to date.</p></div>
+  <div class="ways">
+    <div class="way reveal"><span class="tag">Smoothest</span><b>One line in Terminal</b><p>Downloads the latest Valerie, checks it's genuine, puts it in Applications and opens it.</p>
+      <div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div></div>
+    <div class="way reveal"><b>Download</b><p>Open the disk image and drag Valerie into Applications. Linux and Windows builds are on the releases page.</p>
+      <a class="btn sm primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Valerie.dmg</a>
+      <a class="btn sm" href="https://github.com/cullen-b/valerie/releases/latest">All downloads</a></div>
+    <div class="way reveal"><b>Homebrew</b><p>No need to <code>brew upgrade</code>: Valerie updates itself.</p>
+      <div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div></div>
+  </div>
+  <p class="fine">Valerie isn't notarized by Apple yet, so the first time you open a downloaded or Homebrew copy, macOS may say it can't check it. Click Done, then System Settings › Privacy &amp; Security › Open Anyway. That's once; the Terminal line doesn't need it.</p>
+</div></section>
+
+<footer><div class="wrap"><span>Valerie</span><a href="https://github.com/cullen-b/valerie">Source</a><a href="https://github.com/cullen-b/valerie/releases">Releases</a><a href="https://github.com/cullen-b/valerie/issues">Report a problem</a></div></footer>
+
 <script>
-for (const b of document.querySelectorAll(".cmd button")) {
-  b.onclick = () => { navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
+const $ = (s) => document.querySelector(s);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+// ---------- the mini Valerie ----------
+const SPACES = [
+  { name: "Personal", accent: "#9d8cff", bg: "#17141f", pins: ["G", "▶", "♫", "✉"], pinColors: ["#ea4335", "#ff0033", "#1ed760", "#4285f4"],
+    tabs: [["The case for a slower, kinder web", "#e98a6c"], ["Weekend in Lisbon – Airbnb", "#ff5a5f"], ["Sourdough, step by step", "#c99a5b"], ["Hacker News", "#ff6600"], ["Lo-fi beats to browse to", "#1ed760"]] },
+  { name: "Work", accent: "#5fb3ff", bg: "#111821", pins: ["L", "F", "S", "N"], pinColors: ["#5e6ad2", "#a259ff", "#4a154b", "#e5e5e5"],
+    tabs: [["Q4 roadmap – Linear", "#5e6ad2"], ["Onboarding flow – Figma", "#a259ff"], ["#launch – Slack", "#e01e5a"], ["Pull request #412", "#8b949e"], ["Docs – Notion", "#d9d9d9"]] },
+  { name: "School", accent: "#4fd6a0", bg: "#101a17", pins: ["C", "D", "Q", "W"], pinColors: ["#e66000", "#4285f4", "#2d6cdf", "#636466"],
+    tabs: [["Organic Chemistry – Canvas", "#e66000"], ["Lab report draft – Docs", "#4285f4"], ["Krebs cycle – Wikipedia", "#c8c8c8"], ["Quizlet – Unit 4", "#4255ff"], ["Office hours booking", "#9aa0a6"]] },
+];
+const M = { space: 0, active: 0, accent: null, tabH: 34, top: false, right: false, dark: false, serif: false };
+const win = $("#win");
+function drawMock() {
+  const sp = SPACES[M.space];
+  win.style.setProperty("--mock-accent", M.accent || sp.accent);
+  win.style.setProperty("--space-bg", sp.bg);
+  win.style.setProperty("--tab-h", M.tabH + "px");
+  win.classList.toggle("top", M.top); win.classList.toggle("right", M.right && !M.top);
+  win.classList.toggle("darkpage", M.dark); win.classList.toggle("serif", M.serif);
+  const pins = $("#pins"); pins.replaceChildren();
+  sp.pins.forEach((p, i) => { const d = el("div", null, p); d.style.color = sp.pinColors[i]; pins.append(d); });
+  const tabs = $("#tabs"); tabs.replaceChildren();
+  sp.tabs.forEach(([t, c], i) => {
+    const r = el("div", "tab" + (i === M.active ? " on" : "")); const f = el("span", "fav"); f.style.background = c;
+    r.append(f, el("span", null, t)); r.onclick = () => { M.active = i; drawMock(); }; tabs.append(r);
+  });
+  const sd = $("#spaces"); sd.replaceChildren();
+  SPACES.forEach((s, i) => { const b = el("button", i === M.space ? "on" : ""); b.title = s.name; b.onclick = () => { M.space = i; M.active = 0; drawMock(); }; sd.append(b); });
+  const [title] = sp.tabs[M.active];
+  $("#atitle").textContent = title; $("#akick").textContent = sp.name;
+  $("#url").textContent = "valerie.app/" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 28);
 }
+
+// ---------- change it by asking ----------
+const BASE = ["# Only what you changed lives here.", "spaces: [Personal, Work, School]", "search_engine: duckduckgo"];
+let added = [];
+const COLORS = { green: "#3ccf91", blue: "#4ea8ff", pink: "#ff7ac6", orange: "#ff9d4d", red: "#ff6b6b", yellow: "#f5c84c", purple: "#9d8cff", teal: "#2fd3c4" };
+const RULES = [
+  { re: /\b(green|blue|pink|orange|red|yellow|purple|teal)\b/, run: (m) => { M.accent = COLORS[m[1]]; return [`theme: { accent: "${COLORS[m[1]]}" }   # ${m[1]}`]; } },
+  { re: /\b(big|bigger|tall|taller|huge|large|roomy)\b/, run: () => { M.tabH = 50; return ["sidebar: { tab_height: 50 }   # roomier tabs"]; } },
+  { re: /\b(small|smaller|compact|tiny|dense)\b/, run: () => { M.tabH = 26; return ["sidebar: { tab_height: 26 }   # compact tabs"]; } },
+  { re: /\b(top|chrome|horizontal)\b/, run: () => { M.top = true; return ["layout: { tab_bar: top }   # tabs along the top"]; } },
+  { re: /\b(side|sidebar|left)\b(?!.*right)/, run: () => { M.top = false; M.right = false; return ["layout: { tab_bar: side, sidebar_position: left }"]; } },
+  { re: /\bright\b/, run: () => { M.top = false; M.right = true; return ["layout: { sidebar_position: right }"]; } },
+  { re: /\b(dark|night|invert)\b/, run: () => { M.dark = true; return ["pages: { dark_mode: always }   # every site in dark mode"]; } },
+  { re: /\b(light|bright|day)\b/, run: () => { M.dark = false; return ["pages: { dark_mode: off }"]; } },
+  { re: /\b(serif|georgia|book|font|typewriter)\b/, run: () => { M.serif = true; return ['layout: { font: "Georgia" }   # a bookish font']; } },
+  { re: /\b(reset|undo|default|original)\b/, run: () => { Object.assign(M, { accent: null, tabH: 34, top: false, right: false, dark: false, serif: false }); added = []; return []; } },
+];
+const SUGGEST = ["Make it green", "Bigger tabs", "Tabs on top like Chrome", "Every site in dark mode", "Sidebar on the right", "A bookish font", "Reset"];
+function drawYaml(fresh) {
+  const pre = $("#yaml"); pre.replaceChildren();
+  const lines = [...BASE, ...added];
+  lines.forEach((l) => {
+    const isNew = fresh && fresh.includes(l);
+    const [code, comment] = l.startsWith("#") ? ["", l] : l.split(/\s{3}(?=#)/);
+    const row = el("span", isNew ? "add" : null);
+    row.style.display = "block";
+    // The comment goes on its own line above the setting, as people write YAML.
+    if (comment) row.append(el("span", "cm", comment + (code ? "\n" : "")));
+    if (code) row.append(document.createTextNode((isNew ? "+ " : "") + code));
+    pre.append(row);
+  });
+}
+let busy = false;
+function ask(text) {
+  text = (text || "").trim(); if (!text || busy) return;
+  const t = text.toLowerCase();
+  const hits = RULES.filter((r) => r.re.test(t));
+  const st = $("#st"); busy = true;
+  st.textContent = "✦ your AI is editing…"; st.className = "st busy";
+  setTimeout(() => {
+    let fresh = [];
+    for (const r of hits) {
+      const lines = r.run(t.match(r.re));
+      for (const l of lines) { const key = l.split(":")[0]; added = added.filter((a) => a.split(":")[0] !== key); added.push(l); fresh.push(l); }
+    }
+    drawMock(); drawYaml(fresh);
+    if (hits.length) { st.textContent = "✓ saved · applied live"; st.className = "st ok"; $("#ynote").textContent = "Every change your AI makes is a readable line in one file. Undo is deleting it."; }
+    else { st.textContent = "your settings"; st.className = "st"; $("#ynote").textContent = "This little demo only knows colors, tab size, layout, dark mode and fonts. The real Valerie hands anything you say to your AI."; }
+    busy = false;
+  }, 650);
+}
+const chips = $("#chips");
+SUGGEST.forEach((s) => { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; chips.append(c); });
+$("#ask").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(e.target.value); });
+$("#askgo").onclick = () => ask($("#ask").value);
+
+// ---------- the command bar ----------
+const COMMANDS = [["◫", "Split View", "⌃⇧="], ["≡", "Reader View", ""], ["◐", "New Space…", ""], ["☀", "Create Task…", ""], ["◎", "Watch This Page…", ""], ["⤒", "Pin Tab", "⌘⇧D"], ["✎", "Open Config File", ""]];
+const HISTORY = ["Rust 2027 edition: what's new", "Best ramen in Lisbon", "How to keep sourdough starter alive", "Figma: auto layout tips"];
+let sel = 0, results = [];
+function search(q) {
+  const s = q.trim().toLowerCase(), out = [];
+  if (s.startsWith("!")) out.push({ ic: "✎", t: "Customize Valerie: " + (q.trim().slice(1).trim() || "describe a change…"), k: "your AI", go: () => { closeBar(); ask(q.trim().slice(1)); } });
+  else if (s.startsWith("?")) out.push({ ic: "✦", t: "Ask your AI: " + (q.trim().slice(1).trim() || "anything…"), k: "opens in Chats", go: () => { closeBar(); location.hash = "#agents"; } });
+  else {
+    SPACES[M.space].tabs.forEach(([t], i) => { if (!s || t.toLowerCase().includes(s)) out.push({ ic: "▭", t, k: "Switch to tab", go: () => { M.active = i; drawMock(); closeBar(); } }); });
+    COMMANDS.forEach(([ic, t, k]) => { if (s && t.toLowerCase().includes(s)) out.push({ ic, t, k: k || "Command", go: closeBar }); });
+    HISTORY.forEach((t) => { if (s && t.toLowerCase().includes(s)) out.push({ ic: "↺", t, k: "History", go: closeBar }); });
+    if (s) out.push({ ic: "⌕", t: "Search the web for “" + q.trim() + "”", k: "↩", go: closeBar });
+    if (s && s.split(/\s+/).length >= 3) out.push({ ic: "✦", t: "Ask your AI: " + q.trim(), k: "opens in Chats", go: () => { closeBar(); location.hash = "#agents"; } });
+  }
+  results = out.slice(0, 7); sel = 0; drawRes();
+}
+function drawRes() {
+  const r = $("#res"); r.replaceChildren();
+  results.forEach((x, i) => { const d = el("div", "r" + (i === sel ? " sel" : "")); d.append(el("span", "ic", x.ic), el("span", null, x.t), el("span", "k", x.k)); d.onclick = x.go; d.onmouseenter = () => { sel = i; drawRes(); }; r.append(d); });
+}
+function openBar() { $("#cbar").classList.add("open"); $("#cq").value = ""; search(""); setTimeout(() => $("#cq").focus(), 20); }
+function closeBar() { $("#cbar").classList.remove("open"); }
+$("#cq").addEventListener("input", (e) => search(e.target.value));
+$("#cq").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { sel = Math.min(results.length - 1, sel + 1); drawRes(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); drawRes(); e.preventDefault(); }
+  else if (e.key === "Enter" && results[sel]) results[sel].go();
+  else if (e.key === "Escape") closeBar();
+});
+$("#url").onclick = openBar; $("#hint").onclick = openBar;
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "d") && document.activeElement !== $("#ask")) {
+    const r = win.getBoundingClientRect(); if (r.top < innerHeight && r.bottom > 0) { e.preventDefault(); openBar(); }
+  }
+});
+document.addEventListener("mousedown", (e) => { if (!e.target.closest("#cbar") && !e.target.closest("#url") && !e.target.closest("#hint")) closeBar(); });
+
+// ---------- the agent chat (plays when it scrolls into view) ----------
+const SCRIPT = [
+  ["me", "Look at my Lisbon tabs and make me a packing list. Check the weather too."],
+  ["tool", "list_tabs", "3 tabs about Lisbon"],
+  ["tool", "read_page", "Weekend in Lisbon – Airbnb"],
+  ["tool", "open_tab", "weather.com/lisbon (in the Agents space)"],
+  ["tool", "read_page", "Lisbon 10-day forecast"],
+  ["ai", "Lisbon this weekend: 19–23°C, a little rain Saturday evening. The flat has a washer, so pack light:\n\n• 3 tees, 1 light sweater, a rain jacket\n• Comfy walking shoes (it's hilly!)\n• Swimsuit for Carcavelos\n• Adapter (type F)\n\nI closed the weather tab when I was done."],
+];
+let playing = false;
+async function play() {
+  if (playing) return; playing = true;
+  const c = $("#chat"); c.replaceChildren();
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (const [who, a, b] of SCRIPT) {
+    if (who === "me") { c.append(el("div", "msg me", a)); await wait(700); }
+    else if (who === "tool") { const t = el("div", "tool"); t.append(el("b", null, a), " · " + b); c.append(t); await wait(520); }
+    else { const m = el("div", "msg ai", ""); c.append(m); for (let i = 0; i <= a.length; i += 3) { m.textContent = a.slice(0, i); await wait(14); } m.textContent = a; }
+  }
+  const r = el("button", "btn sm replay", "↻ Play again"); r.onclick = () => { playing = false; play(); }; c.append(r);
+}
+
+// ---------- page bits ----------
+const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); if (e.target.id === "chat") play(); } }), { threshold: 0.25 });
+document.querySelectorAll(".reveal").forEach((x) => io.observe(x));
+addEventListener("scroll", () => $("#nav").classList.toggle("scrolled", scrollY > 10), { passive: true });
+for (const b of document.querySelectorAll(".cmd button")) b.onclick = () => { navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
 fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) => r.ok ? r.json() : null).then((r) => {
-  if (r && r.tag_name) document.getElementById("ver").textContent = `Valerie ${r.tag_name.replace(/^v/, "")} · Apple silicon and Intel · macOS 14 or later · free`;
+  if (r && r.tag_name) $("#ver").textContent = `Valerie ${r.tag_name.replace(/^v/, "")} · free · open source · updates itself`;
 }).catch(() => {});
+drawMock(); drawYaml();
 </script>
 </body>
 </html>

@@ -91,6 +91,8 @@ sidebar:
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank
 escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
                            # "press Esc to exit full screen" banner, whatever this is set to.
+welcome: true              # the welcome guide (AI, sync, describe your browser, a tour) the first time Valerie opens;
+                           # "Welcome Tour" in the command bar shows it again. true | false
 
 command_bar:
   site_search: true        # type a site's name (e.g. "youtube"), press Tab, and search that site directly

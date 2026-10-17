@@ -2,7 +2,7 @@
 //! any command), run headless. They chat in the Chats space with full control of the browser, answer questions
 //! about a page from find (with no tools at all), and stream their answers back as they write them.
 use crate::config::AgentDef;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
@@ -155,6 +155,8 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
     let k = kind(&def.cli).with_context(|| format!("unknown agent CLI `{}` (use claude, codex, opencode, pi, cursor or hermes, or `command`)", def.cli))?;
     let bin = find_bin(k, &path).with_context(|| format!("{} isn't installed: run \"Set Up {}\" from the command bar", k.title, k.title))?;
     let mut c = Command::new(bin);
+    // Some CLIs take their folder from PWD (inherited from whoever started Valerie) rather than the real one.
+    c.current_dir(work).env("PWD", work);
     // Valerie's MCP server, told this run's access level (some CLIs start MCP servers with a scrubbed environment).
     let mcp_args = json!(["mcp-stdio", "--access", access, "--chat", o.chat]);
     let mcp_json = || json!({ "mcpServers": { "valerie": { "command": exe, "args": mcp_args } } });
@@ -249,12 +251,18 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
             Format::Codex
         }
         "opencode" => {
-            c.args(["run", prompt]);
+            c.args(["run", prompt]).arg("--dir").arg(work);
             if stream {
                 c.args(["--format", "json"]);
             }
             let cfg = match mode {
                 Mode::PageOnly => json!({ "mcp": {}, "tools": { "*": false } }),
+                // Changing Valerie means editing its settings file; the only command it may run is the settings check.
+                Mode::Customize => json!({
+                    "mcp": { "valerie": { "type": "local", "command": [exe, "mcp-stdio", "--access", "full"], "enabled": true } },
+                    "permission": { "edit": "allow", "external_directory": "deny",
+                                    "bash": { "*": "deny", format!("{exe} check-config*"): "allow", "valerie check-config*": "allow" } },
+                }),
                 _ => {
                     // `opencode run` can't stop to ask, so "ask" and "read" both mean its own edits and commands are off.
                     let own = if access == "full" { "allow" } else { "deny" };
@@ -543,6 +551,86 @@ pub fn stream(run: &str, mut cmd: Command, format: Format, timeout: Duration, on
 }
 
 /// Open a terminal that installs the CLI if it's missing, then signs in: the one step a user does per agent.
+/// Whether an agent CLI answers right now (installed, signed in, its plan active): a one-line question, no tools.
+pub fn probe(def: &AgentDef) -> Result<()> {
+    let work = crate::config::data_dir().join("agents").join("probe");
+    std::fs::create_dir_all(&work)?;
+    let (mut cmd, _) = build(def, Mode::PageOnly, "Reply with exactly the word OK and nothing else.", None, false, &work, &Opts::default())?;
+    let out = run_with_timeout(cmd.current_dir(&work), Duration::from_secs(90))?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    if out.status.success() && text.to_uppercase().contains("OK") {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr).to_string() + &text;
+    let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("it didn't answer").trim().chars().take(200).collect::<String>();
+    bail!("{last}")
+}
+
+/// Free models OpenCode offers without an account, best first; anything else ending in "-free" comes after.
+const FREE_MODELS: &[&str] = &["deepseek-v4.1-flash-free", "glm-5.3-flash-free", "nemotron-3-ultra-free", "mimo-v2.6-flash-free", "beam-free"];
+
+/// For people without an AI subscription: install OpenCode (no Terminal needed) and find a free model that answers.
+/// Returns that model ("opencode/…"). `step` hears what's happening.
+pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
+    let path = search_path();
+    let k = kind("opencode").context("no OpenCode")?;
+    if find_bin(k, &path).is_none() {
+        step("Installing OpenCode…");
+        let mut c = Command::new("/bin/bash");
+        c.args(["-c", k.install]).env("PATH", &path).stdin(std::process::Stdio::null());
+        let out = run_with_timeout(&mut c, Duration::from_secs(600))?;
+        if !out.status.success() || find_bin(k, &search_path()).is_none() {
+            bail!("couldn't install OpenCode: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim());
+        }
+    }
+    step("Finding a free model…");
+    let bin = find_bin(k, &search_path()).context("OpenCode isn't installed")?;
+    let mut c = Command::new(bin);
+    c.args(["models", "opencode"]).env("PATH", &path).stdin(std::process::Stdio::null());
+    let listed = String::from_utf8_lossy(&run_with_timeout(&mut c, Duration::from_secs(60))?.stdout).to_string();
+    let free: Vec<&str> = listed.lines().map(str::trim).filter(|m| m.ends_with("-free")).collect();
+    let mut order: Vec<String> = FREE_MODELS.iter().map(|m| format!("opencode/{m}")).filter(|m| free.contains(&m.as_str())).collect();
+    let rest: Vec<String> = free.iter().map(|m| m.to_string()).filter(|m| !order.contains(m)).collect();
+    order.extend(rest);
+    if order.is_empty() {
+        bail!("OpenCode lists no free models right now");
+    }
+    for m in order.iter().take(4) {
+        step(&format!("Trying {}…", m.trim_start_matches("opencode/")));
+        if probe(&AgentDef { cli: "opencode".into(), model: m.clone(), command: vec![] }).is_ok() {
+            return Ok(m.clone());
+        }
+    }
+    bail!("none of OpenCode's free models answered; try again in a minute")
+}
+
+/// Run a command, killing it after `limit`.
+fn run_with_timeout(c: &mut Command, limit: Duration) -> Result<std::process::Output> {
+    let mut child = c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn()?;
+    let (mut so, mut se) = (child.stdout.take(), child.stderr.take());
+    let read = |p: Option<&mut dyn std::io::Read>| {
+        let mut buf = Vec::new();
+        if let Some(p) = p {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    };
+    let out_t = std::thread::spawn(move || read(so.as_mut().map(|p| p as &mut dyn std::io::Read)));
+    let err_t = std::thread::spawn(move || read(se.as_mut().map(|p| p as &mut dyn std::io::Read)));
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait()? {
+            break s;
+        }
+        if start.elapsed() > limit {
+            let _ = child.kill();
+            bail!("it took too long to answer");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    Ok(std::process::Output { status, stdout: out_t.join().unwrap_or_default(), stderr: err_t.join().unwrap_or_default() })
+}
+
 pub fn set_up(k: &Kind) -> Result<()> {
     let path = search_path();
     let mut script = format!("export PATH=\"{path}\"\necho 'Setting up {} for Valerie'\n", k.title);
@@ -710,5 +798,17 @@ mod tests {
         assert!(matches!(&parse(Format::Cursor, cursor)[..], [Ev::Delta { text }] if text == "a"));
         let cursor_whole = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}"#;
         assert!(parse(Format::Cursor, cursor_whole).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod free_ai_tests {
+    /// Real network: installs OpenCode if missing and finds a free model that answers.
+    #[test]
+    #[ignore]
+    fn free_ai_answers() {
+        let model = super::set_up_free(&|s| eprintln!("step: {s}")).unwrap();
+        eprintln!("model: {model}");
+        assert!(model.starts_with("opencode/") && model.ends_with("-free"));
     }
 }

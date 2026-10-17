@@ -35,6 +35,7 @@ pub enum Source {
     Overlay,
     Chat,
     Answer,
+    Welcome,
     LittleBar(WindowId),
     Page(Target),
 }
@@ -79,6 +80,10 @@ pub enum UserEvent {
     SafariSignIn { tab: TabId },
     /// A message from work done off the main thread.
     Toast(String),
+    /// Something for the welcome guide to show (an agent's test result, free AI setup progress…).
+    ToWelcome(Value),
+    /// Free AI is set up: OpenCode with this model.
+    FreeAiReady(String),
     /// Time to look for an update (a while after launch).
     CheckUpdates,
     /// The release feed was read (`manual`: the user asked).
@@ -125,6 +130,9 @@ pub struct App {
     chats_open: bool,
     active_chat: Option<String>,
     chat_view: Option<WebView>,
+    /// The welcome guide, over the whole window while it's open.
+    welcome_view: Option<WebView>,
+    welcome_open: bool,
     /// Chats whose agent is answering right now.
     chat_running: std::collections::HashSet<String>,
     /// When each running chat's agent started (for the Working section's timers).
@@ -368,6 +376,7 @@ fn ui(name: &str) -> String {
         "little.html" => include_str!("../ui/little.html"),
         "chat.html" => include_str!("../ui/chat.html"),
         "answer.html" => include_str!("../ui/answer.html"),
+        "welcome.html" => include_str!("../ui/welcome.html"),
         "brief.html" => include_str!("../ui/brief.html"),
         "content.js" => include_str!("../ui/content.js"),
         "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
@@ -491,6 +500,8 @@ impl App {
             chats_open: false,
             active_chat: None,
             chat_view: None,
+            welcome_view: None,
+            welcome_open: false,
             chat_running: Default::default(),
             chat_started: HashMap::new(),
             found_models: Default::default(),
@@ -870,6 +881,15 @@ impl App {
                 let _ = cv.set_visible(false);
             }
         }
+        if let Some(wv) = &self.welcome_view {
+            if self.welcome_open {
+                let _ = wv.set_bounds(full);
+                let _ = wv.set_visible(true);
+                platform::bring_to_front(wv);
+            } else {
+                let _ = wv.set_visible(false);
+            }
+        }
         self.highlight_panes();
         let hide_lights = self.config.layout.tab_bar == TabBar::Side
             && (!self.config.layout.sidebar_visible || self.config.layout.sidebar_position == SidebarPosition::Right);
@@ -955,6 +975,10 @@ impl App {
 
     fn focus_active(&self) {
         if self.bar_open {
+            return;
+        }
+        if let Some(v) = self.welcome_view.as_ref().filter(|_| self.welcome_open) {
+            let _ = v.focus();
             return;
         }
         if self.chats_open {
@@ -2879,6 +2903,10 @@ impl App {
                 self.dirty = true;
                 self.toast("Stopped watching");
             }
+            Command::Welcome => {
+                self.close_bar();
+                self.open_welcome();
+            }
             Command::CheckForUpdates => {
                 self.close_bar();
                 self.check_updates(true);
@@ -3422,7 +3450,7 @@ impl App {
                             self.state.space_mut().active = Some(id);
                         }
                     }
-                    Source::Chrome | Source::Chat | Source::Answer => self.focused_little = None,
+                    Source::Chrome | Source::Chat | Source::Answer | Source::Welcome => self.focused_little = None,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -3495,6 +3523,7 @@ impl App {
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => self.render_chat(),
+            (Source::Welcome, _) => self.welcome_message(&m, elwt),
             (Source::Answer, "ready") => {
                 // The panel finished loading after the question went out: replay it and what's arrived so far.
                 if let (Some(v), Some(t)) = (&self.answer_view, self.answer_tab) {
@@ -3695,18 +3724,28 @@ impl App {
             UserEvent::SyncSetup(step) => match step {
                 crate::github::Step::Code { code, url } => {
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(code.clone()));
-                    self.open_tab(&url, None, true);
-                    self.toast(&format!("Paste the code {code} on GitHub (it's on your clipboard)"));
+                    if self.welcome_open {
+                        // The guide covers the window: GitHub opens in a little window beside it.
+                        self.welcome_send(&json!({ "type": "sync", "step": "code", "code": code }));
+                        self.open_little(&url, self.state.active_space, elwt);
+                    } else {
+                        self.open_tab(&url, None, true);
+                        self.toast(&format!("Paste the code {code} on GitHub (it's on your clipboard)"));
+                    }
                 }
                 crate::github::Step::Done { login, repo } => match sync::write_repo_setting(&repo) {
                     Ok(()) => {
+                        self.welcome_send(&json!({ "type": "sync", "step": "done", "login": login, "repo": repo }));
                         self.reload_config();
                         self.toast(&format!("Signed in as {login}: syncing with {}", repo.trim_end_matches(".git").trim_start_matches("https://")));
                         self.start_sync();
                     }
                     Err(e) => self.toast(&format!("Couldn't save the sync setting: {e}")),
                 },
-                crate::github::Step::Failed(e) => self.toast(&format!("Sync setup: {e}")),
+                crate::github::Step::Failed(e) => {
+                    self.welcome_send(&json!({ "type": "sync", "step": "failed", "detail": e }));
+                    self.toast(&format!("Sync setup: {e}"))
+                }
             },
             UserEvent::SyncDone(r) => {
                 self.syncing = false;
@@ -3734,9 +3773,12 @@ impl App {
                     self.render();
                     return;
                 }
-                if f.name.starts_with("Customize") {
+                if f.name.starts_with("Customize") || f.name.starts_with("Welcome") {
                     self.reload_config();
                     self.build_menu();
+                }
+                if f.name.starts_with("Welcome") {
+                    self.welcome_send(&json!({ "type": "customized", "ok": f.ok, "summary": f.summary }));
                 }
                 self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, f.name));
                 self.agent_runs.insert(0, f);
@@ -3785,6 +3827,18 @@ impl App {
             },
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
             UserEvent::Toast(msg) => self.toast(&msg),
+            UserEvent::ToWelcome(ev) => self.welcome_send(&ev),
+            UserEvent::FreeAiReady(model) => {
+                let set = config::set_setting(&["agents", "available", "opencode"], &format!("{{ cli: opencode, model: {} }}", json!(model)))
+                    .and_then(|_| config::set_setting(&["agents", "default"], "opencode"));
+                match set {
+                    Ok(()) => {
+                        self.reload_config();
+                        self.welcome_send(&json!({ "type": "free", "step": "done", "model": model }));
+                    }
+                    Err(e) => self.welcome_send(&json!({ "type": "free", "step": "failed", "detail": format!("couldn't save the setting: {e}") })),
+                }
+            }
             UserEvent::CheckUpdates => self.check_updates(false),
             UserEvent::UpdateFound { release, manual } => self.update_found(release, manual),
             UserEvent::UpdateDone { result, manual } => {
@@ -4160,6 +4214,11 @@ impl App {
             std::thread::sleep(std::time::Duration::from_secs(20));
             send(&p, UserEvent::CheckUpdates);
         });
+        // The first time: the welcome guide (not in test instances, which have their own folders).
+        let test_instance = std::env::var_os("VALERIE_CONFIG_DIR").is_some() && std::env::var_os("VALERIE_WELCOME_TEST").is_none();
+        if self.config.welcome && !self.state.welcome_done && !test_instance {
+            self.open_welcome();
+        }
         // Asking each CLI for its models starts node processes: let the first page have the machine first.
         let p = self.proxy.clone();
         std::thread::spawn(move || {
@@ -5099,6 +5158,169 @@ impl App {
         platform::ask(v, &format!("Allow {site} to send notifications?"), &body, "Allow", "Don't Allow", move |allowed| {
             send(&p, UserEvent::NotifyPermission { tab, site: s, allowed });
         });
+    }
+
+    // ---------------------------------------------------------------- welcome guide
+
+    fn open_welcome(&mut self) {
+        if self.welcome_view.is_none() {
+            let (p, p2) = (self.proxy.clone(), self.proxy.clone());
+            let built = WebViewBuilder::new()
+                .with_html(ui("welcome.html"))
+                .with_visible(false)
+                .with_accept_first_mouse(true)
+                .with_devtools(true)
+                .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Welcome, msg: r.into_body() }))
+                // The guide never navigates; its links open as tabs.
+                .with_navigation_handler(move |url| {
+                    if url.starts_with("about:") || url.starts_with("data:") {
+                        return true;
+                    }
+                    send(&p2, UserEvent::Ipc { from: Source::Welcome, msg: json!({ "t": "open", "url": url }).to_string() });
+                    false
+                })
+                .build_as_child(&self.window);
+            match built {
+                Ok(v) => self.welcome_view = Some(v),
+                Err(e) => return eprintln!("valerie: welcome view: {e}"),
+            }
+        } else if let Some(v) = &self.welcome_view {
+            let _ = v.evaluate_script("window.welcome && welcome.restart()");
+        }
+        self.welcome_open = true;
+        self.layout();
+        self.focus_active();
+    }
+
+    fn close_welcome(&mut self, done: bool) {
+        self.welcome_open = false;
+        if done && !self.state.welcome_done {
+            self.state.welcome_done = true;
+            self.dirty = true;
+        }
+        self.layout();
+        self.focus_active();
+    }
+
+    fn welcome_send(&self, ev: &Value) {
+        if let Some(v) = &self.welcome_view {
+            let _ = v.evaluate_script(&format!("window.welcome && welcome.event({ev})"));
+        }
+    }
+
+    /// What the guide needs to draw itself: agents on this computer, sync, browsers to import from, shortcuts.
+    fn welcome_data(&self) -> Value {
+        let path = crate::ai::search_path();
+        let agents: Vec<Value> = crate::ai::KINDS
+            .iter()
+            .map(|k| json!({ "id": k.id, "title": k.title, "installed": crate::ai::find_bin(k, &path).is_some() }))
+            .collect();
+        let mut keys = serde_json::Map::new();
+        for (key, b) in &self.config.keybindings {
+            let cmd = b.as_ref().and_then(|b| serde_json::to_value(b).ok()).and_then(|v| v.as_str().map(str::to_string).or_else(|| v["cmd"].as_str().map(str::to_string)));
+            if let Some(c) = cmd {
+                keys.entry(c).or_insert(json!(key));
+            }
+        }
+        json!({
+            "version": crate::update::current(), "agents": agents, "default_agent": self.config.agents.default,
+            "sync": self.config.sync.repo, "imports": crate::import::found(), "keys": keys,
+            "accent": self.theme_for(self.state.active_space).accent, "font": self.config.layout.font,
+            "done": self.state.welcome_done,
+        })
+    }
+
+    fn welcome_message(&mut self, m: &Value, elwt: &EventLoopWindowTarget<UserEvent>) {
+        trace(&format!("welcome: {}", m["t"].as_str().unwrap_or("")));
+        match m["t"].as_str().unwrap_or("") {
+            "ready" => {
+                let data = self.welcome_data();
+                if let Some(v) = &self.welcome_view {
+                    let _ = v.evaluate_script(&format!("window.welcome && welcome.init({data})"));
+                }
+            }
+            // Ask each installed agent a one-line question, in parallel: does it answer (signed in, plan active)?
+            "probe" => {
+                let path = crate::ai::search_path();
+                for k in crate::ai::KINDS.iter().filter(|k| crate::ai::find_bin(k, &path).is_some()) {
+                    let (_, def) = self.config.agent_named(k.id);
+                    let (p, id) = (self.proxy.clone(), k.id);
+                    std::thread::spawn(move || {
+                        let r = crate::ai::probe(&def);
+                        let ev = json!({ "type": "agent", "id": id, "works": r.is_ok(), "detail": r.err().map(|e| format!("{e:#}")) });
+                        send(&p, UserEvent::ToWelcome(ev));
+                    });
+                }
+            }
+            "use_agent" => {
+                let Some(id) = m["id"].as_str().filter(|id| crate::ai::kind(id).is_some()) else { return };
+                match config::set_setting(&["agents", "default"], id) {
+                    Ok(()) => {
+                        self.reload_config();
+                        self.welcome_send(&json!({ "type": "using", "id": id }));
+                    }
+                    Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
+                }
+            }
+            "sign_in" => {
+                if let Some(k) = m["id"].as_str().and_then(crate::ai::kind) {
+                    if let Err(e) = crate::ai::set_up(k) {
+                        self.toast(&format!("Couldn't start {} setup: {e}", k.title));
+                    }
+                }
+            }
+            "free_ai" => {
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let step = |s: &str| send(&p, UserEvent::ToWelcome(json!({ "type": "free", "step": "progress", "detail": s })));
+                    match crate::ai::set_up_free(&step) {
+                        Ok(model) => send(&p, UserEvent::FreeAiReady(model)),
+                        Err(e) => send(&p, UserEvent::ToWelcome(json!({ "type": "free", "step": "failed", "detail": format!("{e:#}") }))),
+                    }
+                });
+            }
+            "import" => {
+                let Some(source) = m["source"].as_str() else { return };
+                let ev = match crate::import::import(source) {
+                    Ok(imp) => {
+                        let msg = self.state.apply_import(source, imp);
+                        self.dirty = true;
+                        self.render();
+                        json!({ "type": "imported", "source": source, "ok": true, "detail": msg })
+                    }
+                    Err(e) => json!({ "type": "imported", "source": source, "ok": false, "detail": format!("{e:#}") }),
+                };
+                self.welcome_send(&ev);
+            }
+            "sync" => {
+                if !self.config.sync.repo.is_empty() {
+                    return self.welcome_send(&json!({ "type": "sync", "step": "done", "repo": self.config.sync.repo }));
+                }
+                self.dispatch(Command::SetUpSync, elwt);
+            }
+            "customize" => {
+                let request: String = m["request"].as_str().unwrap_or("").chars().take(6000).collect();
+                if !request.trim().is_empty() {
+                    self.start_agent_with("Welcome: make Valerie yours".into(), request, None, None, true);
+                }
+            }
+            "open" => {
+                if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("https://")) {
+                    self.open_little(url, self.state.active_space, elwt);
+                }
+            }
+            // "Try it" in the tour: close the guide and do the thing.
+            "try" => {
+                let Ok(cmd) = serde_json::from_value::<Command>(m["cmd"].clone()) else { return };
+                self.close_welcome(true);
+                self.dispatch(cmd, elwt);
+            }
+            "done" => self.close_welcome(true),
+            "drag" => {
+                let _ = self.window.drag_window();
+            }
+            _ => {}
+        }
     }
 
     /// Look for a newer Valerie. By itself only from an installed app (not the bare binary or a test instance with its
