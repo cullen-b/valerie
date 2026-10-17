@@ -500,7 +500,7 @@ const RULES = [
   [/\b(wide|wider|widen|bigger|larger|more room)\b.*\bsidebar\b|\bsidebar\b.*\b(wide|wider|bigger|larger)\b/, (s) => A.sidebarWidth(s, 320)],
   [/\b(narrow|narrower|thin|thinner|smaller|slim|skinny)\b.*\bsidebar\b|\bsidebar\b.*\b(narrow|narrower|thinner|smaller|slim)\b/, (s) => A.sidebarWidth(s, 190)],
   // text and tabs
-  [/\b(bigger|larger|huge|large|big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(bigger|larger|huge|big)\b|\bcan'?t (read|see)\b|\bmy eyes\b|\bgrandma|\bgrandpa|\bgranny|\bsquint|\bhard to read\b|\bold eyes\b|\bglasses\b|\bi'?m old\b/, (s) => A.zoom(s, 125)],
+  [/\b(bigger|larger|huge|large|big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(bigger|larger|huge|big)\b|\bcan'?t (read|see)\b|\bmy eyes\b|\bgrandma|\bgrandpa|\bgranny|\bsquint|\bhard to read\b|\btoo small\b|\bold eyes\b|\bglasses\b|\bi'?m old\b/, (s) => A.zoom(s, 125)],
   [/\b(smaller|tiny|small|less big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(smaller|tiny)\b|\bmore on screen\b/, (s) => A.zoom(s, 90)],
   [/^(?!.*\b(text|font|letters|words|type|sidebar|read|eyes)\b).*\b(big|bigger|tall|taller|huge|large|roomy|roomier|chunky|fat)\b/, (s) => A.tabs(s, 50)],
   [/\b(compact|dense|tiny tabs|small tabs|smaller tabs|thinner tabs|more tabs)\b/, (s) => A.tabs(s, 28)],
@@ -518,7 +518,7 @@ const RULES = [
   [has("minimal", "minimalist", "zen", "focus", "declutter", "clean", "cleaner", "simpler", "distraction", "distractions", "less clutter"), (s) => A.minimal(s)],
   [/\b(hide|no|remove|get rid of)\b.*\b(url|address bar|address)\b/, (s) => { M.url = false; s("sidebar.url_bar", "sidebar: { url_bar: false }"); }],
   [/\b(hide|no|remove|get rid of)\b.*\b(favorites|favourites|pins|icons)\b/, (s) => { M.favs = false; s("sidebar.favorites", "sidebar: { favorites: false }"); }],
-  [/\b(no|stop|less|reduce|without)\b.*\b(animation|animations|motion|moving)\b|\bmotion sick|\binstant\b|\bsnappy\b|\bfaster\b/, (s) => A.still(s)],
+  [/\b(no|stop|less|reduce|without)\b.*\b(animation|animations|motion|moving)\b|\bmotion sick|\binstant\b|\bsnappy\b|\bfaster\b/, (s, m, t, note) => { A.still(s); note("Animations are off: everything switches instantly."); }],
   // pages
   [/\b(dark|night|2 ?am|3 ?am|late|bedtime|night owl|vampire|too bright|blinding|burning|eyes hurt|my eyes are)\b/, (s, m) => A.dark(s, true, ["dark", "night"].includes(m[1]) ? null : "every site dark, your eyes will thank you")],
   [has("light", "light mode", "daytime", "day mode", "too dark"), (s) => { A.dark(s, false); M.tone = null; }],
@@ -557,11 +557,14 @@ function colorIn(raw, set) {
 }
 function toHex(c) { COLORWORD.fillStyle = "#000"; COLORWORD.fillStyle = c; return COLORWORD.fillStyle; }
 
-// Clickable examples, a few at a time; the fun is in what it understands.
-const EXAMPLES = ["My boss is walking by", "I'm a vampire", "It's my birthday!", "Make it look expensive", "My dad's computer in 1997",
+// Clickable examples, dealt three looks and three ways of working at a time.
+const LOOKS = ["My boss is walking by", "I'm a vampire", "It's my birthday!", "Make it look expensive", "My dad's computer in 1997",
   "Sunday morning with coffee", "My cat walked on the keyboard", "Barbie, but upside down", "Tokyo at night", "Hacker in a movie",
-  "Grandma's visiting", "Newspaper on a train", "Make it IKEA", "Send Reddit to Work", "I'm left-handed", "Comic Sans, unironically",
-  "Spooky season", "Under the sea 🌊", "Like Spotify", "Fat tabs", "Close tabs after a week of ignoring them", "Make it tomato"];
+  "Newspaper on a train", "Make it IKEA", "Comic Sans, unironically", "Spooky season", "Under the sea 🌊", "Like Spotify", "Make it tomato"];
+const USES = ["I'm left-handed", "Grandma's visiting", "Fat tabs for my fat fingers", "Send Reddit to Work", "Close tabs I ignore for a week",
+  "Tabs on top, like Chrome", "Less clutter, just my tabs", "More tabs on screen", "Wider sidebar, my tab titles are long", "I get motion sick",
+  "Homework links go to School", "I use vim", "Never show me cookie popups", "Hide the address bar", "Text is too small on my laptop"];
+const EXAMPLES = [...LOOKS, ...USES];
 const IDEAS = ["tabs on top", "make it cozy", "like Netflix", "comic sans", "dracula", "hot pink", "I'm left-handed", "party mode", "square corners",
   "close tabs after 3 days", "less clutter", "🌊", "cyberpunk", "like a newspaper", "sidebar on the right", "too bright"];
 let added = [], busy = false;
@@ -594,7 +597,8 @@ function ask(text) {
   }, 550);
 }
 function dealChips() {
-  const pick = [...EXAMPLES].sort(() => Math.random() - 0.5).slice(0, 6), chips = $("#chips"); chips.replaceChildren();
+  const few = (list) => [...list].sort(() => Math.random() - 0.5).slice(0, 3);
+  const pick = [...few(LOOKS), ...few(USES)].sort(() => Math.random() - 0.5), chips = $("#chips"); chips.replaceChildren();
   for (const s of [...pick, "Reset"]) { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; chips.append(c); }
   const more = el("button", "chip", "↻ More ideas"); more.onclick = dealChips; chips.append(more);
 }
