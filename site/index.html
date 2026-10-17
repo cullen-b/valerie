@@ -10,415 +10,477 @@
 <meta property="og:image" content="https://cullen-b.github.io/valerie/icon.png">
 <link rel="icon" href="icon.png">
 <style>
-:root { --bg: #09080d; --card: rgba(255,255,255,.04); --card2: rgba(255,255,255,.07); --line: rgba(255,255,255,.08);
-  --fg: #efeef6; --dim: rgba(239,238,246,.62); --faint: rgba(239,238,246,.38); --accent: #9d8cff; --ok: #6ee7a8; }
+:root { --bg1: #171a2b; --bg2: #2a1f3d; --accent: #9d8cff; --fg: #ecebf5; --fg-dim: rgba(236,235,245,.55);
+  --hover: rgba(255,255,255,.07); --active: rgba(255,255,255,.14); --tile: rgba(255,255,255,.06); --line: rgba(255,255,255,.08);
+  --page: #fbfaf8; --ink: #1d1c21; --ink2: #6e6b76; --rule: rgba(0,0,0,.07); --sw: 248px; --tab-h: 38px; --ease: cubic-bezier(.2,.8,.2,1); }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; color: var(--fg); background: linear-gradient(160deg, var(--bg1), var(--bg2)); transition: background .5s;
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 70%); }
+button { font: inherit; color: inherit; }
 a { color: inherit; }
-.wrap { max-width: 1140px; margin: 0 auto; padding: 0 28px; }
-.glow { position: absolute; inset: 0 0 auto; height: 1100px; pointer-events: none; z-index: 0;
-  background: radial-gradient(900px 560px at 50% -120px, color-mix(in srgb, var(--accent) 34%, transparent), transparent 70%),
-              radial-gradient(600px 400px at 85% 420px, rgba(80,200,255,.10), transparent 70%); }
-nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(18px) saturate(1.4); background: rgba(9,8,13,.62); border-bottom: 1px solid transparent; transition: border-color .3s; }
-nav.scrolled { border-bottom-color: var(--line); }
-nav .wrap { display: flex; align-items: center; gap: 22px; height: 62px; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 750; letter-spacing: -.3px; text-decoration: none; font-size: 17px; }
-.brand img { width: 28px; height: 28px; }
-nav .links { display: flex; gap: 22px; margin-left: auto; font-size: 14.5px; color: var(--dim); }
-nav .links a { text-decoration: none; } nav .links a:hover { color: var(--fg); }
-.btn { display: inline-flex; align-items: center; gap: 9px; padding: 12px 20px; border-radius: 13px; font-weight: 650; text-decoration: none; font-size: 15.5px;
-  background: var(--card2); border: 1px solid var(--line); cursor: pointer; transition: transform .15s, filter .15s, background .15s; color: var(--fg); font-family: inherit; }
-.btn:hover { background: rgba(255,255,255,.11); } .btn:active { transform: scale(.98); }
-.btn.primary { background: var(--accent); color: #0b0a10; border-color: transparent; box-shadow: 0 12px 36px color-mix(in srgb, var(--accent) 38%, transparent); }
-.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
-.btn.sm { padding: 8px 14px; font-size: 14px; border-radius: 11px; }
-section { position: relative; z-index: 1; }
-.hero { text-align: center; padding: 58px 0 10px; }
-.pill { display: inline-flex; gap: 8px; align-items: center; padding: 6px 14px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); font-size: 13.5px; color: var(--dim); margin-bottom: 26px; }
-.pill b { color: var(--ok); font-weight: 650; }
-h1 { font-size: clamp(40px, 6.2vw, 74px); line-height: 1.02; letter-spacing: -2.6px; margin: 0 0 20px; font-weight: 780; }
-h1 em { font-style: normal; background: linear-gradient(100deg, var(--accent), #7ed8ff 60%, #ffb3e6); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.sub { font-size: clamp(17px, 1.8vw, 20px); color: var(--dim); max-width: 680px; margin: 0 auto 28px; }
-.ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-.meta { color: var(--faint); font-size: 13.5px; margin-top: 14px; }
+#app { position: relative; overflow: hidden; display: grid; grid-template-columns: var(--sw) 1fr; height: 100vh; height: 100dvh; }
 
-/* ---------- the demo ---------- */
-.demo { padding: 26px 0 90px; }
-.asker { max-width: 860px; margin: 0 auto 22px; }
-.askbar { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border-radius: 18px; background: rgba(20,19,28,.85);
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 0 6px color-mix(in srgb, var(--accent) 9%, transparent); }
-.askbar .bang { color: var(--accent); font-weight: 800; font-size: 20px; }
-.askbar input { flex: 1; background: none; border: 0; outline: 0; color: var(--fg); font: inherit; font-size: 17px; min-width: 0; }
-.askbar input::placeholder { color: var(--faint); }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
-.chip { padding: 7px 14px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); color: var(--dim); font-size: 14px; cursor: pointer; transition: all .15s; }
-.chip:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: var(--card2); }
-.stagewrap { display: grid; grid-template-columns: 1fr 300px; gap: 18px; align-items: start; }
-.yaml { background: #0e0d14; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; font: 12.5px/1.65 ui-monospace, Menlo, monospace; }
-.yaml .head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--dim); font: 12.5px -apple-system, system-ui, sans-serif; }
-.yaml .head .st { margin-left: auto; color: var(--faint); }
-.yaml .head .st.busy { color: var(--accent); } .yaml .head .st.ok { color: var(--ok); }
-.yaml pre { margin: 0; padding: 12px 14px; min-height: 360px; white-space: pre-wrap; color: rgba(239,238,246,.78); }
-.yaml .add { background: rgba(110,231,168,.10); color: var(--ok); display: block; margin: 0 -14px; padding: 0 14px; animation: flash .9s; }
-.yaml .cm { color: var(--faint); }
-@keyframes flash { from { background: rgba(110,231,168,.35); } }
-.note { color: var(--faint); font-size: 13px; padding: 10px 14px; border-top: 1px solid var(--line); font-family: -apple-system, system-ui, sans-serif; }
+/* ---------- sidebar ---------- */
+#sidebar { display: flex; flex-direction: column; padding: 0 8px 8px; min-width: 0; font-size: 13px; user-select: none; -webkit-user-select: none; }
+.drag { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding-left: 6px; }
+.lights { display: flex; gap: 8px; } .lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+#url { all: unset; height: 34px; flex: none; border-radius: 10px; background: var(--tile); display: flex; align-items: center; gap: 7px; padding: 0 11px;
+  color: var(--fg-dim); font-size: 12.5px; margin-bottom: 10px; overflow: hidden; white-space: nowrap; cursor: text; }
+#url:hover { background: var(--active); color: var(--fg); }
+#url .path { opacity: .6; } #url kbd { margin-left: auto; font: 11px -apple-system, system-ui, sans-serif; opacity: .55; }
+.favs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 12px; }
+.tile { height: 46px; border-radius: 11px; background: var(--tile); display: grid; place-items: center; text-decoration: none; font-size: 16px; color: var(--fg-dim); transition: background .12s; }
+.tile:hover { background: var(--active); color: var(--fg); } .tile svg { width: 18px; height: 18px; fill: currentColor; }
+.space-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 8px; font-weight: 600; }
+.space-title i { color: var(--accent); font-style: normal; }
+#tabs { display: flex; flex-direction: column; gap: 2px; transition: opacity .2s, transform .25s var(--ease); }
+#tabs.swap { opacity: 0; transform: translateX(var(--swap, 12px)); transition: none; }
+.row { all: unset; height: var(--tab-h); border-radius: calc(var(--tab-h) * .26); display: flex; align-items: center; gap: 9px; padding: 0 10px;
+  cursor: default; white-space: nowrap; overflow: hidden; transition: background .12s, height .35s var(--ease); }
+.row.new { animation: tabin .3s var(--ease); }
+.row:hover { background: var(--hover); }
+.row.on { background: var(--active); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.row.split { box-shadow: inset 2px 0 0 var(--accent); }
+.row .ic { width: 16px; height: 16px; border-radius: 4px; flex: none; display: grid; place-items: center; font-size: 11px; background: var(--tile); color: var(--accent); }
+.row .ic img { width: 16px; height: 16px; }
+.row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.row.agent .ic { background: color-mix(in srgb, var(--accent) 30%, transparent); color: #fff; }
+@keyframes tabin { from { opacity: 0; transform: translateX(-8px); } }
+.foot { margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 8px; padding-top: 8px; }
+.foot button { all: unset; width: 8px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.25); cursor: pointer; transition: all .3s var(--ease); }
+.foot button.on { width: 22px; background: var(--accent); }
 
-/* mock window */
-.win { --tab-h: 34px; --sb: 236px; --mock-accent: var(--accent); --space-bg: #17141f; position: relative; height: 520px; border-radius: 16px; overflow: hidden;
-  border: 1px solid rgba(255,255,255,.12); box-shadow: 0 40px 120px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.4);
-  background: linear-gradient(160deg, color-mix(in srgb, var(--mock-accent) 22%, var(--space-bg)), var(--space-bg) 70%);
-  display: grid; grid-template-columns: var(--sb) 1fr; transition: background .6s; font-size: 13px; }
-.win.right { grid-template-columns: 1fr var(--sb); }
-.win.right .sb { order: 2; } .win.right .page { order: 1; margin: 10px 0 10px 10px; }
-.win.top { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-.win.serif .page, .win.serif .sb { font-family: Georgia, "Iowan Old Style", serif; }
-.sb { display: flex; flex-direction: column; padding: 12px 10px 10px; gap: 8px; min-width: 0; transition: all .4s; }
-.lights { display: flex; gap: 7px; padding: 2px 4px 6px; } .lights i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
-.url { padding: 7px 10px; border-radius: 9px; background: rgba(255,255,255,.07); color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-.pins { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.pins div { height: 38px; border-radius: 10px; background: rgba(255,255,255,.07); display: grid; place-items: center; font-weight: 700; font-size: 13px; cursor: pointer; transition: background .2s; }
-.pins div:hover { background: rgba(255,255,255,.12); }
-.label { color: var(--faint); font-size: 11px; font-weight: 650; letter-spacing: .5px; text-transform: uppercase; padding: 6px 6px 0; }
-.tabs { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
-.tab { height: var(--tab-h); display: flex; align-items: center; gap: 9px; padding: 0 9px; border-radius: 9px; color: rgba(239,238,246,.82); cursor: pointer; transition: height .4s cubic-bezier(.2,.8,.2,1), background .15s; white-space: nowrap; overflow: hidden; }
-.tab:hover { background: rgba(255,255,255,.06); }
-.tab.on { background: rgba(255,255,255,.13); color: #fff; }
-.fav { width: 16px; height: 16px; border-radius: 5px; flex: none; }
-.spaces { margin-top: auto; display: flex; gap: 8px; justify-content: center; padding-top: 6px; }
-.spaces button { all: unset; width: 9px; height: 9px; border-radius: 5px; background: rgba(255,255,255,.25); cursor: pointer; transition: all .3s; }
-.spaces button.on { width: 24px; background: var(--mock-accent); }
-.win.top .sb { flex-direction: row; align-items: center; padding: 10px 12px 0; gap: 8px; }
-.win.top .sb .pins, .win.top .sb .label, .win.top .sb .spaces { display: none; }
-.win.top .sb .url { order: 9; width: 210px; flex: none; }
-.win.top .tabs { flex-direction: row; flex: 1; }
-.win.top .tab { flex: 1; max-width: 180px; height: 32px; }
-.page { margin: 10px 10px 10px 0; border-radius: 12px; background: #fbfaf7; color: #1e1d22; overflow: hidden; position: relative; transition: filter .5s, background .4s; }
-.win.top .page { margin: 8px 10px 10px; }
-.win.darkpage .page { filter: invert(.92) hue-rotate(180deg); }
-.article { padding: 34px 44px; }
-.article .kick { font-size: 11px; font-weight: 750; letter-spacing: .8px; text-transform: uppercase; color: #b35c2e; }
-.article h3 { font-size: 26px; line-height: 1.15; margin: 8px 0 10px; letter-spacing: -.5px; }
-.article .by { color: #8a8790; font-size: 12px; margin-bottom: 18px; }
-.article .img { height: 120px; border-radius: 10px; background: linear-gradient(120deg, #f1c58f, #e98a6c 50%, #9a7ad6); margin-bottom: 18px; }
-.article p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.65; color: #45434b; }
-/* command bar inside the mock */
-.cbar { position: absolute; left: 50%; top: 70px; width: min(520px, 86%); transform: translateX(-50%) scale(.97); opacity: 0; pointer-events: none;
-  background: #1b1a23; border: 1px solid rgba(255,255,255,.12); border-radius: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.55); transition: opacity .18s, transform .18s; z-index: 5; overflow: hidden; isolation: isolate; }
-.cbar.open { opacity: 1; transform: translateX(-50%) scale(1); pointer-events: auto; }
-.cbar input { width: 100%; padding: 16px 18px; background: none; border: 0; border-bottom: 1px solid var(--line); outline: 0; color: var(--fg); font: inherit; font-size: 16px; }
-.res { padding: 6px; max-height: 280px; overflow: hidden; }
-.r { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; color: var(--dim); cursor: pointer; }
-.r.sel { background: color-mix(in srgb, var(--mock-accent) 30%, transparent); color: #fff; }
-.r .ic { width: 22px; text-align: center; opacity: .9; } .r .k { margin-left: auto; font-size: 11.5px; color: var(--faint); }
-.hint { position: absolute; right: 16px; bottom: 14px; z-index: 4; font-size: 12px; color: #6d6a75; background: rgba(255,255,255,.85); padding: 5px 10px; border-radius: 8px; cursor: pointer; }
-.hint kbd { font: 600 11px ui-monospace, Menlo, monospace; }
+/* tabs along the top (asked for, or a narrow screen) */
+body.top #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+body.top #sidebar { flex-direction: row; align-items: center; gap: 8px; padding: 6px 8px; }
+body.top .drag { height: auto; } body.top .favs, body.top .space-title, body.top .foot { display: none; }
+body.top #url { order: 9; width: 230px; margin: 0; }
+body.top #tabs { flex-direction: row; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+body.top .row { flex: 0 1 170px; min-width: 90px; height: 32px; }
+body.right #app { grid-template-columns: 1fr var(--sw); } body.right #sidebar { order: 2; }
 
-/* ---------- sections ---------- */
-h2 { font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spacing: -1.4px; margin: 0 0 14px; font-weight: 760; }
-.kicker { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: .9px; text-transform: uppercase; margin-bottom: 12px; }
-.lead { color: var(--dim); font-size: 18px; max-width: 620px; margin: 0 0 30px; }
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; align-items: center; padding: 90px 0; }
-.chat { background: #110f17; border: 1px solid var(--line); border-radius: 18px; padding: 18px; min-height: 380px; box-shadow: 0 30px 90px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 12px; }
-.msg { max-width: 88%; padding: 11px 14px; border-radius: 14px; font-size: 14.5px; line-height: 1.5; animation: rise .35s ease; }
-.msg.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 26%, #1c1a25); }
-.msg.ai { background: rgba(255,255,255,.05); white-space: pre-wrap; }
-.tool { align-self: flex-start; font: 12px ui-monospace, Menlo, monospace; color: var(--dim); background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; animation: rise .3s ease; }
+/* ---------- pages ---------- */
+#main { position: relative; display: flex; gap: 8px; padding: 8px 8px 8px 0; min-width: 0; min-height: 0; }
+body.right #main { padding: 8px 0 8px 8px; } body.top #main { padding: 0 8px 8px; }
+#main { transition: padding .3s var(--ease); } body.chatting #main { padding-right: 356px; } body.chatting.right #main { padding-right: 0; padding-left: 356px; }
+.card { flex: 1; min-width: 0; overflow-y: auto; border-radius: 12px; background: var(--page); color: var(--ink); scroll-behavior: smooth;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 12px 40px rgba(0,0,0,.25); transition: background .4s, color .4s; }
+#card2:empty { display: none; }
+body.darkpage { --page: #16151b; --ink: #ecebf2; --ink2: rgba(236,235,242,.58); --rule: rgba(255,255,255,.08); }
+body.serif .card { font-family: Georgia, "Iowan Old Style", serif; }
+.pg { animation: pgin .35s var(--ease); } .pg[hidden] { display: none; }
+@keyframes pgin { from { opacity: 0; transform: translateY(6px); } }
+.inner { max-width: 720px; margin: 0 auto; padding: clamp(40px, 12vh, 120px) 40px 80px; }
+.split-on .inner { padding-left: 28px; padding-right: 28px; } .split-on h1 { font-size: clamp(32px, 3.4vw, 46px); }
+h1 { font-size: clamp(38px, 5.4vw, 64px); line-height: 1.02; letter-spacing: -.04em; margin: 0 0 14px; font-weight: 750; }
+h1 em, h2 em { font-style: normal; color: var(--accent); }
+h2 { font-size: clamp(28px, 3.6vw, 40px); line-height: 1.08; letter-spacing: -.03em; margin: 0 0 10px; font-weight: 720; }
+.sub { color: var(--ink2); font-size: 18px; margin: 0 0 28px; }
+.logo { width: 64px; height: 64px; margin-bottom: 22px; filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--accent) 45%, transparent)); }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 11px; border: 0; cursor: pointer; text-decoration: none;
+  font-weight: 600; font-size: 15px; background: var(--rule); color: var(--ink); transition: transform .12s, opacity .12s; }
+.btn:hover { opacity: .85; } .btn:active { transform: scale(.98); }
+.btn.primary { background: var(--ink); color: var(--page); }
+.btn.sm { padding: 7px 13px; font-size: 13.5px; border-radius: 9px; }
+.ctas { display: flex; gap: 10px; flex-wrap: wrap; }
+.meta { color: var(--ink2); font-size: 13px; margin: 14px 0 0; opacity: .8; }
+.ask { display: flex; align-items: center; gap: 10px; margin-top: 56px; padding: 6px 6px 6px 16px; border-radius: 14px; border: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--ink) 3%, var(--page)); transition: border-color .2s, box-shadow .2s; }
+.ask:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); }
+.ask b { color: var(--accent); font-size: 18px; }
+.ask input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--ink); font: inherit; font-size: 16px; }
+.ask input::placeholder { color: var(--ink2); opacity: .7; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip { all: unset; padding: 5px 11px; border-radius: 99px; font-size: 13px; color: var(--ink2); border: 1px solid var(--rule); cursor: pointer; }
+.chip:hover { color: var(--ink); border-color: var(--accent); }
+.caption { color: var(--ink2); font-size: 13px; margin-top: 18px; opacity: .8; }
+kbd { font: 600 11px ui-monospace, Menlo, monospace; padding: 1px 5px; border-radius: 5px; border: 1px solid var(--rule); }
+.feats { display: grid; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--rule); margin-top: 32px; }
+.feat { all: unset; display: block; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+.feat:nth-child(odd) { padding-right: 20px; }
+.feat b { display: block; font-size: 15.5px; } .feat span { color: var(--ink2); font-size: 14px; }
+button.feat { cursor: pointer; } button.feat b::after { content: " →"; color: var(--accent); opacity: 0; transition: opacity .15s; } button.feat:hover b::after { opacity: 1; }
+.ways { margin-top: 32px; border-top: 1px solid var(--rule); }
+.way { display: grid; grid-template-columns: 120px 1fr; gap: 16px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.way > span { font-weight: 600; font-size: 14.5px; }
+.cmd { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 8px 8px 12px; border-radius: 10px; background: var(--rule); }
+.cmd code { flex: 1; min-width: 0; font: 12.5px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.cmd button { all: unset; cursor: pointer; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 7px; background: var(--page); }
+.fine { color: var(--ink2); font-size: 13.5px; margin: 18px 0 0; }
+.wx { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 26px; }
+.wx div { padding: 16px 8px; border-radius: 12px; background: var(--rule); text-align: center; font-size: 13px; color: var(--ink2); }
+.wx b { display: block; font-size: 24px; margin: 4px 0; color: var(--ink); }
+
+/* ---------- the config file the AI edits ---------- */
+#yaml { position: absolute; right: 22px; bottom: 22px; width: 330px; z-index: 6; border-radius: 13px; overflow: hidden; background: #121118ee;
+  backdrop-filter: blur(14px); color: #e8e7ef; box-shadow: 0 20px 60px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.08); font: 12px/1.6 ui-monospace, Menlo, monospace;
+  transition: opacity .25s, transform .25s var(--ease); }
+#yaml[hidden] { display: block; opacity: 0; transform: translateY(10px); pointer-events: none; }
+#yaml .hd { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid rgba(255,255,255,.08); font-family: -apple-system, system-ui, sans-serif; }
+#yaml .hd span { margin-left: auto; color: rgba(255,255,255,.45); } #yaml .hd span.ok { color: #6ee7a8; }
+#yaml .hd button { all: unset; cursor: pointer; padding: 0 6px; opacity: .5; } #yaml .hd button:hover { opacity: 1; }
+#yaml pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; }
+#yaml .add { display: block; margin: 0 -12px; padding: 0 12px; color: #6ee7a8; animation: flash .9s; } #yaml .cm { color: rgba(255,255,255,.4); }
+@keyframes flash { from { background: rgba(110,231,168,.3); } }
+
+/* ---------- a chat with an agent ---------- */
+#chat { position: absolute; top: 8px; right: 8px; bottom: 8px; width: 340px; z-index: 7; display: flex; flex-direction: column; border-radius: 14px;
+  background: #121118f2; backdrop-filter: blur(16px); color: #ecebf2; box-shadow: 0 24px 80px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08);
+  transition: opacity .25s, transform .3s var(--ease); font-size: 14px; }
+body.right #chat { right: auto; left: 8px; }
+body.top #chat { top: 0; }
+#chat[hidden] { display: flex; opacity: 0; transform: translateX(16px); pointer-events: none; }
+#chat .hd { display: flex; align-items: center; gap: 8px; padding: 12px 12px 12px 16px; border-bottom: 1px solid rgba(255,255,255,.08); font-weight: 600; font-size: 13px; }
+#chat .hd i { font-style: normal; color: var(--accent); } #chat .hd span { color: rgba(255,255,255,.45); font-weight: 400; }
+#chat .hd button { all: unset; margin-left: auto; cursor: pointer; opacity: .5; padding: 0 4px; } #chat .hd button:hover { opacity: 1; }
+#msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 90%; padding: 9px 13px; border-radius: 13px; line-height: 1.5; animation: pgin .3s var(--ease); white-space: pre-wrap; }
+.msg.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 30%, #1c1a25); }
+.msg.ai { background: rgba(255,255,255,.06); }
+.tool { align-self: flex-start; font: 11.5px ui-monospace, Menlo, monospace; color: rgba(255,255,255,.6); padding: 4px 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,.1); animation: pgin .25s; }
 .tool b { color: var(--accent); font-weight: 600; }
-@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
-.replay { align-self: center; margin-top: auto; }
-.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.feat { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; transition: transform .2s, border-color .2s; }
-.feat:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
-.feat .ic { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-size: 18px; margin-bottom: 14px; }
-.feat b { display: block; font-size: 16.5px; margin-bottom: 6px; } .feat span { color: var(--dim); font-size: 14.5px; }
-.install { padding: 90px 0; }
-.ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.way { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.way .tag { align-self: flex-start; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px; background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
-.way p { color: var(--dim); font-size: 14.5px; margin: 0; flex: 1; }
-.cmd { display: flex; align-items: center; gap: 8px; background: #0b0a10; border: 1px solid var(--line); border-radius: 11px; padding: 9px 10px 9px 12px; }
-.cmd code { flex: 1; font: 12.5px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
-.cmd button { all: unset; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 7px; background: rgba(255,255,255,.08); }
-.cmd button:hover { background: var(--accent); color: #0b0a10; }
-.tip { display: flex; gap: 14px; align-items: flex-start; margin-top: 18px; padding: 16px 18px; border-radius: 16px; font-size: 14.5px; color: var(--dim);
-  background: color-mix(in srgb, var(--accent) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); }
-.tip b { color: var(--fg); } .tip .ic { color: var(--accent); font-size: 18px; line-height: 1.4; }
-.tip code { font: 12.5px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 6px; color: var(--fg); }
-.fine { color: var(--faint); font-size: 13.5px; margin-top: 20px; max-width: 760px; }
-footer { border-top: 1px solid var(--line); padding: 34px 0 60px; color: var(--faint); font-size: 14px; }
-footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; } footer a { color: var(--dim); text-decoration: none; } footer a:hover { color: var(--fg); }
-.reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.8,.2,1); }
-.reveal.in { opacity: 1; transform: none; }
-@media (max-width: 900px) {
-  .stagewrap, .split { grid-template-columns: 1fr; } .grid, .ways { grid-template-columns: 1fr; } nav .links { display: none; }
-  nav .btn { margin-left: auto; } .hint { display: none; }
-  .win { --sb: 170px; height: 460px; } .article { padding: 22px; }
+#chat .again { all: unset; align-self: center; margin-top: 6px; font-size: 12.5px; color: rgba(255,255,255,.55); cursor: pointer; } #chat .again:hover { color: #fff; }
+
+/* ---------- the command bar ---------- */
+#scrim { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.18); opacity: 0; pointer-events: none; transition: opacity .15s; }
+#cbar { position: fixed; left: 50%; top: 16vh; z-index: 21; width: min(600px, calc(100vw - 32px)); border-radius: 16px; overflow: hidden;
+  background: #1b1a23f5; backdrop-filter: blur(20px); color: var(--fg); box-shadow: 0 30px 90px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.1);
+  opacity: 0; transform: translateX(-50%) scale(.97); pointer-events: none; transition: opacity .15s, transform .15s; }
+body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
+#cq { width: 100%; padding: 17px 18px; border: 0; border-bottom: 1px solid var(--line); outline: 0; background: none; color: var(--fg); font: inherit; font-size: 17px; }
+#cq::placeholder { color: var(--fg-dim); }
+#res { padding: 6px; }
+.r { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; color: var(--fg-dim); cursor: pointer; font-size: 14px; }
+.r.sel { background: color-mix(in srgb, var(--accent) 32%, transparent); color: #fff; }
+.r .ic { width: 20px; text-align: center; } .r .k { margin-left: auto; font-size: 12px; opacity: .6; }
+#toast { position: fixed; left: 50%; bottom: 26px; z-index: 30; transform: translate(-50%, 10px); padding: 8px 14px; border-radius: 10px; font-size: 13px;
+  background: #1b1a23; color: var(--fg); box-shadow: 0 10px 30px rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+#toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 760px) {
+  .inner { padding: 36px 22px 60px; } .feats { grid-template-columns: 1fr; } .feat:nth-child(odd) { padding-right: 0; }
+  .way { grid-template-columns: 1fr; gap: 8px; } .wx { grid-template-columns: repeat(3, 1fr); } .wx div:nth-child(n+4) { display: none; }
+  body.top #url, body.top .drag { display: none; } #card2 { display: none; }
+  #chat, body.top #chat { left: 8px; right: 8px; top: auto; height: 60%; width: auto; } body.chatting #main { padding: 0 8px 8px; } #yaml { left: 12px; right: 12px; width: auto; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-<div class="glow"></div>
-<nav id="nav"><div class="wrap">
-  <a class="brand" href="#"><img src="icon.png" alt="">Valerie</a>
-  <div class="links"><a href="#try">Try it</a><a href="#agents">Agents</a><a href="#features">Features</a><a href="#install">Install</a><a href="https://github.com/cullen-b/valerie">GitHub</a></div>
-  <a class="btn sm primary" href="#install">Download</a>
-</div></nav>
+<div id="app">
+  <nav id="sidebar" aria-label="Tabs">
+    <div class="drag"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div></div>
+    <button id="url" title="Command bar (⌘K)"></button>
+    <div class="favs">
+      <a class="tile" href="https://github.com/cullen-b/valerie" title="Source on GitHub" aria-label="Source on GitHub"><svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+      <a class="tile" href="https://github.com/cullen-b/valerie-plugins" title="Plugins" aria-label="Plugins">◇</a>
+      <a class="tile" href="https://github.com/cullen-b/valerie/releases" title="Releases" aria-label="Releases">↓</a>
+      <a class="tile" href="https://github.com/cullen-b/valerie/issues" title="Report a problem" aria-label="Report a problem">!</a>
+    </div>
+    <div class="space-title"><i>◆</i><span id="spname"></span></div>
+    <div id="tabs" role="tablist"></div>
+    <div class="foot" id="spaces"></div>
+  </nav>
 
-<section class="hero"><div class="wrap">
-  <div class="pill"><b>●</b> <span id="ver">Free · open source · updates itself</span></div>
-  <h1>The browser you<br><em>change by asking.</em></h1>
-  <p class="sub">Tell Valerie how you want it and its AI rewires itself on the spot. Spaces, a command bar, vim keys, and agents that can actually use your browser, on Safari's fast engine.</p>
-  <div class="ctas">
-    <a class="btn primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Download for Mac</a>
-    <a class="btn" href="#try">Try it right here ↓</a>
-  </div>
-  <div class="meta">Apple silicon and Intel · macOS 14 or later · Linux and Windows builds too</div>
-</div></section>
-
-<section class="demo" id="try"><div class="wrap">
-  <div class="asker">
-    <div class="askbar"><span class="bang">!</span><input id="ask" placeholder="Describe a change… try “make it green” or “tabs on top”" autocomplete="off"><button class="btn sm primary" id="askgo">Ask</button></div>
-    <div class="chips" id="chips"></div>
-  </div>
-  <div class="stagewrap">
-    <div class="win" id="win">
-      <div class="sb" id="sb">
-        <div class="lights"><i></i><i></i><i></i></div>
-        <div class="url" id="url" title="Open the command bar">valerie.app/read/slow-web</div>
-        <div class="pins" id="pins"></div>
-        <div class="label" id="tlabel">Today</div>
-        <div class="tabs" id="tabs"></div>
-        <div class="spaces" id="spaces"></div>
-      </div>
-      <div class="page" id="page">
-        <div class="article">
-          <div class="kick" id="akick">Essay</div>
-          <h3 id="atitle">The case for a slower, kinder web</h3>
-          <div class="by">8 min read</div>
-          <div class="img"></div>
-          <p>Every browser asks you to adapt to it. Its buttons, its menus, its idea of where things go. What if it worked the other way around, and the browser adapted to you?</p>
-          <p>Say what you want in plain words. Bigger text for tired eyes, tabs where you expect them, the colors you like. And it simply happens.</p>
+  <main id="main">
+    <div class="card" id="card1">
+      <section class="pg" data-tab="home" data-title="Valerie">
+        <div class="inner">
+          <img class="logo" src="icon.png" alt="">
+          <h1>The browser you<br>change by <em>asking.</em></h1>
+          <p class="sub">Fast, keyboard-first, and rewired by AI when you ask.</p>
+          <div class="ctas">
+            <a class="btn primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Download for Mac</a>
+            <button class="btn" data-go="install">Other ways</button>
+          </div>
+          <p class="meta" id="ver">Free · open source · macOS 14+</p>
+          <label class="ask"><b>!</b><input id="ask" placeholder="Describe a change… try “tabs on top”" autocomplete="off"><button class="btn sm primary" id="askgo">Ask</button></label>
+          <div class="chips" id="chips"></div>
+          <p class="caption">This page is a working Valerie. Press <kbd>⌘K</kbd>.</p>
         </div>
-        <div class="hint" id="hint">Press <kbd>⌘K</kbd> for the command bar</div>
-      </div>
-      <div class="cbar" id="cbar"><input id="cq" placeholder="Search tabs, history and commands…  (! to change Valerie, ? to ask AI)" autocomplete="off"><div class="res" id="res"></div></div>
+      </section>
+
+      <section class="pg" data-tab="agents" data-title="Agents" hidden>
+        <div class="inner">
+          <h2>An AI that can <em>use</em> your browser.</h2>
+          <p class="sub">It opens tabs, reads pages and fills things in, with the access you choose.</p>
+          <button class="btn primary" id="watch">▶ Watch it work</button>
+          <p class="fine">Claude Code, Codex, Cursor, or a free AI Valerie sets up for you.</p>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="features" data-title="Features" hidden>
+        <div class="inner">
+          <h2>Arc's best ideas, <em>made yours.</em></h2>
+          <div class="feats">
+            <button class="feat" data-demo="space"><b>Spaces</b><span>Own tabs, theme and logins.</span></button>
+            <button class="feat" data-demo="bar"><b>Command bar</b><span>Tabs, history, web and AI in one box.</span></button>
+            <button class="feat" data-demo="split"><b>Split view</b><span>Two tabs side by side.</span></button>
+            <button class="feat" data-demo="vim"><b>Vim keys</b><span><kbd>j</kbd> <kbd>k</kbd> scroll, <kbd>J</kbd> <kbd>K</kbd> switch tabs.</span></button>
+            <div class="feat"><b>Little windows</b><span>Links from other apps open small.</span></div>
+            <div class="feat"><b>A quieter web</b><span>No ads, trackers or cookie banners.</span></div>
+            <div class="feat"><b>Sync through GitHub</b><span>Settings and tabs, in a repo you own.</span></div>
+            <div class="feat"><b>Plugins</b><span>Install one, or ask your AI to write it.</span></div>
+            <div class="feat"><b>Fast and light</b><span>Rust on Safari's engine.</span></div>
+            <div class="feat"><b>Updates itself</b><span>Quietly, in the background.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="install" data-title="Install" hidden>
+        <div class="inner">
+          <h2>Get Valerie</h2>
+          <p class="sub">Free and open source. It keeps itself up to date.</p>
+          <div class="ways">
+            <div class="way"><span>Terminal</span><div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div></div>
+            <div class="way"><span>Homebrew</span><div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div></div>
+            <div class="way"><span>Download</span><div class="ctas"><a class="btn sm primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Valerie.dmg</a><a class="btn sm" href="https://github.com/cullen-b/valerie/releases/latest">Linux and Windows</a></div></div>
+          </div>
+          <p class="fine">Sign in to Claude Code, Codex or Cursor first and setup is instant. No AI? Valerie sets up a free one.</p>
+          <p class="fine">The .dmg and Homebrew copies aren't notarized yet. The first time, open System Settings › Privacy &amp; Security › Open Anyway.</p>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="weather" data-title="Lisbon · 10-day forecast" hidden>
+        <div class="inner">
+          <h2>Lisbon</h2>
+          <p class="sub">Light rain Saturday evening.</p>
+          <div class="wx"><div>Fri<b>23°</b>☀</div><div>Sat<b>21°</b>☂</div><div>Sun<b>19°</b>⛅</div><div>Mon<b>22°</b>☀</div><div>Tue<b>22°</b>☀</div></div>
+        </div>
+      </section>
     </div>
-    <div class="yaml">
-      <div class="head">✎ config.yaml <span class="st" id="st">your settings</span></div>
-      <pre id="yaml"></pre>
-      <div class="note" id="ynote">Every change your AI makes is a readable line in one file. Undo is deleting it.</div>
-    </div>
-  </div>
-</div></section>
+    <div class="card" id="card2"></div>
 
-<section id="agents"><div class="wrap split">
-  <div class="reveal">
-    <div class="kicker">Agents built in</div>
-    <h2>An AI that can use your browser, not just talk about it.</h2>
-    <p class="lead">Chats can open tabs, read pages, click and fill things in, with the access you choose: read only, ask first, or full. Ask questions about any page right in find. Schedule a morning brief. Have it watch a page and tap you when something changes.</p>
-    <p class="lead" style="font-size:15.5px">Works with Claude Code, Codex, Cursor and more. No subscription? Valerie sets up free AI for you.</p>
-  </div>
-  <div class="chat reveal" id="chat"></div>
-</div></section>
-
-<section id="features"><div class="wrap" style="padding: 40px 0 20px">
-  <div class="reveal"><div class="kicker">Everything else</div><h2>Arc's best ideas, made yours.</h2><p class="lead">All of it configurable, all of it from the keyboard if you like.</p></div>
-  <div class="grid">
-    <div class="feat reveal"><div class="ic">◐</div><b>Spaces</b><span>Separate sets of tabs, each with its own color and logins. Swipe to switch.</span></div>
-    <div class="feat reveal"><div class="ic">⌘</div><b>One command bar</b><span>Tabs, history, the web, every command, a calculator, and your AI, all in one box.</span></div>
-    <div class="feat reveal"><div class="ic">⤒</div><b>Tabs that tidy themselves</b><span>Pin what matters. Everything else archives itself after a day.</span></div>
-    <div class="feat reveal"><div class="ic">⌨</div><b>Keyboard everything</b><span>Vim keys, link hints, and every shortcut is yours to change.</span></div>
-    <div class="feat reveal"><div class="ic">◫</div><b>Split view and little windows</b><span>Tabs side by side. Links from other apps open small and get out of the way.</span></div>
-    <div class="feat reveal"><div class="ic">✂</div><b>Sites that behave</b><span>Cookie banners rejected, trackers stripped, ads blocked, dark mode for any site.</span></div>
-    <div class="feat reveal"><div class="ic">⇄</div><b>Sync through GitHub</b><span>Settings and tabs on every Mac, in a private repo you own.</span></div>
-    <div class="feat reveal"><div class="ic">⚡</div><b>Fast and light</b><span>Rust on the system's own web engine: Safari's speed and battery life.</span></div>
-    <div class="feat reveal"><div class="ic">↻</div><b>Updates itself</b><span>Quietly, in the background. The new version is there next time you open it.</span></div>
-  </div>
-</div></section>
-
-<section class="install" id="install"><div class="wrap">
-  <div class="reveal"><div class="kicker">Install</div><h2>Get Valerie</h2><p class="lead">Free and open source. Pick whichever way you like. After that, Valerie keeps itself up to date.</p></div>
-  <div class="ways">
-    <div class="way reveal"><span class="tag">Smoothest</span><b>One line in Terminal</b><p>Downloads the latest Valerie, checks it's genuine, puts it in Applications and opens it.</p>
-      <div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div></div>
-    <div class="way reveal"><b>Download</b><p>Open the disk image and drag Valerie into Applications. Linux and Windows builds are on the releases page.</p>
-      <a class="btn sm primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Valerie.dmg</a>
-      <a class="btn sm" href="https://github.com/cullen-b/valerie/releases/latest">All downloads</a></div>
-    <div class="way reveal"><b>Homebrew</b><p>No need to <code>brew upgrade</code>: Valerie updates itself.</p>
-      <div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div></div>
-  </div>
-  <div class="tip reveal"><span class="ic">✦</span><div><b>Tip: sign in to your AI app first.</b> Setup goes fastest if the AI you use is already signed in on this Mac:
-    Claude Code, Codex or Cursor (in Terminal: <code>claude</code>, <code>codex login</code> or <code>cursor-agent login</code>). Valerie finds it and uses it straight away.
-    No AI app? Valerie sets up a free one for you during setup.</div></div>
-  <p class="fine">Valerie isn't notarized by Apple yet, so the first time you open a downloaded or Homebrew copy, macOS may say it can't check it. Click Done, then System Settings › Privacy &amp; Security › Open Anyway. That's once; the Terminal line doesn't need it.</p>
-</div></section>
-
-<footer><div class="wrap"><span>Valerie</span><a href="https://github.com/cullen-b/valerie">Source</a><a href="https://github.com/cullen-b/valerie/releases">Releases</a><a href="https://github.com/cullen-b/valerie/issues">Report a problem</a></div></footer>
+    <div id="yaml" hidden><div class="hd">config.yaml <span id="st"></span><button id="yclose" aria-label="Close">✕</button></div><pre id="ypre"></pre></div>
+    <aside id="chat" hidden><div class="hd"><i>✦</i> Chat <span>· Claude Code</span><button id="cclose" aria-label="Close">✕</button></div><div id="msgs"></div></aside>
+  </main>
+</div>
+<div id="scrim"></div>
+<div id="cbar" role="dialog" aria-label="Command bar"><input id="cq" placeholder="Search tabs and commands…  ! to change Valerie" autocomplete="off"><div id="res"></div></div>
+<div id="toast"></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ---------- the mini Valerie ----------
 const SPACES = [
-  { name: "Personal", accent: "#9d8cff", bg: "#17141f", pins: ["G", "▶", "♫", "✉"], pinColors: ["#ea4335", "#ff0033", "#1ed760", "#4285f4"],
-    tabs: [["The case for a slower, kinder web", "#e98a6c"], ["Weekend in Lisbon – Airbnb", "#ff5a5f"], ["Sourdough, step by step", "#c99a5b"], ["Hacker News", "#ff6600"], ["Lo-fi beats to browse to", "#1ed760"]] },
-  { name: "Work", accent: "#5fb3ff", bg: "#111821", pins: ["L", "F", "S", "N"], pinColors: ["#5e6ad2", "#a259ff", "#4a154b", "#e5e5e5"],
-    tabs: [["Q4 roadmap – Linear", "#5e6ad2"], ["Onboarding flow – Figma", "#a259ff"], ["#launch – Slack", "#e01e5a"], ["Pull request #412", "#8b949e"], ["Docs – Notion", "#d9d9d9"]] },
-  { name: "School", accent: "#4fd6a0", bg: "#101a17", pins: ["C", "D", "Q", "W"], pinColors: ["#e66000", "#4285f4", "#2d6cdf", "#636466"],
-    tabs: [["Organic Chemistry – Canvas", "#e66000"], ["Lab report draft – Docs", "#4285f4"], ["Krebs cycle – Wikipedia", "#c8c8c8"], ["Quizlet – Unit 4", "#4255ff"], ["Office hours booking", "#9aa0a6"]] },
+  { name: "Personal", accent: "#9d8cff", bg1: "#171a2b", bg2: "#2a1f3d" },
+  { name: "Work", accent: "#5fb3ff", bg1: "#0f1a28", bg2: "#132a3c" },
+  { name: "School", accent: "#4fd6a0", bg1: "#0e1d19", bg2: "#17302a" },
 ];
-const M = { space: 0, active: 0, accent: null, tabH: 34, top: false, right: false, dark: false, serif: false };
-const win = $("#win");
-function drawMock() {
-  const sp = SPACES[M.space];
-  win.style.setProperty("--mock-accent", M.accent || sp.accent);
-  win.style.setProperty("--space-bg", sp.bg);
-  win.style.setProperty("--tab-h", M.tabH + "px");
-  win.classList.toggle("top", M.top); win.classList.toggle("right", M.right && !M.top);
-  win.classList.toggle("darkpage", M.dark); win.classList.toggle("serif", M.serif);
-  const pins = $("#pins"); pins.replaceChildren();
-  sp.pins.forEach((p, i) => { const d = el("div", null, p); d.style.color = sp.pinColors[i]; pins.append(d); });
-  const tabs = $("#tabs"); tabs.replaceChildren();
-  sp.tabs.forEach(([t, c], i) => {
-    const r = el("div", "tab" + (i === M.active ? " on" : "")); const f = el("span", "fav"); f.style.background = c;
-    r.append(f, el("span", null, t)); r.onclick = () => { M.active = i; drawMock(); }; tabs.append(r);
-  });
+const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀" };
+const BASE_TABS = ["home", "agents", "features", "install"];
+const page = (id) => document.querySelector(`.pg[data-tab="${id}"]`);
+const narrow = matchMedia("(max-width: 760px)");
+const DEFAULTS = { accent: null, tabH: 38, top: false, right: false, dark: false, serif: false };
+const M = { space: 0, tab: "home", split: null, tabs: [...BASE_TABS], ...DEFAULTS };
+
+function render() {
+  const sp = SPACES[M.space], root = document.documentElement.style, b = document.body.classList;
+  root.setProperty("--accent", M.accent || sp.accent); root.setProperty("--bg1", sp.bg1); root.setProperty("--bg2", sp.bg2);
+  root.setProperty("--tab-h", M.tabH + "px");
+  b.toggle("top", M.top || narrow.matches); b.toggle("right", M.right && !M.top && !narrow.matches);
+  b.toggle("darkpage", M.dark); b.toggle("serif", M.serif);
+  $("#spname").textContent = sp.name;
+  const tabs = $("#tabs"), shown = [...tabs.children].map((r) => r.dataset.id); tabs.replaceChildren();
+  for (const id of M.tabs) {
+    const r = el("button", "row" + (id === M.tab ? " on" : "") + (id === M.split ? " split" : "") + (id === "weather" ? " agent" : "") + (shown.length && !shown.includes(id) ? " new" : ""));
+    r.dataset.id = id;
+    r.setAttribute("role", "tab"); r.setAttribute("aria-selected", id === M.tab);
+    const ic = el("span", "ic");
+    if (ICONS[id] === "img") { const im = el("img"); im.src = "icon.png"; im.alt = ""; ic.append(im); } else ic.textContent = ICONS[id];
+    r.append(ic, el("span", "t", page(id).dataset.title)); r.onclick = () => show(id); tabs.append(r);
+  }
   const sd = $("#spaces"); sd.replaceChildren();
-  SPACES.forEach((s, i) => { const b = el("button", i === M.space ? "on" : ""); b.title = s.name; b.onclick = () => { M.space = i; M.active = 0; drawMock(); }; sd.append(b); });
-  const [title] = sp.tabs[M.active];
-  $("#atitle").textContent = title; $("#akick").textContent = sp.name;
-  $("#url").textContent = "valerie.app/" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 28);
+  SPACES.forEach((s, i) => { const d = el("button", i === M.space ? "on" : ""); d.title = s.name; d.setAttribute("aria-label", "Space: " + s.name); d.onclick = () => go(i); sd.append(d); });
+  for (const p of document.querySelectorAll(".pg")) {
+    const id = p.dataset.tab, home = id === M.split ? $("#card2") : $("#card1");
+    if (p.parentElement !== home) home.append(p);
+    p.hidden = id !== M.tab && id !== M.split;
+  }
+  document.body.classList.toggle("split-on", !!M.split);
+  const url = $("#url"); url.replaceChildren(el("b", null, location.host || "valerie"), el("span", "path", M.tab === "home" ? "" : "/" + M.tab), el("kbd", null, "⌘K"));
+  tabs.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (M.tab !== "weather") history.replaceState(null, "", M.tab === "home" ? location.pathname : "#" + M.tab);
 }
+function show(id) {
+  if (M.split === id) M.split = M.tab;
+  if (M.tab !== id) { M.tab = id; $("#card1").scrollTop = 0; }
+  render();
+}
+function go(space, dir) {
+  if (space === M.space) return;
+  const t = $("#tabs"); t.style.setProperty("--swap", (dir ?? space - M.space) > 0 ? "14px" : "-14px");
+  M.space = space; t.classList.add("swap"); render(); requestAnimationFrame(() => requestAnimationFrame(() => t.classList.remove("swap")));
+}
+function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 1600); }
 
 // ---------- change it by asking ----------
-const BASE = ["# Only what you changed lives here.", "spaces: [Personal, Work, School]", "search_engine: duckduckgo"];
-let added = [];
 const COLORS = { green: "#3ccf91", blue: "#4ea8ff", pink: "#ff7ac6", orange: "#ff9d4d", red: "#ff6b6b", yellow: "#f5c84c", purple: "#9d8cff", teal: "#2fd3c4" };
 const RULES = [
   { re: /\b(green|blue|pink|orange|red|yellow|purple|teal)\b/, run: (m) => { M.accent = COLORS[m[1]]; return [`theme: { accent: "${COLORS[m[1]]}" }   # ${m[1]}`]; } },
   { re: /\b(big|bigger|tall|taller|huge|large|roomy)\b/, run: () => { M.tabH = 50; return ["sidebar: { tab_height: 50 }   # roomier tabs"]; } },
-  { re: /\b(small|smaller|compact|tiny|dense)\b/, run: () => { M.tabH = 26; return ["sidebar: { tab_height: 26 }   # compact tabs"]; } },
+  { re: /\b(small|smaller|compact|tiny|dense)\b/, run: () => { M.tabH = 28; return ["sidebar: { tab_height: 28 }   # compact tabs"]; } },
   { re: /\b(top|chrome|horizontal)\b/, run: () => { M.top = true; return ["layout: { tab_bar: top }   # tabs along the top"]; } },
   { re: /\b(side|sidebar|left)\b(?!.*right)/, run: () => { M.top = false; M.right = false; return ["layout: { tab_bar: side, sidebar_position: left }"]; } },
   { re: /\bright\b/, run: () => { M.top = false; M.right = true; return ["layout: { sidebar_position: right }"]; } },
-  { re: /\b(dark|night|invert)\b/, run: () => { M.dark = true; return ["pages: { dark_mode: always }   # every site in dark mode"]; } },
+  { re: /\b(dark|night)\b/, run: () => { M.dark = true; return ["pages: { dark_mode: always }   # every site dark"]; } },
   { re: /\b(light|bright|day)\b/, run: () => { M.dark = false; return ["pages: { dark_mode: off }"]; } },
-  { re: /\b(serif|georgia|book|font|typewriter)\b/, run: () => { M.serif = true; return ['layout: { font: "Georgia" }   # a bookish font']; } },
-  { re: /\b(reset|undo|default|original)\b/, run: () => { Object.assign(M, { accent: null, tabH: 34, top: false, right: false, dark: false, serif: false }); added = []; return []; } },
+  { re: /\b(serif|georgia|book|bookish|font)\b/, run: () => { M.serif = true; return ['layout: { font: "Georgia" }   # a bookish font']; } },
+  { re: /\b(reset|undo|default|original)\b/, run: () => { Object.assign(M, DEFAULTS); added = []; return []; } },
 ];
-const SUGGEST = ["Make it green", "Bigger tabs", "Tabs on top like Chrome", "Every site in dark mode", "Sidebar on the right", "A bookish font", "Reset"];
-function drawYaml(fresh) {
-  const pre = $("#yaml"); pre.replaceChildren();
-  const lines = [...BASE, ...added];
-  lines.forEach((l) => {
-    const isNew = fresh && fresh.includes(l);
-    const [code, comment] = l.startsWith("#") ? ["", l] : l.split(/\s{3}(?=#)/);
-    const row = el("span", isNew ? "add" : null);
+const SUGGEST = ["Make it green", "Tabs on top", "Sidebar on the right", "Dark pages", "Bigger tabs", "A bookish font", "Reset"];
+let added = [], busy = false;
+function drawYaml(fresh = []) {
+  const pre = $("#ypre"); pre.replaceChildren();
+  for (const l of added) {
+    const [code, comment] = l.split(/\s{3}(?=#)/), isNew = fresh.includes(l), row = el("span", isNew ? "add" : null);
     row.style.display = "block";
-    // The comment goes on its own line above the setting, as people write YAML.
-    if (comment) row.append(el("span", "cm", comment + (code ? "\n" : "")));
-    if (code) row.append(document.createTextNode((isNew ? "+ " : "") + code));
-    pre.append(row);
-  });
+    if (comment) row.append(el("span", "cm", comment + "\n"));
+    row.append(document.createTextNode((isNew ? "+ " : "") + code)); pre.append(row);
+  }
+  $("#yaml").hidden = !added.length;
 }
-let busy = false;
 function ask(text) {
-  text = (text || "").trim(); if (!text || busy) return;
-  const t = text.toLowerCase();
-  const hits = RULES.filter((r) => r.re.test(t));
-  const st = $("#st"); busy = true;
-  st.textContent = "✦ your AI is editing…"; st.className = "st busy";
+  text = (text || "").trim().toLowerCase(); if (!text || busy) return;
+  const hits = RULES.filter((r) => r.re.test(text)), st = $("#st");
+  if (!hits.length) { toast("This demo knows colors, tab size, layout, dark pages and fonts. The real one does anything."); return; }
+  busy = true; $("#yaml").hidden = false; st.textContent = "✦ editing…"; st.className = "";
   setTimeout(() => {
-    let fresh = [];
-    for (const r of hits) {
-      const lines = r.run(t.match(r.re));
-      for (const l of lines) { const key = l.split(":")[0]; added = added.filter((a) => a.split(":")[0] !== key); added.push(l); fresh.push(l); }
+    const fresh = [];
+    for (const r of hits) for (const l of r.run(text.match(r.re))) {
+      const key = l.split(":")[0]; added = added.filter((a) => a.split(":")[0] !== key); added.push(l); fresh.push(l);
     }
-    drawMock(); drawYaml(fresh);
-    if (hits.length) { st.textContent = "✓ saved · applied live"; st.className = "st ok"; $("#ynote").textContent = "Every change your AI makes is a readable line in one file. Undo is deleting it."; }
-    else { st.textContent = "your settings"; st.className = "st"; $("#ynote").textContent = "This little demo only knows colors, tab size, layout, dark mode and fonts. The real Valerie hands anything you say to your AI."; }
-    busy = false;
-  }, 650);
+    render(); drawYaml(fresh); st.textContent = "✓ applied"; st.className = "ok"; busy = false;
+  }, 550);
 }
-const chips = $("#chips");
-SUGGEST.forEach((s) => { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; chips.append(c); });
+for (const s of SUGGEST) { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; $("#chips").append(c); }
 $("#ask").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(e.target.value); });
-$("#askgo").onclick = () => ask($("#ask").value);
+$("#askgo").onclick = (e) => { e.preventDefault(); ask($("#ask").value); };
+$("#yclose").onclick = () => ($("#yaml").hidden = true);
+
+// ---------- an agent at work: it opens a real tab here, reads it and closes it ----------
+let run = 0;
+async function agent() {
+  const me = ++run, alive = () => me === run, msgs = $("#msgs");
+  $("#chat").hidden = false; document.body.classList.add("chatting"); msgs.replaceChildren();
+  const say = (cls, text) => { const m = el("div", "msg " + cls, text); msgs.append(m); msgs.scrollTop = 1e6; return m; };
+  const tool = async (name, arg, ms = 700) => { const t = el("div", "tool"); t.append(el("b", null, name), " " + arg); msgs.append(t); await wait(ms); };
+  say("me", "What's the weather in Lisbon this weekend? Close the tab when you're done.");
+  await wait(800); if (!alive()) return;
+  await tool("open_tab", "weather.com/lisbon", 300); if (!alive()) return;
+  if (!M.tabs.includes("weather")) M.tabs.push("weather");
+  show("weather"); await wait(900); if (!alive()) return;
+  await tool("read_page", "Lisbon · 10-day forecast", 1100); if (!alive()) return;
+  await tool("close_tab", "weather.com/lisbon", 200); if (!alive()) return;
+  M.tabs = M.tabs.filter((t) => t !== "weather"); if (M.split === "weather") M.split = null;
+  show("agents"); await wait(400); if (!alive()) return;
+  const a = "Warm and mostly sunny: 19–23°C, with light rain Saturday evening. Bring a light jacket.", m = say("ai", "");
+  for (let i = 0; i <= a.length; i += 3) { if (!alive()) return; m.textContent = a.slice(0, i); await wait(14); }
+  m.textContent = a;
+  const again = el("button", "again", "↻ Play again"); again.onclick = agent; msgs.append(again);
+}
+function closeChat() {
+  run++; $("#chat").hidden = true; document.body.classList.remove("chatting");
+  if (M.tabs.includes("weather")) { M.tabs = M.tabs.filter((t) => t !== "weather"); if (M.split === "weather") M.split = null; if (M.tab === "weather") M.tab = "agents"; render(); }
+}
+$("#watch").onclick = agent; $("#cclose").onclick = closeChat;
+
+// ---------- feature demos ----------
+function toggleSplit() {
+  if (M.split) M.split = null;
+  else M.split = M.tabs.find((t) => t !== M.tab && t !== "weather" && t !== "features") || M.tabs.find((t) => t !== M.tab);
+  render();
+}
+const DEMOS = {
+  space: () => go((M.space + 1) % SPACES.length),
+  bar: () => openBar(),
+  split: () => { if (narrow.matches) return toast("Split view needs a wider window."); toggleSplit(); },
+  vim: () => toast("Press j or k to scroll, J or K to switch tabs."),
+};
+for (const b of document.querySelectorAll("[data-demo]")) b.onclick = () => DEMOS[b.dataset.demo]();
+for (const b of document.querySelectorAll("[data-go]")) b.onclick = () => show(b.dataset.go);
+for (const b of document.querySelectorAll(".cmd button")) b.onclick = () => {
+  navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500);
+};
 
 // ---------- the command bar ----------
-const COMMANDS = [["◫", "Split View", "⌃⇧="], ["≡", "Reader View", ""], ["◐", "New Space…", ""], ["☀", "Create Task…", ""], ["◎", "Watch This Page…", ""], ["⤒", "Pin Tab", "⌘⇧D"], ["✎", "Open Config File", ""]];
-const HISTORY = ["Rust 2027 edition: what's new", "Best ramen in Lisbon", "How to keep sourdough starter alive", "Figma: auto layout tips"];
+const DMG = "https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg";
+const COMMANDS = [
+  ["↓", "Download Valerie", "", () => (location.href = DMG)],
+  ["✦", "Watch an Agent Work", "", () => { show("agents"); agent(); }],
+  ["◫", "Split View", "⌃⇧=", () => DEMOS.split()],
+  ["◐", "Next Space", "⌃→", () => DEMOS.space()],
+  ["⧉", "Copy URL", "⌘⇧C", () => copyUrl()],
+  ["☾", "Dark Pages", "", () => ask("dark")],
+  ["▤", "Tabs on Top", "", () => ask("top")],
+  ["↺", "Reset Changes", "", () => ask("reset")],
+];
 let sel = 0, results = [];
 function search(q) {
   const s = q.trim().toLowerCase(), out = [];
-  if (s.startsWith("!")) out.push({ ic: "✎", t: "Customize Valerie: " + (q.trim().slice(1).trim() || "describe a change…"), k: "your AI", go: () => { closeBar(); ask(q.trim().slice(1)); } });
-  else if (s.startsWith("?")) out.push({ ic: "✦", t: "Ask your AI: " + (q.trim().slice(1).trim() || "anything…"), k: "opens in Chats", go: () => { closeBar(); location.hash = "#agents"; } });
+  if (s.startsWith("!")) out.push({ ic: "✎", t: "Change Valerie: " + (q.trim().slice(1).trim() || "describe a change…"), k: "your AI", go: () => ask(s.slice(1)) });
   else {
-    SPACES[M.space].tabs.forEach(([t], i) => { if (!s || t.toLowerCase().includes(s)) out.push({ ic: "▭", t, k: "Switch to tab", go: () => { M.active = i; drawMock(); closeBar(); } }); });
-    COMMANDS.forEach(([ic, t, k]) => { if (s && t.toLowerCase().includes(s)) out.push({ ic, t, k: k || "Command", go: closeBar }); });
-    HISTORY.forEach((t) => { if (s && t.toLowerCase().includes(s)) out.push({ ic: "↺", t, k: "History", go: closeBar }); });
-    if (s) out.push({ ic: "⌕", t: "Search the web for “" + q.trim() + "”", k: "↩", go: closeBar });
-    if (s && s.split(/\s+/).length >= 3) out.push({ ic: "✦", t: "Ask your AI: " + q.trim(), k: "opens in Chats", go: () => { closeBar(); location.hash = "#agents"; } });
+    for (const id of M.tabs) { const t = page(id).dataset.title; if (!s || t.toLowerCase().includes(s) || id.includes(s)) out.push({ ic: "▭", t, k: "Switch to Tab", go: () => show(id) }); }
+    for (const [ic, t, k, go] of COMMANDS) if (s && t.toLowerCase().includes(s)) out.push({ ic, t, k: k || "Command", go });
+    if (s) out.push({ ic: "⌕", t: "Search the web for “" + q.trim() + "”", k: "↩", go: () => open("https://duckduckgo.com/?q=" + encodeURIComponent(q.trim()), "_blank", "noopener") });
   }
   results = out.slice(0, 7); sel = 0; drawRes();
 }
 function drawRes() {
   const r = $("#res"); r.replaceChildren();
-  results.forEach((x, i) => { const d = el("div", "r" + (i === sel ? " sel" : "")); d.append(el("span", "ic", x.ic), el("span", null, x.t), el("span", "k", x.k)); d.onclick = x.go; d.onmouseenter = () => { sel = i; drawRes(); }; r.append(d); });
+  results.forEach((x, i) => {
+    const d = el("div", "r" + (i === sel ? " sel" : "")); d.append(el("span", "ic", x.ic), el("span", null, x.t), el("span", "k", x.k));
+    d.onclick = () => pick(i); d.onmouseenter = () => { sel = i; drawRes(); }; r.append(d);
+  });
 }
-function openBar() { $("#cbar").classList.add("open"); $("#cq").value = ""; search(""); setTimeout(() => $("#cq").focus(), 20); }
-function closeBar() { $("#cbar").classList.remove("open"); }
+function pick(i) { closeBar(); results[i].go(); }
+function openBar() { document.body.classList.add("bar"); $("#cq").value = ""; search(""); setTimeout(() => $("#cq").focus(), 20); }
+function closeBar() { document.body.classList.remove("bar"); $("#cq").blur(); }
+function copyUrl() { navigator.clipboard.writeText(location.href).then(() => toast("Copied " + location.href)); }
 $("#cq").addEventListener("input", (e) => search(e.target.value));
 $("#cq").addEventListener("keydown", (e) => {
   if (e.key === "ArrowDown") { sel = Math.min(results.length - 1, sel + 1); drawRes(); e.preventDefault(); }
   else if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); drawRes(); e.preventDefault(); }
-  else if (e.key === "Enter" && results[sel]) results[sel].go();
-  else if (e.key === "Escape") closeBar();
+  else if (e.key === "Enter" && results[sel]) pick(sel);
 });
-$("#url").onclick = openBar; $("#hint").onclick = openBar;
+$("#url").onclick = openBar; $("#scrim").onclick = closeBar;
+
+// ---------- keys: ⌘K/⌘D command bar, ⌘⇧C copy URL, vim j/k scroll, J/K switch tabs ----------
 document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "d") && document.activeElement !== $("#ask")) {
-    const r = win.getBoundingClientRect(); if (r.top < innerHeight && r.bottom > 0) { e.preventDefault(); openBar(); }
-  }
+  const mod = e.metaKey || e.ctrlKey, typing = e.target.closest("input");
+  if (mod && !e.shiftKey && (e.key === "k" || e.key === "d")) { e.preventDefault(); openBar(); return; }
+  if (mod && e.shiftKey && e.key.toLowerCase() === "c") { e.preventDefault(); copyUrl(); return; }
+  if (e.ctrlKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { e.preventDefault(); const d = e.key === "ArrowRight" ? 1 : -1; go((M.space + d + SPACES.length) % SPACES.length, d); return; }
+  if (e.key === "Escape") { if (document.body.classList.contains("bar")) closeBar(); else if (!$("#chat").hidden) closeChat(); return; }
+  if (typing || mod || e.altKey || document.body.classList.contains("bar")) return;
+  if (e.key === "j" || e.key === "k") $("#card1").scrollBy({ top: e.key === "j" ? 90 : -90 });
+  else if (e.key === "J" || e.key === "K") { const i = M.tabs.indexOf(M.tab), n = M.tabs.length; show(M.tabs[(i + (e.key === "J" ? 1 : -1) + n) % n]); }
 });
-document.addEventListener("mousedown", (e) => { if (!e.target.closest("#cbar") && !e.target.closest("#url") && !e.target.closest("#hint")) closeBar(); });
 
-// ---------- the agent chat (plays when it scrolls into view) ----------
-const SCRIPT = [
-  ["me", "Look at my Lisbon tabs and make me a packing list. Check the weather too."],
-  ["tool", "list_tabs", "3 tabs about Lisbon"],
-  ["tool", "read_page", "Weekend in Lisbon – Airbnb"],
-  ["tool", "open_tab", "weather.com/lisbon (in the Agents space)"],
-  ["tool", "read_page", "Lisbon 10-day forecast"],
-  ["ai", "Lisbon this weekend: 19–23°C, a little rain Saturday evening. The flat has a washer, so pack light:\n\n• 3 tees, 1 light sweater, a rain jacket\n• Comfy walking shoes (it's hilly!)\n• Swimsuit for Carcavelos\n• Adapter (type F)\n\nI closed the weather tab when I was done."],
-];
-let playing = false;
-async function play() {
-  if (playing) return; playing = true;
-  const c = $("#chat"); c.replaceChildren();
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  for (const [who, a, b] of SCRIPT) {
-    if (who === "me") { c.append(el("div", "msg me", a)); await wait(700); }
-    else if (who === "tool") { const t = el("div", "tool"); t.append(el("b", null, a), " · " + b); c.append(t); await wait(520); }
-    else { const m = el("div", "msg ai", ""); c.append(m); for (let i = 0; i <= a.length; i += 3) { m.textContent = a.slice(0, i); await wait(14); } m.textContent = a; }
-  }
-  const r = el("button", "btn sm replay", "↻ Play again"); r.onclick = () => { playing = false; play(); }; c.append(r);
-}
+// Two-finger swipes on the sidebar switch spaces; the trackpad's leftover inertia is ignored until it stops.
+let swipe = 0, swipeIdle;
+$("#sidebar").addEventListener("wheel", (e) => {
+  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  e.preventDefault(); clearTimeout(swipeIdle); swipeIdle = setTimeout(() => (swipe = 0), 250);
+  if (swipe === null) return;
+  swipe += e.deltaX;
+  if (Math.abs(swipe) > 60) { const d = swipe > 0 ? 1 : -1; swipe = null; if (SPACES[M.space + d]) go(M.space + d, d); }
+}, { passive: false });
 
-// ---------- page bits ----------
-const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); if (e.target.id === "chat") play(); } }), { threshold: 0.25 });
-document.querySelectorAll(".reveal").forEach((x) => io.observe(x));
-addEventListener("scroll", () => $("#nav").classList.toggle("scrolled", scrollY > 10), { passive: true });
-for (const b of document.querySelectorAll(".cmd button")) b.onclick = () => { navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
-fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) => r.ok ? r.json() : null).then((r) => {
-  if (r && r.tag_name) $("#ver").textContent = `Valerie ${r.tag_name.replace(/^v/, "")} · free · open source · updates itself`;
+narrow.addEventListener("change", () => { if (narrow.matches) M.split = null; render(); });
+const fromHash = () => ({ try: "home", agents: "agents", features: "features", install: "install" })[location.hash.slice(1)];
+addEventListener("hashchange", () => fromHash() && show(fromHash()));
+if (fromHash()) M.tab = fromHash();
+fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) => (r.ok ? r.json() : null)).then((r) => {
+  if (r && r.tag_name) $("#ver").textContent = `Version ${r.tag_name.replace(/^v/, "")} · free · open source · macOS 14+`;
 }).catch(() => {});
-drawMock(); drawYaml();
+render();
 </script>
 </body>
 </html>
