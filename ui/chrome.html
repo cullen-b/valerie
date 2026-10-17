@@ -744,14 +744,17 @@ $("#drag").onmousedown = (e) => { if (e.target.id === "drag") send({ t: "drag" }
 $("#empty").onclick = () => cmd({ cmd: "new_tab" });
 
 // ---------- two-finger swipe between spaces: the list follows your fingers, then commits or springs back ----------
-const swipe = { acc: 0, timer: 0, lock: false };
+const swipe = { acc: 0, timer: 0, lock: false, unlock: 0 };
+// After a switch the trackpad keeps sending momentum for a second or more: ignore it until it has stopped, or the
+// list would twitch sideways a moment after arriving in the new space.
+function holdSwipe() { clearTimeout(swipe.unlock); swipe.unlock = setTimeout(() => (swipe.lock = false), 220); }
 function springBack() {
   const sc = $("#scroll");
   sc.style.transition = "transform .25s var(--ease), opacity .2s"; sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
 }
 $("#sidebar").addEventListener("wheel", (e) => {
   if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !S || (S.spaces.length < 2 && !(S.chats && S.chats.enabled)) || S.sidebar.swipe_between_spaces === false) return;
-  if (swipe.lock) return;
+  if (swipe.lock) return holdSwipe();
   swipe.acc += e.deltaX;
   const sc = $("#scroll"), off = Math.max(-1, Math.min(1, swipe.acc / 160));
   sc.style.transition = "none";
@@ -760,7 +763,7 @@ $("#sidebar").addEventListener("wheel", (e) => {
   if (Math.abs(swipe.acc) > 160) {
     const dir = swipe.acc > 0 ? 1 : -1;
     swipe.acc = 0; swipe.lock = true; pendingDir = dir;
-    setTimeout(() => (swipe.lock = false), 550); // swallow trackpad momentum
+    holdSwipe();
     cmd({ cmd: dir > 0 ? "next_space" : "prev_space" });
     return;
   }

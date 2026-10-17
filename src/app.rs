@@ -43,6 +43,8 @@ pub enum Source {
 pub enum UserEvent {
     Ipc { from: Source, msg: String },
     PageLoad { target: Target, url: String, finished: bool },
+    /// The system ended a page's process (often to free memory while it was hidden); it's blank until reloaded.
+    PageCrashed { target: Target },
     Title { target: Target, title: String },
     NewWindow { target: Target, url: String },
     ExternalScheme(String),
@@ -164,6 +166,8 @@ pub struct App {
     /// Versions already mentioned this session, so a found update is only mentioned once.
     update_told: std::collections::HashSet<String>,
     preload_seq: u64,
+    /// Tabs whose page process ended while out of sight: they reload when they're shown again.
+    crashed: std::collections::HashSet<TabId>,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
     /// Sites asked about notifications this session (a site gets asked once).
@@ -520,6 +524,7 @@ impl App {
             update_ready: None,
             update_told: Default::default(),
             preload_seq: 0,
+            crashed: Default::default(),
             window_focused: true,
             notify_asked: Default::default(),
             passkey_offered: Default::default(),
@@ -682,6 +687,12 @@ impl App {
 
     fn page_builder<'a>(&self, base: WebViewBuilder<'a>, target: Target, url: &str) -> WebViewBuilder<'a> {
         let p = self.proxy.clone();
+        #[cfg(target_os = "macos")]
+        let base = {
+            use wry::WebViewBuilderExtDarwin;
+            let pc = p.clone();
+            base.with_on_web_content_process_terminate_handler(move || send(&pc, UserEvent::PageCrashed { target }))
+        };
         let (p1, p2, p3, p4, p5) = (p.clone(), p.clone(), p.clone(), p.clone(), p.clone());
         let downloads = self.config.downloads.dir();
         // Where each download is being saved; the completed handler doesn't get the path on every platform.
@@ -791,6 +802,7 @@ impl App {
 
     fn unload(&mut self, tab: TabId) {
         self.views.remove(&tab);
+        self.crashed.remove(&tab);
         self.preloaded.remove(&tab);
         self.ready_views.remove(&tab);
         if let Some(t) = self.state.tabs.get_mut(&tab) {
@@ -847,6 +859,12 @@ impl App {
         for (id, v) in &self.views {
             if !panes.contains(id) {
                 let _ = v.set_visible(false);
+            }
+        }
+        for id in panes.iter().filter(|id| self.crashed.contains(id)).copied().collect::<Vec<_>>() {
+            self.crashed.remove(&id);
+            if let Some(v) = self.views.get(&id) {
+                let _ = v.reload();
             }
         }
         for (i, id) in panes.iter().enumerate() {
@@ -1374,6 +1392,7 @@ impl App {
         if i >= self.state.spaces.len() {
             return;
         }
+        self.touch_panes();
         let changed = i != self.state.active_space || self.chats_open;
         self.chats_open = false;
         self.state.active_space = i;
@@ -2338,7 +2357,19 @@ impl App {
         self.schedule_sync();
     }
 
+    /// The tabs on screen count as in use (activating one only marks the moment it was opened), so a page you've been
+    /// reading for an hour isn't unloaded the moment you switch away from it.
+    fn touch_panes(&mut self) {
+        let t = now();
+        for id in self.panes() {
+            if let Some(tab) = self.state.tabs.get_mut(&id) {
+                tab.last_active = t;
+            }
+        }
+    }
+
     fn tick(&mut self) {
+        self.touch_panes();
         let t = now();
         let panes = self.panes();
         let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
@@ -3827,6 +3858,19 @@ impl App {
             },
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
             UserEvent::Toast(msg) => self.toast(&msg),
+            UserEvent::PageCrashed { target } => {
+                trace(&format!("page process ended: {target:?}"));
+                match target {
+                    Target::Tab(id) if !self.panes().contains(&id) => {
+                        self.crashed.insert(id);
+                    }
+                    _ => {
+                        if let Some(v) = self.view_for(target) {
+                            let _ = v.reload();
+                        }
+                    }
+                }
+            }
             UserEvent::ToWelcome(ev) => self.welcome_send(&ev),
             UserEvent::FreeAiReady(model) => {
                 let set = config::set_setting(&["agents", "available", "opencode"], &format!("{{ cli: opencode, model: {} }}", json!(model)))
@@ -4337,6 +4381,7 @@ impl App {
         if self.active_chat.as_ref().is_none_or(|id| !self.chats.iter().any(|c| &c.id == id)) {
             self.active_chat = self.chats.first().map(|c| c.id.clone());
         }
+        self.touch_panes();
         let was = self.chats_open;
         self.chats_open = true;
         let secs = self.anim_secs();
