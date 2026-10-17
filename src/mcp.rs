@@ -49,6 +49,11 @@ pub fn load_or_create_token() -> String {
     t
 }
 
+/// Compare two secrets without leaking how much of them matched.
+pub fn same_secret(a: &str, b: &str) -> bool {
+    eq_const(a, b)
+}
+
 fn eq_const(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
@@ -130,7 +135,10 @@ struct Caller {
 }
 
 /// Tools that only look; everything else changes something and needs the chat's permission.
-const LOOKING: &[&str] = &["list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats"];
+const LOOKING: &[&str] = &[
+    "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
+    "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui",
+];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
 fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
@@ -254,7 +262,37 @@ pub fn tools() -> Vec<Value> {
              With options: {}.",
             commands.join(", "), with_args.join("; ")),
              json!({ "command": { "type": "object" } }), &["command"]),
+        tool("search_history", "Search the pages the user visited (title or address contains the words), most recent first.",
+             json!({ "query": { "type": "string" }, "limit": { "type": "integer", "default": 50 } }), &[]),
+        tool("delete_history", "Remove pages from history: those whose title or address contains `query`, or exactly `url`.",
+             json!({ "query": { "type": "string" }, "url": { "type": "string" } }), &[]),
+        tool("list_archived", "List tabs Valerie archived (closed after a while unused), newest first; reopen one with run_command restore_archived.",
+             json!({ "query": { "type": "string" }, "limit": { "type": "integer", "default": 50 } }), &[]),
+        tool("list_closed_tabs", "List recently closed tabs, most recent first (reopen_closed_tab brings back the latest).", json!({}), &[]),
+        tool("list_downloads", "List finished downloads: file name, where it was saved, the address it came from and when.", json!({}), &[]),
+        tool("clear_site_data", "Clear a site's cookies, caches and storage (signs the user out of it). Always asks the user first.",
+             json!({ "site": { "type": "string", "description": "e.g. example.com; defaults to the active tab's site" } }), &[]),
+        tool("site_state", "What Valerie remembers about a site: zoom, dark mode, notifications, ad blocking, hidden elements, boosts, \
+             plugins and per-site settings.", json!({ "site": { "type": "string", "description": "Defaults to the active tab's site" } }), &[]),
+        tool("screenshot_ui", "Capture Valerie's own interface as a PNG (to check a change to its look).",
+             json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" },
+                     "width": { "type": "integer" } }), &[]),
+        tool("read_ui", "Read Valerie's own interface: its visible text and an outline of elements with their ids and classes \
+             (the names to use in ui/*.css).", json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" } }), &[]),
     ]
+}
+
+/// Every tool's name (what plugin `permissions` can list).
+pub fn tool_names() -> Vec<String> {
+    tools().iter().filter_map(|t| t["name"].as_str().map(str::to_string)).filter(|n| n != "approve").collect()
+}
+
+/// Run a tool for a plugin's page script (off the main thread: tools wait for the browser).
+pub fn run_tool(name: &str, args: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
+    if name == "clear_site_data" {
+        return call_wait(proxy, "clear_site_data", args, 600);
+    }
+    call_tool(name, args, proxy)
 }
 
 /// Send one operation to the UI thread and wait for its answer.
@@ -356,7 +394,10 @@ return { url: location.href, title: document.title, elements: out };
 fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let tab = a.get("tab").and_then(|t| t.as_i64());
     match name {
-        "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats" => call(proxy, name, a),
+        "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
+        | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
+        "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
+        "screenshot_ui" => call(proxy, "screenshot_ui", a),
         "history" => {
             let cmd = match a["action"].as_str() {
                 Some("back") => "back",

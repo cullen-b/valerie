@@ -865,6 +865,21 @@ mod mac {
     }
 }
 
+/// Seconds since the keyboard or mouse was last used (0 where that can't be known).
+pub fn idle_seconds() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+        }
+        // kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType
+        unsafe { CGEventSourceSecondsSinceLastEventType(0, u32::MAX) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    0.0
+}
+
 pub fn bring_to_front(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::bring_to_front(wv);

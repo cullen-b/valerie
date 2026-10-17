@@ -59,6 +59,104 @@ pub struct Config {
     pub content_blocking: BlockingConfig,
     pub passwords: PasswordsConfig,
     pub themes: BTreeMap<String, Theme>,
+    pub ui: UiConfig,
+    pub menu: MenuConfig,
+    pub context_menu: ContextMenuConfig,
+    pub mouse: MouseConfig,
+    pub gestures: GesturesConfig,
+    pub app: AppConfig,
+    pub global_keybindings: BTreeMap<String, Option<Binding>>,
+    pub rules: Vec<NetRule>,
+    pub sites: BTreeMap<String, Option<SiteSettings>>,
+    pub language: String,
+    pub extensions: ExtensionsConfig,
+}
+
+/// Your own CSS for Valerie's windows (ui/*.css in the config folder).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfig {
+    pub custom_css: bool,
+}
+
+/// The menu bar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuConfig {
+    pub hide: Vec<String>,
+    pub rename: BTreeMap<String, Option<String>>,
+    pub commands: BTreeMap<String, Option<String>>,
+    pub quit_shortcut: String,
+    pub confirm_quit: bool,
+}
+
+/// Valerie's right-click menus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextMenuConfig {
+    pub hide: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseConfig {
+    pub back_button: Option<Binding>,
+    pub forward_button: Option<Binding>,
+    pub middle_click_tab: Option<Binding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GesturesConfig {
+    pub swipe_to_go_back: bool,
+    pub pinch_to_zoom: bool,
+}
+
+/// Valerie outside its window: the Dock and the menu bar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub icon: String,
+    pub dock_menu: Vec<Binding>,
+    pub menu_bar_icon: String,
+    pub menu_bar_menu: Vec<Binding>,
+}
+
+/// A network rule: block, redirect, hide or add a header. Exactly one of block / redirect / hide / header.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetRule {
+    /// Requests to stop: Adblock syntax ("||ads.example.com^") or an address with * wildcards.
+    pub block: String,
+    /// Pages to send elsewhere (an address with * wildcards) …
+    pub redirect: String,
+    /// … and where: the address, where each * is what the matching * in `redirect` matched.
+    pub to: String,
+    /// Elements to hide (a CSS selector).
+    pub hide: String,
+    /// A request header to add ("Name: value") to pages you open.
+    pub header: String,
+    /// Which sites it applies to (hosts like "example.com", "*.edu"); empty = every site.
+    pub site: String,
+}
+
+/// Settings for one site (`sites:`); anything left out follows the global setting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SiteSettings {
+    pub camera: Option<String>,
+    pub microphone: Option<String>,
+    pub notifications: Option<String>,
+    pub user_agent: Option<String>,
+    pub zoom: Option<f64>,
+    pub autoplay: Option<bool>,
+    pub dark_mode: Option<String>,
+    pub vim: Option<bool>,
+    pub links: Option<BTreeMap<String, String>>,
+    pub unload: Option<bool>,
+    pub ad_blocking: Option<bool>,
+    pub popups: Option<String>,
+    pub cookie_banners: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionsConfig {
+    pub enabled: bool,
+    pub folder: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +197,7 @@ pub struct SidebarConfig {
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
+    pub order: Vec<String>,
     pub tab_height: f64,
     pub now_playing: bool,
     pub compact_width: f64,
@@ -439,6 +538,10 @@ pub struct WindowConfig {
     pub screen_fraction: f64,
     pub min_width: f64,
     pub min_height: f64,
+    pub always_on_top: bool,
+    pub opacity: f64,
+    pub vibrancy: String,
+    pub traffic_lights: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -459,6 +562,24 @@ pub struct HistoryConfig {
 pub struct DownloadsConfig {
     pub folder: String,
     pub keep_in_list: usize,
+    pub ask: bool,
+    pub open_when_done: bool,
+    pub rules: Vec<DownloadRule>,
+}
+
+/// Where files of a kind (or from a site) go.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DownloadRule {
+    /// File names to match, e.g. "*.pdf" or "*.{jpg,png}"; empty = any.
+    #[serde(rename = "match")]
+    pub pattern: String,
+    /// Sites it came from (hosts); empty = any.
+    pub site: String,
+    /// Folder to save into (~ allowed); empty = the usual folder.
+    pub folder: String,
+    pub open: Option<bool>,
+    pub ask: Option<bool>,
 }
 
 impl Config {
@@ -581,6 +702,9 @@ pub struct SpaceConfig {
     pub theme: Option<ThemeRef>,
     #[serde(default)]
     pub icon: Option<String>,
+    /// Settings that apply while this space is the one you're in (same shape as config.yaml).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,6 +837,10 @@ pub struct AgentsConfig {
     pub model: String,
     pub space: String,
     pub jobs: Vec<AgentJob>,
+    /// Added to every agent's instructions (after Valerie's own safety rules).
+    pub instructions: String,
+    /// Added for one job: chat, find, tasks, customize.
+    pub instructions_for: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -840,7 +968,10 @@ pub fn config_path() -> PathBuf {
 
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
-const FREE_FORM: &[&str] = &["keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "agents.models", "ai_actions", "notifications.sites"];
+const FREE_FORM: &[&str] = &[
+    "keybindings", "site_search", "site_profiles", "themes", "vim.bindings", "command_bar.result_weights", "agents.available", "agents.models",
+    "ai_actions", "notifications.sites", "global_keybindings", "sites", "menu.rename", "menu.commands", "agents.instructions_for",
+];
 
 /// Keys in the user's config that aren't Valerie settings (usually typos, which would otherwise be silently
 /// ignored), each with the closest real key when there is one.

@@ -1319,8 +1319,28 @@ const watchLogin = () => {
 watchLogin();
 document.addEventListener("visibilitychange", watchLogin);
 
+// ---------- plugin scripts: `valerie.run(title)` and `valerie.call(tool, args)` ----------
+// Each plugin's script is handed a key in the code Valerie runs (pages can't read that), and its messages go out
+// through natives captured before the page's own scripts ran, so the page can't borrow a plugin's powers.
+const PromiseCtor = Promise, randomFill = crypto.getRandomValues.bind(crypto), pluginWaits = new Map();
+function pluginApi(plugin, key) {
+  const id = () => { const a = new Uint32Array(4); randomFill(a); return a.join("-"); };
+  return Object.freeze({
+    call: (tool, args) => new PromiseCtor((resolve, reject) => {
+      const n = id(); pluginWaits.set(n, [resolve, reject]);
+      post({ t: "plugin_call", plugin, key, id: n, tool: String(tool), args: args || {} });
+    }),
+    run: (title) => post({ t: "plugin_run", plugin, key, title: String(title) }),
+  });
+}
+function pluginReply(n, ok, value) {
+  const w = pluginWaits.get(n); if (!w) return;
+  pluginWaits.delete(n); if (ok) w[0](value); else w[1](new Error(String(value)));
+}
+
 Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
+    api: pluginApi, pluginReply,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = c; applyBoostCss(); applyDark(); }, toast, find: openFind, hints: startHints,

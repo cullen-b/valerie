@@ -3,6 +3,7 @@ mod app;
 mod blocking;
 mod command;
 mod config;
+mod extensions;
 mod import;
 mod llm_guide;
 mod mcp;

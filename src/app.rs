@@ -100,12 +100,30 @@ pub enum UserEvent {
     /// A change was made a while ago; sync if nothing newer came since (the number is the change's generation).
     SyncDue(u64),
     AgentDone(agents::Finished),
-    PluginDone { title: String, output: String, result: Result<String, String> },
+    PluginDone { plugin: String, title: String, output: String, result: Result<String, String> },
     SiteDataCleared { message: String, reload: bool },
     /// Blocklist JSON ready to compile (None = unchanged since last compile, so reuse WebKit's cached copy).
     BlocklistBuilt { json: Option<String>, hash: String },
     #[cfg(target_os = "macos")]
     RulesReady(Result<blocking::mac::RuleList, String>, Option<String>),
+    /// A browser tool a plugin's page script called finished.
+    PluginReply { target: Target, id: String, result: Result<Value, String> },
+    /// The user answered "Let this plugin use …?".
+    PluginGrant { plugin: String, allowed: bool },
+    /// The user said yes to a plugin command's `confirm` question.
+    PluginConfirmed { plugin: String, title: String, context: std::collections::BTreeMap<String, String> },
+    /// A plugin's command-bar search answered.
+    SearchResults { query: String, plugin: String, title: String, items: Vec<Value> },
+    /// A sidebar widget's text came back from its script.
+    WidgetText { key: String, text: String },
+    /// Time to refresh sidebar widgets whose text is due.
+    WidgetTick,
+    /// The answer to "Quit Valerie?".
+    QuitAnswered(bool),
+    /// The answer to "Load this extension?".
+    ExtensionGrant { name: String, print: String, allowed: bool },
+    /// An extension finished loading (or couldn't).
+    ExtensionLoaded { name: String, result: Result<(), String>, announce: bool },
 }
 
 struct Little {
@@ -227,7 +245,49 @@ pub struct App {
     contexts: HashMap<String, wry::WebContext>,
     #[cfg(target_os = "macos")]
     rules: Option<blocking::mac::RuleList>,
+    /// Each plugin's key for `valerie.call` / `valerie.run` from its page script (new every launch).
+    plugin_keys: HashMap<String, String>,
+    /// Plugins whose tool use the user turned down this session (not asked again until relaunch).
+    plugin_denied: std::collections::HashSet<String>,
+    /// Tool calls waiting for the user to approve a plugin's permissions: (page, plugin, call id, tool, args).
+    plugin_waiting: Vec<(Target, String, String, String, Value)>,
+    /// Recent tool calls per plugin, so a page can't flood the browser through one.
+    plugin_calls: HashMap<String, Vec<std::time::Instant>>,
+    /// The address plugin scripts last ran on in each page (to run them again when a web app changes its address).
+    script_urls: HashMap<Target, String>,
+    /// Plugin start scripts the open pages were built with; pages are rebuilt when these change.
+    init_print: String,
+    /// Browser events waiting for plugins' `events` hooks.
+    event_queue: Vec<HookEvent>,
+    /// Running a hook's actions right now (events they cause aren't passed on, so hooks can't loop).
+    in_hook: bool,
+    /// Commands a page script asked for (`valerie.run`), run with the events.
+    event_queue_cmds: Vec<Command>,
+    /// Idle hooks that already fired during this stretch of idleness, and whether the computer is idle.
+    idle_fired: std::collections::HashSet<String>,
+    was_idle: bool,
+    /// Sidebar widget text from scripts, and when each is next due.
+    widget_text: HashMap<String, String>,
+    widget_due: HashMap<String, std::time::Instant>,
+    /// Keys of a key sequence pressed so far, and when the last one was.
+    seq_pending: Option<(Vec<String>, std::time::Instant)>,
+    /// "Quit Valerie?" is showing.
+    quit_asked: bool,
+    /// Extensions the user turned down this session, and whether "Load this extension?" is showing.
+    ext_denied: std::collections::HashSet<String>,
+    ext_asking: bool,
+    /// Valerie's own words in the user's language (`language`): English → theirs.
+    strings: HashMap<String, String>,
     pub quit: bool,
+}
+
+/// Something that happened in the browser, for plugins' `events` hooks.
+struct HookEvent {
+    on: &'static str,
+    tab: Option<TabId>,
+    url: String,
+    space: String,
+    file: String,
 }
 
 struct PeekView {
@@ -410,6 +470,38 @@ fn decode_js(s: &str) -> Value {
     }
 }
 
+/// A plugin's list of results: a JSON array of { title, url?, sub?, copy?, command? } or one "title<TAB>url" per line.
+fn parse_items(text: &str, plugin: &str) -> Vec<Value> {
+    let rows: Vec<Value> = match serde_json::from_str::<Value>(text.trim()) {
+        Ok(Value::Array(a)) => a,
+        _ => text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| match l.split_once('\t') {
+                Some((t, u)) => json!({ "title": t.trim(), "url": u.trim() }),
+                None => json!({ "title": l.trim() }),
+            })
+            .collect(),
+    };
+    rows.into_iter()
+        .take(200)
+        .filter_map(|r| {
+            let title = r["title"].as_str().or(r.as_str())?.to_string();
+            let mut item = json!({ "kind": "plugin", "title": title, "sub": r["sub"].as_str().unwrap_or(plugin) });
+            if let Some(u) = r["url"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https")) {
+                item["url"] = json!(u);
+            } else if let Some(c) = r["copy"].as_str() {
+                item["cmd"] = json!({ "cmd": "copy_text", "text": c });
+            } else if let Some(c) = r["command"].as_str() {
+                item["cmd"] = json!({ "cmd": "plugin", "plugin": plugin, "command": c });
+            } else {
+                item["cmd"] = json!({ "cmd": "copy_text", "text": title });
+            }
+            Some(item)
+        })
+        .collect()
+}
+
 /// "#9d8cff" → [r, g, b, alpha] in 0..1.
 fn hex_rgba(hex: &str) -> [f64; 4] {
     let h = hex.trim_start_matches('#');
@@ -578,6 +670,24 @@ impl App {
             contexts: HashMap::new(),
             #[cfg(target_os = "macos")]
             rules: None,
+            plugin_keys: HashMap::new(),
+            plugin_denied: Default::default(),
+            plugin_waiting: Vec::new(),
+            plugin_calls: HashMap::new(),
+            script_urls: HashMap::new(),
+            init_print: String::new(),
+            event_queue: Vec::new(),
+            in_hook: false,
+            event_queue_cmds: Vec::new(),
+            idle_fired: Default::default(),
+            was_idle: false,
+            widget_text: HashMap::new(),
+            widget_due: HashMap::new(),
+            seq_pending: None,
+            quit_asked: false,
+            ext_denied: Default::default(),
+            ext_asking: false,
+            strings: HashMap::new(),
             quit: false,
         })
     }
@@ -657,22 +767,122 @@ impl App {
         format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config())
     }
 
-    /// After each load: refresh page settings and run matching boost scripts (native eval, so page CSP can't block it).
-    fn after_load(&self, view: &WebView, url: &str) {
-        let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config()));
-        let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
-        for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
-            let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+    /// The space a page belongs to (little windows and Peek count as the space they were opened from).
+    fn space_of_target(&self, target: Target) -> usize {
+        match target {
+            Target::Tab(id) => self.state.space_of(id),
+            Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+            Target::Peek => None,
         }
-        for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
-            if !p.js.is_empty() && plugins::matches(&p.manifest.matches, url) {
-                let settings = Value::Object(p.manifest.settings.clone());
-                let _ = view.evaluate_script(&format!(
-                    "(function (settings) {{ try {{\n{}\n}} catch (e) {{ console.error('valerie plugin {}', e) }} }})({settings});",
-                    p.js, p.name
-                ));
+        .unwrap_or(self.state.active_space)
+    }
+
+    fn space_name(&self, i: usize) -> String {
+        self.state.spaces.get(i).map(|s| s.name.clone()).unwrap_or_default()
+    }
+
+    /// A plugin's script.js as code to run in a page: given its settings and its `valerie` object.
+    fn plugin_js(&self, p: &plugins::Plugin) -> String {
+        let key = self.plugin_keys.get(&p.name).cloned().unwrap_or_default();
+        let api = format!("(window.__valerie && __valerie.api ? __valerie.api({}, {}) : null)", json!(p.name), json!(key));
+        format!(
+            "(function (settings, valerie) {{ try {{\n{}\n}} catch (e) {{ console.error('valerie plugin ' + {}, e) }} }})({}, {api});",
+            p.js,
+            json!(p.name),
+            Value::Object(p.manifest.settings.clone())
+        )
+    }
+
+    /// Plugins whose script must be in place before a page starts (run_at: start, or all_frames): built into each
+    /// page when it's created. Returns (script, main frame only).
+    fn plugin_init_scripts(&self, space: usize) -> Vec<(String, bool)> {
+        let name = self.space_name(space);
+        self.plugins
+            .iter()
+            .filter(|p| p.active_in(&name) && (p.manifest.run_at == "start" || p.manifest.all_frames) && !(p.js.is_empty() && p.css.is_empty()))
+            .map(|p| {
+                let m = &p.manifest;
+                let css = if m.all_frames && !p.css.is_empty() { json!(p.css) } else { Value::Null };
+                let js = if p.js.is_empty() { "0".to_string() } else { self.plugin_js(p) };
+                let script = format!(
+                    r#"(function () {{
+  const glob = (p, t) => new RegExp("^" + p.toLowerCase().replace(/[.+?^${{}}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$").test(t.toLowerCase());
+  const pats = {matches}, h = location.hostname;
+  if (!(pats.length ? pats.some((p) => p.includes("://") ? glob(p, location.href) : glob(p, h) || glob("*." + p, h)) : /^https?:/.test(location.href))) return;
+  const css = {css};
+  if (css && window.top !== window) {{
+    const add = () => {{ const st = document.createElement("style"); st.textContent = css; (document.head || document.documentElement).appendChild(st); }};
+    if (document.documentElement) add(); else document.addEventListener("DOMContentLoaded", add);
+  }}
+  const run = () => {{ {js} }}, at = {at};
+  if (at === "start") return run();
+  const go = at === "idle" ? () => (window.requestIdleCallback || setTimeout)(run) : run;
+  if (document.readyState === "complete") go(); else addEventListener("load", go, {{ once: true }});
+}})();"#,
+                    matches = json!(m.matches),
+                    at = json!(m.run_at),
+                );
+                (script, !m.all_frames)
+            })
+            .collect()
+    }
+
+    /// What the plugin start scripts look like now, to notice when open pages need rebuilding.
+    fn init_fingerprint(&self) -> String {
+        let all: Vec<String> = (0..self.state.spaces.len()).flat_map(|i| self.plugin_init_scripts(i)).map(|(s, m)| format!("{m}{s}")).collect();
+        crate::blocking::hash(&all.join("\n"))
+    }
+
+    /// Rebuild open pages (so new plugin start scripts are in them): pages on screen reload, others load when shown.
+    fn rebuild_views(&mut self) {
+        let panes = self.panes();
+        let ids: Vec<TabId> = self.views.keys().copied().collect();
+        for id in ids {
+            if panes.contains(&id) {
+                self.views.remove(&id);
+                self.ready_views.remove(&id);
+                self.ensure_view(id);
+            } else {
+                self.unload(id);
             }
-            for h in p.manifest.on_page_load.iter().filter(|h| plugins::matches(&h.matches, url)) {
+        }
+        self.layout();
+        self.focus_active();
+        self.render();
+    }
+
+    /// A key for each plugin's page script (kept while Valerie runs, so open pages keep working after a reload).
+    fn ensure_plugin_keys(&mut self) {
+        for p in &self.plugins {
+            self.plugin_keys.entry(p.name.clone()).or_insert_with(crate::mcp::random_hex);
+        }
+    }
+
+    /// After each load: refresh page settings and run matching boost and plugin scripts (native eval, so page CSP
+    /// can't block it). `again`: the page changed its address without reloading, so only plugins that asked to run
+    /// again do.
+    fn after_load(&mut self, target: Target, url: &str, again: bool) {
+        let Some(view) = self.view_for(target) else { return };
+        let space = self.space_name(self.space_of_target(target));
+        if !again {
+            let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config()));
+            let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+            for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
+                let _ = view.evaluate_script(&format!("try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+            }
+        }
+        for p in self.plugins.iter().filter(|p| p.active_in(&space)) {
+            let m = &p.manifest;
+            let in_page = !p.js.is_empty() && m.run_at != "start" && !m.all_frames;
+            if in_page && (!again || m.rerun_when_url_changes) && plugins::matches(&m.matches, url) {
+                let js = self.plugin_js(p);
+                let js = if m.run_at == "idle" { format!("(window.requestIdleCallback || setTimeout)(function () {{ {js} }});") } else { js };
+                let _ = view.evaluate_script(&js);
+            }
+            if again {
+                continue;
+            }
+            for h in m.on_page_load.iter().filter(|h| plugins::matches(&h.matches, url)) {
                 let (dir, run, env) = (p.dir.clone(), h.run.clone(), vec![("VALERIE_URL", url.to_string())]);
                 std::thread::spawn(move || {
                     if let Err(e) = plugins::run_script(&dir, &run, &env) {
@@ -681,6 +891,10 @@ impl App {
                 });
             }
         }
+        self.script_urls.insert(target, url.to_string());
+        if let Target::Tab(id) = target {
+            self.queue_event(if again { "url_changed" } else { "page_loaded" }, Some(id), None);
+        }
     }
 
     /// Run `f` with a builder bound to the profile's isolated storage: a WKWebsiteDataStore on macOS,
@@ -688,8 +902,14 @@ impl App {
     fn with_profile<R>(&mut self, profile: &str, f: impl FnOnce(&Self, WebViewBuilder<'_>) -> R) -> R {
         #[cfg(target_os = "macos")]
         {
-            use wry::WebViewBuilderExtDarwin;
-            f(self, WebViewBuilder::new().with_data_store_identifier(platform::profile_id(profile)))
+            use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos};
+            let id = platform::profile_id(profile);
+            let mut base = WebViewBuilder::new().with_data_store_identifier(id);
+            // With extensions loaded, pages get a configuration that has them (and the profile's storage).
+            if let Some(c) = crate::extensions::page_configuration(id) {
+                base = base.with_webview_configuration(unsafe { objc2::rc::Retained::cast_unchecked(c) });
+            }
+            f(self, base)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -718,7 +938,9 @@ impl App {
         let briefs_proxy = std::sync::Mutex::new(self.proxy.clone());
         let popup_windows = self.config.links.popups == "window";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
-        base
+        // Plugin start scripts go after content.js, which gives them their `valerie` object.
+        let plugin_scripts = self.plugin_init_scripts(self.space_of_target(target));
+        let built = base
             .with_url(if url.is_empty() { "about:blank" } else { url })
             .with_visible(false)
             .with_devtools(true)
@@ -785,7 +1007,8 @@ impl App {
             .with_download_completed_handler(move |url, path, ok| {
                 let path = saved.lock().unwrap().remove(&url).or(path);
                 send(&p, UserEvent::Downloaded { ok, path, url })
-            })
+            });
+        plugin_scripts.into_iter().fold(built, |b, (script, main_only)| b.with_initialization_script_for_main_only(script, main_only))
     }
 
     fn ensure_view(&mut self, tab: TabId) {
@@ -1260,6 +1483,8 @@ impl App {
             "sidebar": self.config.sidebar,
             "vim": { "enabled": self.config.vim.enabled, "bindings": self.config.vim.bindings, "key_timeout_ms": self.config.vim.key_timeout_ms },
             "start_page": self.config.start_page,
+            "start_html": self.config.start_page.strip_prefix("plugin:").and_then(|n| self.plugins.iter().find(|p| p.name == n.trim() && p.manifest.enabled)).map(|p| p.start_html.clone()),
+            "widgets": self.widgets_vm(),
             "toast_seconds": self.config.toast_seconds,
             "chats": {
                 "enabled": self.config.chats.enabled, "open": self.chats_open, "active": self.active_chat,
@@ -1325,6 +1550,9 @@ impl App {
             self.recent_tabs.retain(|t| *t != prev);
             self.recent_tabs.insert(0, prev);
         }
+        if self.state.active_tab() != Some(tab) {
+            self.queue_event("tab_switched", Some(tab), None);
+        }
         self.recent_tabs.retain(|t| *t != tab);
         self.recent_tabs.insert(0, tab);
         self.recent_tabs.truncate(64);
@@ -1353,6 +1581,7 @@ impl App {
         let sp = space.unwrap_or(self.state.active_space);
         let at_top = self.config.tabs.new_tab_position != "bottom";
         let id = self.state.add_tab(sp, url, at_top);
+        self.queue_event("tab_opened", Some(id), None);
         if activate {
             self.activate(id);
         } else {
@@ -1394,6 +1623,7 @@ impl App {
                 }
             }
         } else {
+            self.queue_event("tab_closed", Some(tab), None);
             let space = self.state.space_of(tab);
             let next = self.state.close_tab(tab);
             self.views.remove(&tab);
@@ -1425,6 +1655,9 @@ impl App {
         let changed = i != self.state.active_space || self.chats_open;
         self.chats_open = false;
         self.state.active_space = i;
+        if changed {
+            self.queue_event("space_switched", self.state.active_tab(), None);
+        }
         for p in self.panes() {
             self.ensure_view(p);
         }
@@ -1538,11 +1771,13 @@ impl App {
             let title = format!("Import from {}{}", &src[..1].to_uppercase(), &src[1..]);
             items.push(json!({ "kind": "import", "title": title, "cmd": { "cmd": "import", "source": src } }));
         }
-        for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
-            for c in &p.manifest.commands {
+        let space_name = self.space_name(self.state.active_space);
+        for p in self.plugins.iter().filter(|p| p.active_in(&space_name)) {
+            for c in p.manifest.commands.iter().filter(|c| c.command_bar) {
                 items.push(json!({ "kind": "plugin", "title": c.title, "sub": p.name, "cmd": { "cmd": "plugin", "plugin": p.name, "command": c.title } }));
             }
         }
+        let plugin_search = self.plugins.iter().any(|p| p.active_in(&space_name) && !p.manifest.search.is_empty());
         for name in &self.agents_running {
             items.push(json!({ "kind": "agent", "title": format!("Stop agent: {name}"), "rank": 0, "cmd": { "cmd": "stop_agent", "name": name } }));
         }
@@ -1613,7 +1848,7 @@ impl App {
         } else {
             vec![]
         };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "agent": self.config.agent_for("chat").0, "options": self.config.command_bar, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "plugin_search": plugin_search, "agent": self.config.agent_for("chat").0, "options": self.config.command_bar, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -1729,10 +1964,16 @@ impl App {
     // ---------------------------------------------------------------- little windows
 
     fn open_little(&mut self, url: &str, space: usize, elwt: &EventLoopWindowTarget<UserEvent>) {
-        let lw = &self.config.little_window;
+        self.open_window(url, space, None, elwt)
+    }
+
+    /// A small window of its own for one page (`size` overrides little_window's width and height).
+    fn open_window(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let lw = self.config.little_window.clone();
+        let (lw_width, lw_height) = size.unwrap_or((lw.width, lw.height));
         let window = match mac_window(WindowBuilder::new())
             .with_title("Valerie")
-            .with_inner_size(LogicalSize::new(lw.width, lw.height))
+            .with_inner_size(LogicalSize::new(lw_width, lw_height))
             .with_min_inner_size(LogicalSize::new(360.0, 240.0))
             .build(elwt)
         {
@@ -1743,11 +1984,11 @@ impl App {
         let p = self.proxy.clone();
         let bar = WebViewBuilder::new()
             .with_html(ui("little.html"))
-            .with_bounds(rect(0.0, 0.0, lw.width, LITTLE_BAR))
+            .with_bounds(rect(0.0, 0.0, lw_width, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
             .build_as_child(&window);
-        let (lw_w, lw_h) = (lw.width, lw.height);
+        let (lw_w, lw_h) = (lw_width, lw_height);
         let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
         let view = self.with_profile(&profile, |app, base| {
             app.page_builder(base, Target::Little(id), url)
@@ -1858,8 +2099,15 @@ impl App {
         self.boosts = load_boosts();
         let (plugins, errors) = plugins::load_all();
         self.plugins = plugins;
+        self.ensure_plugin_keys();
+        self.widget_due.clear();
         if let Some(e) = errors.first() {
             self.toast(&format!("Plugin error: {e}"));
+        }
+        let print = self.init_fingerprint();
+        if print != self.init_print {
+            self.init_print = print;
+            self.rebuild_views();
         }
         match Config::load() {
             Ok(c) => {
@@ -1901,10 +2149,13 @@ impl App {
     fn build_menu(&mut self) {
         let menu = Menu::new();
         let mut cmds = HashMap::new();
-        let app_menu = Submenu::new("Valerie", true);
+        let mc = self.config.menu.clone();
+        let name_of = |m: &str| mc.rename.get(m).cloned().flatten().unwrap_or_else(|| m.to_string());
+        let shown = |m: &str| !mc.hide.iter().any(|h| h.eq_ignore_ascii_case(m));
+        let app_menu = Submenu::new(name_of("Valerie"), true);
         let settings = MenuItem::with_id("settings", "Settings…", true, None);
         cmds.insert(settings.id().clone(), Command::OpenConfig);
-        let quit = MenuItem::with_id("quit", "Quit Valerie", true, "CmdOrCtrl+Q".parse().ok());
+        let quit = MenuItem::with_id("quit", "Quit Valerie", true, mc.quit_shortcut.parse().ok());
         cmds.insert(quit.id().clone(), Command::Quit);
         let _ = app_menu.append_items(&[
             &PredefinedMenuItem::about(None, None),
@@ -1918,7 +2169,7 @@ impl App {
             &PredefinedMenuItem::separator(),
             &quit,
         ]);
-        let edit = Submenu::new("Edit", true);
+        let edit = Submenu::new(name_of("Edit"), true);
         let _ = edit.append_items(&[
             &PredefinedMenuItem::undo(None),
             &PredefinedMenuItem::redo(None),
@@ -1928,25 +2179,55 @@ impl App {
             &PredefinedMenuItem::paste(None),
             &PredefinedMenuItem::select_all(None),
         ]);
-        let groups = [Submenu::new("Tabs", true), Submenu::new("Spaces", true), Submenu::new("View", true), Submenu::new("Tools", true)];
+        // Menus by their English names; menu.commands can add new ones.
+        let mut groups: Vec<(String, Submenu)> = ["Tabs", "Spaces", "View", "Tools"].iter().map(|n| (n.to_string(), Submenu::new(name_of(n), true))).collect();
+        let group = |groups: &mut Vec<(String, Submenu)>, name: &str| -> usize {
+            if let Some(i) = groups.iter().position(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                return i;
+            }
+            groups.push((name.to_string(), Submenu::new(name_of(name), true)));
+            groups.len() - 1
+        };
+        // Where a command goes: menu.commands (null = no menu), else its usual menu.
+        let placed = |cmd: &Command| -> Option<Option<String>> {
+            let name = serde_json::to_value(cmd).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)).unwrap_or_default();
+            mc.commands.get(&name).map(|m| m.clone().filter(|m| !m.is_empty() && m != "none"))
+        };
         let mut bound: Vec<Command> = Vec::new();
         for (i, (accel, binding)) in self.config.keybindings.iter().enumerate() {
             let Some(cmd) = binding.as_ref().and_then(|b| b.command()) else { continue };
+            // Key sequences ("CmdOrCtrl+K CmdOrCtrl+S") start with their first key; Valerie waits for the rest.
+            if accel.trim().contains(' ') {
+                continue;
+            }
             let Ok(acc) = accel.parse::<muda::accelerator::Accelerator>() else {
                 eprintln!("valerie: bad keybinding {accel:?}");
                 continue;
             };
             let item = MenuItem::with_id(format!("k{i}"), self.command_label(&cmd), true, Some(acc));
             cmds.insert(item.id().clone(), cmd.clone());
-            let g = match &cmd {
-                Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => 1,
+            let usual = match &cmd {
+                Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => "Spaces",
                 Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit | Command::FocusNextPane | Command::ZoomIn
-                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } => 2,
-                Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => 3,
-                _ => 0,
+                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } => "View",
+                Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => "Tools",
+                _ => "Tabs",
             };
-            let _ = groups[g].append(&item);
+            // A shortcut needs its menu item to work, so it can move to another menu but not leave them all.
+            let g = match placed(&cmd) {
+                Some(Some(m)) => group(&mut groups, &m),
+                _ => group(&mut groups, usual),
+            };
+            let _ = groups[g].1.append(&item);
             bound.push(cmd);
+        }
+        // Key sequences: their first key opens a short wait for the next one.
+        for (i, prefix) in self.sequence_prefixes().into_iter().enumerate() {
+            let Ok(acc) = prefix.parse::<muda::accelerator::Accelerator>() else { continue };
+            let item = MenuItem::with_id(format!("seq-{i}"), format!("{prefix} …"), true, Some(acc));
+            cmds.insert(item.id().clone(), Command::KeySequence { first: prefix.clone(), next: None });
+            let g = group(&mut groups, "Tools");
+            let _ = groups[g].1.append(&item);
         }
         // Unbound catalog commands still appear in the menu so everything is discoverable.
         for (name, title) in CATALOG {
@@ -1954,30 +2235,49 @@ impl App {
             if bound.contains(&cmd) || matches!(cmd, Command::Quit | Command::OpenConfig) {
                 continue;
             }
-            let item = MenuItem::with_id(format!("c-{name}"), *title, true, None);
+            let g = match placed(&cmd) {
+                Some(Some(m)) => group(&mut groups, &m),
+                Some(None) => continue,
+                None => group(&mut groups, "Tools"),
+            };
+            let item = MenuItem::with_id(format!("c-{name}"), self.translate(title), true, None);
             cmds.insert(item.id().clone(), cmd);
-            let _ = groups[3].append(&item);
+            let _ = groups[g].1.append(&item);
         }
-        let plugin_menu = Submenu::new("Plugins", true);
+        let plugin_menu = Submenu::new(name_of("Plugins"), true);
         for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
             for c in &p.manifest.commands {
                 let acc = c.key.as_deref().and_then(|k| k.parse::<muda::accelerator::Accelerator>().ok());
                 let item = MenuItem::with_id(format!("plugin-{}-{}", p.name, c.title), &c.title, true, acc);
-                cmds.insert(item.id().clone(), Command::Plugin { plugin: p.name.clone(), command: c.title.clone() });
-                let _ = plugin_menu.append(&item);
+                cmds.insert(item.id().clone(), Command::Plugin { plugin: p.name.clone(), command: c.title.clone(), context: Default::default() });
+                match c.menu.as_deref().filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("plugins")) {
+                    Some(m) => {
+                        let g = group(&mut groups, m);
+                        let _ = groups[g].1.append(&item);
+                    }
+                    None => {
+                        let _ = plugin_menu.append(&item);
+                    }
+                }
             }
         }
-        let window_menu = Submenu::new("Window", true);
+        let window_menu = Submenu::new(name_of("Window"), true);
         let _ = window_menu.append_items(&[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::fullscreen(None)]);
         let _ = menu.append(&app_menu);
-        let _ = menu.append(&edit);
-        for g in &groups {
-            let _ = menu.append(g);
+        if shown("Edit") {
+            let _ = menu.append(&edit);
         }
-        if plugin_menu.items().len() > 0 {
+        for (name, g) in &groups {
+            if shown(name) && g.items().len() > 0 {
+                let _ = menu.append(g);
+            }
+        }
+        if plugin_menu.items().len() > 0 && shown("Plugins") {
             let _ = menu.append(&plugin_menu);
         }
-        let _ = menu.append(&window_menu);
+        if shown("Window") {
+            let _ = menu.append(&window_menu);
+        }
         // The menu is also where keyboard shortcuts live, so every platform needs it attached.
         #[cfg(target_os = "macos")]
         {
@@ -2191,10 +2491,12 @@ impl App {
                     }
                 }
                 let id = self.state.add_tab(space, url, true);
+                self.queue_event("tab_opened", Some(id), None);
                 self.dispatch(Command::SplitView { tab: Some(id) }, elwt);
             }
             _ => {
                 let id = self.state.add_tab(space, url, true);
+                self.queue_event("tab_opened", Some(id), None);
                 self.ensure_view(id);
                 self.layout();
                 self.render();
@@ -2203,13 +2505,21 @@ impl App {
         }
     }
 
-    fn run_plugin_command(&mut self, plugin: &str, title: &str, elwt: &EventLoopWindowTarget<UserEvent>) {
+    fn run_plugin_command(&mut self, plugin: &str, title: &str, context: std::collections::BTreeMap<String, String>, confirmed: bool, elwt: &EventLoopWindowTarget<UserEvent>) {
         let Some(p) = self.plugins.iter().find(|p| p.name == plugin && p.manifest.enabled) else {
             return self.toast(&format!("No enabled plugin named {plugin}"));
         };
         let Some(c) = p.manifest.commands.iter().find(|c| c.title == title).cloned() else {
             return self.toast(&format!("{plugin} has no command {title:?}"));
         };
+        if let Some(q) = c.confirm.as_ref().filter(|q| !q.trim().is_empty() && !confirmed) {
+            let (px, plugin, title) = (self.proxy.clone(), plugin.to_string(), title.to_string());
+            return platform::ask(&self.chrome, q, &format!("{} ({plugin})", c.title), "Yes", "No", move |ok| {
+                if ok {
+                    send(&px, UserEvent::PluginConfirmed { plugin, title, context });
+                }
+            });
+        }
         let dir = p.dir.clone();
         // Macros may only use built-in commands, so a plugin can't loop into itself.
         for a in c.actions.iter().filter_map(|a| a.command()) {
@@ -2221,30 +2531,85 @@ impl App {
         if let Some(js) = &c.js {
             if let Some(v) = active.and_then(|t| self.views.get(&t)) {
                 let p2 = self.proxy.clone();
-                let title2 = c.title.clone();
-                let wrapped = format!("(function(){{try{{var r=(function(){{\n{js}\n}})();return r==null?'':String(r)}}catch(e){{return 'Error: '+e}}}})()");
+                let (title2, plugin2) = (c.title.clone(), plugin.to_string());
+                let wrapped = format!("(function(context){{try{{var r=(function(){{\n{js}\n}})();return r==null?'':String(r)}}catch(e){{return 'Error: '+e}}}})({})", json!(context));
                 let _ = v.evaluate_script_with_callback(&wrapped, move |s| {
                     let text = match decode_js(&s) {
                         Value::String(t) => t,
                         other => other.to_string(),
                     };
-                    send(&p2, UserEvent::PluginDone { title: title2.clone(), output: "toast".into(), result: Ok(text) });
+                    send(&p2, UserEvent::PluginDone { plugin: plugin2.clone(), title: title2.clone(), output: "toast".into(), result: Ok(text) });
                 });
             }
         }
         if let Some(run) = c.run.clone() {
             let tab = active.and_then(|t| self.state.tabs.get(&t));
-            let env = vec![
+            let mut env = vec![
                 ("VALERIE_URL", tab.map(|t| t.url.clone()).unwrap_or_default()),
                 ("VALERIE_TITLE", tab.map(|t| t.display_title().to_string()).unwrap_or_default()),
                 ("VALERIE_TAB", active.map(|t| t.to_string()).unwrap_or_default()),
+                ("VALERIE_SPACE", self.state.space().name.clone()),
             ];
+            for (k, var) in [("link", "VALERIE_LINK"), ("selection", "VALERIE_SELECTION"), ("image", "VALERIE_IMAGE"), ("page", "VALERIE_PAGE"), ("tab", "VALERIE_CLICKED_TAB"), ("folder", "VALERIE_FOLDER")] {
+                if let Some(v) = context.get(k) {
+                    env.push((var, v.clone()));
+                }
+            }
             let p2 = self.proxy.clone();
+            let plugin2 = plugin.to_string();
             std::thread::spawn(move || {
                 let result = plugins::run_script(&dir, &run, &env).map_err(|e| format!("{e:#}"));
-                send(&p2, UserEvent::PluginDone { title: c.title, output: c.output, result });
+                send(&p2, UserEvent::PluginDone { plugin: plugin2, title: c.title, output: c.output, result });
             });
         }
+    }
+
+    /// What a plugin command printed, shown the way its `output` says.
+    fn plugin_output(&mut self, plugin: &str, title: &str, output: &str, result: Result<String, String>) {
+        let text = match result {
+            Ok(t) => t,
+            Err(e) => return self.toast(&format!("{title} failed: {e}")),
+        };
+        let enc = |t: &str| url::form_urlencoded::byte_serialize(t.as_bytes()).collect::<String>().replace('+', "%20");
+        match output {
+            "tab" => {
+                self.open_tab(&format!("data:text/plain;charset=utf-8,{}", enc(&text)), None, true);
+            }
+            "html" => {
+                self.open_tab(&format!("data:text/html;charset=utf-8,{}", enc(&text)), None, true);
+            }
+            "notify" if !text.trim().is_empty() => {
+                let body: String = text.trim().chars().take(400).collect();
+                self.notify_valerie(title, &body, None);
+            }
+            "clipboard" => {
+                let short: String = text.trim().chars().take(40).collect();
+                self.copy(text.trim_end_matches('\n'), &format!("Copied {short}"));
+            }
+            "list" => {
+                let items = parse_items(&text, plugin);
+                if items.is_empty() {
+                    return self.toast(&format!("{title}: nothing to show"));
+                }
+                self.open_list(title, items);
+            }
+            "toast" if !text.trim().is_empty() => {
+                let t: String = text.trim().chars().take(200).collect();
+                self.toast(&t);
+            }
+            _ => {}
+        }
+    }
+
+    /// The command bar showing only these items (a plugin's `list` output), filtered as you type.
+    fn open_list(&mut self, title: &str, items: Vec<Value>) {
+        let data = json!({ "mode": "list", "placeholder": title, "theme": self.theme_for(self.state.active_space), "items": items,
+                           "options": self.config.command_bar, "font": self.config.layout.font });
+        let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
+        let _ = self.overlay.set_visible(true);
+        platform::bring_to_front(&self.overlay);
+        let _ = self.overlay.focus();
+        self.bar_open = true;
     }
 
     fn start_agent(&mut self, name: String, prompt: String, agent: Option<String>, model: Option<String>) {
@@ -2438,6 +2803,7 @@ impl App {
         if t.saturating_sub(self.state.update_checked) >= every {
             self.check_updates(false);
         }
+        self.check_idle();
         self.check_watches();
         self.check_tasks(false);
         self.tend_chats();
@@ -3298,9 +3664,9 @@ impl App {
                     _ => self.toast("No such agent job"),
                 }
             }
-            Command::Plugin { plugin, command } => {
+            Command::Plugin { plugin, command, context } => {
                 self.close_bar();
-                self.run_plugin_command(&plugin, &command, elwt);
+                self.run_plugin_command(&plugin, &command, context, false, elwt);
             }
             Command::Customize { request } => {
                 self.close_bar();
@@ -3426,6 +3792,26 @@ impl App {
                     let _ = v.evaluate_script(&format!("window.__valerie && __valerie.find({q})"));
                 }
             }
+            Command::KeySequence { first, next } => self.key_sequence(first, next, elwt),
+            Command::NewWindow { url } => {
+                let url = url.map(|u| routing::resolve_input(&u, &self.config.search_engine)).or_else(|| Some(self.config.new_tab_url.clone()).filter(|u| !u.is_empty()));
+                let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                self.open_window(&url.unwrap_or_else(|| "about:blank".into()), self.state.active_space, Some((size.width * 0.9, size.height * 0.9)), elwt);
+            }
+            Command::UndoCustomization => {
+                self.close_bar();
+                self.undo_customization();
+            }
+            Command::Extensions => {
+                self.close_bar();
+                self.show_extensions();
+            }
+            Command::ExtensionAction { name, options } => self.extension_action(&name, options),
+            Command::Quit if self.config.menu.confirm_quit && !self.quit_asked => {
+                self.quit_asked = true;
+                let p = self.proxy.clone();
+                platform::ask(&self.chrome, &self.translate("Quit Valerie?"), "", &self.translate("Quit"), &self.translate("Cancel"), move |ok| send(&p, UserEvent::QuitAnswered(ok)));
+            }
             Command::Quit => self.quit = true,
         }
     }
@@ -3549,6 +3935,9 @@ impl App {
                     }
                 }
                 let real_url = self.views.get(&id).and_then(|v| v.url().ok());
+                // A web app changed its address without loading a page: plugins that asked to run again do.
+                let loaded = self.state.tabs.get(&id).is_some_and(|t| !t.loading);
+                let moved = real_url.clone().filter(|u| loaded && u.starts_with("http") && self.script_urls.get(&target).is_some_and(|last| last != u));
                 if let Some(t) = self.state.tabs.get_mut(&id) {
                     if let Some(f) = m["favicon"].as_str() {
                         if matches!(scheme_of(f).as_str(), "http" | "https" | "data") && f.len() < 8192 {
@@ -3565,6 +3954,9 @@ impl App {
                 }
                 self.apply_zoom(id);
                 self.render();
+                if let Some(u) = moved {
+                    self.after_load(target, &u, true);
+                }
             }
             (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
                 let k = k.to_string();
@@ -3589,6 +3981,15 @@ impl App {
                     if let Some(v) = self.view_for(target) {
                         let _ = v.evaluate_script("window.__valerie && __valerie.keyed()");
                     }
+                }
+            }
+            (Source::Page(target), k @ ("plugin_call" | "plugin_run")) => {
+                let k = k.to_string();
+                self.plugin_message(target, &k, &m);
+            }
+            (Source::Overlay, "search") => {
+                if let Some(q) = m["query"].as_str() {
+                    self.plugin_search(q);
                 }
             }
             (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
@@ -3711,9 +4112,7 @@ impl App {
                     }
                     if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id)) {
                         self.state.record_visit(&u, &t);
-                        if let Some(v) = self.views.get(&id) {
-                            self.after_load(v, &u);
-                        }
+                        self.after_load(Target::Tab(id), &u, false);
                         self.fill_offers.remove(&Target::Tab(id));
                         // A login form that navigates on submit: show the save prompt once more on the page it lands on.
                         let reoffer = self.pending_save.as_mut().filter(|p| p.target == Target::Tab(id) && !p.reoffered && now().saturating_sub(p.at) <= 10);
@@ -3729,8 +4128,8 @@ impl App {
                     if let Some(l) = self.littles.get_mut(&id) {
                         l.url = url.clone();
                     }
-                    if let Some(l) = self.littles.get(&id).filter(|_| finished) {
-                        self.after_load(&l.view, &url);
+                    if finished && self.littles.contains_key(&id) {
+                        self.after_load(Target::Little(id), &url, false);
                     }
                     self.render_little(id);
                 }
@@ -3738,8 +4137,8 @@ impl App {
                     if let Some(p) = self.peek.as_mut() {
                         p.url = url.clone();
                     }
-                    if let Some(p) = self.peek.as_ref().filter(|_| finished) {
-                        self.after_load(&p.view, &url);
+                    if finished && self.peek.is_some() {
+                        self.after_load(Target::Peek, &url, false);
                     }
                 }
             },
@@ -3889,18 +4288,46 @@ impl App {
                 }
                 Err(e) => self.toast(&format!("Content blocking failed: {e}")),
             },
-            UserEvent::PluginDone { title, output, result } => match result {
-                Ok(text) if output == "tab" => {
-                    let enc: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>().replace('+', "%20");
-                    self.open_tab(&format!("data:text/plain;charset=utf-8,{enc}"), None, true);
+            UserEvent::PluginDone { plugin, title, output, result } => self.plugin_output(&plugin, &title, &output, result),
+            UserEvent::PluginReply { target, id, result } => self.plugin_reply(target, &id, result),
+            UserEvent::PluginGrant { plugin, allowed } => self.plugin_grant(plugin, allowed),
+            UserEvent::PluginConfirmed { plugin, title, context } => self.run_plugin_command(&plugin, &title, context, true, elwt),
+            UserEvent::SearchResults { query, plugin, title, items } => {
+                if self.bar_open && !items.is_empty() {
+                    let _ = self.overlay.evaluate_script(&format!("palette.more({}, {}, {}, {})", json!(query), json!(plugin), json!(title), json!(items)));
                 }
-                Ok(text) if output == "toast" && !text.trim().is_empty() => {
-                    let t: String = text.trim().chars().take(200).collect();
-                    self.toast(&t);
+            }
+            UserEvent::WidgetText { key, text } => {
+                if self.widget_text.get(&key) != Some(&text) {
+                    self.widget_text.insert(key, text);
+                    self.render();
                 }
-                Ok(_) => {}
-                Err(e) => self.toast(&format!("{title} failed: {e}")),
+            }
+            UserEvent::WidgetTick => self.refresh_widgets(),
+            UserEvent::ExtensionGrant { name, print, allowed } => {
+                self.ext_asking = false;
+                if allowed {
+                    self.state.extension_grants.insert(name, print);
+                    self.dirty = true;
+                } else {
+                    self.ext_denied.insert(name);
+                }
+                self.load_extensions(true);
+            }
+            UserEvent::ExtensionLoaded { name, result, announce } => match result {
+                Ok(()) => {
+                    // Pages made before this don't have it: rebuild them (on screen now, the rest when shown).
+                    self.rebuild_views();
+                    if announce {
+                        self.toast(&format!("Extension loaded: {name}"));
+                    }
+                }
+                Err(e) => self.toast(&format!("Extension {name}: {e}")),
             },
+            UserEvent::QuitAnswered(ok) => {
+                self.quit_asked = false;
+                self.quit = ok;
+            }
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
             UserEvent::Toast(msg) => self.toast(&msg),
             UserEvent::PageCrashed { target } => {
@@ -3988,6 +4415,7 @@ impl App {
                 Some(path) => {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     self.toast(&format!("Downloaded {name}"));
+                    self.queue_event("download_finished", self.state.active_tab(), Some(path.to_string_lossy().into_owned()));
                     self.state.downloads.retain(|d| d.path != path.to_string_lossy());
                     self.state.downloads.insert(0, crate::state::Download { name, path: path.to_string_lossy().into_owned(), url, at: now() });
                     self.state.downloads.truncate(self.config.downloads.keep_in_list);
@@ -4242,7 +4670,6 @@ impl App {
     }
 
     fn window_event(&mut self, id: WindowId, ev: WindowEvent, elwt: &EventLoopWindowTarget<UserEvent>) {
-        let _ = elwt;
         let main = id == self.window.id();
         match ev {
             WindowEvent::Focused(f) if main => self.window_focused = f,
@@ -4257,7 +4684,7 @@ impl App {
             WindowEvent::Moved(_) if main => self.remember_frame(),
             WindowEvent::CloseRequested => {
                 if main {
-                    self.quit = true;
+                    self.dispatch(Command::Quit, elwt);
                 } else {
                     self.littles.remove(&id);
                     if self.focused_little == Some(id) {
@@ -4276,6 +4703,8 @@ impl App {
     /// everything else happens after that, in `after_reveal`.
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
         self.known_plugins = self.plugins.iter().map(|p| p.name.clone()).collect();
+        self.ensure_plugin_keys();
+        self.init_print = self.init_fingerprint();
         trace("start");
         self.build_menu();
         let a = self.state.active_space;
@@ -4324,6 +4753,8 @@ impl App {
     }
 
     fn after_reveal(&mut self) {
+        self.queue_event("valerie_started", self.state.active_tab(), None);
+        self.load_extensions(false);
         self.start_blocklist();
         std::thread::spawn(crate::llm_guide::install);
         self.check_tasks(true);
@@ -4394,6 +4825,11 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(30));
         send(&p, UserEvent::Tick);
     });
+    let p = proxy.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        send(&p, UserEvent::WidgetTick);
+    });
     watch_config(proxy.clone());
     let mut app = App::new(&event_loop, config, proxy)?;
     trace("window and sidebar created");
@@ -4407,13 +4843,19 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                 if let Some(why) = app.pending_reveal.take() {
                     app.reveal(why);
                 }
+                app.drain_events(elwt);
             }
-            Event::WindowEvent { window_id, event, .. } => app.window_event(window_id, event, elwt),
+            Event::WindowEvent { window_id, event, .. } => {
+                app.window_event(window_id, event, elwt);
+                app.drain_events(elwt);
+            }
             Event::Opened { urls } => app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt),
             Event::LoopDestroyed => app.save(),
             _ => {}
         }
         if app.quit {
+            app.queue_event("valerie_quitting", None, None);
+            app.drain_events(elwt);
             app.remember_frame();
             app.save();
             *control_flow = ControlFlow::Exit;
@@ -6008,6 +6450,526 @@ impl App {
                 send(&p, UserEvent::ModelsFound { cli: cli.into(), models });
             }
         });
+    }
+}
+
+// ---------------------------------------------------------------- customising: key sequences, language, undo
+
+/// Folders and files in the config folder that "Undo Last Customization" restores.
+const UNDO_ITEMS: &[&str] = &["config.yaml", "NOTES.md", "plugins", "boosts", "ui", "strings"];
+
+fn undo_dir() -> PathBuf {
+    config::data_dir().join("undo")
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for e in std::fs::read_dir(from)?.flatten() {
+            if e.file_name() == ".git" {
+                continue;
+            }
+            copy_tree(&e.path(), &to.join(e.file_name()))?;
+        }
+    } else if from.is_file() {
+        std::fs::copy(from, to)?;
+    }
+    Ok(())
+}
+
+/// Save the config folder's settings, plugins and styles so an AI's change can be undone (the last 10 are kept).
+pub fn snapshot_config(why: &str) {
+    let dir = undo_dir().join(format!("{}-{}", now(), why.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').take(40).collect::<String>().trim().replace(' ', "-")));
+    for item in UNDO_ITEMS {
+        let _ = copy_tree(&config::config_dir().join(item), &dir.join(item));
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let mut all: Vec<PathBuf> = std::fs::read_dir(undo_dir()).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    all.sort();
+    while all.len() > 10 {
+        let _ = std::fs::remove_dir_all(all.remove(0));
+    }
+}
+
+/// Put back the newest snapshot (and drop it, so undoing again goes further back). Returns what it undid.
+fn restore_snapshot() -> Result<String, String> {
+    let mut all: Vec<PathBuf> = std::fs::read_dir(undo_dir()).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    all.sort();
+    let Some(last) = all.pop() else { return Err("there's nothing to undo".into()) };
+    let cfg = config::config_dir();
+    for item in UNDO_ITEMS {
+        let (saved, live) = (last.join(item), cfg.join(item));
+        if live.is_dir() {
+            std::fs::remove_dir_all(&live).map_err(|e| e.to_string())?;
+        } else if live.is_file() && saved.exists() {
+            std::fs::remove_file(&live).map_err(|e| e.to_string())?;
+        }
+        copy_tree(&saved, &live).map_err(|e| e.to_string())?;
+    }
+    let what = last.file_name().map(|n| n.to_string_lossy().split_once('-').map(|x| x.1.replace('-', " ")).unwrap_or_default()).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&last);
+    Ok(what)
+}
+
+/// Turn a key event's name from a page or the sidebar ("Cmd+KeyS") into an accelerator to compare.
+fn accel(s: &str) -> Option<muda::accelerator::Accelerator> {
+    s.trim().parse().ok()
+}
+
+impl App {
+    /// First keys of the key sequences in `keybindings` ("CmdOrCtrl+K CmdOrCtrl+S" → "CmdOrCtrl+K").
+    fn sequence_prefixes(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .config
+            .keybindings
+            .iter()
+            .filter(|(k, b)| b.is_some() && k.trim().contains(' '))
+            .filter_map(|(k, _)| k.split_whitespace().next().map(str::to_string))
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// One more key of a key sequence: run its command when complete, keep waiting while it's the start of one.
+    fn key_sequence(&mut self, first: String, next: Option<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let fresh = self.seq_pending.as_ref().is_some_and(|(_, at)| at.elapsed() < std::time::Duration::from_secs(2));
+        let mut keys = match (next, fresh) {
+            (None, _) => vec![first],
+            (Some(n), true) => {
+                let mut k = self.seq_pending.take().map(|p| p.0).unwrap_or_default();
+                k.push(n);
+                k
+            }
+            (Some(_), false) => return,
+        };
+        keys.retain(|k| !k.is_empty());
+        let typed: Vec<_> = keys.iter().map(|k| accel(k)).collect();
+        let mut longer = false;
+        for (seq, b) in self.config.keybindings.iter().filter_map(|(k, b)| b.as_ref().map(|b| (k, b))) {
+            let parts: Vec<_> = seq.split_whitespace().map(accel).collect();
+            if parts.len() < 2 || parts.len() < typed.len() || parts.iter().zip(&typed).any(|(a, b)| a.is_none() || a != b) {
+                continue;
+            }
+            if parts.len() == typed.len() {
+                if let Some(cmd) = b.command() {
+                    self.seq_pending = None;
+                    return self.dispatch(cmd, elwt);
+                }
+            }
+            longer = true;
+        }
+        if longer {
+            self.seq_pending = Some((keys, std::time::Instant::now()));
+            // Whatever has the keyboard sends the next key here.
+            let js = "window.__valerie && __valerie.nextKey ? __valerie.nextKey() : window.valerie && valerie.nextKey && valerie.nextKey()";
+            match self.state.active_tab().and_then(|t| self.views.get(&t)).filter(|_| !self.bar_open && !self.chats_open) {
+                Some(v) => drop(v.evaluate_script(js)),
+                None => drop(self.chrome.evaluate_script(js)),
+            }
+        } else {
+            self.seq_pending = None;
+        }
+    }
+
+    /// Valerie's words in the user's language: an exact entry, or a pattern with {} for the parts that change.
+    fn translate(&self, text: &str) -> String {
+        if self.strings.is_empty() {
+            return text.to_string();
+        }
+        if let Some(t) = self.strings.get(text) {
+            return t.clone();
+        }
+        for (from, to) in self.strings.iter().filter(|(k, _)| k.contains("{}")) {
+            let parts: Vec<&str> = from.split("{}").collect();
+            let (Some(head), Some(tail)) = (parts.first(), parts.last()) else { continue };
+            let Some(mut rest) = text.strip_prefix(head) else { continue };
+            let mut found = Vec::new();
+            let mut ok = true;
+            for (k, lit) in parts[1..].iter().enumerate() {
+                let last = k == parts.len() - 2;
+                let at = if last { (rest.len() >= lit.len() && rest.ends_with(lit)).then(|| rest.len() - lit.len()) } else { rest.find(lit) };
+                match at.filter(|_| !lit.is_empty() || last) {
+                    Some(a) => {
+                        found.push(&rest[..a]);
+                        rest = &rest[a + lit.len()..];
+                    }
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok && text.ends_with(tail) {
+                let mut out = to.clone();
+                for f in found {
+                    out = out.replacen("{}", f, 1);
+                }
+                return out;
+            }
+        }
+        text.to_string()
+    }
+
+    /// Read strings/<language>.yaml from the config folder.
+    fn load_strings(&mut self) {
+        let lang = self.config.language.trim().to_lowercase();
+        self.strings = if lang.is_empty() || lang == "en" {
+            HashMap::new()
+        } else {
+            let path = config::config_dir().join("strings").join(format!("{lang}.yaml"));
+            std::fs::read_to_string(path).ok().and_then(|t| serde_yaml::from_str::<HashMap<String, String>>(&t).ok()).unwrap_or_default()
+        };
+    }
+
+    fn undo_customization(&mut self) {
+        match restore_snapshot() {
+            Ok(what) => {
+                self.reload_config();
+                self.build_menu();
+                self.toast(&if what.is_empty() { "Undid the last customization".to_string() } else { format!("Undid: {what}") });
+            }
+            Err(e) => self.toast(&format!("Couldn't undo: {e}")),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- browser extensions
+
+impl App {
+    /// Load the allowed extensions; ask about new ones, one at a time (`announce`: say when each is ready).
+    fn load_extensions(&mut self, announce: bool) {
+        if !self.config.extensions.enabled || !crate::extensions::supported() {
+            return;
+        }
+        let loaded = crate::extensions::loaded();
+        for e in crate::extensions::find(&crate::extensions::dir(&self.config.extensions)) {
+            if loaded.contains(&e.name) || self.ext_denied.contains(&e.name) {
+                continue;
+            }
+            if self.state.extension_grants.get(&e.name) == Some(&e.print) {
+                let (p, name) = (self.proxy.clone(), e.name.clone());
+                crate::extensions::load(e.name.clone(), &e.dir, move |result| send(&p, UserEvent::ExtensionLoaded { name, result, announce }));
+            } else if !self.ext_asking {
+                self.ext_asking = true;
+                let wants = if e.wants.is_empty() { "nothing special".to_string() } else { e.wants.iter().take(12).cloned().collect::<Vec<_>>().join(", ") };
+                let (p, name, print) = (self.proxy.clone(), e.name.clone(), e.print.clone());
+                platform::ask(&self.chrome, &format!("Load the extension “{}”?", e.title), &format!("It was added to your extensions folder. It asks for: {wants}."), "Load", "Not Now", move |ok| {
+                    send(&p, UserEvent::ExtensionGrant { name, print, allowed: ok });
+                });
+            }
+        }
+    }
+
+    /// The extensions in the command bar: open a popup or options page, or see why one isn't running.
+    fn show_extensions(&mut self) {
+        let found = crate::extensions::find(&crate::extensions::dir(&self.config.extensions));
+        if found.is_empty() {
+            return self.toast(&format!("No extensions yet: put an unpacked extension's folder in {}", crate::extensions::dir(&self.config.extensions).display()));
+        }
+        let loaded = crate::extensions::loaded();
+        let mut items = Vec::new();
+        for e in found {
+            let on = loaded.contains(&e.name);
+            let status = if !crate::extensions::supported() {
+                "needs macOS 15.4 or later"
+            } else if !self.config.extensions.enabled {
+                "extensions are off (extensions.enabled)"
+            } else if on {
+                "running"
+            } else if self.ext_denied.contains(&e.name) {
+                "not loaded (you said Not Now; restart Valerie to be asked again)"
+            } else {
+                "waiting for you to allow it"
+            };
+            let sub = format!("{} {} · {status}", e.title, e.version);
+            if on && crate::extensions::has_action(&e.name) {
+                items.push(json!({ "kind": "plugin", "title": format!("{}: button / popup", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name } }));
+            }
+            if on && crate::extensions::options_url(&e.name).is_some() {
+                items.push(json!({ "kind": "plugin", "title": format!("{}: options", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name, "options": true } }));
+            }
+            if !on || items.is_empty() {
+                items.push(json!({ "kind": "plugin", "title": e.title, "sub": sub, "cmd": { "cmd": "copy_text", "text": e.dir.to_string_lossy() } }));
+            }
+        }
+        self.open_list("Extensions", items);
+    }
+
+    fn extension_action(&mut self, name: &str, options: bool) {
+        self.close_bar();
+        if options {
+            match crate::extensions::options_url(name) {
+                Some(u) => {
+                    self.open_tab(&u, None, true);
+                }
+                None => self.toast("That extension has no options page"),
+            }
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use wry::WebViewExtMacOS;
+            let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+            let (x, y, w, _) = self.content_area(size.width, size.height);
+            let v = self.chrome.webview();
+            let ptr = objc2::rc::Retained::as_ptr(&v) as *mut objc2::runtime::AnyObject;
+            if let Err(e) = crate::extensions::show_action(name, ptr, x + w - 60.0, y + 8.0) {
+                self.toast(&format!("{name}: {e}"));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- plugins: events, tools, widgets, search
+
+impl App {
+    /// Note that something happened, for plugins' `events` hooks (run once the current event is handled).
+    fn queue_event(&mut self, on: &'static str, tab: Option<TabId>, file: Option<String>) {
+        if self.in_hook || !self.plugins.iter().any(|p| p.manifest.enabled && p.manifest.events.iter().any(|e| e.on == on)) {
+            return;
+        }
+        let url = tab.and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()).unwrap_or_default();
+        let space = tab.and_then(|t| self.state.space_of(t)).unwrap_or(self.state.active_space);
+        self.event_queue.push(HookEvent { on, tab, url, space: self.space_name(space), file: file.unwrap_or_default() });
+    }
+
+    /// Run the hooks for queued events: their actions here (aimed at the event's tab), their scripts in the background.
+    pub fn drain_events(&mut self, elwt: &EventLoopWindowTarget<UserEvent>) {
+        for c in std::mem::take(&mut self.event_queue_cmds) {
+            self.dispatch(c, elwt);
+        }
+        let events = std::mem::take(&mut self.event_queue);
+        for ev in events {
+            let mut todo: Vec<(PathBuf, plugins::EventHook)> = Vec::new();
+            for p in self.plugins.iter().filter(|p| p.active_in(&ev.space)) {
+                for h in p.manifest.events.iter().filter(|h| h.on == ev.on) {
+                    if h.matches.is_empty() || plugins::matches(&h.matches, &ev.url) {
+                        todo.push((p.dir.clone(), h.clone()));
+                    }
+                }
+            }
+            for (dir, h) in todo {
+                self.in_hook = true;
+                for a in h.actions.iter().filter_map(|a| serde_json::to_value(a.command()?).ok()) {
+                    let mut a = a;
+                    if let (Some(t), Some(o)) = (ev.tab, a.as_object_mut()) {
+                        if o.get("tab").is_none_or(Value::is_null) {
+                            o.insert("tab".into(), json!(t));
+                        }
+                    }
+                    match serde_json::from_value::<Command>(a) {
+                        Ok(c) if !matches!(c, Command::Plugin { .. } | Command::Customize { .. } | Command::Quit) => self.dispatch(c, elwt),
+                        _ => {}
+                    }
+                }
+                self.in_hook = false;
+                if let Some(run) = h.run {
+                    let env = vec![
+                        ("VALERIE_EVENT", ev.on.to_string()),
+                        ("VALERIE_URL", ev.url.clone()),
+                        ("VALERIE_TAB", ev.tab.map(|t| t.to_string()).unwrap_or_default()),
+                        ("VALERIE_SPACE", ev.space.clone()),
+                        ("VALERIE_FILE", ev.file.clone()),
+                    ];
+                    let quitting = ev.on == "valerie_quitting";
+                    let job = move || {
+                        if let Err(e) = plugins::run_script(&dir, &run, &env) {
+                            eprintln!("valerie: {} hook in {}: {e:#}", env[0].1, dir.display());
+                        }
+                    };
+                    // Quitting doesn't wait for much, so those scripts run before Valerie goes.
+                    if quitting { job() } else { drop(std::thread::spawn(job)) }
+                }
+            }
+        }
+    }
+
+    /// Fire `idle` hooks once per stretch of idleness (each after its own minutes), and `active` on coming back.
+    fn check_idle(&mut self) {
+        let hooks: Vec<(String, f64)> = self
+            .plugins
+            .iter()
+            .filter(|p| p.manifest.enabled)
+            .flat_map(|p| p.manifest.events.iter().enumerate().filter(|(_, e)| e.on == "idle").map(|(i, e)| (format!("{}#{i}", p.name), e.minutes.unwrap_or(5.0))).collect::<Vec<_>>())
+            .collect();
+        let wants_active = self.plugins.iter().any(|p| p.manifest.enabled && p.manifest.events.iter().any(|e| e.on == "active"));
+        if hooks.is_empty() && !wants_active {
+            return;
+        }
+        let idle = platform::idle_seconds();
+        let shortest = hooks.iter().map(|h| h.1).fold(f64::MAX, f64::min).min(5.0);
+        if idle >= shortest * 60.0 {
+            for (key, minutes) in hooks {
+                if idle >= minutes * 60.0 && self.idle_fired.insert(key) {
+                    self.queue_event("idle", self.state.active_tab(), None);
+                }
+            }
+            self.was_idle = true;
+        } else if self.was_idle && idle < 60.0 {
+            self.was_idle = false;
+            self.idle_fired.clear();
+            self.queue_event("active", self.state.active_tab(), None);
+        }
+    }
+
+    /// `valerie.call` / `valerie.run` from a plugin's page script. The key proves the message came from the plugin's
+    /// own script, not the page it runs on.
+    fn plugin_message(&mut self, target: Target, kind: &str, m: &Value) {
+        let (Some(name), Some(key)) = (m["plugin"].as_str(), m["key"].as_str()) else { return };
+        if self.plugin_keys.get(name).is_none_or(|k| !crate::mcp::same_secret(k, key)) {
+            return;
+        }
+        let url = self.view_for(target).and_then(|v| v.url().ok()).unwrap_or_default();
+        let Some(p) = self.plugins.iter().find(|p| p.name == name && p.manifest.enabled && plugins::matches(&p.manifest.matches, &url)) else { return };
+        let now_i = std::time::Instant::now();
+        let recent = self.plugin_calls.entry(name.to_string()).or_default();
+        recent.retain(|t| now_i.duration_since(*t) < std::time::Duration::from_secs(10));
+        if recent.len() >= 100 {
+            return;
+        }
+        recent.push(now_i);
+        if kind == "plugin_run" {
+            let title = m["title"].as_str().unwrap_or("");
+            if p.manifest.commands.iter().any(|c| c.title == title) {
+                let cmd = Command::Plugin { plugin: name.to_string(), command: title.to_string(), context: Default::default() };
+                self.event_queue_cmds.push(cmd);
+            }
+            return;
+        }
+        let (id, tool) = (m["id"].as_str().unwrap_or("").to_string(), m["tool"].as_str().unwrap_or("").to_string());
+        let mut args = m["args"].clone();
+        if !p.manifest.permissions.contains(&tool) {
+            return self.plugin_reply(target, &id, Err(format!("{tool} isn't in this plugin's permissions (add it to `permissions` in plugin.yaml)")));
+        }
+        if let (Target::Tab(t), Some(o)) = (target, args.as_object_mut()) {
+            o.entry("tab").or_insert(json!(t));
+        }
+        let mut wanted = p.manifest.permissions.clone();
+        wanted.sort();
+        if self.state.plugin_grants.get(name) == Some(&wanted) {
+            return self.plugin_tool(target, id, tool, args);
+        }
+        if self.plugin_denied.contains(name) {
+            return self.plugin_reply(target, &id, Err("the user didn't allow this plugin to use browser tools".into()));
+        }
+        let asking = self.plugin_waiting.iter().any(|w| w.1 == name);
+        self.plugin_waiting.push((target, name.to_string(), id, tool, args));
+        if !asking {
+            let (px, plugin) = (self.proxy.clone(), name.to_string());
+            let list = wanted.iter().map(|t| t.replace('_', " ")).collect::<Vec<_>>().join(", ");
+            platform::ask(&self.chrome, &format!("Let the plugin “{name}” use the browser?"), &format!("Its script on {} wants to: {list}. You're asked once; remove a tool from `permissions` in its plugin.yaml to take it back.", site_of(&url).unwrap_or(url.clone())), "Allow", "Don't Allow", move |ok| {
+                send(&px, UserEvent::PluginGrant { plugin, allowed: ok });
+            });
+        }
+    }
+
+    fn plugin_grant(&mut self, plugin: String, allowed: bool) {
+        if allowed {
+            if let Some(p) = self.plugins.iter().find(|p| p.name == plugin) {
+                let mut perms = p.manifest.permissions.clone();
+                perms.sort();
+                self.state.plugin_grants.insert(plugin.clone(), perms);
+                self.dirty = true;
+            }
+        } else {
+            self.plugin_denied.insert(plugin.clone());
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.plugin_waiting).into_iter().partition(|w| w.1 == plugin);
+        self.plugin_waiting = rest;
+        for (target, _, id, tool, args) in mine {
+            if allowed {
+                self.plugin_tool(target, id, tool, args);
+            } else {
+                self.plugin_reply(target, &id, Err("the user didn't allow this plugin to use browser tools".into()));
+            }
+        }
+    }
+
+    /// Run a tool for a plugin page script (tools wait on the browser, so off the main thread).
+    fn plugin_tool(&self, target: Target, id: String, tool: String, args: Value) {
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            let result = crate::mcp::run_tool(&tool, args, &p);
+            send(&p, UserEvent::PluginReply { target, id, result });
+        });
+    }
+
+    fn plugin_reply(&self, target: Target, id: &str, result: Result<Value, String>) {
+        let (ok, value) = match result {
+            Ok(v) => (true, v),
+            Err(e) => (false, json!(e)),
+        };
+        if let Some(v) = self.view_for(target) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.pluginReply({}, {ok}, {value})", json!(id)));
+        }
+    }
+
+    /// Sidebar widgets from plugins, with their latest text.
+    fn widgets_vm(&self) -> Vec<Value> {
+        let space = self.space_name(self.state.active_space);
+        self.plugins
+            .iter()
+            .filter(|p| p.active_in(&space))
+            .flat_map(|p| {
+                p.manifest.sidebar.iter().map(move |w| {
+                    let key = format!("{}/{}", p.name, w.title);
+                    let text = self.widget_text.get(&key).cloned().unwrap_or_else(|| w.title.clone());
+                    json!({ "plugin": p.name, "title": w.title, "text": text, "icon": w.icon, "command": w.command, "url": w.url })
+                })
+            })
+            .collect()
+    }
+
+    /// Run the scripts of widgets whose text is due.
+    fn refresh_widgets(&mut self) {
+        let now_i = std::time::Instant::now();
+        for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
+            for w in &p.manifest.sidebar {
+                let Some(run) = w.text_from.clone() else { continue };
+                let key = format!("{}/{}", p.name, w.title);
+                if self.widget_due.get(&key).is_some_and(|due| *due > now_i) {
+                    continue;
+                }
+                self.widget_due.insert(key.clone(), now_i + std::time::Duration::from_secs_f64(w.every_seconds.max(5.0)));
+                let (dir, px) = (p.dir.clone(), self.proxy.clone());
+                std::thread::spawn(move || {
+                    let text = match plugins::run_script(&dir, &run, &[]) {
+                        Ok(t) => t.trim().lines().next().unwrap_or("").chars().take(80).collect(),
+                        Err(e) => format!("⚠ {}", e.to_string().chars().take(60).collect::<String>()),
+                    };
+                    send(&px, UserEvent::WidgetText { key, text });
+                });
+            }
+        }
+    }
+
+    /// Ask plugins' search providers about what's typed in the command bar.
+    fn plugin_search(&self, query: &str) {
+        let space = self.space_name(self.state.active_space);
+        for p in self.plugins.iter().filter(|p| p.active_in(&space)) {
+            for s in &p.manifest.search {
+                let q = if s.keyword.is_empty() {
+                    query.trim().to_string()
+                } else {
+                    match query.trim().strip_prefix(&s.keyword).filter(|r| r.starts_with(' ')) {
+                        Some(r) => r.trim().to_string(),
+                        None => continue,
+                    }
+                };
+                if q.chars().count() < 2 {
+                    continue;
+                }
+                let (dir, run, px, plugin, title, query) = (p.dir.clone(), s.run.clone(), self.proxy.clone(), p.name.clone(), s.title.clone(), query.to_string());
+                std::thread::spawn(move || {
+                    let items = match plugins::run_script(&dir, &run, &[("VALERIE_QUERY", q)]) {
+                        Ok(out) => parse_items(&out, &plugin),
+                        Err(_) => vec![],
+                    };
+                    send(&px, UserEvent::SearchResults { query, plugin, title, items });
+                });
+            }
+        }
     }
 }
 

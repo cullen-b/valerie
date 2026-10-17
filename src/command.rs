@@ -399,6 +399,9 @@ pub enum Command {
     Plugin {
         plugin: String,
         command: String,
+        /// What was right-clicked (link, selection, image, page): passed to the command as VALERIE_LINK and so on.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        context: std::collections::BTreeMap<String, String>,
     },
     /// Ask the user's AI assistant to change Valerie itself (edits config and plugins).
     Customize {
@@ -418,6 +421,27 @@ pub enum Command {
     FindInPage {
         #[serde(default)]
         query: Option<String>,
+    },
+    /// A key of a key sequence ("CmdOrCtrl+K CmdOrCtrl+S") was pressed; Valerie waits for the rest.
+    KeySequence {
+        first: String,
+        #[serde(default)]
+        next: Option<String>,
+    },
+    /// A window of its own for a page (or the command bar's new tab page when there's none).
+    NewWindow {
+        #[serde(default)]
+        url: Option<String>,
+    },
+    /// Put Valerie's settings, plugins and styles back the way they were before the last change an AI made.
+    UndoCustomization,
+    /// The browser extensions Valerie loaded (and their buttons).
+    Extensions,
+    /// Open an extension's popup or options page.
+    ExtensionAction {
+        name: String,
+        #[serde(default)]
+        options: bool,
     },
     Quit,
 }
@@ -573,6 +597,9 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),
     ("set_up_sync", "Set Up Sync (sign in to GitHub)"),
+    ("new_window", "New Window"),
+    ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
+    ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),
 ];
 
@@ -628,7 +655,9 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("toggle_media", "{ tab? }  (play / pause)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
-    ("plugin", "{ plugin, command }  (run a plugin command by its title)"),
+    ("new_window", "{ url? }  (a separate window for one page)"),
+    ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
+    ("plugin", "{ plugin, command, context? }  (run a plugin command by its title; context: { link?, selection?, image?, page? })"),
 ];
 
 pub fn title_for(name: &str) -> String {

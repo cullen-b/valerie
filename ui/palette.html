@@ -176,6 +176,13 @@ function compute() {
   const raw = q.value.trim(), needle = raw.toLowerCase();
   let out = [];
   if (D.mode === "prompt") { results = []; sel = 0; return draw(); }
+  // A plugin's list: only its items, filtered by what's typed.
+  if (D.mode === "list") {
+    results = D.items.map((it) => ({ ...it, s: needle ? Math.max(score(needle, it.title || ""), score(needle, it.sub || "") - 5) : 0 }))
+      .filter((it) => it.s >= 0).sort((a, b) => b.s - a.s);
+    sel = 0; return draw();
+  }
+  askPlugins(raw);
   if (scope) {
     results = raw ? [{ kind: "go", title: raw, sub: "Search " + scope.name, go: scope.url.replace("%s", encodeURIComponent(raw)), icon: "⌕" }] : [];
     sel = 0; return draw();
@@ -225,7 +232,26 @@ function compute() {
     if (wantsAgent(raw)) results.unshift(ask); else results.push(ask);
     results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
   }
+  // Results plugins already sent for this text stay (they arrive a moment after typing).
+  for (const [key, more] of Object.entries(extra)) if (more.query === raw) results.push(...more.items.slice(0, 8));
   sel = 0; draw();
+}
+
+// ---------- plugins' search providers: asked a moment after you stop typing; their results join the list ----------
+let extra = {}, searchTimer = 0;
+function askPlugins(raw) {
+  clearTimeout(searchTimer);
+  if (!D.plugin_search || raw.length < 2 || /^[!>?]/.test(raw)) { extra = {}; return; }
+  for (const k of Object.keys(extra)) if (extra[k].query !== raw) delete extra[k];
+  searchTimer = setTimeout(() => send({ t: "search", query: raw }), 160);
+}
+function more(query, plugin, title, items) {
+  if (query !== q.value.trim() || D.mode === "prompt" || D.mode === "list") return;
+  extra[plugin + "/" + title] = { query, items: items.map((it) => ({ ...it, sub: it.sub && it.sub !== plugin ? it.sub : title })) };
+  const keep = results[sel];
+  compute();
+  const i = keep ? results.findIndex((r) => r.title === keep.title && r.kind === keep.kind) : -1;
+  if (i > 0) { sel = i; mark(); }
 }
 
 function draw() {
@@ -291,8 +317,9 @@ q.addEventListener("keydown", (e) => {
 document.getElementById("backdrop").onmousedown = close;
 
 window.palette = {
+  more,
   open(data) {
-    D = data;
+    D = data; extra = {};
     const r = document.documentElement;
     r.classList.toggle("light", data.theme.mode === "light");
     r.style.setProperty("--accent", data.theme.accent);
@@ -308,6 +335,7 @@ window.palette = {
     q.placeholder = data.mode === "current" ? "Edit URL or search…" : "Search or enter URL…";
     q.value = data.mode === "prompt" ? data.prompt.value || "" : data.query || "";
     if (data.mode === "prompt") q.placeholder = data.prompt.label + "…";
+    if (data.mode === "list") { q.value = ""; q.placeholder = data.placeholder || "Pick one…"; }
     document.querySelector("#inputrow .glyph").textContent = data.mode === "prompt" ? "✎" : "⌕";
     scope = null; document.body.classList.remove("scoped");
     compute();
