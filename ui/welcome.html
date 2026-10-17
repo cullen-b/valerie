@@ -181,7 +181,7 @@ function agentTitle(id) { const a = W && W.agents.find((x) => x.id === id); retu
 function hello(root) {
   const h = el("div", "hello");
   h.append(el("div", "mark", "✦"), el("h1", null, "Welcome to Valerie"),
-    el("p", "lead", "A fast browser you shape by asking. Let's set up the few things that make it yours. It takes about two minutes, and you can skip anything."));
+    el("p", "lead", "A fast browser where everything is yours to change. Let's set up the few things that make it yours. It takes about two minutes, and you can skip anything."));
   const ag = el("div", "agenda");
   [["1", "Bring your bookmarks"], ["2", "Pick your AI"], ["3", "Sync your Macs"], ["4", "Describe your browser"], ["5", "A quick tour"]]
     .forEach(([n, t]) => { const s = el("span"); s.append(el("b", null, n), t); ag.append(s); });

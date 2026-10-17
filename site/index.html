@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Valerie: the browser you change by asking</title>
-<meta name="description" content="A fast browser for Mac you shape by asking. Spaces, a command bar, vim keys and AI agents that can use your browser. Free.">
-<meta property="og:title" content="Valerie: the browser you change by asking">
-<meta property="og:description" content="Describe the browser you want. Valerie's AI makes it so.">
+<title>Valerie: the infinitely configurable browser</title>
+<meta name="description" content="A fast browser for Mac where everything is a setting: spaces, tabs, shortcuts, themes, menus and site rules. Change it in one file, or ask your AI to. Free.">
+<meta property="og:title" content="Valerie: the infinitely configurable browser">
+<meta property="og:description" content="Everything is a setting. Change it in one file, or ask your AI to.">
 <meta property="og:image" content="https://cullen-b.github.io/valerie/icon.png">
 <link rel="icon" href="icon.png">
 <style>
@@ -191,14 +191,14 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
       <section class="pg" data-tab="home" data-title="Valerie">
         <div class="inner">
           <img class="logo" src="icon.png" alt="">
-          <h1>The browser you<br>change by <em>asking.</em></h1>
-          <p class="sub">Fast, keyboard-first, and rewired by AI when you ask.</p>
+          <h1>The infinitely<br><em>configurable</em> browser.</h1>
+          <p class="sub">Every color, shortcut, menu and site rule is a setting. Change them in one file, or ask your AI to.</p>
           <div class="ctas">
             <a class="btn primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Download for Mac</a>
             <button class="btn" data-go="install">Other ways</button>
           </div>
           <p class="meta" id="ver">Free · open source · macOS 14+</p>
-          <label class="ask"><b>!</b><input id="ask" placeholder="Describe a change… try “tabs on top”" autocomplete="off"><button class="btn sm primary" id="askgo">Ask</button></label>
+          <label class="ask"><b>!</b><input id="ask" placeholder="Change anything… try “tabs on top”" autocomplete="off"><button class="btn sm primary" id="askgo">Ask</button></label>
           <div class="chips" id="chips"></div>
           <p class="caption">This page is a working Valerie. Press <kbd>⌘K</kbd>.</p>
         </div>
@@ -217,16 +217,16 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
         <div class="inner">
           <h2>Arc's best ideas, <em>made yours.</em></h2>
           <div class="feats">
+            <div class="feat"><b>Everything is a setting</b><span>One readable file, synced through GitHub.</span></div>
+            <div class="feat"><b>Your AI does the editing</b><span>Say what you want; it writes the setting.</span></div>
             <button class="feat" data-demo="space"><b>Spaces</b><span>Own tabs, theme and logins.</span></button>
             <button class="feat" data-demo="bar"><b>Command bar</b><span>Tabs, history, web and AI in one box.</span></button>
             <button class="feat" data-demo="split"><b>Split view</b><span>Two tabs side by side.</span></button>
             <button class="feat" data-demo="vim"><b>Vim keys</b><span><kbd>j</kbd> <kbd>k</kbd> scroll, <kbd>J</kbd> <kbd>K</kbd> switch tabs.</span></button>
             <div class="feat"><b>Little windows</b><span>Links from other apps open small.</span></div>
             <div class="feat"><b>A quieter web</b><span>No ads, trackers or cookie banners.</span></div>
-            <div class="feat"><b>Sync through GitHub</b><span>Settings and tabs, in a repo you own.</span></div>
             <div class="feat"><b>Plugins</b><span>Install one, or ask your AI to write it.</span></div>
             <div class="feat"><b>Fast and light</b><span>Rust on Safari's engine.</span></div>
-            <div class="feat"><b>Updates itself</b><span>Quietly, in the background.</span></div>
           </div>
         </div>
       </section>
@@ -320,7 +320,7 @@ function go(space, dir) {
 }
 function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 1600); }
 
-// ---------- change it by asking ----------
+// ---------- change a setting by asking ----------
 const COLORS = { green: "#3ccf91", blue: "#4ea8ff", pink: "#ff7ac6", orange: "#ff9d4d", red: "#ff6b6b", yellow: "#f5c84c", purple: "#9d8cff", teal: "#2fd3c4" };
 const RULES = [
   { re: /\b(green|blue|pink|orange|red|yellow|purple|teal)\b/, run: (m) => { M.accent = COLORS[m[1]]; return [`theme: { accent: "${COLORS[m[1]]}" }   # ${m[1]}`]; } },
