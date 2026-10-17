@@ -14,7 +14,7 @@
   --hover: rgba(255,255,255,.07); --active: rgba(255,255,255,.14); --tile: rgba(255,255,255,.06); --line: rgba(255,255,255,.08);
   --page: #fbfaf8; --ink: #1d1c21; --ink2: #6e6b76; --rule: rgba(0,0,0,.07); --sw: 248px; --tab-h: 38px; --ease: cubic-bezier(.2,.8,.2,1); }
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; overscroll-behavior: none; }
 body { overflow: hidden; color: var(--fg); background: linear-gradient(160deg, var(--bg1), var(--bg2)); transition: background .5s;
   font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
@@ -591,14 +591,22 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "J" || e.key === "K") { const i = M.tabs.indexOf(M.tab), n = M.tabs.length; show(M.tabs[(i + (e.key === "J" ? 1 : -1) + n) % n]); }
 });
 
-// Two-finger swipes on the sidebar switch spaces; the trackpad's leftover inertia is ignored until it stops.
-let swipe = 0, swipeIdle;
+// Two-finger swipes on the sidebar switch spaces, as in Valerie: the list follows your fingers, then commits or springs
+// back. After a switch the trackpad's leftover momentum is ignored until it stops.
+const swipe = { acc: 0, lock: false, timer: 0, unlock: 0 };
+const follow = (off) => { const t = $("#tabs"); t.style.transition = off ? "none" : ""; t.style.transform = off ? `translateX(${-off * 56}px)` : ""; t.style.opacity = off ? 1 - Math.abs(off) * 0.55 : ""; };
 $("#sidebar").addEventListener("wheel", (e) => {
   if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
-  e.preventDefault(); clearTimeout(swipeIdle); swipeIdle = setTimeout(() => (swipe = 0), 250);
-  if (swipe === null) return;
-  swipe += e.deltaX;
-  if (Math.abs(swipe) > 60) { const d = swipe > 0 ? 1 : -1; swipe = null; if (SPACES[M.space + d]) go(M.space + d, d); }
+  e.preventDefault();
+  if (swipe.lock) { clearTimeout(swipe.unlock); swipe.unlock = setTimeout(() => (swipe.lock = false), 220); return; }
+  swipe.acc += e.deltaX; clearTimeout(swipe.timer);
+  if (Math.abs(swipe.acc) > 160) {
+    const d = swipe.acc > 0 ? 1 : -1; swipe.acc = 0; swipe.lock = true; follow(0);
+    swipe.unlock = setTimeout(() => (swipe.lock = false), 220);
+    go((M.space + d + SPACES.length) % SPACES.length, d); return;
+  }
+  follow(Math.max(-1, Math.min(1, swipe.acc / 160)));
+  swipe.timer = setTimeout(() => { swipe.acc = 0; follow(0); }, 140);
 }, { passive: false });
 
 narrow.addEventListener("change", () => { if (narrow.matches) M.split = null; render(); });
