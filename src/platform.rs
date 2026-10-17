@@ -471,6 +471,76 @@ mod mac {
         }
     }
 
+    /// The older notification API, for when macOS refuses the current one (it can remember a refusal for an app's ID
+    /// for good). It still shows as Valerie, with its icon; the AppleScript fallback shows Script Editor's.
+    pub fn notify_legacy(n: &super::Note) -> bool {
+        use objc2::class;
+        use objc2::runtime::{AnyClass, Bool, Imp, Sel};
+        use objc2::sel;
+        use objc2_foundation::NSString;
+        if !bundled() || AnyClass::get(c"NSUserNotificationCenter").is_none() {
+            return false;
+        }
+        // Clicked: hand the notification's action back to Valerie. Shown even while Valerie is in front.
+        unsafe extern "C-unwind" fn activated(_: *mut AnyObject, _: Sel, _: *mut AnyObject, note: *mut AnyObject) {
+            let info: *mut AnyObject = msg_send![note, userInfo];
+            let key = objc2_foundation::NSString::from_str("action");
+            let v: *mut objc2_foundation::NSString = if info.is_null() { std::ptr::null_mut() } else { msg_send![info, objectForKey: &*key] };
+            if !v.is_null() {
+                if let Some(f) = CLICKED.get() {
+                    f((*v).to_string());
+                }
+            }
+        }
+        unsafe extern "C-unwind" fn present(_: *mut AnyObject, _: Sel, _: *mut AnyObject, _: *mut AnyObject) -> Bool {
+            Bool::YES
+        }
+        unsafe {
+            let center: *mut AnyObject = msg_send![class!(NSUserNotificationCenter), defaultUserNotificationCenter];
+            if center.is_null() {
+                return false;
+            }
+            let has_delegate: *mut AnyObject = msg_send![center, delegate];
+            if has_delegate.is_null() {
+                let name = c"ValerieLegacyNotificationDelegate";
+                let cls: Option<&AnyClass> = AnyClass::get(name).or_else(|| {
+                    let c = objc2::ffi::objc_allocateClassPair(class!(NSObject), name.as_ptr(), 0);
+                    if c.is_null() {
+                        return None;
+                    }
+                    let add = |s: Sel, f: *const (), types: &std::ffi::CStr| {
+                        objc2::ffi::class_addMethod(c, s, std::mem::transmute::<*const (), Imp>(f), types.as_ptr());
+                    };
+                    add(sel!(userNotificationCenter:didActivateNotification:), activated as *const (), c"v@:@@");
+                    add(sel!(userNotificationCenter:shouldPresentNotification:), present as *const (), c"c@:@@");
+                    objc2::ffi::objc_registerClassPair(c);
+                    AnyClass::get(name)
+                });
+                if let Some(cls) = cls {
+                    let delegate: *mut AnyObject = msg_send![cls, new]; // held weakly by the center: lives for the app's life
+                    let _: () = msg_send![center, setDelegate: delegate];
+                }
+            }
+            let note: *mut AnyObject = msg_send![class!(NSUserNotification), new];
+            let _: () = msg_send![note, setTitle: &*NSString::from_str(n.title)];
+            if !n.subtitle.is_empty() {
+                let _: () = msg_send![note, setSubtitle: &*NSString::from_str(n.subtitle)];
+            }
+            let _: () = msg_send![note, setInformativeText: &*NSString::from_str(n.body)];
+            if n.sound {
+                let _: () = msg_send![note, setSoundName: &*NSString::from_str("DefaultSoundName")];
+            }
+            if let Some(a) = &n.action {
+                let (k, v) = (NSString::from_str("action"), NSString::from_str(a));
+                let info: *mut AnyObject = msg_send![class!(NSDictionary), dictionaryWithObject: &*v, forKey: &*k];
+                let _: () = msg_send![note, setUserInfo: info];
+            }
+            let _: () = msg_send![center, deliverNotification: note];
+            let _: () = msg_send![note, release];
+        }
+        true
+    }
+
     /// Post through the notification center; false when that isn't available (not an app, or not allowed).
     pub fn notify_native(n: &super::Note) -> bool {
         use objc2::class;
@@ -987,7 +1057,7 @@ pub fn notifications_init(on_click: impl Fn(String) + Send + Sync + 'static) {
 /// platform offers (a script on a bare macOS build, notify-send on Linux).
 pub fn notify(n: &Note) {
     #[cfg(target_os = "macos")]
-    if mac::notify_native(n) {
+    if mac::notify_native(n) || mac::notify_legacy(n) {
         return;
     }
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
