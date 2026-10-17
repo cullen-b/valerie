@@ -16,7 +16,7 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; overscroll-behavior: none; }
 body { overflow: hidden; color: var(--fg); background: linear-gradient(160deg, var(--bg1), var(--bg2)); transition: background .5s;
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  font: 15px/1.55 var(--font, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif); -webkit-font-smoothing: antialiased; }
 body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
   background: radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 70%); }
 button { font: inherit; color: inherit; }
@@ -61,17 +61,31 @@ body.top .drag { height: auto; } body.top .favs, body.top .space-title, body.top
 body.top #url { order: 9; width: 230px; margin: 0; }
 body.top #tabs { flex-direction: row; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 body.top .row { flex: 0 1 170px; min-width: 90px; height: 32px; }
-body.right #app { grid-template-columns: 1fr var(--sw); } body.right #sidebar { order: 2; }
+body.right #app { grid-template-columns: 1fr var(--sw); } #app { transition: grid-template-columns .3s var(--ease); } body.right #sidebar { order: 2; }
 
 /* ---------- pages ---------- */
 #main { position: relative; display: flex; gap: 8px; padding: 8px 8px 8px 0; min-width: 0; min-height: 0; }
 body.right #main { padding: 8px 0 8px 8px; } body.top #main { padding: 0 8px 8px; }
 #main { transition: padding .3s var(--ease); } body.chatting #main { padding-right: 356px; } body.chatting.right #main { padding-right: 0; padding-left: 356px; }
-.card { flex: 1; min-width: 0; overflow-y: auto; border-radius: 12px; background: var(--page); color: var(--ink); scroll-behavior: smooth;
+.card { flex: 1; min-width: 0; overflow-y: auto; border-radius: var(--radius, 12px); background: var(--page); color: var(--ink); scroll-behavior: smooth;
   box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 12px 40px rgba(0,0,0,.25); transition: background .4s, color .4s; }
 #card2:empty { display: none; }
 body.darkpage { --page: #16151b; --ink: #ecebf2; --ink2: rgba(236,235,242,.58); --rule: rgba(255,255,255,.08); }
-body.serif .card { font-family: Georgia, "Iowan Old Style", serif; }
+.pg { zoom: var(--zoom, 1); }
+/* what asking can change: a light sidebar theme, page tones, hidden sidebar parts, motion, and two plugins */
+body.lightbar { --fg: #23201c; --fg-dim: rgba(35,32,28,.5); --hover: rgba(0,0,0,.05); --active: rgba(255,255,255,.75); --tile: rgba(255,255,255,.5); --line: rgba(0,0,0,.08); }
+body.lightbar .row.on { box-shadow: 0 1px 4px rgba(0,0,0,.08); } body.lightbar .foot button { background: rgba(0,0,0,.18); }
+body.tone-sepia { --page: #f4ecd8; --ink: #433422; --ink2: #7a6650; --rule: rgba(67,52,34,.12); }
+body.tone-contrast { --page: #fff; --ink: #000; --ink2: #1a1a1a; --rule: rgba(0,0,0,.45); }
+body.tone-terminal { --page: #050805; --ink: #39ff14; --ink2: rgba(57,255,20,.62); --rule: rgba(57,255,20,.2); }
+body.tone-terminal .card { text-shadow: 0 0 6px rgba(57,255,20,.35); }
+body.tone-retro { --page: #c0c0c0; --ink: #000; --ink2: #303030; --rule: rgba(0,0,0,.28); }
+body.tone-retro .btn, body.tone-retro .ask, body.tone-retro .cmd, body.tone-retro .chip, body.tone-retro .tag { border-radius: 0; box-shadow: inset -2px -2px #808080, inset 2px 2px #fff; }
+body.tone-retro .btn.primary { background: #000080; color: #fff; }
+body.nourl #url, body.nofavs .favs, body.nospace .space-title { display: none; }
+body.nomotion *, body.nomotion *::before { transition: none !important; animation: none !important; }
+body.flip .card { transform: rotate(180deg); }
+body.party #app { animation: party 3s linear infinite; } @keyframes party { to { filter: hue-rotate(360deg); } }
 .pg { animation: pgin .35s var(--ease); } .pg[hidden] { display: none; }
 @keyframes pgin { from { opacity: 0; transform: translateY(6px); } }
 .inner { max-width: 720px; margin: 0 auto; padding: clamp(40px, 12vh, 120px) 40px 80px; }
@@ -144,7 +158,7 @@ button.tag { cursor: pointer; }
 #yaml .hd { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid rgba(255,255,255,.08); font-family: -apple-system, system-ui, sans-serif; }
 #yaml .hd span { margin-left: auto; color: rgba(255,255,255,.45); } #yaml .hd span.ok { color: #6ee7a8; }
 #yaml .hd button { all: unset; cursor: pointer; padding: 0 6px; opacity: .5; } #yaml .hd button:hover { opacity: 1; }
-#yaml pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; }
+#yaml pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; max-height: 46vh; overflow-y: auto; }
 #yaml .add { display: block; margin: 0 -12px; padding: 0 12px; color: #6ee7a8; animation: flash .9s; } #yaml .cm { color: rgba(255,255,255,.4); }
 @keyframes flash { from { background: rgba(110,231,168,.3); } }
 
@@ -168,7 +182,7 @@ body.top #chat { top: 0; }
 
 /* ---------- the command bar ---------- */
 #scrim { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.18); opacity: 0; pointer-events: none; transition: opacity .15s; }
-#cbar { position: fixed; left: 50%; top: 16vh; z-index: 21; width: min(600px, calc(100vw - 32px)); border-radius: 16px; overflow: hidden;
+#cbar { --fg: #ecebf5; --fg-dim: rgba(236,235,245,.55); --line: rgba(255,255,255,.08); position: fixed; left: 50%; top: 16vh; z-index: 21; width: min(600px, calc(100vw - 32px)); border-radius: 16px; overflow: hidden;
   background: #1b1a23f5; backdrop-filter: blur(20px); color: var(--fg); box-shadow: 0 30px 90px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.1);
   opacity: 0; transform: translateX(-50%) scale(.97); pointer-events: none; transition: opacity .15s, transform .15s; }
 body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
@@ -179,7 +193,7 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
 .r.sel { background: color-mix(in srgb, var(--accent) 32%, transparent); color: #fff; }
 .r .ic { width: 20px; text-align: center; } .r .k { margin-left: auto; font-size: 12px; opacity: .6; }
 #toast { position: fixed; left: 50%; bottom: 26px; z-index: 30; transform: translate(-50%, 10px); padding: 8px 14px; border-radius: 10px; font-size: 13px;
-  background: #1b1a23; color: var(--fg); box-shadow: 0 10px 30px rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+  background: #1b1a23; color: #ecebf5; box-shadow: 0 10px 30px rgba(0,0,0,.35); max-width: calc(100vw - 32px); text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
 #toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 760px) {
@@ -338,26 +352,34 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const BASE_TABS = ["home", "agents", "features", "install"];
 const SPACES = [
-  { name: "Personal", accent: "#9d8cff", bg1: "#171a2b", bg2: "#2a1f3d", tabs: [...BASE_TABS], tab: "home" },
-  { name: "Work", accent: "#5fb3ff", bg1: "#0f1a28", bg2: "#132a3c", tabs: ["tickets", "calendar", "launch"], tab: "tickets" },
-  { name: "School", accent: "#4fd6a0", bg1: "#0e1d19", bg2: "#17302a", tabs: [...BASE_TABS], tab: "home" },
+  { name: "Personal", base: { accent: "#9d8cff", bg: ["#171a2b", "#2a1f3d"] }, tabs: [...BASE_TABS], tab: "home" },
+  { name: "Work", base: { accent: "#5fb3ff", bg: ["#0f1a28", "#132a3c"] }, tabs: ["tickets", "calendar", "launch"], tab: "tickets" },
+  { name: "School", base: { accent: "#4fd6a0", bg: ["#0e1d19", "#17302a"] }, tabs: [...BASE_TABS], tab: "home" },
 ];
 const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉" };
 // Tabs an agent opens, and where you land when they close.
 const AGENT_TABS = { weather: "agents", meet: "calendar" };
 const page = (id) => document.querySelector(`.pg[data-tab="${id}"]`);
 const narrow = matchMedia("(max-width: 760px)");
-const DEFAULTS = { accent: null, tabH: 38, top: false, right: false, dark: false, serif: false };
+const DEFAULTS = { tabH: 38, top: false, right: false, dark: false, tone: null, font: null, zoom: 100, radius: 12, sw: 248,
+  url: true, favs: true, spaceName: true, motion: true, flip: false, party: false };
 const M = { space: 0, split: null, ...DEFAULTS,
   get tabs() { return SPACES[this.space].tabs; }, set tabs(v) { SPACES[this.space].tabs = v; },
   get tab() { return SPACES[this.space].tab; }, set tab(v) { SPACES[this.space].tab = v; } };
 
 function render() {
   const sp = SPACES[M.space], root = document.documentElement.style, b = document.body.classList;
-  root.setProperty("--accent", M.accent || sp.accent); root.setProperty("--bg1", sp.bg1); root.setProperty("--bg2", sp.bg2);
-  root.setProperty("--tab-h", M.tabH + "px");
+  const th = sp.theme || {};
+  root.setProperty("--accent", sp.accent || th.accent || sp.base.accent);
+  root.setProperty("--bg1", (th.bg || sp.base.bg)[0]); root.setProperty("--bg2", (th.bg || sp.base.bg)[1]);
+  root.setProperty("--tab-h", M.tabH + "px"); root.setProperty("--sw", M.sw + "px"); root.setProperty("--radius", M.radius + "px");
+  root.setProperty("--zoom", M.zoom / 100);
+  if (M.font) root.setProperty("--font", M.font); else root.removeProperty("--font");
   b.toggle("top", M.top || narrow.matches); b.toggle("right", M.right && !M.top && !narrow.matches);
-  b.toggle("darkpage", M.dark); b.toggle("serif", M.serif);
+  b.toggle("darkpage", M.dark); b.toggle("lightbar", !!th.light);
+  for (const t of ["sepia", "contrast", "terminal", "retro"]) b.toggle("tone-" + t, M.tone === t);
+  b.toggle("nourl", !M.url); b.toggle("nofavs", !M.favs); b.toggle("nospace", !M.spaceName);
+  b.toggle("nomotion", !M.motion); b.toggle("flip", M.flip); b.toggle("party", M.party);
   $("#spname").textContent = sp.name;
   const tabs = $("#tabs"), shown = [...tabs.children].map((r) => r.dataset.id); tabs.replaceChildren();
   for (const id of M.tabs) {
@@ -395,48 +417,182 @@ function go(space, dir) {
 function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 1600); }
 
 // ---------- change a setting by asking ----------
-const COLORS = { green: "#3ccf91", blue: "#4ea8ff", pink: "#ff7ac6", orange: "#ff9d4d", red: "#ff6b6b", yellow: "#f5c84c", purple: "#9d8cff", teal: "#2fd3c4" };
+// No AI here: a long list of things people might say, each mapped to the real setting Valerie's AI would write.
+const PRESETS = { midnight: [["#171a2b", "#2a1f3d"], "#9d8cff"], rose: [["#2b1520", "#4a1f33"], "#ff7ab6"], forest: [["#10211b", "#1d3a2c"], "#5fd39a"],
+  ocean: [["#0e1c2e", "#123a52"], "#4cc2ff"], grape: [["#1d1430", "#3b1f5e"], "#c58bff"], ember: [["#24130c", "#4a2412"], "#ff9a4c"],
+  sand: [["#f3e9dc", "#e8d5bf"], "#c2703d", true], paper: [["#f6f6f4", "#e9e9e6"], "#3d6bff", true], black: [["#000000", "#000000"], "#9a9aff"] };
+const fonts = { mono: ['ui-monospace, "SF Mono", Menlo, monospace', "SF Mono"], serif: ['Georgia, "Iowan Old Style", serif', "Georgia"],
+  comic: ['"Comic Sans MS", "Comic Neue", "Chalkboard SE", cursive', "Comic Sans MS"], hand: ['"Bradley Hand", "Segoe Print", cursive', "Bradley Hand"],
+  rounded: ['ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif', "SF Pro Rounded"], helvetica: ['"Helvetica Neue", Helvetica, Arial, sans-serif', "Helvetica Neue"],
+  times: ['"Times New Roman", Times, serif', "Times New Roman"], retro: ['Tahoma, "MS Sans Serif", Geneva, sans-serif', "Tahoma"] };
+const sp = () => SPACES[M.space];
+// The little toolkit every rule uses. `set(key, line, comment)` records a line for config.yaml.
+const A = {
+  theme(set, name, bg, accent, light) {
+    const s = sp(), preset = PRESETS[name]; if (preset) [bg, accent, light] = preset;
+    s.theme = { bg, accent, light: !!light }; s.accent = null;
+    set("theme:" + s.name, `spaces: [{ name: ${s.name}, theme: ${preset ? name : `{ mode: ${light ? "light" : "dark"}, background: ["${bg[0]}", "${bg[1]}"], accent: "${accent}" }`} }]`, preset ? null : name);
+  },
+  accent(set, hex, label) {
+    const s = sp(), th = s.theme; s.accent = hex;
+    set("theme:" + s.name, `spaces: [{ name: ${s.name}, theme: { ${th ? `mode: ${th.light ? "light" : "dark"}, background: ["${th.bg[0]}", "${th.bg[1]}"], ` : ""}accent: "${hex}" } }]`, label);
+  },
+  dark(set, on, why) { M.dark = on; M.tone = null; set("pages.dark_mode", `pages: { dark_mode: ${on ? "always" : "off"} }`, why || (on ? "every site dark" : null)); },
+  tone(set, tone, why) { M.tone = tone; M.dark = false; set("tone", `# + plugins/${tone}-pages/page.css`, why || `no setting for ${tone} pages, so your AI writes a tiny plugin`); },
+  font(set, f) { M.font = fonts[f][0]; set("layout.font", `layout: { font: "${fonts[f][1]}" }`); },
+  radius(set, px) { M.radius = px; set("layout.corner_radius", `layout: { corner_radius: ${px} }`, px ? null : "square corners"); },
+  zoom(set, pct, why) { M.zoom = pct; set("tabs.default_zoom", `tabs: { default_zoom: ${pct} }`, why || (pct > 100 ? "bigger text on every site" : "smaller text")); },
+  sidebarWidth(set, px) { M.sw = px; set("layout.sidebar_width", `layout: { sidebar_width: ${px} }`); },
+  tabs(set, px, why) { M.tabH = px; set("sidebar.tab_height", `sidebar: { tab_height: ${px} }`, why || (px > 38 ? "roomier tabs" : "compact tabs")); },
+  top(set, why) { M.top = true; set("layout.tab_bar", "layout: { tab_bar: top }", why || "tabs along the top"); },
+  side(set, right, why) { M.top = false; M.right = right; set("layout.tab_bar", `layout: { tab_bar: side, sidebar_position: ${right ? "right" : "left"} }`, why); },
+  minimal(set) { M.url = false; M.favs = false; M.spaceName = false; set("sidebar.min", "sidebar: { url_bar: false, favorites: false, space_name: false }", "just the tabs"); },
+  still(set) { M.motion = false; set("layout.animation_ms", "layout: { animation_ms: 0 }", "no animations, everything instant"); },
+  plugin(set, name, why) { set("plugin:" + name, `# + plugins/${name}/style.css`, why || "no setting for that, so your AI writes a tiny plugin"); },
+};
+const BRANDS = { spotify: [["#121212", "#1e1e1e"], "#1ed760"], netflix: [["#141414", "#2a0a0a"], "#e50914"], youtube: [["#181818", "#2a1212"], "#ff0033"],
+  twitch: [["#18181b", "#26173f"], "#9146ff"], discord: [["#1e1f22", "#2b2d31"], "#5865f2"], facebook: [["#0b1a33", "#18305a"], "#1877f2"],
+  instagram: [["#3a0f3d", "#6b1d2e"], "#ff6a3d"], github: [["#0d1117", "#161b22"], "#2f81f7"], slack: [["#3f0e40", "#4a154b"], "#ecb22e"],
+  linear: [["#101116", "#1b1c26"], "#5e6ad2"], figma: [["#1e1e1e", "#2c2c2c"], "#a259ff"], notion: [["#f7f6f3", "#ebeae6"], "#191919", true],
+  duolingo: [["#0f2a12", "#1e4a14"], "#58cc02"], starbucks: [["#0b2a20", "#00492f"], "#d4a373"], mcdonalds: [["#2a0606", "#5a0c0c"], "#ffc72c"],
+  ikea: [["#003a73", "#0058a3"], "#ffdb00"], barbie: [["#4a0f2e", "#7a1a4a"], "#ff4fa3"], lakers: [["#2a1440", "#552583"], "#fdb927"],
+  ferrari: [["#2a0505", "#4d0a0a"], "#ff2800"], tiffany: [["#0d2b2a", "#11403e"], "#0abab5"], batman: [["#0a0a0a", "#161616"], "#ffd60a"] };
+const ALIASES = { "coca cola": "ferrari", coke: "ferrari", gotham: "batman", "mcdonald's": "mcdonalds", "mcdonald": "mcdonalds", insta: "instagram", bluesky: "facebook", twitter: "facebook" };
+const SITES = { youtube: "youtube.com", github: "github.com", reddit: "reddit.com", canvas: "canvas.instructure.com", netflix: "netflix.com", figma: "figma.com",
+  notion: "notion.so", slack: "slack.com", linear: "linear.app", twitter: "x.com", instagram: "instagram.com", gmail: "mail.google.com", docs: "docs.google.com", amazon: "amazon.com" };
+const has = (...words) => new RegExp(`\\b(${words.join("|")})\\b`);
 const RULES = [
-  { re: /\b(green|blue|pink|orange|red|yellow|purple|teal)\b/, run: (m) => { M.accent = COLORS[m[1]]; return [`theme: { accent: "${COLORS[m[1]]}" }   # ${m[1]}`]; } },
-  { re: /\b(big|bigger|tall|taller|huge|large|roomy)\b/, run: () => { M.tabH = 50; return ["sidebar: { tab_height: 50 }   # roomier tabs"]; } },
-  { re: /\b(small|smaller|compact|tiny|dense)\b/, run: () => { M.tabH = 28; return ["sidebar: { tab_height: 28 }   # compact tabs"]; } },
-  { re: /\b(top|chrome|horizontal)\b/, run: () => { M.top = true; return ["layout: { tab_bar: top }   # tabs along the top"]; } },
-  { re: /\b(side|sidebar|left)\b(?!.*right)/, run: () => { M.top = false; M.right = false; return ["layout: { tab_bar: side, sidebar_position: left }"]; } },
-  { re: /\bright\b/, run: () => { M.top = false; M.right = true; return ["layout: { sidebar_position: right }"]; } },
-  { re: /\b(dark|night)\b/, run: () => { M.dark = true; return ["pages: { dark_mode: always }   # every site dark"]; } },
-  { re: /\b(light|bright|day)\b/, run: () => { M.dark = false; return ["pages: { dark_mode: off }"]; } },
-  { re: /\b(serif|georgia|book|bookish|font)\b/, run: () => { M.serif = true; return ['layout: { font: "Georgia" }   # a bookish font']; } },
-  { re: /\b(reset|undo|default|original)\b/, run: () => { Object.assign(M, DEFAULTS); added = []; return []; } },
+  // whole looks
+  [has("dracula"), (s) => { A.theme(s, "Dracula", ["#282a36", "#343746"], "#bd93f9"); A.dark(s, true); }],
+  [has("nord"), (s) => { A.theme(s, "Nord", ["#2e3440", "#3b4252"], "#88c0d0"); A.dark(s, true); }],
+  [has("solarized"), (s) => { A.theme(s, "Solarized", ["#002b36", "#073642"], "#b58900"); A.tone(s, "sepia"); }],
+  [has("gruvbox"), (s) => { A.theme(s, "Gruvbox", ["#282828", "#3c3836"], "#fabd2f"); A.dark(s, true); }],
+  [has("catppuccin", "mocha"), (s) => { A.theme(s, "Catppuccin", ["#1e1e2e", "#313244"], "#cba6f7"); A.dark(s, true); }],
+  [has("tokyo ?night"), (s) => { A.theme(s, "Tokyo Night", ["#1a1b26", "#24283b"], "#7aa2f7"); A.dark(s, true); }],
+  [has("monokai"), (s) => { A.theme(s, "Monokai", ["#272822", "#3e3d32"], "#a6e22e"); A.dark(s, true); }],
+  [/\b(midnight|rose|forest|ocean|grape|ember|sand|paper)\b/, (s, m) => A.theme(s, m[1])],
+  [has("black", "pitch black", "oled", "all black"), (s) => A.theme(s, "black")],
+  [has("white", "all white", "clean white"), (s) => A.theme(s, "paper")],
+  [new RegExp(`\\b(${[...Object.keys(BRANDS), ...Object.keys(ALIASES)].join("|")})\\b`), (s, m, t) => {
+    if (/\b(open|send|put|keep|route)\b/.test(t)) return;   // "open youtube in School" is a route, not a look
+    const key = ALIASES[m[1]] || m[1], [bg, accent, light] = BRANDS[key]; A.theme(s, key[0].toUpperCase() + key.slice(1), bg, accent, light);
+  }],
+  [has("halloween", "spooky", "scary", "🎃"), (s) => { A.theme(s, "ember"); A.dark(s, true, "spooky season"); A.font(s, "hand"); }],
+  [has("christmas", "xmas", "festive", "holiday", "🎄", "santa"), (s) => { A.theme(s, "Christmas", ["#0f2a1a", "#3b1212"], "#ff4d4d"); A.font(s, "serif"); }],
+  [has("valentine", "valentines", "romantic"), (s) => { A.theme(s, "rose"); A.font(s, "hand"); }],
+  [has("sunset", "golden hour"), (s) => A.theme(s, "Sunset", ["#2b1530", "#5a2a2a"], "#ff8a5c")],
+  [has("cyberpunk", "neon", "blade runner"), (s) => { A.theme(s, "Cyberpunk", ["#0d0221", "#2a0a4a"], "#ff2a6d"); A.dark(s, true); A.radius(s, 0); }],
+  [has("vaporwave", "synthwave", "outrun", "aesthetic"), (s) => { A.theme(s, "Vaporwave", ["#2b1055", "#5b2a86"], "#ff71ce"); A.font(s, "times"); }],
+  [has("hacker", "hackers", "matrix", "terminal", "neo"), (s) => { A.theme(s, "black"); A.accent(s, "#39ff14", "phosphor green"); A.tone(s, "terminal"); A.font(s, "mono"); A.radius(s, 0); }],
+  [has("retro", "90s", "nineties", "windows 95", "win95", "windows 98", "geocities", "old school", "y2k"), (s) => {
+    A.theme(s, "Windows 95", ["#008080", "#008080"], "#000080"); A.tone(s, "retro", "it's 1995"); A.font(s, "retro"); A.radius(s, 0); }],
+  [has("apple", "cupertino", "macos", "mac os", "like a mac", "jony ive"), (s) => { A.theme(s, "paper"); A.accent(s, "#0071e3", "Apple blue"); A.font(s, "rounded"); A.radius(s, 18); }],
+  [has("cozy", "cosy", "hygge", "comfy", "warm and fuzzy"), (s) => { A.theme(s, "sand"); A.tone(s, "sepia"); A.font(s, "serif"); A.radius(s, 22); }],
+  [has("corporate", "professional", "serious", "boring", "enterprise", "for work", "my boss"), (s) => { A.theme(s, "paper"); A.font(s, "helvetica"); A.radius(s, 4); }],
+  [has("fun", "playful", "silly", "goofy", "whimsical", "for kids", "kid"), (s) => { A.accent(s, "#ff4fa3", "bubblegum"); A.font(s, "comic"); A.radius(s, 28); A.tabs(s, 46); }],
+  [has("newspaper", "new york times", "nyt", "editorial", "magazine"), (s) => { A.tone(s, "sepia"); A.font(s, "times"); A.radius(s, 0); }],
+  // layout
+  [has("chrome", "firefox", "edge", "brave", "safari", "top", "horizontal", "like every other browser", "normal browser"), (s, m) => A.top(s, ["chrome", "firefox", "edge", "brave", "safari"].includes(m[1]) ? `tabs along the top, like ${m[1][0].toUpperCase() + m[1].slice(1)}` : null)],
+  [has("arc", "vertical", "vertical tabs", "on the side", "left"), (s, m) => { A.side(s, false, m[1] === "arc" ? "a sidebar, like Arc" : null); if (m[1] === "arc") { M.favs = true; } }],
+  [has("right", "lefty", "left handed", "left-handed"), (s, m) => A.side(s, true, m[1] === "right" ? null : "sidebar on the right, for your mouse hand")],
+  [/\b(wide|wider|widen|bigger|larger|more room)\b.*\bsidebar\b|\bsidebar\b.*\b(wide|wider|bigger|larger)\b/, (s) => A.sidebarWidth(s, 320)],
+  [/\b(narrow|narrower|thin|thinner|smaller|slim|skinny)\b.*\bsidebar\b|\bsidebar\b.*\b(narrow|narrower|thinner|smaller|slim)\b/, (s) => A.sidebarWidth(s, 190)],
+  // text and tabs
+  [/\b(bigger|larger|huge|large|big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(bigger|larger|huge|big)\b|\bcan'?t (read|see)\b|\bmy eyes\b|\bgrandma|\bgrandpa|\bgranny|\bsquint|\bhard to read\b|\bold eyes\b|\bglasses\b|\bi'?m old\b/, (s) => A.zoom(s, 125)],
+  [/\b(smaller|tiny|small|less big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(smaller|tiny)\b|\bmore on screen\b/, (s) => A.zoom(s, 90)],
+  [/^(?!.*\b(text|font|letters|words|type|sidebar|read|eyes)\b).*\b(big|bigger|tall|taller|huge|large|roomy|roomier|chunky|fat)\b/, (s) => A.tabs(s, 50)],
+  [/\b(compact|dense|tiny tabs|small tabs|smaller tabs|thinner tabs|more tabs)\b/, (s) => A.tabs(s, 28)],
+  // fonts
+  [has("comic sans", "comic"), (s) => A.font(s, "comic")],
+  [has("handwritten", "handwriting", "cursive", "hand written", "script"), (s) => A.font(s, "hand")],
+  [has("rounded", "round font", "friendly", "soft", "softer"), (s) => { A.font(s, "rounded"); A.radius(s, 22); }],
+  [has("serif", "georgia", "book", "bookish", "elegant", "fancy", "classy", "literary"), (s) => A.font(s, "serif")],
+  [has("times", "times new roman"), (s) => A.font(s, "times")],
+  [has("mono", "monospace", "code", "coder", "developer", "programmer", "engineer"), (s) => A.font(s, "mono")],
+  [has("helvetica", "swiss", "modernist"), (s) => A.font(s, "helvetica")],
+  // corners, clutter, motion
+  [has("square", "sharp", "boxy", "no rounded", "brutalist", "brutal"), (s) => A.radius(s, 0)],
+  [has("rounder", "bubbly", "more rounded", "round", "pill"), (s) => A.radius(s, 28)],
+  [has("minimal", "minimalist", "zen", "focus", "declutter", "clean", "cleaner", "simpler", "distraction", "distractions", "less clutter"), (s) => A.minimal(s)],
+  [/\b(hide|no|remove|get rid of)\b.*\b(url|address bar|address)\b/, (s) => { M.url = false; s("sidebar.url_bar", "sidebar: { url_bar: false }"); }],
+  [/\b(hide|no|remove|get rid of)\b.*\b(favorites|favourites|pins|icons)\b/, (s) => { M.favs = false; s("sidebar.favorites", "sidebar: { favorites: false }"); }],
+  [/\b(no|stop|less|reduce|without)\b.*\b(animation|animations|motion|moving)\b|\bmotion sick|\binstant\b|\bsnappy\b|\bfaster\b/, (s) => A.still(s)],
+  // pages
+  [/\b(dark|night|2 ?am|3 ?am|late|bedtime|night owl|vampire|too bright|blinding|burning|eyes hurt|my eyes are)\b/, (s, m) => A.dark(s, true, ["dark", "night"].includes(m[1]) ? null : "every site dark, your eyes will thank you")],
+  [has("light", "light mode", "daytime", "day mode", "too dark"), (s) => { A.dark(s, false); M.tone = null; }],
+  [has("sepia", "warm", "warmer", "night shift", "easy on the eyes", "paper white", "kindle", "e-ink", "eink"), (s) => A.tone(s, "sepia")],
+  [has("contrast", "high contrast", "accessible", "accessibility", "low vision"), (s) => A.tone(s, "contrast", "high-contrast pages")],
+  // plugins for things with no setting
+  [has("upside down", "upside-down", "australia", "australian", "flip", "flipped", "backwards", "chaos", "prank"), (s) => { M.flip = true; A.plugin(s, "upside-down", "there's no setting for this… so your AI wrote a plugin"); }],
+  [has("party", "disco", "rainbow", "rave", "pride", "celebrate", "lsd", "trippy", "🎉", "🌈"), (s) => { M.party = true; A.plugin(s, "party-mode", "no setting for a party, so your AI wrote a plugin"); }],
+  // things you can't see, which the real browser does
+  [/\b(open|send|put|keep|route)\b.*?\b(youtube|github|reddit|canvas|netflix|figma|notion|slack|linear|twitter|instagram|gmail|docs|amazon|[a-z0-9-]+\.(?:com|edu|org|net|io|dev|app|gov|so))\b.*\b(in|to|on)\b.*\b(work|school|personal)\b/, (s, m, t, note) => {
+    const site = SITES[m[2]] || m[2], space = m[4][0].toUpperCase() + m[4].slice(1);
+    s("route:" + site, `routes: [{ match: "${site}", space: ${space} }]`, "air traffic control"); note(`Links to ${site} now open in ${space}, from any app.`); }],
+  [/\b(edu|school sites|university|college|homework)\b.*\b(school)\b/, (s, m, t, note) => { s("route:*.edu", 'routes: [{ match: "*.edu", space: School }]', "air traffic control"); note("Every .edu link now opens in School."); }],
+  [has("cookie", "cookies", "cookie banners", "gdpr", "consent"), (s, m, t, note) => { s("privacy.cookie_banners", "privacy: { cookie_banners: reject }", "already on: Valerie clicks “Reject all”"); note("Cookie banners get rejected for you. (It was already on.)"); }],
+  [has("ads", "ad", "adblock", "ad blocker", "trackers", "tracking"), (s, m, t, note) => { s("content_blocking.enabled", "content_blocking: { enabled: true }", "ads and trackers blocked, already on"); note("Ads and trackers are already blocked."); }],
+  [/\b(\d+)\s*(hour|hours|day|days|week|weeks)\b/, (s, m, t, note) => {
+    if (!/\b(tab|tabs|close|archive|clean)\b/.test(t)) return;
+    const h = +m[1] * ({ hour: 1, day: 24, week: 168 }[m[2].replace(/s$/, "")]); s("tabs.archive_after_hours", `tabs: { archive_after_hours: ${h} }`, "old tabs tidy themselves away"); note(`Tabs you haven't touched in ${m[1]} ${m[2]} now archive themselves.`); }],
+  [/\bnever\b.*\b(close|archive)\b|\bkeep (all )?my tabs\b|\btab hoarder\b/, (s, m, t, note) => { s("tabs.archive_after_hours", "tabs: { archive_after_hours: 0 }", "tabs stay forever"); note("Your tabs will never close themselves."); }],
+  [has("vim", "vi", "hjkl", "neovim", "nvim"), (s, m, t, note) => { s("vim.enabled", "vim: { enabled: true }", "j/k scroll, f for link hints"); note("Vim keys are on. Try j, k, J and K on this page."); }],
 ];
-const SUGGEST = ["Make it green", "Tabs on top", "Sidebar on the right", "Dark pages", "Bigger tabs", "A bookish font", "Reset"];
+const COLORWORD = document.createElement("canvas").getContext("2d");
+const EMOJI = { "🍊": "orange", "🍋": "gold", "🍓": "crimson", "🍇": "grape", "🌊": "ocean", "🔥": "ember", "🌲": "forest", "🌸": "hotpink", "💜": "mediumpurple",
+  "💚": "limegreen", "💙": "dodgerblue", "❤️": "red", "❤": "red", "🖤": "black", "🧡": "darkorange", "💛": "gold", "🩵": "skyblue", "🌙": "midnight", "☀️": "sand" };
+// Any CSS colour works too ("make it tomato", "hot pink", "#ff8800"), and some emoji.
+function colorIn(raw, set) {
+  for (const [e, c] of Object.entries(EMOJI)) if (raw.includes(e)) { PRESETS[c] ? A.theme(set, c) : A.accent(set, toHex(c), e); return true; }
+  const words = raw.toLowerCase().match(/#[0-9a-f]{3,8}\b|[a-z]+/g) || [];
+  const skip = new Set(["inherit", "initial", "unset", "revert", "currentcolor", "transparent", "black", "white"]);
+  for (let i = 0; i < words.length; i++) for (const w of [words[i] + (words[i + 1] || ""), words[i]]) {
+    if (skip.has(w) || !CSS.supports("color", w)) continue;
+    A.accent(set, toHex(w), w.startsWith("#") ? null : w); return true;
+  }
+  return false;
+}
+function toHex(c) { COLORWORD.fillStyle = "#000"; COLORWORD.fillStyle = c; return COLORWORD.fillStyle; }
+
+const SUGGEST = ["Like Spotify", "My grandma can't read this", "Windows 95", "Hacker mode", "Upside down", "It's 2am", "Open YouTube in School", "Reset"];
+const IDEAS = ["tabs on top", "make it cozy", "like Netflix", "comic sans", "dracula", "hot pink", "I'm left-handed", "party mode", "square corners",
+  "close tabs after 3 days", "less clutter", "🌊", "cyberpunk", "like a newspaper", "sidebar on the right", "too bright"];
 let added = [], busy = false;
 function drawYaml(fresh = []) {
   const pre = $("#ypre"); pre.replaceChildren();
   for (const l of added) {
-    const [code, comment] = l.split(/\s{3}(?=#)/), isNew = fresh.includes(l), row = el("span", isNew ? "add" : null);
+    const isNew = fresh.includes(l), row = el("span", isNew ? "add" : null);
     row.style.display = "block";
-    if (comment) row.append(el("span", "cm", comment + "\n"));
-    row.append(document.createTextNode((isNew ? "+ " : "") + code)); pre.append(row);
+    if (l.comment) row.append(el("span", "cm", "# " + l.comment + "\n"));
+    row.append(document.createTextNode((isNew && !l.line.startsWith("#") ? "+ " : "") + l.line)); pre.append(row);
   }
   $("#yaml").hidden = !added.length;
 }
 function ask(text) {
-  text = (text || "").trim().toLowerCase(); if (!text || busy) return;
-  const hits = RULES.filter((r) => r.re.test(text)), st = $("#st");
-  if (!hits.length) { toast("This demo knows colors, tab size, layout, dark pages and fonts. The real one does anything."); return; }
-  busy = true; $("#yaml").hidden = false; st.textContent = "✦ editing…"; st.className = "";
+  const raw = (text || "").trim(), t = raw.toLowerCase().replace(/[’‘]/g, "'"); if (!raw || busy) return;
+  if (/\b(reset|undo|default|defaults|original|start over|go back)\b/.test(t)) {
+    Object.assign(M, DEFAULTS); for (const s of SPACES) { s.theme = null; s.accent = null; } added = []; render(); drawYaml(); toast("Back to how it started."); return;
+  }
+  const fresh = [], notes = [], set = (key, line, comment) => fresh.push({ key, line, comment });
+  for (const [re, run] of RULES) { const m = t.match(re); if (m) run(set, m, t, (n) => notes.push(n)); }
+  if (!fresh.some((f) => f.key.startsWith("theme:"))) colorIn(raw, set);
+  if (!fresh.length) { toast(`That one needs the real Valerie, whose AI can change anything. Here, try “${IDEAS[Math.floor(Math.random() * IDEAS.length)]}”.`); return; }
+  const st = $("#st"); busy = true; $("#yaml").hidden = false; st.textContent = "✦ editing…"; st.className = "";
   setTimeout(() => {
-    const fresh = [];
-    for (const r of hits) for (const l of r.run(text.match(r.re))) {
-      const key = l.split(":")[0]; added = added.filter((a) => a.split(":")[0] !== key); added.push(l); fresh.push(l);
-    }
-    render(); drawYaml(fresh); st.textContent = "✓ applied"; st.className = "ok"; busy = false;
+    const keys = new Set(fresh.map((f) => f.key)), last = new Map(fresh.map((f) => [f.key, f]));
+    const newest = [...last.values()];
+    added = added.filter((a) => !keys.has(a.key)).concat(newest);
+    render(); drawYaml(newest); st.textContent = "✓ applied"; st.className = "ok"; busy = false;
+    if (notes.length) toast(notes.join(" "));
   }, 550);
 }
 for (const s of SUGGEST) { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; $("#chips").append(c); }
 $("#ask").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(e.target.value); });
 $("#askgo").onclick = (e) => { e.preventDefault(); ask($("#ask").value); };
 $("#yclose").onclick = () => ($("#yaml").hidden = true);
+// The box suggests something new every few seconds.
+let idea = 0;
+setInterval(() => { if (document.activeElement !== $("#ask") && !$("#ask").value) $("#ask").placeholder = `Change anything… try “${IDEAS[idea++ % IDEAS.length]}”`; }, 3200);
 
 // ---------- an agent at work: it acts on this page's own tabs ----------
 const TICKETS = [["VAL-231", "Login redirect loops on Safari", "merged"], ["VAL-238", "CSV export drops the time zone", "merged"],
