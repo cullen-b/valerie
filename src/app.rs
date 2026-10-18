@@ -227,6 +227,8 @@ pub struct App {
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
     focused_little: Option<WindowId>,
+    /// The main window was closed while a little window stayed open (`little_window.keep_open_when_main_closes`).
+    main_hidden: bool,
     config: Config,
     state: State,
     proxy: EventLoopProxy<UserEvent>,
@@ -815,6 +817,7 @@ impl App {
             sync_gen: 0,
             littles: HashMap::new(),
             focused_little: None,
+            main_hidden: false,
             config,
             state,
             proxy,
@@ -2380,7 +2383,7 @@ impl App {
             drop(l);
             self.focused_little = None;
             self.open_tab(&url, Some(target), true);
-            self.window.set_focus();
+            self.show_main();
             self.focus_active();
         }
     }
@@ -2427,12 +2430,12 @@ impl App {
             match routed {
                 Some(space) => {
                     self.open_tab(&url, Some(space), true);
-                    self.window.set_focus();
+                    self.show_main();
                 }
                 None if self.config.little_window.enabled => self.open_little(&url, self.state.active_space, elwt),
                 None => {
                     self.open_tab(&url, None, true);
-                    self.window.set_focus();
+                    self.show_main();
                 }
             }
         }
@@ -3554,6 +3557,9 @@ impl App {
                 Command::CloseTab { tab: None } => {
                     self.littles.remove(&id);
                     self.focused_little = None;
+                    if self.main_hidden && self.littles.is_empty() {
+                        self.dispatch(Command::Quit, elwt);
+                    }
                     return;
                 }
                 Command::MoveToMainWindow { space } => return self.little_to_main(id, space.clone()),
@@ -3572,13 +3578,16 @@ impl App {
         match cmd {
             Command::OpenCommandBar { mode } => {
                 if little.is_some() {
-                    self.window.set_focus();
+                    self.show_main();
                     self.focused_little = None;
                 }
                 self.open_bar(mode)
             }
             Command::CloseCommandBar => self.close_bar(),
             Command::NewTab { url, space, background } => {
+                if self.main_hidden {
+                    self.show_main();
+                }
                 let space = space.and_then(|s| self.state.space_index(&s));
                 let url = url.or_else(|| Some(self.config.new_tab_url.clone()).filter(|u| !u.is_empty()));
                 match url {
@@ -4924,7 +4933,7 @@ impl App {
                 };
                 self.close_peek();
                 self.open_tab(&url, space, true);
-                self.window.set_focus();
+                self.show_main();
             }
             UserEvent::ExternalScheme(url) => {
                 let scheme = scheme_of(&url);
@@ -5164,7 +5173,7 @@ impl App {
                 if let Some(cmd) = self.global_keys.get(i).cloned() {
                     // Shortcuts from another app bring Valerie forward first.
                     platform::activate_app();
-                    self.window.set_focus();
+                    self.show_main();
                     self.dispatch(cmd, elwt);
                 }
             }
@@ -5307,7 +5316,7 @@ impl App {
                 }
             }
             UserEvent::NotificationClicked(action) => {
-                self.window.set_focus();
+                self.show_main();
                 let Ok(a) = serde_json::from_str::<Value>(&action) else { return };
                 if let Some(tab) = a["tab"].as_u64().filter(|t| self.state.tabs.contains_key(t)) {
                     self.activate(tab);
@@ -5669,12 +5678,21 @@ impl App {
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),
             WindowEvent::CloseRequested => {
-                if main {
+                if main && self.config.little_window.keep_open_when_main_closes && !self.littles.is_empty() {
+                    self.remember_frame();
+                    self.save();
+                    self.window.set_visible(false);
+                    self.main_hidden = true;
+                } else if main {
                     self.dispatch(Command::Quit, elwt);
                 } else {
                     self.littles.remove(&id);
                     if self.focused_little == Some(id) {
                         self.focused_little = None;
+                    }
+                    // The main window was closed earlier: closing the last little window quits, as closing it would have.
+                    if self.main_hidden && self.littles.is_empty() {
+                        self.dispatch(Command::Quit, elwt);
                     }
                 }
             }
@@ -5734,6 +5752,15 @@ impl App {
             self.state.window_frame = f;
             self.dirty = true;
         }
+    }
+
+    /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
+    fn show_main(&mut self) {
+        if std::mem::take(&mut self.main_hidden) {
+            self.window.set_visible(true);
+            self.focused_little = None;
+        }
+        self.window.set_focus();
     }
 
     /// Show the window, then start the work nobody is waiting for.
@@ -5851,6 +5878,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                 app.window_event(window_id, event, elwt);
                 app.drain_events(elwt);
             }
+            Event::Reopen { .. } => app.show_main(),
             Event::Opened { urls } => app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt),
             Event::LoopDestroyed => app.save(),
             _ => {}
