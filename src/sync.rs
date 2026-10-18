@@ -103,10 +103,14 @@ struct Git<'a> {
 }
 
 impl Git<'_> {
-    /// Run git; with a token it goes through a one-off credential helper (never written to disk).
+    /// Run git; with a token it goes through a one-off credential helper (never written to disk). Git hooks don't
+    /// run: this is Valerie's own repo, and a hook from some other tool (one that refuses commits on main, say) would
+    /// stop sync for good. PATH includes Homebrew's folders, for credential helpers like `gh` when Valerie was opened
+    /// from the Dock.
     fn run(&self, args: &[&str]) -> Result<String> {
         let mut c = Command::new("git");
-        c.arg("-C").arg(self.dir).env("GIT_TERMINAL_PROMPT", "0");
+        c.arg("-C").arg(self.dir).env("GIT_TERMINAL_PROMPT", "0").env("PATH", crate::ai::search_path());
+        c.arg("-c").arg(format!("core.hooksPath={}", no_hooks().display()));
         if let Some(t) = self.token {
             c.args(["-c", "credential.helper=", "-c", "credential.helper=!f() { echo username=x-access-token; echo \"password=$VALERIE_GIT_TOKEN\"; }; f"]);
             c.env("VALERIE_GIT_TOKEN", t);
@@ -129,6 +133,13 @@ impl Git<'_> {
         let out = Command::new("git").arg("-C").arg(self.dir).args(["show", &format!("{rev}:{path}")]).output().ok()?;
         out.status.success().then_some(out.stdout)
     }
+}
+
+/// An empty folder to point git's hooks at.
+fn no_hooks() -> PathBuf {
+    let d = crate::config::data_dir().join("no-git-hooks");
+    let _ = std::fs::create_dir_all(&d);
+    d
 }
 
 fn safe_name(s: &str) -> String {
@@ -646,6 +657,15 @@ mod tests {
         std::fs::create_dir_all(a.join("data/chats")).unwrap();
         std::fs::write(a.join("data/chats/c1.json"), r#"{"id":"c1","title":"Packing list","updated":5,"messages":[{"role":"user","text":"my bank password hint"}]}"#).unwrap();
         run(&a.join("config"), &me_a, &opt(&a, None, false)).unwrap();
+        // Another tool's hook that refuses every commit (six-ten refuses commits on main) doesn't stop sync.
+        for hook in ["pre-commit", "commit-msg"] {
+            let h = a.join("config/.git/hooks").join(hook);
+            std::fs::write(&h, "#!/bin/sh\necho refused >&2\nexit 1\n").unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::PermissionsExt::set_mode(&mut std::fs::metadata(&h).unwrap().permissions(), 0o755);
+            #[cfg(unix)]
+            std::fs::set_permissions(&h, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        }
         let (key, created) = set_passphrase(&a.join("config"), "correct horse battery staple").unwrap();
         assert!(created);
         run(&a.join("config"), &me_a, &opt(&a, Some(key), true)).unwrap();

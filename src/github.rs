@@ -16,8 +16,9 @@ pub enum Step {
     Failed(String),
 }
 
+// Opened from the Dock, Valerie's PATH has no Homebrew folders: look where Homebrew and friends put `gh` too.
 fn gh(args: &[&str]) -> Option<String> {
-    let o = Command::new("gh").args(args).output().ok()?;
+    let o = Command::new("gh").env("PATH", crate::ai::search_path()).args(args).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty())
 }
 
@@ -109,6 +110,7 @@ fn device_flow(client_id: &str, notify: &dyn Fn(Step)) -> Result<String> {
 /// `gh auth login` in the background: pass its one-time code to the user, wait for them to approve it.
 fn gh_login(notify: &dyn Fn(Step)) -> Result<String> {
     let mut child = Command::new("gh")
+        .env("PATH", crate::ai::search_path())
         .args(["auth", "login", "--web", "--hostname", "github.com", "--git-protocol", "https", "--scopes", "repo"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -301,5 +303,24 @@ mod tests {
         assert!(push.status.success() && delete.status.success(), "couldn't push: {}{}", String::from_utf8_lossy(&push.stderr), String::from_utf8_lossy(&delete.stderr));
         assert!(!elsewhere.status.success(), "the repo key could push to another repo");
         eprintln!("refused elsewhere: {}", String::from_utf8_lossy(&elsewhere.stderr).trim());
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    /// Opened from the Dock, Valerie's PATH is only the system folders; `gh` from Homebrew is still found.
+    #[test]
+    fn finds_gh_without_homebrew_on_path() {
+        if !["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].iter().any(|p| std::path::Path::new(p).exists()) {
+            return;
+        }
+        let _g = crate::config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let old = std::env::var_os("PATH");
+        std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+        let found = super::gh(&["--version"]);
+        if let Some(p) = old {
+            std::env::set_var("PATH", p);
+        }
+        assert!(found.is_some_and(|v| v.starts_with("gh version")));
     }
 }
