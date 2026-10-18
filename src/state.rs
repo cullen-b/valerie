@@ -429,10 +429,12 @@ impl State {
         }
     }
 
-    /// Close a tab, remembering it for reopen. Returns the tab that should become active in its space.
-    pub fn close_tab(&mut self, tab: TabId) -> Option<TabId> {
+    /// Close a tab, remembering it for reopen. Returns the tab that should become active in its space: a Today tab or
+    /// a `loaded` saved one, never a sleeping saved tab (with nothing else open the space shows its start page).
+    pub fn close_tab(&mut self, tab: TabId, loaded: impl Fn(TabId) -> bool) -> Option<TabId> {
         let space = self.space_of(tab).unwrap_or(self.active_space);
-        let order = self.order(space, true);
+        let usable = |s: &Self, t: TabId| s.spaces[space].today.contains(&t) || loaded(t);
+        let order: Vec<TabId> = self.order(space, true).into_iter().filter(|t| *t == tab || usable(self, *t)).collect();
         let pos = order.iter().position(|t| *t == tab);
         let was_active = self.spaces[space].active == Some(tab);
         self.detach(tab);
@@ -445,7 +447,7 @@ impl State {
         if !was_active {
             return self.spaces[space].active;
         }
-        let order = self.order(space, true);
+        let order: Vec<TabId> = self.order(space, true).into_iter().filter(|t| usable(self, *t)).collect();
         let next = pos.and_then(|p| order.get(p).or_else(|| order.last()).copied());
         self.spaces[space].active = next;
         next
@@ -861,9 +863,23 @@ mod tests {
         let b = s.add_tab(0, "https://b", false);
         let c = s.add_tab(0, "https://c", false);
         s.spaces[0].active = Some(b);
-        assert_eq!(s.close_tab(b), Some(c));
-        assert_eq!(s.close_tab(c), Some(a));
+        assert_eq!(s.close_tab(b, |_| false), Some(c));
+        assert_eq!(s.close_tab(c, |_| false), Some(a));
         assert_eq!(s.closed.len(), 2);
+    }
+
+    #[test]
+    fn closing_last_open_tab_skips_sleeping_saved_tabs() {
+        let mut s = state();
+        let saved = s.add_tab(0, "https://youtube.com", false);
+        s.pin(saved);
+        let a = s.add_tab(0, "https://a", false);
+        s.spaces[0].active = Some(a);
+        assert_eq!(s.close_tab(a, |_| false), None);
+        assert_eq!(s.spaces[0].active, None);
+        let b = s.add_tab(0, "https://b", false);
+        s.spaces[0].active = Some(b);
+        assert_eq!(s.close_tab(b, |t| t == saved), Some(saved));
     }
 
     fn device(spaces: Vec<crate::sync::SyncedSpace>) -> DeviceTabs {

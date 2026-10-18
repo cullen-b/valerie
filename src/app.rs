@@ -1904,7 +1904,8 @@ impl App {
         } else {
             self.queue_event("tab_closed", Some(tab), None);
             let space = self.state.space_of(tab);
-            let next = self.state.close_tab(tab);
+            let views = &self.views;
+            let next = self.state.close_tab(tab, |t| views.contains_key(&t));
             self.views.remove(&tab);
             if space == Some(self.state.active_space) || space.is_none() {
                 if let Some(n) = next {
