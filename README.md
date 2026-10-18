@@ -98,7 +98,8 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
     3 days (`chats.auto_settle_days`). Working and snoozed chats sit at the bottom of the sidebar; unread answers
     get a dot.
   - **Copy Chat ID** and paste `chat:<id>` into another chat to bring that conversation along.
-  - Chats are saved in the config folder, so they sync.
+  - Chats sync between your machines, encrypted with your sync passphrase (`chats.sync`). A chat started on
+    another machine carries on here with whichever AI this machine has.
 - **Ask from the command bar:** type a question or a request; it opens in Chats (`> do this` / `? ask that` force it).
 - **Ask from find:** press `/`, type a question ("what's the return policy here?"), Enter: the answer appears right
   under the find bar, in Valerie's own panel (the page can't read it). Any agent works; it only sees that page and runs
@@ -195,17 +196,31 @@ can (except reading passwords).
 
 Run **Set Up Sync** from the command bar (or `valerie sync-setup`). It signs you in to GitHub (through the GitHub
 CLI, or Valerie's own sign-in if `sync.github_client_id` is set), creates a private `<you>/valerie-sync` repo, and
-from then on syncs a few seconds after every change. Your **config folder is the repo**: settings, boosts, plugins and
-every device's tabs (`devices/<hostname>.json`). Files Valerie regenerates per machine (`AGENTS.md`, `reference/`) and
-anything secret-looking (`*.csv`, `.env`) stay out.
+from then on syncs a few seconds after every change. Your **config folder is the repo**: settings, boosts and plugins
+as readable files, and each machine's tabs, chats and saved passwords **encrypted with your sync passphrase**
+(XChaCha20-Poly1305, with a key made from the passphrase by Argon2id). You type the passphrase once on each machine;
+GitHub, or anyone who gets the repo, sees only scrambled files. Files Valerie regenerates per machine (`AGENTS.md`,
+`reference/`), `this-mac.yaml` and anything secret-looking (`*.csv`, `.env`, `*.bak`) stay out.
 
-**New machine:** install Valerie, run Set Up Sync, done: it finds your repo and pulls everything down (your old
-`config.yaml` is kept as `config.before-sync.yaml`). Or have your assistant clone the repo into the config folder
+**Safe by default:**
+- Each machine syncs with **its own key that can reach only the sync repo** (a GitHub deploy key, listed under the
+  repo's Settings › Deploy keys, so a lost machine can be cut off there). Valerie keeps no GitHub sign-in of its own;
+  the sign-in during setup is only used to make the repo and add the key (`sync.repo_key`).
+- **Plugins and AI programs that arrive from another machine wait** until you allow them on this one ("Allow Plugins
+  from Other Machines"), showing what they'd run. What you make on a machine is never held (`sync.ask_before_plugins`).
+- Turning encryption on starts the repo's history over, so nothing readable from before stays in it.
+- **Different AI apps on different machines** just work: settings for one machine go in `this-mac.yaml`, the AI you
+  pick while setting up a new machine stays that machine's, and if a machine doesn't have the AI the others use,
+  Valerie uses one it has (`agents.fallback`).
+
+**New machine:** install Valerie, run Set Up Sync and type your sync passphrase: it finds your repo and pulls
+everything down (your old `config.yaml` is kept as `config.before-sync.yaml`). Or have your assistant clone the repo into the config folder
 (`valerie paths` prints where that is) before first launch.
 
 Pinned tabs, folders, favorites and spaces sync for real (the newest edit to a space wins). Today tabs stay on their
 device and show up in the command bar as "Synced". If two machines change the same line of a setting, the one that
-syncs last wins. `⌘⇧Y` syncs now. Nothing but GitHub is involved.
+syncs last wins. Saved passwords: the newest change wins, deletions included. `⌘⇧Y` syncs now. Nothing but GitHub is
+involved.
 
 **Links:** middle-, ⌘- or ⇧-click opens a background tab, ⌥-click opens it in split view, ⌥⇧-click Peeks at it
 (`esc` closes, `⌘O` keeps it as a tab), and right-click gives Valerie's link menu (⇧-right-click for the system

@@ -146,6 +146,9 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
     let access = if o.plan || mode == Mode::PageOnly { "read" } else { o.access.as_str() };
     let effort = o.effort.as_str();
     if !def.command.is_empty() {
+        if !crate::trust::program_allowed(&crate::trust::load(), &def.command) {
+            anyhow::bail!("this AI's program came from another machine through sync and hasn't been allowed here: run \"Allow Plugins from Other Machines\" from the command bar");
+        }
         // Any program: `{prompt}` and `{model}` in its arguments are filled in; it prints the answer.
         let mut c = Command::new(&def.command[0]);
         c.args(def.command[1..].iter().map(|a| a.replace("{prompt}", prompt).replace("{model}", model)));

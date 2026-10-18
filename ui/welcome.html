@@ -93,6 +93,8 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 .code { font: 700 34px ui-monospace, Menlo, monospace; letter-spacing: 4px; padding: 14px 20px; border-radius: 14px; background: var(--card2); display: inline-block; margin: 6px 0 10px; user-select: text; }
 .done-line { display: flex; align-items: center; gap: 10px; color: var(--ok); font-weight: 600; }
 .err { color: var(--bad); font-size: 13.5px; margin-top: 8px; }
+.key { margin-top: 22px; } .key h3 { margin: 0 0 6px; font-size: 17px; } .key .hint { margin: 0 0 12px; color: var(--dim); font-size: 13.5px; line-height: 1.5; }
+.keyrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; } .keyrow input { flex: 1 1 100%; width: auto; min-width: 0; font: 15px ui-monospace, Menlo, monospace; }
 /* make it yours */
 .q { font-size: 26px; font-weight: 700; letter-spacing: -.5px; margin: 0 0 6px; }
 .qhelp { color: var(--dim); margin: 0 0 18px; }
@@ -145,7 +147,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 function btn(text, cls, on) { const b = el("button", cls, text); b.onclick = on; return b; }
 
 let W = null;                      // data from Valerie
-const S = { step: 0, dir: 1, agents: {}, chosen: "", free: null, sync: null, imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
+const S = { step: 0, dir: 1, agents: {}, chosen: "", free: null, sync: null, key: null, only: "", imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
 const STEPS = ["hello", "import", "ai", "sync", "yours", "tour"];
 
 // ---------- shortcut labels from the user's keybindings ----------
@@ -307,7 +309,7 @@ function tuneCard() {
 }
 
 function syncStep(root) {
-  root.append(el("div", "kicker", "Step 3 · Sync"), el("h1", null, "Your Valerie on every Mac"));
+  root.append(el("div", "kicker", S.only ? "Sync" : "Step 3 · Sync"), el("h1", null, "Your Valerie on every Mac"));
   const wrap = el("div", "sync"), left = el("div");
   left.append(el("p", "lead", "Settings, spaces, pinned tabs and folders follow you to every Mac. They live in a private GitHub repo that only you can see, and change history comes free."));
   const s = S.sync || (W.sync ? { step: "done", repo: W.sync } : null);
@@ -318,10 +320,38 @@ function syncStep(root) {
       el("div", "note", "When GitHub says you're done, come back here. This screen updates by itself."));
   } else if (s.step === "done") {
     const d = el("div", "done-line"); d.append("✓ ", el("span", null, "Syncing with " + String(s.repo || "").replace(/^https:\/\//, "").replace(/\.git$/, ""))); left.append(d);
+    left.append(passphrase());
   } else if (s.step === "failed") { left.append(el("div", "err", s.detail || "Sign-in didn't finish."), btn("Try again", "small", () => { S.sync = { step: "waiting" }; draw(); send({ t: "sync" }); })); }
   const macs = el("div", "macs"); macs.append(el("div", "wire"));
   for (let i = 0; i < 2; i++) { const m = el("div", "mac"); m.append(el("i")); macs.append(m); }
   wrap.append(left, macs); root.append(wrap);
+}
+
+// The sync passphrase: tabs, chats and passwords are encrypted with it before they reach GitHub.
+function passphrase() {
+  const box = el("div", "key"), k = S.key || {};
+  if (!k.state || k.state === "checking") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Looking at your sync repo…")); box.append(w); return box; }
+  if (k.state === "off") return box;
+  if (k.state === "done") { const d = el("div", "done-line"); d.append("✓ ", el("span", null, "Tabs, chats and passwords are encrypted with your passphrase")); box.append(d); return box; }
+  const fresh = k.state === "new" || (k.state === "failed" && k.was === "new");
+  box.append(el("h3", null, fresh ? "Choose a sync passphrase" : "Enter your sync passphrase"),
+    el("p", "hint", fresh ? "It encrypts your tabs, chats and passwords before they reach GitHub. You'll type it once on each Mac. Nobody can recover it, so keep it somewhere safe, like your password manager."
+      : "The one you chose on your other Mac. It unlocks your tabs, chats and passwords here."));
+  const row = el("div", "keyrow"), input = el("input");
+  input.type = fresh ? "text" : "password"; input.spellcheck = false; input.autocomplete = "off";
+  input.placeholder = fresh ? "at least 12 characters" : "your sync passphrase";
+  if (fresh) input.value = S.typed != null ? S.typed : (k.suggestion || "");
+  input.oninput = () => { S.typed = input.value; };
+  const go = () => { if (!input.value.trim()) return; S.key = { state: "working", was: fresh ? "new" : "enter" }; send({ t: "sync_passphrase", passphrase: input.value }); draw(); };
+  input.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  row.append(input);
+  if (fresh) row.append(btn("Copy", "small", () => send({ t: "copy", text: input.value })));
+  row.append(btn(fresh ? "Use this passphrase" : "Unlock", "primary", go));
+  box.append(row);
+  if (k.state === "working") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Checking…")); box.append(w); }
+  if (k.state === "failed") box.append(el("div", "err", k.detail || "That didn't work."));
+  setTimeout(() => { if (document.activeElement.tagName !== "INPUT") input.focus(); }, 0);
+  return box;
 }
 
 // ---------- make it yours: a few questions, then the agent changes Valerie ----------
@@ -434,7 +464,7 @@ function tourStep(root) {
 }
 
 // ---------- frame ----------
-function visibleSteps() { return STEPS.filter((s) => s !== "import" || (W && W.imports && W.imports.length)); }
+function visibleSteps() { return S.only ? [S.only] : STEPS.filter((s) => s !== "import" || (W && W.imports && W.imports.length)); }
 function go(i) {
   const vs = visibleSteps();
   if (vs[S.step] === "ai" && i > S.step && !chosenWorks() && !S.skippedAi) return confirmSkipAi();
@@ -451,7 +481,9 @@ function draw() {
   stage.replaceChildren(root); stage.dataset.step = name; if (same) stage.scrollTop = keep;
   const foot = $("#foot"); foot.replaceChildren();
   const last = S.step === vs.length - 1;
-  if (name === "hello") {
+  if (S.only) {
+    foot.append(el("span", "grow"), btn("Done", "primary", () => send({ t: "done" })));
+  } else if (name === "hello") {
     foot.append(btn("Skip setup", "ghost", () => send({ t: "done" })), el("span", "grow"), btn("Let's go", "primary", () => go(1)));
   } else {
     foot.append(btn("Back", "ghost", () => go(S.step - 1)), el("span", "grow"));
@@ -481,10 +513,12 @@ window.welcome = {
     if (d.font) document.body.style.fontFamily = `${d.font}, -apple-system, system-ui, sans-serif`;
     S.chosen = d.default_agent || "";
     S.effort = d.effort || "";
+    S.only = d.only || "";
+    if (d.sync_key) S.key = { state: d.sync_key, suggestion: d.suggestion };
     draw();
     send({ t: "probe" });
   },
-  restart() { S.step = 0; S.dir = 1; S.qi = 0; if (S.custom && S.custom.state !== "working") S.custom = null; draw(); send({ t: "probe" }); },
+  restart() { S.step = 0; S.dir = 1; S.qi = 0; S.only = ""; if (S.custom && S.custom.state !== "working") S.custom = null; draw(); send({ t: "probe" }); },
   event(ev) {
     if (ev.type === "agent") { S.agents[ev.id] = { works: ev.works, detail: ev.detail }; pickDefault(); }
     else if (ev.type === "using") S.chosen = ev.id;
@@ -492,6 +526,8 @@ window.welcome = {
     else if (ev.type === "imported") S.imported[ev.source] = ev;
     else if (ev.type === "models") { W.models = ev.models; if (document.activeElement && document.activeElement.tagName === "SELECT") return; }
     else if (ev.type === "sync") { S.sync = ev; if (ev.step === "done") W.sync = ev.repo; }
+    else if (ev.type === "sync_key") { if (ev.state === "failed") ev.was = (S.key && S.key.was) || "enter"; else if (!ev.suggestion && S.key) ev.suggestion = S.key.suggestion; if (ev.state === "done") S.typed = null; S.key = ev; }
+    else if (ev.type === "only") { S.only = ev.step; S.step = 0; }
     else if (ev.type === "customized") S.custom = { state: "done", ok: ev.ok, summary: ev.summary };
     draw();
   },

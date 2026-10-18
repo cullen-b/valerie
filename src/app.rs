@@ -53,7 +53,11 @@ pub enum UserEvent {
     Mcp(McpRequest),
     Tick,
     ConfigChanged,
-    SyncDone(Result<Vec<sync::DeviceTabs>, String>),
+    SyncDone(Result<sync::Outcome, String>),
+    /// The sync passphrase was set or entered (or wasn't the right one).
+    PassphraseSet(Result<bool, String>),
+    /// One held plugin or program was answered; ask about the rest.
+    AskHeld(Vec<String>, Vec<String>, bool),
     Downloaded { ok: bool, path: Option<PathBuf>, url: String, open: bool },
     Captured(Result<Vec<u8>, String>),
     DownloadStarted { target: Target },
@@ -223,6 +227,23 @@ pub struct App {
     dirty: bool,
     last_sync: u64,
     syncing: bool,
+    /// The AI was picked in the welcome guide on this machine (kept for this machine if the synced settings differ).
+    ai_picked_here: bool,
+    /// What the welcome guide set here: agent, its definition, effort.
+    welcome_ai: Option<(String, Option<config::AgentDef>, String)>,
+    /// The welcome guide is showing just this step (e.g. "sync" for the passphrase).
+    welcome_only: Option<String>,
+    /// Start the sync repo's history over on the next sync (just after the passphrase was set, so nothing readable stays).
+    fresh_history: bool,
+    /// The running sync carries `fresh_history`; and whether to sync again when it's done (something changed mid-way).
+    fresh_in_flight: bool,
+    resync: bool,
+    /// The sync repo has a passphrase, and whether this machine knows it.
+    sync_passphrase: bool,
+    sync_locked: bool,
+    asked_passphrase: bool,
+    /// A sync has finished since launch (so the passphrase state is known).
+    sync_checked: bool,
     page_opens: Vec<std::time::Instant>,
     /// When the sidebar was last hidden; edge reveals right after hiding are the page sliding under the mouse.
     sidebar_hidden_at: std::time::Instant,
@@ -397,9 +418,34 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
     }
 }
 
-/// Chats live in the config folder (so they sync) unless chats.sync is off.
-fn chats_dir(config: &Config) -> PathBuf {
-    if config.chats.sync { config::config_dir().join("chats") } else { config::data_dir().join("chats") }
+/// What this machine's tabs file was called before machines had ids (its short hostname).
+fn legacy_device_name() -> String {
+    std::process::Command::new("hostname").arg("-s").output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+/// Chats live on this machine; with chats.sync they also travel, encrypted, through the sync repo.
+fn chats_dir(_config: &Config) -> PathBuf {
+    config::data_dir().join("chats")
+}
+
+/// Chats used to sit in the config folder (and sync readable): move them here, keeping whichever copy is newer.
+fn move_old_chats() {
+    let (from, to) = (config::config_dir().join("chats"), config::data_dir().join("chats"));
+    for sub in ["", "closed"] {
+        for e in std::fs::read_dir(from.join(sub)).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.extension().is_none_or(|x| x != "json") {
+                continue;
+            }
+            let dest = to.join(sub).join(e.file_name());
+            let updated = |p: &std::path::Path| std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).map_or(0, |v| v["updated"].as_u64().unwrap_or(0));
+            if !dest.exists() || updated(&p) > updated(&dest) {
+                let _ = std::fs::create_dir_all(dest.parent().unwrap_or(&to));
+                let _ = std::fs::copy(&p, &dest);
+            }
+            let _ = std::fs::remove_file(&p);
+        }
+    }
 }
 
 fn boosts_dir() -> PathBuf {
@@ -716,7 +762,10 @@ impl App {
             recent_tabs: Vec::new(),
             committed_url: HashMap::new(),
             page_request: None,
-            chats: crate::ai::load_chats(&chats_dir(&config)),
+            chats: {
+                move_old_chats();
+                crate::ai::load_chats(&chats_dir(&config))
+            },
             chats_open: false,
             active_chat: None,
             chat_view: None,
@@ -762,6 +811,16 @@ impl App {
             dirty: false,
             last_sync: 0,
             syncing: false,
+            ai_picked_here: false,
+            welcome_ai: None,
+            welcome_only: None,
+            fresh_history: false,
+            fresh_in_flight: false,
+            resync: false,
+            sync_passphrase: false,
+            sync_locked: false,
+            asked_passphrase: false,
+            sync_checked: false,
             page_opens: Vec::new(),
             sidebar_hidden_at: std::time::Instant::now(),
             user_agent,
@@ -3109,15 +3168,18 @@ impl App {
             return self.toast("Sync isn't set up yet: run \"Set Up Sync\" from the command bar");
         }
         if self.syncing {
+            self.resync = true;
             return;
         }
         self.syncing = true;
+        self.fresh_in_flight = self.fresh_history;
         self.last_sync = now();
         if self.state.track_changes() {
             self.dirty = true;
         }
         let me = sync::DeviceTabs {
             device: self.config.device_name(),
+            id: config::device_id(),
             updated: now(),
             spaces: self
                 .state
@@ -3148,10 +3210,183 @@ impl App {
         };
         let dir = config::config_dir();
         let p = self.proxy.clone();
+        let c = &self.config.sync;
+        let mut vaults: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
+        vaults.extend(self.config.passwords.shared.iter().map(|v| v.name.clone()));
+        let mut opt = sync::Options {
+            encrypt: c.encrypt,
+            chats: self.config.chats.sync.then(|| chats_dir(&self.config)),
+            vaults: if c.encrypt && c.passwords && self.config.passwords.enabled { vaults } else { Vec::new() },
+            hold: c.ask_before_plugins,
+            // Cleared only once a sync succeeds, so a failed one tries again.
+            fresh_history: self.fresh_history,
+            old_names: [c.device.clone(), legacy_device_name()].into_iter().filter(|n| !n.is_empty()).collect(),
+            ..Default::default()
+        };
+        let (repo_key, device) = (c.repo_key, me.device.clone());
         std::thread::spawn(move || {
-            let token = repo.contains("github.com").then(crate::github::token).flatten();
-            send(&p, UserEvent::SyncDone(sync::run(&repo, &dir, &me, token.as_deref()).map_err(|e| format!("{e:#}"))))
+            opt.key = crate::crypt::read_key_file(&dir).and_then(|kf| crate::crypt::stored_key(&kf));
+            // GitHub repos: this machine's own key for the sync repo (made the first time, from a sign-in that's then
+            // dropped); without one, the GitHub sign-in itself.
+            let ssh = (repo_key && crate::github::owner_repo(&repo).is_some())
+                .then(|| {
+                    if !crate::github::repo_key_path().exists() {
+                        let t = crate::github::token()?;
+                        crate::github::add_repo_key(&t, &repo, &device).ok()?;
+                        crate::github::forget_token();
+                    }
+                    crate::github::ssh_command()
+                })
+                .flatten();
+            match ssh {
+                Some(cmd) => {
+                    opt.remote = crate::github::ssh_url(&repo).unwrap_or(repo.clone());
+                    opt.ssh = Some(cmd);
+                }
+                None => {
+                    opt.remote = repo.clone();
+                    opt.token = repo.contains("github.com").then(crate::github::token).flatten();
+                }
+            }
+            send(&p, UserEvent::SyncDone(sync::run(&dir, &me, &opt).map_err(|e| format!("{e:#}"))))
         });
+    }
+
+    fn after_sync(&mut self, plugins: Vec<String>, programs: Vec<String>, has_passphrase: bool, locked: bool, passwords: usize, chats: bool) {
+        // An AI picked here in the welcome guide stays this machine's, even if the synced settings name another.
+        if std::mem::take(&mut self.ai_picked_here) {
+            self.keep_ai_here();
+        }
+        self.sync_passphrase = has_passphrase;
+        self.sync_locked = locked;
+        self.sync_checked = true;
+        self.welcome_send(&json!({ "type": "sync_key", "state": self.passphrase_state(), "suggestion": crate::crypt::suggest_passphrase() }));
+        // Asked once ever for each case (choose one / type it here); after that it's "Sync Passphrase".
+        let asked = config::data_dir().join(if locked { "asked-enter-passphrase" } else { "asked-new-passphrase" });
+        if self.config.sync.encrypt && (locked || !has_passphrase) && !self.asked_passphrase && !self.welcome_open && !asked.exists() {
+            self.asked_passphrase = true;
+            let _ = std::fs::write(&asked, "");
+            self.toast(if locked { "Enter your sync passphrase to bring over your tabs, chats and passwords" } else { "Choose a sync passphrase so your tabs, chats and passwords sync encrypted" });
+            self.open_sync_passphrase();
+        }
+        if passwords > 0 {
+            self.toast(&format!("{passwords} password{} from your other machines", if passwords == 1 { "" } else { "s" }));
+        }
+        if chats {
+            // Newer copies from other machines; a chat that's answering right now keeps what it has.
+            for c in crate::ai::load_chats(&chats_dir(&self.config)) {
+                match self.chats.iter_mut().find(|x| x.id == c.id) {
+                    Some(x) if !self.chat_running.contains(&c.id) && c.updated > x.updated => *x = c,
+                    Some(_) => {}
+                    None => self.chats.push(c),
+                }
+            }
+            self.chats.sort_by(|a, b| b.updated.cmp(&a.updated));
+            if self.chats_open {
+                self.render_chat();
+            }
+        }
+        if !plugins.is_empty() || !programs.is_empty() {
+            self.reload_config();
+            self.ask_about_held(plugins, programs);
+        }
+    }
+
+    /// The AI chosen in this machine's welcome guide, written to this-mac.yaml where the synced settings differ.
+    fn keep_ai_here(&mut self) {
+        let Some(picked) = self.welcome_ai.clone() else { return };
+        let synced = Config::merged_shared(&std::fs::read_to_string(config::config_path()).unwrap_or_default()).ok().and_then(|v| serde_yaml::from_value::<Config>(v).ok());
+        let Some(synced) = synced else { return };
+        let mut changed = false;
+        if synced.agents.default != picked.0 {
+            changed |= config::set_this_mac_setting(&["agents", "default"], &picked.0).is_ok();
+        }
+        if let Some(def) = picked.1.as_ref().filter(|d| synced.agents.available.get(&picked.0).cloned().flatten().as_ref() != Some(*d)) {
+            let value = if def.model.is_empty() { format!("{{ cli: {} }}", def.cli) } else { format!("{{ cli: {}, model: {} }}", def.cli, json!(def.model)) };
+            changed |= config::set_this_mac_setting(&["agents", "available", &picked.0], &value).is_ok();
+        }
+        if synced.chats.effort != picked.2 {
+            changed |= config::set_this_mac_setting(&["chats", "effort"], &json!(picked.2).to_string()).is_ok();
+        }
+        if changed {
+            self.reload_config();
+            self.toast(&format!("Your other machines use {}; this one keeps {}", crate::ai::kind(&synced.agents.default).map_or(synced.agents.default.as_str(), |k| k.title), crate::ai::kind(&picked.0).map_or(picked.0.as_str(), |k| k.title)));
+        }
+    }
+
+    /// Ask, one at a time, whether plugins and AI programs from other machines may run here.
+    fn ask_about_held(&mut self, mut plugins: Vec<String>, mut programs: Vec<String>) {
+        if plugins.is_empty() && programs.is_empty() {
+            return;
+        }
+        if !cfg!(target_os = "macos") {
+            let names: Vec<String> = plugins.iter().chain(programs.iter()).cloned().collect();
+            return self.toast(&format!("From your other machines, waiting for you to allow them: {} (run `valerie allow-from-sync`)", names.join(", ")));
+        }
+        let p = self.proxy.clone();
+        if let Some(name) = plugins.first().cloned() {
+            plugins.remove(0);
+            let what = crate::trust::powers(&crate::trust::files_in(&plugins::plugins_dir().join(&name)));
+            let body = format!("It came from another machine through sync. Here it:\n• {}\n\nOnly allow it if you (or your AI) made it.", what.join("\n• "));
+            let title = format!("Allow the plugin “{name}” on this computer?");
+            platform::ask(&self.chrome, &title, &body, "Allow", "Not Now", move |ok| {
+                if ok {
+                    crate::trust::allow_plugin(&name);
+                }
+                send(&p, UserEvent::AskHeld(plugins, programs, ok));
+            });
+        } else if let Some(cmd) = programs.first().cloned() {
+            programs.remove(0);
+            let title = "Allow an AI program from another computer?".to_string();
+            let body = format!("Your synced settings now name an AI that runs this program on your computer:\n\n{cmd}\n\nOnly allow it if you added it.");
+            platform::ask(&self.chrome, &title, &body, "Allow", "Not Now", move |ok| {
+                if ok {
+                    crate::trust::allow_program(&cmd);
+                }
+                send(&p, UserEvent::AskHeld(plugins, programs, ok));
+            });
+        }
+    }
+
+    /// An AI choice from the welcome guide: shared settings until sync is set up, then this machine's own (so a new
+    /// machine's pick doesn't change the others). Remembered so the first sync can't replace it.
+    fn set_ai_setting(&mut self, path: &[&str], value: &str) -> anyhow::Result<()> {
+        if self.config.sync.repo.is_empty() {
+            config::set_setting(path, value)?;
+        } else {
+            config::set_this_mac_setting(path, value)?;
+        }
+        self.reload_config();
+        let a = &self.config.agents;
+        self.welcome_ai = Some((a.default.clone(), a.available.get(&a.default).cloned().flatten(), self.config.chats.effort.clone()));
+        self.ai_picked_here = true;
+        Ok(())
+    }
+
+    /// Set or enter the sync passphrase: the welcome guide's sync step, on its own.
+    fn open_sync_passphrase(&mut self) {
+        self.open_welcome();
+        // A guide that's just being made reads this when it's ready; one already open gets it now.
+        self.welcome_only = Some("sync".into());
+        self.welcome_send(&json!({ "type": "only", "step": "sync" }));
+        if self.sync_checked {
+            self.welcome_send(&json!({ "type": "sync_key", "state": self.passphrase_state(), "suggestion": crate::crypt::suggest_passphrase() }));
+        } else {
+            self.start_sync();
+        }
+    }
+
+    /// For the guide: off (not encrypting) | new (choose one) | enter (type it) | done.
+    fn passphrase_state(&self) -> &'static str {
+        if !self.config.sync.encrypt {
+            "off"
+        } else if self.sync_locked {
+            "enter"
+        } else if self.sync_passphrase {
+            "done"
+        } else {
+            "new"
+        }
     }
 
     /// Sync a little after a change (sync.on_change), so a burst of edits goes up as one commit.
@@ -3187,6 +3422,9 @@ impl App {
     }
 
     fn tick(&mut self) {
+        if let Some(n) = config::take_fallback_note() {
+            self.toast(&n);
+        }
         self.touch_panes();
         let t = now();
         let panes = self.panes();
@@ -3720,11 +3958,25 @@ impl App {
             Command::SetUpSync => {
                 self.toast("Signing in to GitHub…");
                 let (p, id, name) = (self.proxy.clone(), self.config.sync.github_client_id.clone(), self.config.sync.repo_name.clone());
+                let (repo_key, device) = (self.config.sync.repo_key, self.config.device_name());
                 std::thread::spawn(move || {
                     let notify = |s: crate::github::Step| send(&p, UserEvent::SyncSetup(s));
-                    let done = crate::github::set_up(&id, &name, &notify);
+                    let done = crate::github::set_up(&id, &name, repo_key, &device, &notify);
                     notify(done);
                 });
+            }
+            Command::SyncPassphrase => {
+                if self.config.sync.repo.is_empty() {
+                    return self.toast("Set up sync first: run \"Set Up Sync\" from the command bar");
+                }
+                self.open_sync_passphrase();
+            }
+            Command::AllowFromOtherMachines => {
+                let t = crate::trust::load();
+                if t.held_plugins.is_empty() && t.held_programs.is_empty() {
+                    return self.toast("Nothing from other machines is waiting");
+                }
+                self.ask_about_held(t.held_plugins.keys().cloned().collect(), t.held_programs.clone());
             }
             Command::Print => {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
@@ -4666,22 +4918,54 @@ impl App {
             UserEvent::SyncDone(r) => {
                 self.syncing = false;
                 match r {
-                    Ok(devices) => {
-                        for id in self.state.apply_remote(&devices) {
+                    Ok(out) => {
+                        if self.fresh_in_flight {
+                            self.fresh_history = false;
+                        }
+                        for id in self.state.apply_remote(&out.devices) {
                             self.views.remove(&id);
                         }
                         self.state.reconcile_spaces(&self.config);
-                        self.remote = devices;
+                        self.remote = out.devices;
                         self.dirty = true;
                         for p in self.panes() {
                             self.ensure_view(p);
                         }
                         self.layout();
                         self.render();
+                        self.after_sync(out.held_plugins, out.held_programs, out.has_passphrase, out.locked, out.passwords_changed, out.chats_changed);
+                    }
+                    Err(e) if e.contains("Permission denied (publickey)") || e.contains("denied to deploy key") => {
+                        self.toast("This computer's sync key was removed from GitHub: run \"Set Up Sync\" to give it a new one")
                     }
                     Err(e) => self.toast(&format!("Sync failed: {e}")),
                 }
+                if std::mem::take(&mut self.resync) {
+                    self.start_sync();
+                }
             }
+            UserEvent::AskHeld(plugins, programs, allowed) => {
+                if allowed {
+                    self.reload_config();
+                }
+                self.ask_about_held(plugins, programs);
+            }
+            UserEvent::PassphraseSet(r) => match r {
+                Ok(created) => {
+                    self.sync_passphrase = true;
+                    self.sync_locked = false;
+                    self.fresh_history = created;
+                    self.welcome_send(&json!({ "type": "sync_key", "state": "done" }));
+                    self.toast(if created { "Sync passphrase set: your tabs, chats and passwords sync encrypted now" } else { "Unlocked: bringing over your tabs, chats and passwords" });
+                    self.start_sync();
+                }
+                Err(e) => {
+                    self.welcome_send(&json!({ "type": "sync_key", "state": "failed", "detail": e }));
+                    if !self.welcome_open {
+                        self.toast(&e);
+                    }
+                }
+            },
             UserEvent::AgentDone(f) => {
                 self.agents_running.retain(|n| n != &f.name);
                 if f.name.starts_with("Watch: ") {
@@ -4852,8 +5136,8 @@ impl App {
                 Err(e) => self.market_send(&json!({ "type": "index_error", "detail": e })),
             },
             UserEvent::FreeAiReady(model) => {
-                let set = config::set_setting(&["agents", "available", "opencode"], &format!("{{ cli: opencode, model: {} }}", json!(model)))
-                    .and_then(|_| config::set_setting(&["agents", "default"], "opencode"));
+                let set = self.set_ai_setting(&["agents", "available", "opencode"], &format!("{{ cli: opencode, model: {} }}", json!(model)))
+                    .and_then(|_| self.set_ai_setting(&["agents", "default"], "opencode"));
                 match set {
                     Ok(()) => {
                         self.reload_config();
@@ -5409,7 +5693,7 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
                 .map(|d| config::config_dir().join(d))
                 .flat_map(|d| std::fs::read_dir(&d).into_iter().flatten().flatten().filter_map(|e| m(&e.path())).chain(m(&d)))
                 .collect();
-            [m(&path), m(&boosts_dir()), m(&plugins::plugins_dir())].into_iter().flatten().chain(boosts).chain(plugin_files).chain(more).max()
+            [m(&path), m(&config::this_mac_path()), m(&boosts_dir()), m(&plugins::plugins_dir())].into_iter().flatten().chain(boosts).chain(plugin_files).chain(more).max()
         };
         let mut last = mtime();
         loop {
@@ -5649,7 +5933,8 @@ impl App {
             c.agent = default_name;
         }
         let (name, mut def) = self.config.agent_named(&c.agent);
-        if !c.model.is_empty() {
+        // The chat's model is for its own agent, not one standing in for it on this machine.
+        if !c.model.is_empty() && name == c.agent {
             def.model = c.model.clone();
         }
         c.settled = false;
@@ -5672,7 +5957,8 @@ impl App {
         c.messages.push(Msg { role: "assistant".into(), agent: name.clone(), at: t, ..Default::default() });
         c.updated = t;
         // Agents that can continue their own session get just the new message; others get the conversation so far.
-        let session = c.sessions.get(&name).cloned();
+        // Sessions live on the machine that started them, so a synced chat continues elsewhere from its transcript.
+        let session = c.sessions.get(&format!("{name}@{}", config::device_id())).cloned();
         let plan_note = if opts.plan {
             "\n\n(Plan mode: don't change anything yet. Reply with a short numbered plan of what you'd do, then stop; the user will say go.)"
         } else {
@@ -5727,7 +6013,7 @@ impl App {
         let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) else { return };
         if let Ev::Session { id } = &ev {
             let agent = c.messages.last().map(|m| m.agent.clone()).unwrap_or_default();
-            c.sessions.insert(agent, id.clone());
+            c.sessions.insert(format!("{agent}@{}", config::device_id()), id.clone());
             return;
         }
         let Some(m) = c.messages.last_mut().filter(|m| m.role == "assistant") else { return };
@@ -6549,6 +6835,7 @@ impl App {
     // ---------------------------------------------------------------- welcome guide
 
     fn open_welcome(&mut self) {
+        self.welcome_only = None;
         if self.welcome_view.is_none() {
             let (p, p2) = (self.proxy.clone(), self.proxy.clone());
             let built = WebViewBuilder::new()
@@ -6614,6 +6901,10 @@ impl App {
             "sync": self.config.sync.repo, "imports": crate::import::found(), "keys": keys,
             "accent": self.theme_for(self.state.active_space).accent, "font": self.config.layout.font,
             "done": self.state.welcome_done,
+            "only": self.welcome_only,
+            // Unknown until the first sync has looked at the repo.
+            "sync_key": if self.sync_checked { json!(self.passphrase_state()) } else { Value::Null },
+            "suggestion": crate::crypt::suggest_passphrase(),
         })
     }
 
@@ -6641,11 +6932,8 @@ impl App {
             }
             "use_agent" => {
                 let Some(id) = m["id"].as_str().filter(|id| crate::ai::kind(id).is_some()) else { return };
-                match config::set_setting(&["agents", "default"], id) {
-                    Ok(()) => {
-                        self.reload_config();
-                        self.welcome_send(&json!({ "type": "using", "id": id }));
-                    }
+                match self.set_ai_setting(&["agents", "default"], id) {
+                    Ok(()) => self.welcome_send(&json!({ "type": "using", "id": id })),
                     Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
                 }
             }
@@ -6654,21 +6942,15 @@ impl App {
                 let Some(id) = m["id"].as_str().filter(|id| crate::ai::kind(id).is_some()) else { return };
                 let model: String = m["model"].as_str().unwrap_or("").chars().filter(|c| !c.is_control() && *c != '"').take(120).collect();
                 let value = if model.is_empty() { format!("{{ cli: {id} }}") } else { format!("{{ cli: {id}, model: {} }}", json!(model)) };
-                match config::set_setting(&["agents", "available", id], &value) {
-                    Ok(()) => {
-                        self.reload_config();
-                        self.welcome_send(&json!({ "type": "models", "models": self.agent_models() }));
-                    }
+                match self.set_ai_setting(&["agents", "available", id], &value) {
+                    Ok(()) => self.welcome_send(&json!({ "type": "models", "models": self.agent_models() })),
                     Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
                 }
             }
             "set_effort" => {
                 let effort = m["effort"].as_str().filter(|e| ["", "low", "medium", "high", "max"].contains(e)).unwrap_or("");
-                match config::set_setting(&["chats", "effort"], &json!(effort).to_string()) {
-                    Ok(()) => {
-                        self.reload_config();
-                        self.welcome_send(&json!({ "type": "models", "models": self.agent_models() }));
-                    }
+                match self.set_ai_setting(&["chats", "effort"], &json!(effort).to_string()) {
+                    Ok(()) => self.welcome_send(&json!({ "type": "models", "models": self.agent_models() })),
                     Err(e) => self.toast(&format!("Couldn't save the setting: {e}")),
                 }
             }
@@ -6726,6 +7008,20 @@ impl App {
                 self.dispatch(cmd, elwt);
             }
             "done" => self.close_welcome(true),
+            "copy" => {
+                let text = m["text"].as_str().unwrap_or("").to_string();
+                if arboard::Clipboard::new().and_then(|mut c| c.set_text(text)).is_ok() {
+                    self.toast("Copied");
+                }
+            }
+            "sync_passphrase" => {
+                let phrase = m["passphrase"].as_str().unwrap_or("").to_string();
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let r = sync::set_passphrase(&config::config_dir(), &phrase).map(|(_, created)| created).map_err(|e| format!("{e:#}"));
+                    send(&p, UserEvent::PassphraseSet(r));
+                });
+            }
             "drag" => {
                 let _ = self.window.drag_window();
             }
