@@ -70,6 +70,13 @@ pub struct Config {
     pub sites: BTreeMap<String, Option<SiteSettings>>,
     pub language: String,
     pub extensions: ExtensionsConfig,
+    pub logs: LogsConfig,
+}
+
+/// Valerie's log files (what went wrong, for you and your AI to read).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogsConfig {
+    pub keep_days: u64,
 }
 
 /// Your own CSS for Valerie's windows (ui/*.css in the config folder).

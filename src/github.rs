@@ -218,11 +218,12 @@ pub fn ssh_command() -> Option<String> {
     if std::fs::read_to_string(&hosts).ok().as_deref() != Some(lines.as_str()) {
         std::fs::write(&hosts, &lines).ok()?;
     }
-    let q = |p: &std::path::Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    // ssh splits UserKnownHostsFile at spaces ("Application Support"), so the path is double-quoted inside the option.
     Some(format!(
-        "ssh -i {} -o IdentitiesOnly=yes -o IdentityAgent=none -o UserKnownHostsFile={} -o StrictHostKeyChecking=yes -o BatchMode=yes",
-        q(&key),
-        q(&hosts)
+        "ssh -i {} -o IdentitiesOnly=yes -o IdentityAgent=none -o {} -o StrictHostKeyChecking=yes -o BatchMode=yes",
+        q(&key.to_string_lossy()),
+        q(&format!("UserKnownHostsFile=\"{}\"", hosts.to_string_lossy()))
     ))
 }
 
@@ -303,6 +304,26 @@ mod tests {
         assert!(push.status.success() && delete.status.success(), "couldn't push: {}{}", String::from_utf8_lossy(&push.stderr), String::from_utf8_lossy(&delete.stderr));
         assert!(!elsewhere.status.success(), "the repo key could push to another repo");
         eprintln!("refused elsewhere: {}", String::from_utf8_lossy(&elsewhere.stderr).trim());
+    }
+}
+
+#[cfg(test)]
+mod ssh_tests {
+    /// macOS keeps the data folder in "Application Support": ssh must still trust GitHub with the pinned host keys
+    /// from there (the host key is checked before any login, so an empty key file is enough). Offline, it can't fail.
+    #[test]
+    fn host_keys_path_with_a_space() {
+        let _g = crate::config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let data = std::env::temp_dir().join(format!("valerie ssh test {}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        std::fs::create_dir_all(&data).unwrap();
+        std::env::set_var("VALERIE_DATA_DIR", &data);
+        std::fs::write(super::repo_key_path(), "").unwrap();
+        let ssh = super::ssh_command().unwrap();
+        let out = std::process::Command::new("sh").arg("-c").arg(format!("{ssh} -p 443 git@ssh.github.com")).output().unwrap();
+        std::env::remove_var("VALERIE_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&data);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!err.contains("Host key verification failed"), "ssh didn't find the pinned host keys: {err}");
     }
 }
 

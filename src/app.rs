@@ -1101,7 +1101,7 @@ impl App {
                 let (dir, run, env) = (p.dir.clone(), h.run.clone(), vec![("VALERIE_URL", url.to_string())]);
                 std::thread::spawn(move || {
                     if let Err(e) = plugins::run_script(&dir, &run, &env) {
-                        eprintln!("valerie: page-load hook in {}: {e:#}", dir.display());
+                        crate::log::line("plugins", format!("page-load hook in {}: {e:#}", dir.display()));
                     }
                 });
             }
@@ -1282,7 +1282,7 @@ impl App {
                 }
                 self.views.insert(tab, v);
             }
-            Err(e) => eprintln!("valerie: could not create webview: {e}"),
+            Err(e) => crate::log::line("webview", format!("could not create webview: {e}")),
         }
     }
 
@@ -1795,6 +1795,7 @@ impl App {
     }
 
     fn toast(&self, msg: &str) {
+        crate::log::line("toast", msg);
         let m = serde_json::to_string(&self.translate(msg)).unwrap_or_default();
         let in_page = self.state.active_tab().and_then(|t| self.views.get(&t));
         match in_page {
@@ -2343,7 +2344,7 @@ impl App {
             .build(elwt)
         {
             Ok(w) => w,
-            Err(e) => return eprintln!("valerie: little window: {e}"),
+            Err(e) => return crate::log::line("little-window", e),
         };
         let id = window.id();
         let p = self.proxy.clone();
@@ -2361,7 +2362,7 @@ impl App {
                 .with_bounds(rect(0.0, LITTLE_BAR, lw_w, lw_h - LITTLE_BAR))
                 .build_as_child(&window)
         });
-        let (Ok(bar), Ok(view)) = (bar, view) else { return eprintln!("valerie: little window webviews failed") };
+        let (Ok(bar), Ok(view)) = (bar, view) else { return crate::log::line("little-window", "little window webviews failed") };
         let _ = view.focus();
         window.set_focus();
         #[cfg(target_os = "macos")]
@@ -2637,7 +2638,7 @@ impl App {
                 continue;
             }
             let Ok(acc) = accel.parse::<muda::accelerator::Accelerator>() else {
-                eprintln!("valerie: bad keybinding {accel:?}");
+                crate::log::line("keys", format!("bad keybinding {accel:?}"));
                 continue;
             };
             let item = MenuItem::with_id(format!("k{i}"), self.translate(&self.command_label(&cmd)), true, Some(acc));
@@ -2935,7 +2936,7 @@ impl App {
         });
         let view = match built {
             Ok(v) => v,
-            Err(e) => return eprintln!("valerie: peek: {e}"),
+            Err(e) => return crate::log::line("peek", e),
         };
         platform::round_corners(&view, self.config.peek.corner_radius, platform::Corners::All);
         #[cfg(target_os = "macos")]
@@ -3173,7 +3174,7 @@ impl App {
                 let unchanged = blocking::stored_hash().as_deref() == Some(hash.as_str());
                 send(&p, UserEvent::BlocklistBuilt { json: (!unchanged).then_some(json), hash, fallback });
             }
-            Err(e) => eprintln!("valerie: content blocking disabled: {e:#}"),
+            Err(e) => crate::log::line("blocking", format!("content blocking disabled: {e:#}")),
         });
     }
 
@@ -3431,7 +3432,7 @@ impl App {
 
     fn save(&mut self) {
         if let Err(e) = self.state.save(&state_path()) {
-            eprintln!("valerie: could not save state: {e}");
+            crate::log::line("state", format!("could not save state: {e}"));
         }
         self.dirty = false;
         self.schedule_sync();
@@ -4978,6 +4979,9 @@ impl App {
             },
             UserEvent::SyncDone(r) => {
                 self.syncing = false;
+                if let Err(e) = &r {
+                    crate::log::line("sync", format!("failed: {e}"));
+                }
                 match r {
                     Ok(out) => {
                         if self.fresh_in_flight {
@@ -5260,7 +5264,7 @@ impl App {
                         }
                     }
                     Err(e) if manual => self.toast(&format!("Couldn't update Valerie: {e}")),
-                    Err(e) => eprintln!("valerie: update: {e}"),
+                    Err(e) => crate::log::line("update", format!("install failed: {e}")),
                 }
             }
             UserEvent::SafariSignedIn { tab, bring } => {
@@ -5887,7 +5891,7 @@ impl App {
             .build_as_child(&self.window);
         match built {
             Ok(v) => self.chat_view = Some(v),
-            Err(e) => eprintln!("valerie: chat view: {e}"),
+            Err(e) => crate::log::line("chats", format!("chat view: {e}")),
         }
     }
 
@@ -6223,7 +6227,7 @@ impl App {
                     platform::round_corners(&v, 12.0, platform::Corners::All);
                     self.answer_view = Some(v);
                 }
-                Err(e) => return eprintln!("valerie: answer panel: {e}"),
+                Err(e) => return crate::log::line("ai", format!("answer panel: {e}")),
             }
         }
         self.answer_tab = Some(tab);
@@ -6758,7 +6762,7 @@ impl App {
                 .build_as_child(&self.window);
             match built {
                 Ok(v) => self.market_view = Some(v),
-                Err(e) => return eprintln!("valerie: plugin marketplace view: {e}"),
+                Err(e) => return crate::log::line("plugins", format!("plugin marketplace view: {e}")),
             }
         } else {
             self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
@@ -6957,7 +6961,7 @@ impl App {
                 .build_as_child(&self.window);
             match built {
                 Ok(v) => self.welcome_view = Some(v),
-                Err(e) => return eprintln!("valerie: welcome view: {e}"),
+                Err(e) => return crate::log::line("welcome", format!("welcome view: {e}")),
             }
         } else if let Some(v) = &self.welcome_view {
             let _ = v.evaluate_script("window.welcome && welcome.restart()");
@@ -7180,7 +7184,7 @@ impl App {
                 if manual {
                     self.toast(&format!("Couldn't check for updates: {e}"));
                 }
-                return eprintln!("valerie: update check: {e}");
+                return crate::log::line("update", format!("update check: {e}"));
             }
         };
         let current = self.update_ready.clone().unwrap_or_else(|| crate::update::current().to_string());
@@ -7944,7 +7948,7 @@ impl App {
                     let quitting = ev.on == "valerie_quitting";
                     let job = move || {
                         if let Err(e) = plugins::run_script(&dir, &run, &env) {
-                            eprintln!("valerie: {} hook in {}: {e:#}", env[0].1, dir.display());
+                            crate::log::line("plugins", format!("{} hook in {}: {e:#}", env[0].1, dir.display()));
                         }
                     };
                     // Quitting doesn't wait for much, so those scripts run before Valerie goes.
