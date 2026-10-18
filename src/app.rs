@@ -60,6 +60,8 @@ pub enum UserEvent {
     SavedOne(TabId, bool, Vec<TabId>),
     /// "Restart Now" was picked after an update was installed.
     RestartNow,
+    /// Test builds on (true) or back to stable releases.
+    SetTestBuilds(bool),
     /// The sync passphrase was set or entered (or wasn't the right one).
     PassphraseSet(Result<bool, String>),
     /// The sync passphrase was changed (or started over) here.
@@ -3611,6 +3613,23 @@ impl App {
                     self.close(t);
                 }
             }
+            Command::ToggleTestBuilds => {
+                let on = self.config.updates.channel != "edge";
+                let (title, body, yes) = if on {
+                    ("Get test builds?", "You'll get every change as soon as it's made, before it's released to everyone. They're tried first, but can have rough edges. Switch back any time with Toggle Test Builds.", "Get Test Builds")
+                } else {
+                    ("Back to stable releases?", "You'll get releases once they've been tried and approved. If you're on a test build newer than the current release, Valerie stays on it until the next release catches up.", "Switch to Stable")
+                };
+                if !cfg!(target_os = "macos") {
+                    return self.set_test_builds(on);
+                }
+                let p = self.proxy.clone();
+                platform::ask(&self.chrome, title, body, yes, "Cancel", move |ok| {
+                    if ok {
+                        send(&p, UserEvent::SetTestBuilds(on));
+                    }
+                });
+            }
             Command::ReviewSavedTabs => {
                 let days = if self.config.tabs.ask_to_keep_unused_days > 0.0 { self.config.tabs.ask_to_keep_unused_days } else { 90.0 };
                 let stale = self.state.unused_saved(days, now());
@@ -5145,6 +5164,7 @@ impl App {
                 }
             }
             UserEvent::RestartNow => self.dispatch(Command::Restart, elwt),
+            UserEvent::SetTestBuilds(on) => self.set_test_builds(on),
             UserEvent::SavedAnswer(tabs, choice) => match choice {
                 Some(2) => self.ask_saved_one(tabs),
                 choice => {
@@ -7268,6 +7288,25 @@ impl App {
         self.render();
         if tabs.len() > 1 {
             self.toast(&format!("Removed {} saved tabs (they're in your archive)", tabs.len()));
+        }
+    }
+
+    /// Test builds on this computer (this-mac.yaml), or back to stable; with them on, look for one straight away.
+    fn set_test_builds(&mut self, on: bool) {
+        let mut r = config::set_this_mac_setting(&["updates", "channel"], if on { "edge" } else { "stable" });
+        // An explicit edge feed (from before channels) would keep it on test builds.
+        if !on && self.config.updates.feed == crate::update::EDGE_FEED {
+            r = r.and_then(|_| config::set_this_mac_setting(&["updates", "feed"], &json!(crate::update::STABLE_FEED).to_string()));
+        }
+        if let Err(e) = r {
+            return self.toast(&format!("Couldn't save the setting: {e}"));
+        }
+        self.reload_config();
+        if on {
+            self.toast("Test builds on: looking for the newest one");
+            self.check_updates(true);
+        } else {
+            self.toast("Back to stable releases");
         }
     }
 

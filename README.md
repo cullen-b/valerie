@@ -16,7 +16,8 @@ See [PLAN.md](PLAN.md) for the architecture, the engine decision and the roadmap
 
 Valerie updates itself (`updates:` in the settings; "Check for Updates" in the command bar) from **stable**
 releases: builds that have been used and approved before they go out. Every push to `main` becomes an **edge**
-build first; set `updates: { channel: edge }` (in `this-mac.yaml`) to get those as they're made, for testing. Until releases are notarized, the first open of a downloaded or Homebrew copy needs System
+build first. To get those as they're made, run **Toggle Test Builds** from the command bar (it sets
+`updates.channel: edge` for that computer); run it again to go back to stable. Until releases are notarized, the first open of a downloaded or Homebrew copy needs System
 Settings › Privacy & Security › Open Anyway, once.
 
 ## Run it

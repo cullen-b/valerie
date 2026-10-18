@@ -78,6 +78,7 @@ changed in plain words. Some translations:
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
 | "Find me a plugin for…" / "is there a plugin that…" | `"{exe}" plugins search <words>`, then `"{exe}" plugins install <name>`; "Plugins" in the command bar browses them |
 | "Don't update by yourself" / "ask before updating" | `updates.install: ask` (or `off` to only be told) |
+| "Give me test builds" / "early versions" / "beta" | `updates.channel: edge` in this-mac.yaml (or "Toggle Test Builds"); `stable` goes back |
 | "Open my settings in VS Code" / "in vim" | `editor: "Visual Studio Code"` (any app's name), or `editor: vim` with `terminal: Ghostty` (or Terminal, iTerm, WezTerm, kitty, Alacritty) |
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
