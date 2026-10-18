@@ -106,6 +106,7 @@ sidebar:
   pinned_columns: 4        # pinned icon tiles per row (full and medium sizes)
   pinned_tile_height: 46   # height of each pinned icon tile, pixels
   swipe_between_spaces: true   # two-finger swipe sideways on the sidebar switches spaces
+  swipe_distance: 90       # how far your fingers move sideways to switch, pixels (smaller = quicker swipes count)
   preload_on_hover: true   # start loading a tab when the pointer rests on it in the sidebar, so clicking it is instant
   preload_delay_ms: 90     # how long the pointer rests before that, milliseconds
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
