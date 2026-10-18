@@ -49,10 +49,13 @@ the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`),
 ## Building and checking
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).
-- Every push to `main` is a release (`.github/workflows/release.yml`): tested, built for macOS, Linux and Windows,
-  signed with Valerie's release key and published with `latest.json`. Installed copies update themselves from it
-  (`src/update.rs`, `updates:` settings), so merging is shipping. `scripts/install-macos.sh` is only for trying a build
-  before it's pushed.
+- Every push to `main` is an **edge** (testing) build (`.github/workflows/release.yml`): tested, built for macOS,
+  Linux and Windows, signed with Valerie's release key and published as a pre-release with `latest.json`. Copies on
+  `updates.channel: edge` (the owner's Mac, via its `this-mac.yaml`) install it within hours, so merging still ships
+  to the owner. Everyone else is on **stable**: a build reaches them only when the owner approves it and it's promoted
+  with `gh workflow run promote.yml` (no rebuild; the notes list every change since the last stable release). Never
+  promote without the owner's yes; every now and then, ask whether they want a stable release, listing the changes in
+  plain words. `scripts/install-macos.sh` is only for trying a build before it's pushed.
 - The release key (`assets/release-signing.pem`; private half in the repo's `MACOS_SIGNING_P12` secret and the owner's
   keychain) must not change: macOS ties camera, microphone and keychain permissions to it, and the updater only
   accepts builds signed with it (`RELEASE_REQUIREMENTS`, also `site/install.sh`). Changing keys takes one release that

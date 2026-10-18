@@ -845,6 +845,18 @@ pub struct UpdatesConfig {
     pub every_hours: f64,
     pub install: String,
     pub feed: String,
+    pub channel: String,
+}
+
+impl UpdatesConfig {
+    /// Where to look for updates: the edge feed on the edge channel (unless `feed` points somewhere of its own).
+    pub fn feed_url(&self) -> String {
+        if self.channel == "edge" && (self.feed.is_empty() || self.feed == crate::update::STABLE_FEED) {
+            crate::update::EDGE_FEED.to_string()
+        } else {
+            self.feed.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1341,5 +1353,17 @@ mod tests {
         assert!(super::take_fallback_note().is_some_and(|n| n.contains(missing.title)));
         let off = Config::parse(&format!("agents: {{ default: {}, fallback: false }}\n", missing.id)).unwrap();
         assert_eq!(off.agent_named(missing.id).0, missing.id);
+    }
+
+    /// Stable by default; edge reads the edge feed, unless the feed was pointed somewhere of its own (a fork).
+    #[test]
+    fn update_channels_pick_their_feed() {
+        let stable = Config::parse("").unwrap();
+        assert_eq!(stable.updates.channel, "stable");
+        assert_eq!(stable.updates.feed_url(), crate::update::STABLE_FEED);
+        let edge = Config::parse("updates: { channel: edge }\n").unwrap();
+        assert_eq!(edge.updates.feed_url(), crate::update::EDGE_FEED);
+        let fork = Config::parse("updates: { channel: edge, feed: \"https://example.com/latest.json\" }\n").unwrap();
+        assert_eq!(fork.updates.feed_url(), "https://example.com/latest.json");
     }
 }

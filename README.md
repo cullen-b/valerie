@@ -14,8 +14,9 @@ See [PLAN.md](PLAN.md) for the architecture, the engine decision and the roadmap
   Windows builds from [Releases](https://github.com/cullen-b/valerie/releases/latest). Website:
   https://cullen-b.github.io/valerie/
 
-Valerie updates itself (`updates:` in the settings; "Check for Updates" in the command bar). Every push to `main`
-becomes a release. Until releases are notarized, the first open of a downloaded or Homebrew copy needs System
+Valerie updates itself (`updates:` in the settings; "Check for Updates" in the command bar) from **stable**
+releases: builds that have been used and approved before they go out. Every push to `main` becomes an **edge**
+build first; set `updates: { channel: edge }` (in `this-mac.yaml`) to get those as they're made, for testing. Until releases are notarized, the first open of a downloaded or Homebrew copy needs System
 Settings › Privacy & Security › Open Anyway, once.
 
 ## Run it
