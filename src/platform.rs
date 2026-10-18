@@ -582,6 +582,15 @@ mod mac {
         }
     }
 
+    /// A question with several answers, as a sheet; `done` gets the index of the button (the first is the default).
+    pub fn choose(wv: &WebView, title: &str, body: &str, buttons: &[&str], done: impl FnOnce(usize) + 'static) {
+        let msg = objc2_foundation::NSString::from_str(body);
+        unsafe {
+            let m = objc2::rc::Retained::as_ptr(&msg) as *mut objc2_foundation::NSString;
+            sheet_titled(ptr(wv), m, std::ptr::null_mut(), Some(title), buttons, None, move |r, _| done((r - 1000).max(0) as usize));
+        }
+    }
+
     pub fn has_entitlement(name: &str) -> bool {
         use std::ffi::{c_char, c_void, CString};
         #[link(name = "Security", kind = "framework")]
@@ -1437,6 +1446,17 @@ pub fn local_day() -> (String, String, String, String) {
             format!("{:02}:{:02}", t.hour, t.min),
         ),
         None => (format!("day {}", crate::state::now() / 86400), String::new(), String::new(), String::new()),
+    }
+}
+
+/// A question with several answers on a webview's window; `done(Some(i))` for the i-th button. Elsewhere `None`.
+pub fn choose(wv: &WebView, title: &str, body: &str, buttons: &[&str], done: impl FnOnce(Option<usize>) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::choose(wv, title, body, buttons, move |i| done(Some(i)));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (wv, title, body, buttons);
+        done(None);
     }
 }
 

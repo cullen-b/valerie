@@ -77,6 +77,10 @@ body.pointer .row:hover { background: var(--hover); }
 body.pointer .row:hover .x { display: grid; }
 body.pointer.dragging .row:hover .x { display: none; }
 body.pointer .row .x:hover { background: var(--hover); color: var(--fg); }
+.row .x.minus { font-size: 15px; font-weight: 600; }
+.tile .x.minus { position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; display: none; place-items: center;
+  font-size: 12px; font-weight: 700; line-height: 1; color: var(--fg); background: var(--active); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+body.pointer .tile:hover .x.minus { display: grid; } body.pointer .tile .x.minus:hover { background: var(--accent); color: #fff; }
 .row .audio { font-size: calc(var(--tab-font) * .85); color: var(--accent); }
 .row.split::after { content: ""; position: absolute; left: 2px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
 img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
@@ -365,6 +369,12 @@ function tile(t, list, index) {
   const f = el("div", "tile" + (isActive(t) ? " active" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));
   f.append(icon(t)); f.title = t.title || t.url;
   if (t.playing) f.append(audio(t));
+  // A loaded pinned or favorite tile: − in its corner closes the page and keeps the tile.
+  if (t.loaded && S.sidebar.minus_for_saved_tabs !== false) {
+    const x = el("div", "x minus", "−"); x.title = "Close (keeps it in the sidebar)";
+    x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
+    f.append(x);
+  }
   f.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
   f.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
@@ -381,9 +391,12 @@ function tabRow(t, list, index) {
   const medium = S.layout.sidebar_size === "medium";
   r.append(icon(t), el("div", "title", medium ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab"));
   if (t.playing) r.append(audio(t));
-  const x = el("div", "x", "×"); x.title = t.pinned ? "Unload" : "Close";
+  // Pinned and kept tabs get − (close the page, keep the tab); there's nothing to close once it's closed.
+  const minus = t.pinned && S.sidebar.minus_for_saved_tabs !== false;
+  const x = el("div", "x" + (minus ? " minus" : ""), minus ? "−" : "×");
+  x.title = t.pinned ? "Close (keeps it in the sidebar)" : "Close";
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
-  r.append(x);
+  if (!(minus && !t.loaded)) r.append(x);
   r.title = t.url;
   r.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
   r.onauxclick = (e) => { if (e.button === 1) middleClick(t); };

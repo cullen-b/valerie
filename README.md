@@ -64,7 +64,10 @@ After a keyboard click (`f`, or `Enter` in a text box), the cursor jumps into th
 shows up, so you can type straight away (header search bars and feed composers are left alone; `vim.jump_to_text_box`).
 
 Each space has **pinned** tabs (icon tiles), **Kept** tabs (a list under them that stays until you remove it), and
-**today** tabs (archived after 12 hours unused). Folders work in pinned and Kept. Drag tabs anywhere in the sidebar:
+**today** tabs (archived after 12 hours unused). Pinned, Kept and favorite tabs show **−** instead of ×: it closes
+the page but keeps the tab. Ones you haven't opened in 3 months get a gentle "keep these?" (Keep All, Remove All, or
+One by One; removed ones stay searchable in the archive; `tabs.ask_to_keep_unused_days`, or "Review Saved Tabs" any
+time). Folders work in pinned and Kept. Drag tabs anywhere in the sidebar:
 onto the pinned tiles, into Kept or a folder, onto the favorites row, or onto a space icon. Drag the sidebar's edge to
 resize it: narrow it to show icon + domain, narrower still for icons only (`layout.sidebar_size`, double-click the
 edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek at it.

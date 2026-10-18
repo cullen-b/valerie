@@ -218,6 +218,7 @@ pub struct SidebarConfig {
     pub compact_pinned: String,
     pub pinned_folder_icon: String,
     pub kept_section: bool,
+    pub minus_for_saved_tabs: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
     pub clear_button: String,
@@ -301,6 +302,7 @@ pub enum SidebarPosition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabsConfig {
     pub archive_after_hours: f64,
+    pub ask_to_keep_unused_days: f64,
     pub unload_after_minutes: f64,
     pub new_tab_position: String,
     pub autoplay_in_background: bool,
