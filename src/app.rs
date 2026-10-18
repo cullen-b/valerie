@@ -54,6 +54,10 @@ pub enum UserEvent {
     Tick,
     ConfigChanged,
     SyncDone(Result<sync::Outcome, String>),
+    /// The answer about saved tabs not opened in a long while: 0 keep all, 1 remove all, 2 one by one.
+    SavedAnswer(Vec<TabId>, Option<usize>),
+    /// The answer about one of them (true = keep); the rest still to ask.
+    SavedOne(TabId, bool, Vec<TabId>),
     /// "Restart Now" was picked after an update was installed.
     RestartNow,
     /// The sync passphrase was set or entered (or wasn't the right one).
@@ -242,6 +246,9 @@ pub struct App {
     /// The running sync carries `fresh_history`; and whether to sync again when it's done (something changed mid-way).
     fresh_in_flight: bool,
     resync: bool,
+    /// A question about unused saved tabs is on screen; when they were last looked for.
+    asking_saved: bool,
+    saved_checked: u64,
     /// The sync repo has a passphrase, and whether this machine knows it.
     sync_passphrase: bool,
     sync_locked: bool,
@@ -822,6 +829,8 @@ impl App {
             fresh_history: false,
             fresh_in_flight: false,
             resync: false,
+            asking_saved: false,
+            saved_checked: 0,
             sync_passphrase: false,
             sync_locked: false,
             asked_passphrase: None,
@@ -3440,6 +3449,15 @@ impl App {
         if let Some(n) = config::take_fallback_note() {
             self.toast(&n);
         }
+        // Saved tabs nobody opens any more: asked about at most once an hour, never over the welcome guide.
+        let days = self.config.tabs.ask_to_keep_unused_days;
+        if days > 0.0 && !self.asking_saved && !self.welcome_open && now().saturating_sub(self.saved_checked) > 3600 {
+            self.saved_checked = now();
+            let stale = self.state.unused_saved(days, now());
+            if !stale.is_empty() {
+                self.ask_about_saved(stale);
+            }
+        }
         self.touch_panes();
         let t = now();
         let panes = self.panes();
@@ -3592,6 +3610,14 @@ impl App {
                 if let Some(t) = self.target_tab(tab) {
                     self.close(t);
                 }
+            }
+            Command::ReviewSavedTabs => {
+                let days = if self.config.tabs.ask_to_keep_unused_days > 0.0 { self.config.tabs.ask_to_keep_unused_days } else { 90.0 };
+                let stale = self.state.unused_saved(days, now());
+                if stale.is_empty() {
+                    return self.toast(&format!("You've opened all your saved tabs in the last {days} days"));
+                }
+                self.ask_about_saved(stale);
             }
             Command::ReopenClosedTab => {
                 if let Some(c) = self.state.closed.pop() {
@@ -5119,6 +5145,25 @@ impl App {
                 }
             }
             UserEvent::RestartNow => self.dispatch(Command::Restart, elwt),
+            UserEvent::SavedAnswer(tabs, choice) => match choice {
+                Some(2) => self.ask_saved_one(tabs),
+                choice => {
+                    match choice {
+                        Some(0) => self.keep_saved(&tabs),
+                        Some(1) => self.remove_saved(&tabs),
+                        _ => {}
+                    }
+                    self.asking_saved = false;
+                }
+            },
+            UserEvent::SavedOne(tab, keep, rest) => {
+                if keep {
+                    self.keep_saved(&[tab]);
+                } else {
+                    self.remove_saved(&[tab]);
+                }
+                self.ask_saved_one(rest);
+            }
             UserEvent::QuitAnswered(ok) => {
                 self.quit_asked = false;
                 self.quit = ok;
@@ -7161,6 +7206,68 @@ impl App {
                     self.toast(&format!("Valerie {} is out: run Check for Updates to get it", r.version));
                 }
             }
+        }
+    }
+
+    /// Ask whether to keep saved tabs that haven't been opened in a long while: all, none, or one at a time.
+    fn ask_about_saved(&mut self, tabs: Vec<TabId>) {
+        let days = if self.config.tabs.ask_to_keep_unused_days > 0.0 { self.config.tabs.ask_to_keep_unused_days } else { 90.0 };
+        let since = if days >= 60.0 { format!("{} months", (days / 30.0).round()) } else { format!("{days} days") };
+        if !cfg!(target_os = "macos") {
+            return self.toast(&format!("{} saved tabs haven't been opened in {since}: run Review Saved Tabs", tabs.len()));
+        }
+        self.asking_saved = true;
+        let names: Vec<String> = tabs.iter().take(12).filter_map(|id| self.state.tabs.get(id)).map(|t| format!("• {}", t.display_title())).collect();
+        let more = if tabs.len() > 12 { format!("\n…and {} more", tabs.len() - 12) } else { String::new() };
+        let (title, body) = if tabs.len() == 1 {
+            ("Keep this saved tab?".to_string(), format!("You haven't opened it in {since}:\n{}\n\nRemoved tabs stay searchable in your archive.", names.join("\n")))
+        } else {
+            (format!("Keep these {} saved tabs?", tabs.len()), format!("You haven't opened them in {since}:\n{}{more}\n\nRemoved tabs stay searchable in your archive.", names.join("\n")))
+        };
+        let buttons: &[&str] = if tabs.len() == 1 { &["Keep", "Remove"] } else { &["Keep All", "Remove All", "One by One"] };
+        let p = self.proxy.clone();
+        platform::choose(&self.chrome, &title, &body, buttons, move |i| send(&p, UserEvent::SavedAnswer(tabs, i)));
+    }
+
+    fn ask_saved_one(&mut self, mut rest: Vec<TabId>) {
+        rest.retain(|id| self.state.tabs.contains_key(id));
+        if rest.is_empty() {
+            self.asking_saved = false;
+            return;
+        }
+        let tab = rest.remove(0);
+        let t = &self.state.tabs[&tab];
+        let site = site_of(&t.url).unwrap_or_default();
+        let body = format!("{site}\n\nRemoved tabs stay searchable in your archive.");
+        let p = self.proxy.clone();
+        platform::choose(&self.chrome, &format!("Keep “{}”?", t.display_title()), &body, &["Keep", "Remove"], move |i| {
+            send(&p, UserEvent::SavedOne(tab, i != Some(1), rest));
+        });
+    }
+
+    fn keep_saved(&mut self, tabs: &[TabId]) {
+        for id in tabs {
+            if let Some(t) = self.state.tabs.get_mut(id) {
+                t.kept_at = now();
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Out of the sidebar and into the archive (searchable, like Today tabs that tidy themselves away).
+    fn remove_saved(&mut self, tabs: &[TabId]) {
+        for &id in tabs {
+            if self.state.active_tab() == Some(id) {
+                self.close(id);
+            }
+            self.state.archive_tab(id);
+            self.views.remove(&id);
+        }
+        self.dirty = true;
+        self.layout();
+        self.render();
+        if tabs.len() > 1 {
+            self.toast(&format!("Removed {} saved tabs (they're in your archive)", tabs.len()));
         }
     }
 

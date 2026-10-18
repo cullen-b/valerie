@@ -91,6 +91,8 @@ sidebar:
   compact_pinned: folder   # pinned tabs in the icons-only sidebar. one of: folder (one icon; hover it to pick a tab) | icons (every tab shown)
   pinned_folder_icon: pin  # what that folder icon shows. one of: pin | star | favicons (the first four sites)
   kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them (with folders)
+  minus_for_saved_tabs: true   # pinned and kept tabs show − instead of ×: it closes the page but keeps the tab in the
+                           # sidebar (× on a pinned tab does the same). false = × everywhere
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
@@ -204,6 +206,8 @@ find:
 
 tabs:
   archive_after_hours: 24  # Today tabs you haven't used for this long close (they're archived, searchable); 0 = never
+  ask_to_keep_unused_days: 90   # ask whether to keep pinned, kept and favorite tabs you haven't opened in this many
+                           # days (removed ones are archived, searchable); 0 = never ask
   unload_after_minutes: 60 # free the memory of tabs unused this long (they reload on click); 0 = never
   new_tab_position: top    # where new tabs appear in the list. one of: top | bottom
   autoplay_in_background: false   # let tabs opened in the background start playing video/audio before you look at them

@@ -29,6 +29,9 @@ pub struct Tab {
     pub pinned_url: Option<String>,
     #[serde(default)]
     pub last_active: u64,
+    /// When the user chose to keep it after being asked about a saved tab they hadn't opened in a long while.
+    #[serde(default)]
+    pub kept_at: u64,
     #[serde(default, skip)]
     pub playing: bool,
     #[serde(default, skip)]
@@ -448,6 +451,34 @@ impl State {
         next
     }
 
+    /// Tabs kept in the sidebar: favorites, pinned and saved ("kept"), in every space.
+    pub fn saved_tabs(&self) -> Vec<TabId> {
+        let mut v = self.favorites.clone();
+        for s in &self.spaces {
+            v.extend(flat_ids(&s.pinned));
+            v.extend(flat_ids(&s.kept));
+        }
+        v
+    }
+
+    /// Saved tabs not opened (or kept when asked) for `days`. A tab from before Valerie tracked this starts counting
+    /// now rather than looking ancient.
+    pub fn unused_saved(&mut self, days: f64, now: u64) -> Vec<TabId> {
+        let limit = (days * 86400.0) as u64;
+        let mut out = Vec::new();
+        for id in self.saved_tabs() {
+            let Some(t) = self.tabs.get_mut(&id) else { continue };
+            if t.last_active == 0 {
+                t.last_active = now;
+                continue;
+            }
+            if limit > 0 && now.saturating_sub(t.last_active.max(t.kept_at)) > limit {
+                out.push(id);
+            }
+        }
+        out
+    }
+
     pub fn archive_tab(&mut self, tab: TabId) {
         let space = self.space_of(tab).map(|i| self.spaces[i].name.clone()).unwrap_or_default();
         self.detach(tab);
@@ -798,6 +829,29 @@ mod tests {
         let mut s = State::default();
         s.spaces.push(Space { name: "A".into(), ..Default::default() });
         s
+    }
+
+    /// Only pinned, kept and favorite tabs unopened for the whole period count; keeping one restarts its clock, and a
+    /// tab from before Valerie tracked this starts counting now.
+    #[test]
+    fn finds_saved_tabs_nobody_opens() {
+        let mut s = state();
+        let day = 86400;
+        let now = 400 * day;
+        let ids: Vec<TabId> = (0..5).map(|i| s.add_tab(0, &format!("https://site{i}.com"), false)).collect();
+        for &id in &ids[..4] {
+            s.pin(id);
+        }
+        s.tabs.get_mut(&ids[0]).unwrap().last_active = now - 100 * day; // pinned, old: asked about
+        s.tabs.get_mut(&ids[1]).unwrap().last_active = now - 10 * day; // pinned, recent
+        s.tabs.get_mut(&ids[2]).unwrap().last_active = now - 100 * day; // pinned, old, but kept when asked
+        s.tabs.get_mut(&ids[2]).unwrap().kept_at = now - 5 * day;
+        s.tabs.get_mut(&ids[3]).unwrap().last_active = 0; // from before this was tracked
+        s.tabs.get_mut(&ids[4]).unwrap().last_active = now - 100 * day; // a Today tab: not saved
+        assert_eq!(s.unused_saved(90.0, now), vec![ids[0]]);
+        assert_eq!(s.tabs[&ids[3]].last_active, now);
+        s.archive_tab(ids[0]);
+        assert!(s.unused_saved(90.0, now).is_empty() && s.archive[0].url == "https://site0.com");
     }
 
     #[test]
