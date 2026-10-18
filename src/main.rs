@@ -19,6 +19,7 @@ mod github;
 mod ai;
 mod update;
 mod market;
+mod log;
 
 use config::Config;
 
@@ -388,8 +389,10 @@ fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let config = Config::load().unwrap_or_else(|e| {
-        eprintln!("valerie: config error, using defaults: {e:#}");
+    let loaded = Config::load();
+    log::init(loaded.as_ref().map_or(Config::defaults().logs.keep_days, |c| c.logs.keep_days));
+    let config = loaded.unwrap_or_else(|e| {
+        log::line("config", format!("config error, using defaults: {e:#}"));
         Config::defaults()
     });
     match args.first().map(String::as_str) {
@@ -526,7 +529,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("paths") => {
-            println!("config: {}\ndata:   {}", config::config_path().display(), config::data_dir().display());
+            println!("config: {}\ndata:   {}\nlogs:   {}", config::config_path().display(), config::data_dir().display(), log::dir().display());
             return Ok(());
         }
         _ => {}
@@ -535,5 +538,6 @@ fn main() -> anyhow::Result<()> {
     if !urls.is_empty() && config.mcp.enabled && mcp::forward_open(config.mcp.port, &urls) {
         return Ok(());
     }
+    log::line("app", format!("Valerie {} started", app::version()));
     app::run(config, urls)
 }

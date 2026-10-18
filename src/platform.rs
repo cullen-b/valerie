@@ -27,7 +27,7 @@ pub fn open_external(target: &str) {
     #[cfg(all(unix, not(target_os = "macos")))]
     let r = std::process::Command::new("xdg-open").arg(target).spawn();
     if let Err(e) = r {
-        eprintln!("valerie: could not open {target}: {e}");
+        crate::log::line("open", format!("could not open {target}: {e}"));
     }
 }
 
@@ -463,7 +463,7 @@ mod mac {
                 if !granted.as_bool() {
                     let why: *mut objc2_foundation::NSString = if err.is_null() { std::ptr::null_mut() } else { msg_send![err, localizedDescription] };
                     let why = if why.is_null() { "turned off in System Settings > Notifications".to_string() } else { (*why).to_string() };
-                    eprintln!("valerie: notifications aren't allowed ({why}); using the fallback");
+                    crate::log::line("notifications", format!("notifications aren't allowed ({why}); using the fallback"));
                 }
             });
             // alert | sound

@@ -46,6 +46,13 @@ Users change Valerie by asking an LLM, which reads the guide Valerie writes into
 the guide covers it: commands with options go in `WITH_ARGS` (`src/command.rs`), settings get comments in
 `config/default.yaml`, and `valerie check-config` should catch mistakes in anything new.
 
+## Logs
+
+Valerie writes a daily log to the data folder's `logs/` (`valerie paths` prints it; macOS:
+`~/Library/Application Support/Valerie/logs/valerie-<date>.log`, UTC times, kept `logs.keep_days`). Read it first when
+the owner reports a failure. When you add code where something can fail without the user seeing why, log it with
+`crate::log::line("<area>", …)` (every toast is already logged). Never log secrets (tokens, passwords, keys).
+
 ## Building and checking
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).

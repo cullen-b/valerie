@@ -62,7 +62,7 @@ pub fn spawn(port: u16, token: String, proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(s) => s,
-            Err(e) => return eprintln!("valerie: MCP server could not bind 127.0.0.1:{port}: {e}"),
+            Err(e) => return crate::log::line("mcp", format!("MCP server could not bind 127.0.0.1:{port}: {e}")),
         };
         for rq in server.incoming_requests() {
             let (proxy, token) = (proxy.clone(), token.clone());

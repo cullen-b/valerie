@@ -333,8 +333,11 @@ and opens their popups and options pages. `extensions.enabled: false` turns them
   (which the user approves); pages themselves can't use a plugin's key.
 - Clearing a site's data (`clear_site_data`) always asks the user.
 - Data (tabs, history) lives in `{data}`; don't edit it by hand while Valerie is running.
+- When something fails (sync, updates, plugins, hooks), read the newest `valerie-<date>.log` in `{logs}`: one line per
+  error or message shown to the user, times in UTC. `logs.keep_days` sets how long they're kept (default 7).
 "#,
         data = data_dir().display(),
+        logs = crate::log::dir().display(),
     );
     g
 }
