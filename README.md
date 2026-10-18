@@ -209,6 +209,9 @@ GitHub, or anyone who gets the repo, sees only scrambled files. Files Valerie re
 - **Plugins and AI programs that arrive from another machine wait** until you allow them on this one ("Allow Plugins
   from Other Machines"), showing what they'd run. What you make on a machine is never held (`sync.ask_before_plugins`).
 - Turning encryption on starts the repo's history over, so nothing readable from before stays in it.
+- **Change the passphrase** any time from "Sync Passphrase" on a machine that has it: everything is encrypted again,
+  the history starts over, and each other machine asks for the new one once. Forgot it everywhere? "Start over"
+  there: every machine still has its own tabs, chats and passwords and sends them again with the new passphrase.
 - **Different AI apps on different machines** just work: settings for one machine go in `this-mac.yaml`, the AI you
   pick while setting up a new machine stays that machine's, and if a machine doesn't have the AI the others use,
   Valerie uses one it has (`agents.fallback`).

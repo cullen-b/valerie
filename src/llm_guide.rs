@@ -177,7 +177,8 @@ start Valerie. Device-specific files (`AGENTS.md`, `reference/`) are regenerated
   of them and put this one's in this-mac.yaml (with `agents.fallback` on, a missing AI is replaced by an installed
   one anyway).
 - Tabs, chats and passwords travel encrypted with the user's sync passphrase (`sync.encrypt`); you never see or need
-  it. The user sets or types it with "Sync Passphrase". Never write files under `devices/` or `chats/*.enc`.
+  it. The user sets, types, changes or starts it over with "Sync Passphrase" (never ask them for it). Never write
+  files under `devices/` or `chats/*.enc`.
 - Plugins and agent `command`s that arrive from another machine wait until the user allows them on this one
   ("Allow Plugins from Other Machines", or `"{exe}" allow-from-sync`). Plugins you make here aren't held. Never allow
   them yourself.

@@ -282,7 +282,8 @@ fn write_mine(dir: &Path, me: &DeviceTabs, opt: &Options, st: &mut State) -> Res
         return Ok(());
     }
     let _ = std::fs::remove_file(devices.join(format!("{}.json", me.id)));
-    let Some(key) = &opt.key else { return Ok(()) };
+    // Only the key for the repo's passphrase as it is now (another machine may just have changed it).
+    let Some(key) = opt.key.as_ref().filter(|k| crate::crypt::read_key_file(dir).is_some_and(|kf| crate::crypt::fits(&kf, k))) else { return Ok(()) };
     // The tabs file only changes when the tabs do (the time inside it is set fresh when it's written).
     let d = digest(&plain(&tabs));
     let path = format!("devices/{}.json.enc", me.id);
@@ -485,12 +486,44 @@ pub fn run(dir: &Path, me: &DeviceTabs, opt: &Options) -> Result<Outcome> {
         }
     }
     out.has_passphrase = crate::crypt::read_key_file(dir).is_some();
-    out.locked = opt.encrypt && out.has_passphrase && opt.key.is_none();
+    let kf = crate::crypt::read_key_file(dir);
+    let key = opt.key.filter(|k| kf.as_ref().is_some_and(|kf| crate::crypt::fits(kf, k)));
+    out.locked = opt.encrypt && out.has_passphrase && key.is_none();
+    let opt = &Options { key, chats: opt.chats.clone(), vaults: opt.vaults.clone(), old_names: opt.old_names.clone(), ..Default::default() };
     read_theirs(dir, me, opt, &mut st, changed.as_deref(), &mut out);
     if let Ok(s) = serde_json::to_string(&st) {
         let _ = std::fs::write(state_path(), s);
     }
     Ok(out)
+}
+
+/// Change the sync passphrase. With this machine's key for the current one, everything encrypted in the repo is
+/// encrypted again with the new one. Without it (forgotten everywhere), the encrypted files are removed: every machine
+/// still has its own tabs, chats and passwords and sends them again once it has the new passphrase. Either way the
+/// next sync should start the history over, so nothing stays under the old passphrase.
+pub fn change_passphrase(dir: &Path, old: Option<&crate::crypt::Key>, passphrase: &str) -> Result<crate::crypt::Key> {
+    let (kf, key) = crate::crypt::new_key_file(passphrase)?;
+    if let (Some(k), Some(cur)) = (old, crate::crypt::read_key_file(dir)) {
+        if !crate::crypt::fits(&cur, k) {
+            bail!("this computer doesn't have the current passphrase: enter it first, or start over");
+        }
+    }
+    for sub in ["devices", "chats"] {
+        for e in std::fs::read_dir(dir.join(sub)).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.extension().is_none_or(|x| x != "enc") {
+                continue;
+            }
+            let again = old.and_then(|k| std::fs::read(&p).ok().and_then(|b| crate::crypt::open(k, &b).ok()));
+            match again {
+                Some(plain) => std::fs::write(&p, crate::crypt::seal(&key, &plain))?,
+                None => std::fs::remove_file(&p)?,
+            }
+        }
+    }
+    std::fs::write(dir.join(crate::crypt::KEY_FILE), serde_json::to_string_pretty(&kf)?)?;
+    crate::crypt::store_key(&kf, &key)?;
+    Ok(key)
 }
 
 /// Set the sync passphrase (the first machine) or enter it (every other one). Returns the key and whether this
@@ -659,6 +692,39 @@ mod tests {
         let before = git(&bare, &["rev-list", "--count", "main"]);
         run(&a.join("config"), &me_a, &opt(&a, Some(key), false)).unwrap();
         assert_eq!(git(&bare, &["rev-list", "--count", "main"]), before, "an idle sync committed");
+
+        // A changes the passphrase: everything is encrypted again, the history starts over, and B's old key is useless.
+        let new_key = change_passphrase(&a.join("config"), Some(&key), "a brand new sync passphrase").unwrap();
+        run(&a.join("config"), &me_a, &opt(&a, Some(new_key), true)).unwrap();
+        assert_eq!(git(&bare, &["rev-list", "--count", "main"]).trim(), "1");
+        on(&b);
+        let out = run(&b.join("config"), &me_b, &opt(&b, Some(kb), false)).unwrap();
+        assert!(out.locked && out.devices.is_empty(), "B still reads with the old passphrase");
+        let encrypted: Vec<String> = git(&bare, &["ls-tree", "-r", "--name-only", "main"]).lines().filter(|l| l.ends_with(".enc")).map(str::to_string).collect();
+        assert!(!encrypted.is_empty());
+        for f in &encrypted {
+            let blob = Command::new("git").arg("-C").arg(&bare).args(["show", &format!("main:{f}")]).output().unwrap().stdout;
+            assert!(crate::crypt::open(&new_key, &blob).is_ok(), "{f} isn't under the new passphrase");
+        }
+        assert!(set_passphrase(&b.join("config"), "correct horse battery staple").is_err(), "the old passphrase still works");
+        let (kb2, created) = set_passphrase(&b.join("config"), "a brand new sync passphrase").unwrap();
+        assert!(!created);
+        let out = run(&b.join("config"), &me_b, &opt(&b, Some(kb2), false)).unwrap();
+        assert!(out.devices.iter().any(|d| d.device == "Mac A"));
+
+        // Forgotten everywhere: B starts over. A is locked until it has the newest one, then both see each other again.
+        let k3 = change_passphrase(&b.join("config"), None, "starting over with this one").unwrap();
+        run(&b.join("config"), &me_b, &opt(&b, Some(k3), true)).unwrap();
+        on(&a);
+        let out = run(&a.join("config"), &me_a, &opt(&a, Some(new_key), false)).unwrap();
+        assert!(out.locked);
+        assert!(a.join("data/chats/c1.json").exists(), "starting over lost a machine's own chat");
+        let (ka3, _) = set_passphrase(&a.join("config"), "starting over with this one").unwrap();
+        let out = run(&a.join("config"), &me_a, &opt(&a, Some(ka3), false)).unwrap();
+        assert!(out.devices.iter().any(|d| d.device == "Mac B"));
+        on(&b);
+        let out = run(&b.join("config"), &me_b, &opt(&b, Some(k3), false)).unwrap();
+        assert!(out.devices.iter().any(|d| d.device == "Mac A"), "A's tabs didn't come back after starting over");
 
         std::env::remove_var("VALERIE_CONFIG_DIR");
         std::env::remove_var("VALERIE_DATA_DIR");
