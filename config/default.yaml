@@ -675,7 +675,8 @@ sync:
   device: ""               # this machine's name as other machines show it; empty = the computer's name (set it in
                            # this-mac.yaml, since config.yaml is shared by every machine)
   encrypt: true            # encrypt tabs, chats and passwords with your sync passphrase before they reach the repo
-                           # (typed once per machine; "Sync Passphrase" in the command bar). false = tabs and chats
+                           # (typed once per machine; "Sync Passphrase" in the command bar sets, enters or changes
+                           # it, or starts over if it's forgotten everywhere). false = tabs and chats
                            # go up readable and passwords don't sync
   passwords: true          # sync saved passwords too (encrypted; needs `encrypt`). true | false
   ask_before_plugins: true # plugins and AI programs that arrive from another machine wait until you allow them on

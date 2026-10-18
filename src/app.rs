@@ -56,6 +56,8 @@ pub enum UserEvent {
     SyncDone(Result<sync::Outcome, String>),
     /// The sync passphrase was set or entered (or wasn't the right one).
     PassphraseSet(Result<bool, String>),
+    /// The sync passphrase was changed (or started over) here.
+    PassphraseChanged(Result<(), String>),
     /// One held plugin or program was answered; ask about the rest.
     AskHeld(Vec<String>, Vec<String>, bool),
     Downloaded { ok: bool, path: Option<PathBuf>, url: String, open: bool },
@@ -241,7 +243,8 @@ pub struct App {
     /// The sync repo has a passphrase, and whether this machine knows it.
     sync_passphrase: bool,
     sync_locked: bool,
-    asked_passphrase: bool,
+    /// The passphrase (by its salt) this session already asked about.
+    asked_passphrase: Option<String>,
     /// A sync has finished since launch (so the passphrase state is known).
     sync_checked: bool,
     page_opens: Vec<std::time::Instant>,
@@ -819,7 +822,7 @@ impl App {
             resync: false,
             sync_passphrase: false,
             sync_locked: false,
-            asked_passphrase: false,
+            asked_passphrase: None,
             sync_checked: false,
             page_opens: Vec::new(),
             sidebar_hidden_at: std::time::Instant::now(),
@@ -3262,10 +3265,12 @@ impl App {
         self.sync_checked = true;
         self.welcome_send(&json!({ "type": "sync_key", "state": self.passphrase_state(), "suggestion": crate::crypt::suggest_passphrase() }));
         // Asked once ever for each case (choose one / type it here); after that it's "Sync Passphrase".
+        // (A passphrase changed on another machine counts as a new case: asked again, once.)
         let asked = config::data_dir().join(if locked { "asked-enter-passphrase" } else { "asked-new-passphrase" });
-        if self.config.sync.encrypt && (locked || !has_passphrase) && !self.asked_passphrase && !self.welcome_open && !asked.exists() {
-            self.asked_passphrase = true;
-            let _ = std::fs::write(&asked, "");
+        let salt = crate::crypt::read_key_file(&config::config_dir()).map(|k| k.salt).unwrap_or_default();
+        if self.config.sync.encrypt && (locked || !has_passphrase) && self.asked_passphrase.as_ref() != Some(&salt) && !self.welcome_open && std::fs::read_to_string(&asked).ok() != Some(salt.clone()) {
+            self.asked_passphrase = Some(salt.clone());
+            let _ = std::fs::write(&asked, &salt);
             self.toast(if locked { "Enter your sync passphrase to bring over your tabs, chats and passwords" } else { "Choose a sync passphrase so your tabs, chats and passwords sync encrypted" });
             self.open_sync_passphrase();
         }
@@ -4950,6 +4955,22 @@ impl App {
                 }
                 self.ask_about_held(plugins, programs);
             }
+            UserEvent::PassphraseChanged(r) => match r {
+                Ok(()) => {
+                    self.sync_passphrase = true;
+                    self.sync_locked = false;
+                    self.fresh_history = true;
+                    self.welcome_send(&json!({ "type": "sync_key", "state": "done", "changed": true }));
+                    self.toast("Sync passphrase changed: type the new one once on each of your other machines");
+                    self.start_sync();
+                }
+                Err(e) => {
+                    self.welcome_send(&json!({ "type": "sync_key", "state": "failed", "detail": e }));
+                    if !self.welcome_open {
+                        self.toast(&e);
+                    }
+                }
+            },
             UserEvent::PassphraseSet(r) => match r {
                 Ok(created) => {
                     self.sync_passphrase = true;
@@ -7013,6 +7034,22 @@ impl App {
                 if arboard::Clipboard::new().and_then(|mut c| c.set_text(text)).is_ok() {
                     self.toast("Copied");
                 }
+            }
+            // A new passphrase: re-encrypting with this machine's key ("change"), or without it ("reset": forgotten).
+            "sync_passphrase_change" | "sync_passphrase_reset" => {
+                let phrase = m["passphrase"].as_str().unwrap_or("").to_string();
+                let reset = m["t"] == "sync_passphrase_reset";
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let dir = config::config_dir();
+                    let old = crate::crypt::read_key_file(&dir).and_then(|kf| crate::crypt::stored_key(&kf));
+                    let r = if !reset && old.is_none() {
+                        Err("this computer doesn't have the current passphrase: enter it, or start over".to_string())
+                    } else {
+                        sync::change_passphrase(&dir, if reset { None } else { old.as_ref() }, &phrase).map(|_| ()).map_err(|e| format!("{e:#}"))
+                    };
+                    send(&p, UserEvent::PassphraseChanged(r));
+                });
             }
             "sync_passphrase" => {
                 let phrase = m["passphrase"].as_str().unwrap_or("").to_string();

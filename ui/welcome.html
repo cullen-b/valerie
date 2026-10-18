@@ -327,29 +327,44 @@ function syncStep(root) {
   wrap.append(left, macs); root.append(wrap);
 }
 
-// The sync passphrase: tabs, chats and passwords are encrypted with it before they reach GitHub.
+// The sync passphrase: tabs, chats and passwords are encrypted with it before they reach GitHub. `mode` is change (a new
+// one, re-encrypting with this Mac's key) or reset (forgotten everywhere: start over).
 function passphrase() {
   const box = el("div", "key"), k = S.key || {};
   if (!k.state || k.state === "checking") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Looking at your sync repo…")); box.append(w); return box; }
   if (k.state === "off") return box;
-  if (k.state === "done") { const d = el("div", "done-line"); d.append("✓ ", el("span", null, "Tabs, chats and passwords are encrypted with your passphrase")); box.append(d); return box; }
-  const fresh = k.state === "new" || (k.state === "failed" && k.was === "new");
-  box.append(el("h3", null, fresh ? "Choose a sync passphrase" : "Enter your sync passphrase"),
-    el("p", "hint", fresh ? "It encrypts your tabs, chats and passwords before they reach GitHub. You'll type it once on each Mac. Nobody can recover it, so keep it somewhere safe, like your password manager."
-      : "The one you chose on your other Mac. It unlocks your tabs, chats and passwords here."));
+  const mode = k.mode || "";
+  if (k.state === "done" && !mode) {
+    const d = el("div", "done-line");
+    d.append("✓ ", el("span", null, k.changed ? "Passphrase changed. Type the new one once on each of your other Macs." : "Tabs, chats and passwords are encrypted with your passphrase"));
+    box.append(d, btn("Change passphrase", "small", () => { S.key = { ...k, mode: "change", changed: false }; S.typed = null; draw(); }));
+    return box;
+  }
+  const kind = mode || (k.state === "new" || (k.state === "failed" && k.was === "new") ? "new" : "enter");
+  const text = {
+    new: ["Choose a sync passphrase", "It encrypts your tabs, chats and passwords before they reach GitHub. You'll type it once on each Mac. Nobody can recover it, so keep it somewhere safe, like your password manager.", "Use this passphrase"],
+    enter: ["Enter your sync passphrase", "The one you chose on your other Mac. It unlocks your tabs, chats and passwords here.", "Unlock"],
+    change: ["Choose a new sync passphrase", "Everything in your sync repo is encrypted again with it, and the repo's history starts over so nothing stays under the old one. Each of your other Macs asks for the new one once.", "Change passphrase"],
+    reset: ["Start over with a new passphrase", "Valerie removes the encrypted copies in your sync repo. Every Mac keeps its own tabs, chats and passwords and sends them again once you type the new passphrase there. Only what came from a Mac you no longer have is lost.", "Start over"],
+  }[kind];
+  const fresh = kind !== "enter";
+  box.append(el("h3", null, text[0]), el("p", "hint", text[1]));
   const row = el("div", "keyrow"), input = el("input");
   input.type = fresh ? "text" : "password"; input.spellcheck = false; input.autocomplete = "off";
   input.placeholder = fresh ? "at least 12 characters" : "your sync passphrase";
   if (fresh) input.value = S.typed != null ? S.typed : (k.suggestion || "");
   input.oninput = () => { S.typed = input.value; };
-  const go = () => { if (!input.value.trim()) return; S.key = { state: "working", was: fresh ? "new" : "enter" }; send({ t: "sync_passphrase", passphrase: input.value }); draw(); };
+  const msg = { new: "sync_passphrase", enter: "sync_passphrase", change: "sync_passphrase_change", reset: "sync_passphrase_reset" }[kind];
+  const go = () => { if (!input.value.trim()) return; S.key = { ...k, state: "working", was: kind === "enter" ? "enter" : "new", mode }; send({ t: msg, passphrase: input.value }); draw(); };
   input.onkeydown = (e) => { if (e.key === "Enter") go(); };
   row.append(input);
   if (fresh) row.append(btn("Copy", "small", () => send({ t: "copy", text: input.value })));
-  row.append(btn(fresh ? "Use this passphrase" : "Unlock", "primary", go));
+  row.append(btn(text[2], "primary", go));
+  if (mode) row.append(btn("Cancel", "ghost", () => { S.key = { ...k, state: mode === "change" ? "done" : "enter", mode: "" }; S.typed = null; draw(); }));
   box.append(row);
-  if (k.state === "working") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Checking…")); box.append(w); }
+  if (k.state === "working") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, mode ? "Encrypting again…" : "Checking…")); box.append(w); }
   if (k.state === "failed") box.append(el("div", "err", k.detail || "That didn't work."));
+  if (kind === "enter" && k.state !== "working") box.append(btn("Forgot it? Start over", "ghost small", () => { S.key = { ...k, state: "enter", mode: "reset" }; S.typed = null; draw(); }));
   setTimeout(() => { if (document.activeElement.tagName !== "INPUT") input.focus(); }, 0);
   return box;
 }
@@ -526,7 +541,14 @@ window.welcome = {
     else if (ev.type === "imported") S.imported[ev.source] = ev;
     else if (ev.type === "models") { W.models = ev.models; if (document.activeElement && document.activeElement.tagName === "SELECT") return; }
     else if (ev.type === "sync") { S.sync = ev; if (ev.step === "done") W.sync = ev.repo; }
-    else if (ev.type === "sync_key") { if (ev.state === "failed") ev.was = (S.key && S.key.was) || "enter"; else if (!ev.suggestion && S.key) ev.suggestion = S.key.suggestion; if (ev.state === "done") S.typed = null; S.key = ev; }
+    else if (ev.type === "sync_key") {
+      if (ev.state === "failed") { ev.was = (S.key && S.key.was) || "enter"; ev.mode = (S.key && S.key.mode) || ""; }
+      if (!ev.suggestion && S.key) ev.suggestion = S.key.suggestion;
+      if (ev.state === "done") S.typed = null;
+      // A sync finishing while the change form is open doesn't close it.
+      if (ev.state !== "failed" && !ev.changed && S.key && S.key.mode && S.key.state !== "working") return;
+      S.key = ev;
+    }
     else if (ev.type === "only") { S.only = ev.step; S.step = 0; }
     else if (ev.type === "customized") S.custom = { state: "done", ok: ev.ok, summary: ev.summary };
     draw();

@@ -106,8 +106,13 @@ fn key_path() -> std::path::PathBuf {
 pub fn stored_key(kf: &KeyFile) -> Option<Key> {
     let hexed = keychain_get(&kf.salt).or_else(|| std::fs::read_to_string(key_path()).ok().and_then(|s| s.trim().strip_prefix(&format!("{}:", kf.salt)).map(str::to_string)))?;
     let key: Key = unhex(&hexed).ok()?.try_into().ok()?;
-    // A key that doesn't open the check value belongs to another passphrase.
-    matches!(open(&key, &unhex(&kf.check).ok()?), Ok(v) if v == CHECK).then_some(key)
+    fits(kf, &key).then_some(key)
+}
+
+/// Whether `key` is the one for this key file (a key that doesn't open the check value belongs to another, perhaps
+/// older, passphrase).
+pub fn fits(kf: &KeyFile, key: &Key) -> bool {
+    unhex(&kf.check).ok().and_then(|c| open(key, &c).ok()).is_some_and(|v| v == CHECK)
 }
 
 // Tests keep keys in their own data folder, never in the real Keychain.

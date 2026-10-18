@@ -611,7 +611,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),
     ("set_up_sync", "Set Up Sync (sign in to GitHub)"),
-    ("sync_passphrase", "Sync Passphrase (encrypts your synced tabs, chats and passwords)"),
+    ("sync_passphrase", "Sync Passphrase (set, enter or change the one that encrypts your synced tabs, chats and passwords)"),
     ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
