@@ -1,0 +1,55 @@
+name: Promote to stable
+# Makes a tested edge build the stable release everyone else gets: installed copies, the install line, Homebrew and
+# the website all follow GitHub's "latest release". Nothing is rebuilt, so the exact signed files you tried go out.
+#   gh workflow run promote.yml                      (the newest edge build)
+#   gh workflow run promote.yml -f tag=v0.1.160      (a particular one)
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Edge build to promote, e.g. v0.1.160 (empty = the newest)"
+        required: false
+        default: ""
+      summary:
+        description: "A few words about this release, shown above the list of changes (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      SUMMARY: ${{ inputs.summary }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Pick the build
+        run: |
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --limit 100 --json tagName,isPrerelease \
+              --jq '[.[] | select(.isPrerelease and (.tagName | startswith("v")))][0].tagName')
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then echo "There's no edge build to promote."; exit 1; fi
+          if [ "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" != "true" ]; then echo "$TAG is already stable."; exit 1; fi
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx latest.json || { echo "$TAG has no latest.json"; exit 1; }
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+      - name: Release notes (everything since the last stable release)
+        run: |
+          PREV=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)
+          {
+            if [ -n "$SUMMARY" ]; then echo "$SUMMARY"; echo; fi
+            echo "## What's new"
+            git log --no-merges --format='- %s' ${PREV:+$PREV..}"$TAG" | cut -c1-400
+          } > notes.md
+          cat notes.md
+      - name: Make it the stable release
+        run: gh release edit "$TAG" --prerelease=false --latest --title "Valerie ${TAG#v}" --notes-file notes.md

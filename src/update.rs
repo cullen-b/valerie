@@ -12,6 +12,11 @@ use std::process::Command;
 /// Moving to a new key (a Developer ID, say) means shipping one release that lists both, signed with the old key.
 pub const RELEASE_REQUIREMENTS: &[&str] = &[r#"identifier "dev.valerie.browser" and certificate leaf = H"C69D28F44851570281196E2FC1C24BDCB9B9B6D1""#];
 
+/// Stable releases: GitHub's "latest release", which only ever points at a build the maintainer promoted.
+pub const STABLE_FEED: &str = "https://github.com/cullen-b/valerie/releases/latest/download/latest.json";
+/// Every build of main, as soon as it's built (the rolling `edge` release; .github/workflows/release.yml).
+pub const EDGE_FEED: &str = "https://github.com/cullen-b/valerie/releases/download/edge/latest.json";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Release {
     pub version: String,

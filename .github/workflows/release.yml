@@ -1,6 +1,7 @@
 name: Release
-# Every push to main becomes a release: tested, built for macOS (signed with Valerie's release key), Linux and
-# Windows, and published with latest.json, which installed copies of Valerie read to update themselves.
+# Every push to main becomes an edge (testing) build: tested, built for macOS (signed with Valerie's release key),
+# Linux and Windows, and published as a pre-release with latest.json. Copies on the edge channel update from the
+# rolling `edge` release's latest.json; everyone else stays on stable until a build is promoted (promote.yml).
 on:
   push:
     branches: [main]
@@ -145,7 +146,14 @@ jobs:
                     open("dist/latest.json", "w"), indent=2)
           PY
           cat dist/latest.json
-      - name: Publish
+      - name: Publish as a testing build (stable users get it only once it's promoted)
         run: |
           gh release create "v$VERSION" dist/Valerie-macos.zip dist/Valerie.dmg dist/valerie-linux-x86_64.tar.gz \
-            dist/valerie-windows-x86_64.zip dist/latest.json --title "Valerie $VERSION" --notes-file notes.md --target "$GITHUB_SHA" --latest
+            dist/valerie-windows-x86_64.zip dist/latest.json --title "Valerie $VERSION (testing)" --notes-file notes.md \
+            --target "$GITHUB_SHA" --prerelease
+      - name: Edge feed (what copies on the edge channel update from)
+        run: |
+          gh release view edge >/dev/null 2>&1 || gh release create edge --prerelease --target "$GITHUB_SHA" \
+            --title "Valerie edge (testing builds)" \
+            --notes "Always describes the newest testing build. Valerie with \`updates.channel: edge\` updates from here; everyone else gets stable releases."
+          gh release upload edge dist/latest.json --clobber

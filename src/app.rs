@@ -7099,7 +7099,7 @@ impl App {
         if manual {
             self.toast("Checking for updates…");
         }
-        let (feed, p) = (self.config.updates.feed.clone(), self.proxy.clone());
+        let (feed, p) = (self.config.updates.feed_url(), self.proxy.clone());
         std::thread::spawn(move || {
             let release = crate::update::fetch(&feed).map_err(|e| format!("{e:#}"));
             send(&p, UserEvent::UpdateFound { release, manual });
@@ -7123,7 +7123,10 @@ impl App {
                 match self.update_ready.clone() {
                     // Already downloaded in the background: it only needs a restart.
                     Some(ready) => self.offer_restart(&ready),
-                    None => self.toast(&format!("You're up to date: Valerie {current} is the newest version")),
+                    None => {
+                        let edge = if self.config.updates.channel == "edge" { " testing build" } else { "" };
+                        self.toast(&format!("You're up to date: Valerie {current} is the newest{edge} version"))
+                    }
                 }
             }
             return;

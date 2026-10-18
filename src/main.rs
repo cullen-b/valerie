@@ -220,6 +220,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
             p.push(format!("{what} is {v:?}; use {}", allowed.join(", ")));
         }
     };
+    one_of(&mut p, "updates: channel".into(), &c.updates.channel, &["stable", "edge"]);
     const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);
