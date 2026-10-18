@@ -3451,9 +3451,9 @@ impl App {
         if let Some(n) = config::take_fallback_note() {
             self.toast(&n);
         }
-        // Saved tabs nobody opens any more: asked about at most once an hour, never over the welcome guide.
+        // Saved tabs nobody opens any more: looked for once a day, never over the welcome guide.
         let days = self.config.tabs.ask_to_keep_unused_days;
-        if days > 0.0 && !self.asking_saved && !self.welcome_open && now().saturating_sub(self.saved_checked) > 3600 {
+        if days > 0.0 && !self.asking_saved && !self.welcome_open && now().saturating_sub(self.saved_checked) > 86400 {
             self.saved_checked = now();
             let stale = self.state.unused_saved(days, now());
             if !stale.is_empty() {
