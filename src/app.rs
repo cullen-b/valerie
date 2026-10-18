@@ -954,7 +954,10 @@ impl App {
     /// The page settings for one page: page_config plus the space it's in (plugins can be limited to spaces).
     fn page_config_for(&self, target: Target, base: &Value) -> Value {
         let mut c = base.clone();
-        c["space"] = json!(self.space_name(self.space_of_target(target)));
+        let space = self.space_of_target(target);
+        c["space"] = json!(self.space_name(space));
+        // Its own space's accent, so switching spaces doesn't have to tell every page.
+        c["accent"] = json!(self.theme_for(space).accent);
         c
     }
 
@@ -1921,7 +1924,7 @@ impl App {
         if changed {
             self.queue_event("space_switched", self.state.active_tab(), None);
         }
-        self.apply_space_settings();
+        let settings_changed = self.apply_space_settings();
         for p in self.panes() {
             self.ensure_view(p);
         }
@@ -1935,7 +1938,10 @@ impl App {
         }
         self.focus_active();
         self.render();
-        self.refresh_content_config();
+        // Pages carry their own space's settings; only a space with its own `settings` changes them.
+        if settings_changed {
+            self.refresh_content_config();
+        }
         self.dirty = true;
     }
 
@@ -2520,18 +2526,19 @@ impl App {
     }
 
     /// Switching spaces: if either space has its own settings, switch to the new space's.
-    fn apply_space_settings(&mut self) {
+    /// Returns whether the settings changed (then pages need telling).
+    fn apply_space_settings(&mut self) -> bool {
         let space = self.space_name(self.state.active_space);
         if self.config_space.as_deref() == Some(space.as_str()) || self.base_config.is_null() {
-            return;
+            return false;
         }
         let had = self.config_space.as_ref().is_some_and(|s| self.config.spaces.iter().any(|x| &x.name == s && x.settings.is_some()));
         let has = self.config.spaces.iter().any(|x| x.name == space && x.settings.is_some());
         self.config_space = Some(space);
         if !had && !has {
-            return;
+            return false;
         }
-        let Ok(base) = serde_yaml::from_value::<Config>(self.base_config.clone()) else { return };
+        let Ok(base) = serde_yaml::from_value::<Config>(self.base_config.clone()) else { return false };
         let mut c = self.with_space_settings(base);
         c.layout.sidebar_visible = self.config.layout.sidebar_visible;
         self.config = c;
@@ -2543,6 +2550,7 @@ impl App {
         }
         self.build_menu();
         self.layout();
+        true
     }
 
     fn command_label(&self, cmd: &Command) -> String {
