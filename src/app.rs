@@ -54,6 +54,8 @@ pub enum UserEvent {
     Tick,
     ConfigChanged,
     SyncDone(Result<sync::Outcome, String>),
+    /// "Restart Now" was picked after an update was installed.
+    RestartNow,
     /// The sync passphrase was set or entered (or wasn't the right one).
     PassphraseSet(Result<bool, String>),
     /// The sync passphrase was changed (or started over) here.
@@ -5116,6 +5118,7 @@ impl App {
                     self.dispatch(cmd, elwt);
                 }
             }
+            UserEvent::RestartNow => self.dispatch(Command::Restart, elwt),
             UserEvent::QuitAnswered(ok) => {
                 self.quit_asked = false;
                 self.quit = ok;
@@ -5184,7 +5187,11 @@ impl App {
                 match result {
                     Ok(v) => {
                         self.update_ready = Some(v.clone());
-                        self.toast(&format!("Valerie {v} is installed: it starts next time you open Valerie (or run Restart Valerie)"));
+                        if manual {
+                            self.offer_restart(&v);
+                        } else {
+                            self.toast(&format!("Valerie {v} is installed: it starts next time you open Valerie (or run Restart Valerie)"));
+                        }
                     }
                     Err(e) if manual => self.toast(&format!("Couldn't update Valerie: {e}")),
                     Err(e) => eprintln!("valerie: update: {e}"),
@@ -7113,7 +7120,11 @@ impl App {
         let current = self.update_ready.clone().unwrap_or_else(|| crate::update::current().to_string());
         if !crate::update::newer(&r.version, &current) {
             if manual {
-                self.toast(&format!("Valerie {current} is the newest version"));
+                match self.update_ready.clone() {
+                    // Already downloaded in the background: it only needs a restart.
+                    Some(ready) => self.offer_restart(&ready),
+                    None => self.toast(&format!("You're up to date: Valerie {current} is the newest version")),
+                }
             }
             return;
         }
@@ -7147,6 +7158,20 @@ impl App {
                     self.toast(&format!("Valerie {} is out: run Check for Updates to get it", r.version));
                 }
             }
+        }
+    }
+
+    /// An update is installed but this copy is still the old one: restart now, or it starts next time.
+    fn offer_restart(&mut self, version: &str) {
+        let p = self.proxy.clone();
+        let body = format!("You're running {}. Restarting takes a moment, and your tabs come back as they were. Otherwise it starts the next time you open Valerie.", crate::update::current());
+        platform::ask(&self.chrome, &format!("Valerie {version} is ready"), &body, "Restart Now", "Later", move |now| {
+            if now {
+                send(&p, UserEvent::RestartNow);
+            }
+        });
+        if !cfg!(target_os = "macos") {
+            self.toast(&format!("Valerie {version} is installed: run Restart Valerie to use it"));
         }
     }
 
