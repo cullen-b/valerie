@@ -237,6 +237,12 @@ fn account(origin: &str, username: &str) -> String {
 }
 
 pub fn save(vault: &str, origin: &str, username: &str, password: &str) -> Result<()> {
+    store(vault, origin, username, password)?;
+    stamp(vault, origin, username, crate::state::now(), false);
+    Ok(())
+}
+
+fn store(vault: &str, origin: &str, username: &str, password: &str) -> Result<()> {
     let host = url::Url::parse(origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
     keychain::save(&service(vault), &account(origin, username), &format!("Valerie: {host} ({username})"), password)
 }
@@ -246,7 +252,9 @@ pub fn password(e: &Entry) -> Result<Option<String>> {
 }
 
 pub fn delete(e: &Entry) -> Result<()> {
-    keychain::delete(&service(&e.vault), &account(&e.origin, &e.username))
+    keychain::delete(&service(&e.vault), &account(&e.origin, &e.username))?;
+    stamp(&e.vault, &e.origin, &e.username, crate::state::now(), true);
+    Ok(())
 }
 
 /// Every entry in the given vaults (usernames only; passwords stay in the keychain until filled).
@@ -262,9 +270,131 @@ pub fn list(vaults: &[String]) -> Vec<Entry> {
         .collect()
 }
 
+// ---------------------------------------------------------------- sync (sync.rs encrypts these before they leave)
+
+/// One saved password as it travels between machines; `deleted` marks one removed (so it goes everywhere).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Synced {
+    pub vault: String,
+    pub origin: String,
+    pub username: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub password: String,
+    pub modified: u64,
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+struct Stamp {
+    modified: u64,
+    #[serde(default)]
+    deleted: bool,
+}
+
+fn stamps_path() -> std::path::PathBuf {
+    crate::config::data_dir().join("password-changes.json")
+}
+
+/// When each password was last saved or deleted on this machine (the Keychain doesn't say in a way that travels).
+fn stamps() -> std::collections::BTreeMap<String, Stamp> {
+    std::fs::read_to_string(stamps_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn stamp(vault: &str, origin: &str, username: &str, modified: u64, deleted: bool) {
+    let mut all = stamps();
+    all.insert(format!("{vault}\n{origin}\n{username}"), Stamp { modified, deleted });
+    let p = stamps_path();
+    let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
+    if let Ok(s) = serde_json::to_string(&all) {
+        let _ = std::fs::write(p, s);
+    }
+}
+
+/// Something that changes whenever a password is added, changed or removed here, without reading any secret
+/// (reading every password on each sync would be slow, and could make the Keychain ask).
+pub fn signature(vaults: &[String]) -> String {
+    let mut names: Vec<String> = list(vaults).iter().map(|e| format!("{}\n{}\n{}", e.vault, e.origin, e.username)).collect();
+    names.sort();
+    format!("{}|{}", names.join("\t"), std::fs::read_to_string(stamps_path()).unwrap_or_default())
+}
+
+/// Every password in these vaults, plus the ones deleted here, for the other machines.
+pub fn export(vaults: &[String]) -> Vec<Synced> {
+    let st = stamps();
+    let mut out: Vec<Synced> = list(vaults)
+        .into_iter()
+        .filter_map(|e| {
+            let pw = password(&e).ok().flatten()?;
+            let modified = st.get(&format!("{}\n{}\n{}", e.vault, e.origin, e.username)).map_or(0, |s| s.modified);
+            Some(Synced { vault: e.vault, origin: e.origin, username: e.username, password: pw, modified, deleted: false })
+        })
+        .collect();
+    for (k, s) in st.iter().filter(|(_, s)| s.deleted) {
+        let mut parts = k.splitn(3, '\n');
+        if let (Some(v), Some(o), Some(u)) = (parts.next(), parts.next(), parts.next()) {
+            if vaults.iter().any(|x| x == v) {
+                out.push(Synced { vault: v.into(), origin: o.into(), username: u.into(), password: String::new(), modified: s.modified, deleted: true });
+            }
+        }
+    }
+    out
+}
+
+/// The newest of each password across `lists` (other machines' exports).
+pub fn newest(lists: Vec<Vec<Synced>>) -> Vec<Synced> {
+    let mut best: std::collections::BTreeMap<String, Synced> = Default::default();
+    for e in lists.into_iter().flatten() {
+        let k = format!("{}\n{}\n{}", e.vault, e.origin, e.username);
+        if best.get(&k).is_none_or(|b| e.modified > b.modified) {
+            best.insert(k, e);
+        }
+    }
+    best.into_values().collect()
+}
+
+/// Bring in other machines' changes that are newer than this machine's. Returns how many changed here.
+pub fn import(remote: &[Synced], vaults: &[String]) -> usize {
+    let st = stamps();
+    let here: std::collections::BTreeSet<String> = list(vaults).iter().map(|e| format!("{}\n{}\n{}", e.vault, e.origin, e.username)).collect();
+    let mut n = 0;
+    for e in remote.iter().filter(|e| vaults.contains(&e.vault)) {
+        let k = format!("{}\n{}\n{}", e.vault, e.origin, e.username);
+        let mine = st.get(&k).copied();
+        let have = here.contains(&k);
+        let newer = match mine {
+            Some(m) => e.modified > m.modified,
+            None => !have || e.modified > 0,
+        };
+        if !newer {
+            continue;
+        }
+        let (ok, changed) = if e.deleted {
+            (!have || keychain::delete(&service(&e.vault), &account(&e.origin, &e.username)).is_ok(), have)
+        } else {
+            let same = have && password(&Entry { vault: e.vault.clone(), origin: e.origin.clone(), username: e.username.clone() }).ok().flatten().as_deref() == Some(e.password.as_str());
+            (same || store(&e.vault, &e.origin, &e.username, &e.password).is_ok(), !same)
+        };
+        if ok {
+            stamp(&e.vault, &e.origin, &e.username, e.modified, e.deleted);
+            n += usize::from(changed);
+        }
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_newest_change_wins() {
+        let e = |pw: &str, modified: u64, deleted: bool| Synced { vault: "Me".into(), origin: "https://a.com".into(), username: "u".into(), password: pw.into(), modified, deleted };
+        let n = newest(vec![vec![e("old", 5, false)], vec![e("new", 9, false)], vec![e("", 7, true)]]);
+        assert_eq!(n, vec![e("new", 9, false)]);
+        let n = newest(vec![vec![e("old", 5, false)], vec![e("", 7, true)]]);
+        assert!(n[0].deleted);
+    }
 
     #[test]
     fn csv_handles_quotes_and_newlines() {

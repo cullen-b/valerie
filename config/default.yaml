@@ -8,6 +8,9 @@
 #   - Lists (like `spaces`) replace the default list completely. Maps (like `keybindings`) merge key by key;
 #     set a key to `null` to remove a default.
 #   - Print this file any time with `valerie default-config`.
+#   - Settings for one computer only go in this-mac.yaml next to config.yaml (same shape, any settings; it wins
+#     over config.yaml and never syncs). Use it when one machine differs, e.g. `agents: { default: codex }` on a
+#     Mac signed in to Codex but not Claude, or a different `downloads.folder`.
 # ==============================================================================================================
 
 
@@ -250,7 +253,7 @@ chats:
   auto_settle_days: 3      # chats untouched this many days move to Settled (still there, out of the way); 0 = never
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
-  sync: true               # keep chats in the config folder so they sync between machines (false = this machine only)
+  sync: true               # sync chats between machines (encrypted with the sync passphrase). false = this machine only
   ask_in_find: true        # in find (/), Enter on something that reads like a question asks the find agent about the page
   find_question_words: 4   # a find query this many words long (or ending in "?") counts as a question
   page_text_limit: 60000   # most characters of the page sent along with a question
@@ -654,6 +657,8 @@ agents:
     tasks: ""              # tasks and watched pages
     customize: ""          # "! change …" requests
   jobs: []                 # the older form of `tasks` (below): { name, prompt, at: "08:30" or every: 30m, agent }; still read
+  fallback: true           # when the agent a job uses isn't installed on this computer, use one that is (Claude Code,
+                           # Codex, OpenCode, Pi, Cursor, Hermes, in that order) and say so once. true | false
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -667,7 +672,16 @@ agents:
 # becomes a git checkout of that repo, so on a new machine you can also just clone the repo into the config folder.
 sync:
   repo: ""                 # the sync repo's address, e.g. https://github.com/you/valerie-sync.git; empty = sync off
-  device: ""               # this machine's name in the sync repo; empty = its hostname
+  device: ""               # this machine's name as other machines show it; empty = the computer's name (set it in
+                           # this-mac.yaml, since config.yaml is shared by every machine)
+  encrypt: true            # encrypt tabs, chats and passwords with your sync passphrase before they reach the repo
+                           # (typed once per machine; "Sync Passphrase" in the command bar). false = tabs and chats
+                           # go up readable and passwords don't sync
+  passwords: true          # sync saved passwords too (encrypted; needs `encrypt`). true | false
+  ask_before_plugins: true # plugins and AI programs that arrive from another machine wait until you allow them on
+                           # this one ("Allow Plugins from Other Machines"). false = they run straight away
+  repo_key: true           # each machine syncs with its own key that can reach only the sync repo (no GitHub
+                           # sign-in kept). false = sync with your GitHub sign-in, which can reach all your repos
   on_change: true          # sync shortly after you change tabs or settings
   delay_seconds: 10        # how long after a change to sync (changes in the meantime go along too)
   interval_minutes: 5      # also check for other machines' changes this often; 0 = only on change and ⌘⇧Y

@@ -204,12 +204,17 @@ pub fn plugins_dir() -> PathBuf {
     config_dir().join("plugins")
 }
 
-/// Load every plugin folder. Broken plugins are reported, not fatal.
+/// Load every plugin folder. Broken plugins are reported, not fatal. Plugins from another machine that are waiting
+/// to be allowed here (see trust.rs) don't load.
 pub fn load_all() -> (Vec<Plugin>, Vec<String>) {
     let (mut plugins, mut errors) = (Vec::new(), Vec::new());
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(plugins_dir()).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
+    let trust = crate::trust::load();
     for dir in dirs {
+        if !crate::trust::plugin_allowed(&trust, &dir.file_name().unwrap_or_default().to_string_lossy()) {
+            continue;
+        }
         match load(&dir) {
             Ok(Some(p)) => plugins.push(p),
             Ok(None) => {}
@@ -337,6 +342,13 @@ const BUNDLED: &[(&str, &[(&str, &str)])] = &[(
         ("style.css", include_str!("../plugins/youtube-speed/style.css")),
     ],
 )];
+
+/// Whether these files are exactly a plugin Valerie ships (so one arriving through sync is nothing new).
+pub fn shipped(name: &str, files: &[(String, Vec<u8>)]) -> bool {
+    BUNDLED.iter().find(|(n, _)| *n == name).is_some_and(|(_, bundled)| {
+        files.iter().filter(|(p, _)| !p.ends_with(".DS_Store")).all(|(p, c)| bundled.iter().any(|(f, b)| f == p && b.as_bytes() == c.as_slice()))
+    })
+}
 
 /// Install bundled plugins once, and keep them updated: `.installed` records a fingerprint of every file we wrote,
 /// and a file is replaced by a newer bundled version only while it still matches that fingerprint (i.e. the user

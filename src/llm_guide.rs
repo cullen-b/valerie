@@ -171,6 +171,17 @@ pushes it by itself a few seconds after any change: don't run git here yourself 
 To move the user's setup to a new machine: quit Valerie, move this folder aside, `git clone <repo URL> "{dir}"`,
 start Valerie. Device-specific files (`AGENTS.md`, `reference/`) are regenerated and not synced.
 
+- `config.yaml` and `plugins/` are shared by every machine. For a setting on this computer only (a different AI,
+  downloads folder, `sync.device` name), write it in `this-mac.yaml` here: same shape as config.yaml, it wins over
+  it and never syncs. If the user's machines have different AI apps, keep `agents.default` in config.yaml for most
+  of them and put this one's in this-mac.yaml (with `agents.fallback` on, a missing AI is replaced by an installed
+  one anyway).
+- Tabs, chats and passwords travel encrypted with the user's sync passphrase (`sync.encrypt`); you never see or need
+  it. The user sets or types it with "Sync Passphrase". Never write files under `devices/` or `chats/*.enc`.
+- Plugins and agent `command`s that arrive from another machine wait until the user allows them on this one
+  ("Allow Plugins from Other Machines", or `"{exe}" allow-from-sync`). Plugins you make here aren't held. Never allow
+  them yourself.
+
 ## AI agents
 
 Valerie runs the agent CLIs installed on this computer (Claude Code, Codex, OpenCode, Pi, Cursor, Hermes) with the
@@ -180,7 +191,7 @@ e.g. a strong model for chat and a fast one for find. "Set Up <name>" in the com
 Tasks (`tasks:` in config.yaml) are things an agent does for the user, described in plain words: `want` (what) and
 `when` ("weekdays at 8am", "every 5 minutes", "when Valerie starts", "only when I ask"), with the result as a page tab,
 a chat or a notification. A morning brief is a task; so is "join my meetings when they start". To change a task, edit
-its `want` or `when`; `check-config` tells you if `when` can't be understood. Chats are JSON files in `chats/` here (they sync when `chats.sync` is on). Settings for the Chats space and asking
+its `want` or `when`; `check-config` tells you if `when` can't be understood. Chats are JSON files in Valerie's data folder (`"{exe}" paths`), not here; with `chats.sync` they also travel encrypted. Settings for the Chats space and asking
 questions from find are under `chats`.
 
 ## Settings

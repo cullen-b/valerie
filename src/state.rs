@@ -813,7 +813,7 @@ mod tests {
     }
 
     fn device(spaces: Vec<crate::sync::SyncedSpace>) -> DeviceTabs {
-        DeviceTabs { device: "other".into(), updated: 1, spaces, favorites: vec![], favorites_modified: 0 }
+        DeviceTabs { device: "other".into(), id: "other".into(), updated: 1, spaces, favorites: vec![], favorites_modified: 0 }
     }
 
     fn synced(name: &str, urls: &[&str], modified: u64) -> crate::sync::SyncedSpace {

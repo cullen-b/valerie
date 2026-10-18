@@ -321,7 +321,7 @@ pub struct ReaderConfig {
 
 /// One agent: a CLI Valerie knows (claude, codex, opencode, pi, cursor, hermes) and the model to ask for, or any
 /// command that takes a prompt and prints an answer.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentDef {
     pub cli: String,
@@ -662,6 +662,22 @@ impl Config {
     }
 
     pub fn agent_named(&self, name: &str) -> (String, AgentDef) {
+        let def = self.agent_def(name);
+        if self.agents.fallback && def.command.is_empty() && crate::ai::kind(&def.cli).is_some() && !installed(&def.cli) {
+            if let Some(k) = crate::ai::KINDS.iter().find(|k| installed(k.id)) {
+                // Another machine's choice: use what this one has (its own model, not the other CLI's).
+                let mut sub = self.agent_def(k.id);
+                if self.agents.available.get(k.id).cloned().flatten().is_none_or(|d| d.model.is_empty()) {
+                    sub.model.clear();
+                }
+                note_fallback(&def.cli, k.id);
+                return (k.id.to_string(), sub);
+            }
+        }
+        (name.to_string(), def)
+    }
+
+    fn agent_def(&self, name: &str) -> AgentDef {
         let mut def = self.agents.available.get(name).cloned().flatten().unwrap_or_else(|| AgentDef { cli: name.to_string(), ..Default::default() });
         if def.cli.is_empty() && def.command.is_empty() {
             def.cli = name.to_string();
@@ -669,7 +685,7 @@ impl Config {
         if def.model.is_empty() {
             def.model = self.agents.model.clone();
         }
-        (name.to_string(), def)
+        def
     }
 }
 
@@ -839,6 +855,10 @@ pub struct SyncConfig {
     pub delay_seconds: f64,
     pub repo_name: String,
     pub github_client_id: String,
+    pub encrypt: bool,
+    pub passwords: bool,
+    pub ask_before_plugins: bool,
+    pub repo_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -880,6 +900,8 @@ pub struct AgentsConfig {
     pub instructions: String,
     /// Added for one job: chat, find, tasks, customize.
     pub instructions_for: BTreeMap<String, String>,
+    /// Use an installed agent when the chosen one isn't on this computer.
+    pub fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1009,6 +1031,63 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.yaml")
 }
 
+/// Settings for this computer only: merged over config.yaml, never synced.
+pub fn this_mac_path() -> PathBuf {
+    config_dir().join("this-mac.yaml")
+}
+
+/// `set_setting` for this computer only (this-mac.yaml).
+pub fn set_this_mac_setting(path: &[&str], value: &str) -> Result<()> {
+    let file = this_mac_path();
+    let text = std::fs::read_to_string(&file).unwrap_or_else(|_| "# Settings for this computer only (they win over config.yaml and never sync).\n".into());
+    let new = set_in_text(&text, path, value).context("this-mac.yaml has a one-line block there")?;
+    std::fs::create_dir_all(config_dir())?;
+    std::fs::write(&file, new)?;
+    Ok(())
+}
+
+/// Whether an agent CLI is on this computer (checked at most every 30 seconds, so installing one is noticed).
+pub fn installed(cli: &str) -> bool {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Option<(std::time::Instant, BTreeMap<String, bool>)>> = Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.as_ref().is_none_or(|(t, _)| t.elapsed() > std::time::Duration::from_secs(30)) {
+        *seen = Some((std::time::Instant::now(), BTreeMap::new()));
+    }
+    let map = &mut seen.as_mut().expect("just set").1;
+    *map.entry(cli.to_string()).or_insert_with(|| crate::ai::kind(cli).is_some_and(|k| crate::ai::find_bin(k, &crate::ai::search_path()).is_some()))
+}
+
+static FALLBACK_NOTE: std::sync::Mutex<(Vec<String>, Option<String>)> = std::sync::Mutex::new((Vec::new(), None));
+
+fn note_fallback(missing: &str, using: &str) {
+    let mut n = FALLBACK_NOTE.lock().unwrap_or_else(|e| e.into_inner());
+    let pair = format!("{missing}>{using}");
+    if !n.0.contains(&pair) {
+        n.0.push(pair);
+        let title = |id: &str| crate::ai::kind(id).map_or(id.to_string(), |k| k.title.to_string());
+        n.1 = Some(format!("{} isn't on this computer, so Valerie is using {} here", title(missing), title(using)));
+    }
+}
+
+/// A message to show once when an agent stood in for one that isn't installed here.
+pub fn take_fallback_note() -> Option<String> {
+    FALLBACK_NOTE.lock().unwrap_or_else(|e| e.into_inner()).1.take()
+}
+
+/// A random name for this installation that never changes (unlike the hostname, which macOS renumbers when another
+/// device on the network has the same name). Names this machine's files in the sync repo.
+pub fn device_id() -> String {
+    let path = data_dir().join("device-id");
+    if let Some(id) = std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string()).filter(|s| s.len() >= 8) {
+        return id;
+    }
+    let id = crate::crypt::hex(&crate::crypt::random::<6>());
+    let _ = std::fs::create_dir_all(data_dir());
+    let _ = std::fs::write(&path, &id);
+    id
+}
+
 /// User values override defaults key by key; lists replace wholesale; `null` removes a map entry.
 /// Settings whose keys are names you choose (shortcuts, sites, themes…) rather than fixed options.
 const FREE_FORM: &[&str] = &[
@@ -1095,8 +1174,20 @@ impl Config {
         Ok(serde_yaml::from_value(Self::merged(text)?)?)
     }
 
-    /// The defaults with the user's file on top, as YAML (what spaces' `settings` go on top of).
+    /// The defaults with the user's file on top, then this computer's own settings, as YAML (what spaces'
+    /// `settings` go on top of).
     pub fn merged(text: &str) -> Result<Value> {
+        #[allow(unused_mut)]
+        let mut base = Self::merged_shared(text)?;
+        #[cfg(not(test))]
+        if let Some(here) = std::fs::read_to_string(this_mac_path()).ok().and_then(|t| serde_yaml::from_str::<Value>(&t).ok()).filter(|v| v.is_mapping()) {
+            merge(&mut base, here);
+        }
+        Ok(base)
+    }
+
+    /// The defaults with the user's (shared, synced) file on top, without this computer's own settings.
+    pub fn merged_shared(text: &str) -> Result<Value> {
         let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
         let user: Value = serde_yaml::from_str(text)?;
         if !user.is_null() {
@@ -1142,6 +1233,10 @@ impl Config {
     pub fn device_name(&self) -> String {
         if !self.sync.device.is_empty() {
             return self.sync.device.clone();
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(n) = std::process::Command::new("scutil").args(["--get", "ComputerName"]).output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+            return n;
         }
         std::process::Command::new("hostname")
             .arg("-s")
@@ -1230,5 +1325,20 @@ mod tests {
         assert_eq!(c.layout.sidebar_width, 248.0);
         assert!(c.keybindings["CmdOrCtrl+D"].is_none());
         assert!(c.keybindings.contains_key("CmdOrCtrl+L"));
+    }
+
+    /// An agent that isn't on this computer is replaced by one that is (with that one's own model), once noted.
+    #[test]
+    fn missing_agent_falls_back() {
+        let Some(missing) = crate::ai::KINDS.iter().rev().find(|k| !super::installed(k.id)) else { return };
+        let Some(present) = crate::ai::KINDS.iter().find(|k| super::installed(k.id)) else { return };
+        let c = Config::parse(&format!("agents: {{ default: {}, available: {{ {}: {{ cli: {}, model: big-model }} }} }}\n", missing.id, missing.id, missing.id)).unwrap();
+        let (name, def) = c.agent_named(missing.id);
+        assert_eq!(name, present.id);
+        assert_eq!(def.cli, present.id);
+        assert!(def.model.is_empty(), "the missing agent's model went along: {}", def.model);
+        assert!(super::take_fallback_note().is_some_and(|n| n.contains(missing.title)));
+        let off = Config::parse(&format!("agents: {{ default: {}, fallback: false }}\n", missing.id)).unwrap();
+        assert_eq!(off.agent_named(missing.id).0, missing.id);
     }
 }

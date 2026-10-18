@@ -377,6 +377,11 @@ pub enum Command {
     ToggleDarkPage,
     /// Sign in to GitHub and sync settings and tabs through a private repo (created if needed).
     SetUpSync,
+    /// Choose the sync passphrase (first machine) or type it (every other one); tabs, chats and passwords sync
+    /// encrypted with it.
+    SyncPassphrase,
+    /// Ask about plugins and AI programs that arrived from another machine and are waiting to be allowed here.
+    AllowFromOtherMachines,
     /// Copy text to the clipboard (the command bar's calculator uses this).
     CopyText {
         text: String,
@@ -487,6 +492,9 @@ impl Command {
                 | Command::Welcome
                 | Command::PluginMarketplace
                 | Command::SharePlugin { .. }
+                // Only the person at the computer lets in what another machine sent, or handles the passphrase.
+                | Command::AllowFromOtherMachines
+                | Command::SyncPassphrase
         )
     }
 
@@ -603,6 +611,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),
     ("set_up_sync", "Set Up Sync (sign in to GitHub)"),
+    ("sync_passphrase", "Sync Passphrase (encrypts your synced tabs, chats and passwords)"),
+    ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("extensions", "Extensions"),

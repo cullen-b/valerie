@@ -3,6 +3,7 @@ mod app;
 mod blocking;
 mod command;
 mod config;
+mod crypt;
 mod extensions;
 mod import;
 mod llm_guide;
@@ -13,6 +14,7 @@ mod plugins;
 mod routing;
 mod state;
 mod sync;
+mod trust;
 mod github;
 mod ai;
 mod update;
@@ -27,6 +29,8 @@ USAGE:
   valerie mcp-config      print the command that connects Claude Code to the built-in MCP server
   valerie mcp-stdio       stdio <-> HTTP bridge for MCP clients that only speak stdio
   valerie sync-setup      create a private GitHub repo for tab sync (needs the gh CLI)
+  valerie allow-from-sync list plugins and AI programs another machine sent that wait to be allowed here;
+                          `allow-from-sync <name or program>` allows one
   valerie import-passwords <csv> [vault]  import a Chrome/Arc/Safari/1Password CSV export into a vault
   valerie default-config  print every config option with its default
   valerie llm-guide       print the guide that lets an AI assistant customise Valerie
@@ -189,6 +193,12 @@ fn check_config() -> anyhow::Result<()> {
         Err(e) => problems.push(format!("config.yaml: {e:#}")),
     }
     problems.extend(config::unknown_keys(&std::fs::read_to_string(config::config_path()).unwrap_or_default()));
+    if let Ok(here) = std::fs::read_to_string(config::this_mac_path()) {
+        match serde_yaml::from_str::<serde_yaml::Value>(&here) {
+            Ok(_) => problems.extend(config::unknown_keys(&here).into_iter().map(|u| format!("this-mac.yaml: {u}"))),
+            Err(e) => problems.push(format!("this-mac.yaml: {e}")),
+        }
+    }
     let (plugins, errors) = plugins::load_all();
     problems.extend(errors.into_iter().map(|e| format!("plugin {e}")));
     if problems.is_empty() {
@@ -395,6 +405,28 @@ fn main() -> anyhow::Result<()> {
             return mcp::stdio_bridge(config.mcp.port, flag("--access"), flag("--chat"));
         }
         Some("sync-setup") => return sync::setup(),
+        Some("allow-from-sync") => {
+            let t = trust::load();
+            match args.get(1..).map(|a| a.join(" ")).filter(|a| !a.is_empty()) {
+                Some(what) if trust::allow_plugin(&what) => println!("Allowed the plugin {what} on this computer."),
+                Some(what) if trust::allow_program(&what) => println!("Allowed the AI program `{what}` on this computer."),
+                Some(what) => anyhow::bail!("nothing called {what:?} is waiting (run `valerie allow-from-sync` to see what is)"),
+                None if t.held_plugins.is_empty() && t.held_programs.is_empty() => println!("Nothing from other machines is waiting."),
+                None => {
+                    for name in t.held_plugins.keys() {
+                        println!("plugin {name}:");
+                        for p in trust::powers(&trust::files_in(&plugins::plugins_dir().join(name))) {
+                            println!("  {p}");
+                        }
+                    }
+                    for p in &t.held_programs {
+                        println!("AI program: {p}");
+                    }
+                    println!("\nAllow one with `valerie allow-from-sync <plugin name or the program exactly as shown>`.");
+                }
+            }
+            return Ok(());
+        }
         Some("mcp-config") => {
             let token = mcp::load_or_create_token();
             println!(
