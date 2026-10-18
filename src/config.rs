@@ -1368,4 +1368,26 @@ mod tests {
         let fork = Config::parse("updates: { channel: edge, feed: \"https://example.com/latest.json\" }\n").unwrap();
         assert_eq!(fork.updates.feed_url(), "https://example.com/latest.json");
     }
+
+    /// Toggle Test Builds writes this-mac.yaml: turning them off also undoes an explicit edge feed (the owner's Mac
+    /// was put on edge that way before channels existed), so it really goes back to stable.
+    #[test]
+    fn test_builds_toggle_writes_this_mac() {
+        let _g = super::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("valerie-channel-test-{}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        std::env::set_var("VALERIE_CONFIG_DIR", &dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(super::this_mac_path(), format!("# mine\nupdates:\n  channel: edge\n  feed: \"{}\"\n", crate::update::EDGE_FEED)).unwrap();
+        let read = || Config::parse(&std::fs::read_to_string(super::this_mac_path()).unwrap()).unwrap();
+        assert_eq!(read().updates.feed_url(), crate::update::EDGE_FEED);
+        super::set_this_mac_setting(&["updates", "channel"], "stable").unwrap();
+        super::set_this_mac_setting(&["updates", "feed"], &serde_json::json!(crate::update::STABLE_FEED).to_string()).unwrap();
+        assert_eq!(read().updates.channel, "stable");
+        assert_eq!(read().updates.feed_url(), crate::update::STABLE_FEED);
+        assert!(std::fs::read_to_string(super::this_mac_path()).unwrap().starts_with("# mine"));
+        super::set_this_mac_setting(&["updates", "channel"], "edge").unwrap();
+        assert_eq!(read().updates.feed_url(), crate::update::EDGE_FEED);
+        std::env::remove_var("VALERIE_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

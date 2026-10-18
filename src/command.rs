@@ -373,6 +373,8 @@ pub enum Command {
     },
     /// Close Today tabs showing the same page as another tab in this space.
     CloseDuplicateTabs,
+    /// Switch this computer between test builds (every change as soon as it's built) and stable releases.
+    ToggleTestBuilds,
     /// Ask about pinned, kept and favorite tabs you haven't opened in `tabs.ask_to_keep_unused_days`.
     ReviewSavedTabs,
     /// Turn Valerie's dark mode for light websites on or off for this site.
@@ -498,6 +500,8 @@ impl Command {
                 | Command::AllowFromOtherMachines
                 // It asks the person at the computer which tabs to remove.
                 | Command::ReviewSavedTabs
+                // Which builds this computer runs is the person's choice.
+                | Command::ToggleTestBuilds
                 | Command::SyncPassphrase
         )
     }
@@ -587,6 +591,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("search_selection", "Search Selected Text"),
     ("paste_and_go", "Paste and Go"),
     ("close_duplicate_tabs", "Close Duplicate Tabs"),
+    ("toggle_test_builds", "Toggle Test Builds (get every change as soon as it's made, or go back to stable releases)"),
     ("review_saved_tabs", "Review Saved Tabs (pinned and kept ones you haven't opened in a while)"),
     ("print", "Print Page…"),
     ("open_chats", "Chats"),
