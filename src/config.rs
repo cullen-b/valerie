@@ -750,6 +750,7 @@ pub struct LittleWindowConfig {
     pub space_picker: bool,
     pub copy_button: bool,
     pub keep_open_when_main_closes: bool,
+    pub open_links_alone: bool,
     pub width: f64,
     pub height: f64,
 }

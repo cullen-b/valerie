@@ -373,6 +373,9 @@ little_window:
   copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
   keep_open_when_main_closes: true   # closing the main window leaves little windows open (the Dock icon or ⌘T
                            # brings it back; closing the last little window then quits). true | false (false = quit)
+  open_links_alone: true   # when the main window is closed or Valerie isn't running, a link from another app opens
+                           # only a little window (links routed to a space too). true | false (false = the main
+                           # window opens as well)
   width: 960
   height: 700
 

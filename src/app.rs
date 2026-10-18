@@ -2422,11 +2422,19 @@ impl App {
         }
     }
 
-    /// Links from other apps: Air Traffic Control first, then a little window.
+    /// Links from other apps: Air Traffic Control first, then a little window. With the main window closed (or not
+    /// shown yet, when the link started Valerie), only a little window opens (`little_window.open_links_alone`).
     fn open_external(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let lw = &self.config.little_window;
+        let alone = lw.enabled && lw.open_links_alone && (self.main_hidden || !self.revealed);
         for url in urls {
             let url = self.clean(&url);
             let routed = routing::route(&self.config.routes, &url).and_then(|s| self.state.space_index(s));
+            if alone {
+                self.open_little(&url, routed.unwrap_or(self.state.active_space), elwt);
+                self.main_hidden = true;
+                continue;
+            }
             match routed {
                 Some(space) => {
                     self.open_tab(&url, Some(space), true);
@@ -5759,6 +5767,8 @@ impl App {
         if std::mem::take(&mut self.main_hidden) {
             self.window.set_visible(true);
             self.focused_little = None;
+            self.window.set_focus();
+            return self.focus_active();
         }
         self.window.set_focus();
     }
@@ -5769,9 +5779,12 @@ impl App {
             return;
         }
         self.revealed = true;
-        self.window.set_visible(true);
-        self.window.set_focus();
-        self.focus_active();
+        // Started by a link that opened alone: the main window stays hidden until asked for.
+        if !self.main_hidden {
+            self.window.set_visible(true);
+            self.window.set_focus();
+            self.focus_active();
+        }
         trace(&format!("window shown ({why})"));
         self.after_reveal();
     }
