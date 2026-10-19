@@ -450,6 +450,8 @@ pub enum Command {
     },
     /// Put Valerie's settings, plugins and styles back the way they were before the last change an AI made.
     UndoCustomization,
+    /// A chat where the user's AI helps find out what went wrong (the triage playbook).
+    ReportProblem,
     /// The browser extensions Valerie loaded (and their buttons).
     Extensions,
     /// Open an extension's popup or options page.
@@ -624,6 +626,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("sync_passphrase", "Sync Passphrase (set, enter or change the one that encrypts your synced tabs, chats and passwords)"),
     ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
+    ("report_problem", "Report a Problem… (your AI helps find what went wrong, fixes it or writes the bug report)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),

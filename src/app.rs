@@ -4148,6 +4148,22 @@ impl App {
                 self.toast(&format!("Notifications from {site}: {}", if allow { "allowed" } else { "blocked" }));
             }
             Command::OpenChats => self.open_chats(),
+            Command::ReportProblem => {
+                let mut c = crate::ai::Chat::new(&self.config.agent_for("chat").0);
+                c.title = "Something isn't working".into();
+                c.brief = crate::triage::chat_brief(&self.config);
+                let t = now();
+                c.messages.push(crate::ai::Msg {
+                    role: "assistant".into(), agent: c.agent.clone(), at: t,
+                    text: "Sorry something isn't working. What happened, and what did you expect instead? If it's on a website, say which one.".into(),
+                    ..Default::default()
+                });
+                crate::ai::save_chat(&chats_dir(&self.config), &c);
+                self.active_chat = Some(c.id.clone());
+                self.chats.insert(0, c);
+                self.open_chats();
+                self.render_chat();
+            }
             Command::NewChat { prompt, agent } => {
                 let name = match &agent {
                     Some(a) => self.config.agent_named(a).0,
@@ -6155,6 +6171,10 @@ impl App {
             None => {
                 let mut p = crate::ai::browser_preamble(&def, &context);
                 p.push_str(&self.config.extra_instructions("chat"));
+                if !c.brief.is_empty() {
+                    p.push_str("\n\n");
+                    p.push_str(&c.brief);
+                }
                 let history = c.transcript(12_000);
                 if !history.is_empty() {
                     p.push_str("\n\nThe conversation so far:\n\n");

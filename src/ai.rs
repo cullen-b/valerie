@@ -770,6 +770,9 @@ pub struct Chat {
     pub snoozed_until: u64,
     #[serde(default)]
     pub unread: bool,
+    /// Extra instructions for this chat's agent the user doesn't see (a "Report a Problem" chat's playbook).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub brief: String,
     /// Messages sent while the agent was busy, sent in order when it's done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queue: Vec<String>,

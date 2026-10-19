@@ -20,6 +20,7 @@ mod ai;
 mod update;
 mod market;
 mod log;
+mod triage;
 
 use config::Config;
 
@@ -38,7 +39,8 @@ USAGE:
   valerie check-config    validate config.yaml and every plugin (prints exact errors)
   valerie strings         print Valerie's words, ready to translate into strings/<language>.yaml
   valerie call <tool> [json]  call a browser tool, e.g. valerie call list_tabs '{}'  
-  valerie paths           show config and data locations";
+  valerie paths           show config and data locations
+  valerie triage          something's wrong: your AI (Claude Code or Codex) helps find why, even if Valerie won't open";
 
 fn check_config() -> anyhow::Result<()> {
     let (problems, plugins) = config_problems();
@@ -538,6 +540,7 @@ fn main() -> anyhow::Result<()> {
             print!("{}", config::DEFAULT_YAML);
             return Ok(());
         }
+        Some("triage") => return triage::run_cli(),
         Some("paths") => {
             println!("config: {}\ndata:   {}\nlogs:   {}", config::config_path().display(), config::data_dir().display(), log::dir().display());
             return Ok(());

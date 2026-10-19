@@ -281,6 +281,7 @@ ai_actions:
   Explain the selection: { mode: page, prompt: "Explain this in plain words, using the page for context: {selection}" }
   Key facts and dates: { mode: page, prompt: "List the key facts, numbers, prices and dates on this page." }
   Ask about this page…: { mode: page, prompt: "{input}" }
+  Triage my tabs: { mode: chat, prompt: "Go through all my open tabs in every space (list_tabs; read a page only when its title doesn't say enough). Sort them into: done with (close), duplicates (close), worth keeping (which Kept folder), still to do today (stay), and ones to rename. Show me that plan as a short list grouped by what you'd do, then wait: do it only when I say go, with any changes I ask for." }
   Tidy my tabs: { mode: chat, prompt: "Tidy my tabs in this space: close duplicates and pages I'm clearly done with, then group what's left in Today into Kept folders by topic. Tell me what you did." }
   Short tab titles: { mode: chat, prompt: "Give every tab in this space a short, clear title (2 to 4 words) with rename_tab." }
   Find related reading: { mode: chat, prompt: "Find three good pages related to \"{title}\" ({url}) and open them as background tabs. Say why each is worth reading." }
