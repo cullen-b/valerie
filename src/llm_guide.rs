@@ -156,7 +156,7 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
   `#log`, `.msg.user .bubble`, `.msg.assistant`, `.md` (answers), `.steps` (a run of steps; `.sum` its one-line
   summary), `.step` (`.running`, `.error`, `.thinking`), `.diff` (`.a` added, `.d` removed lines), `.todos`, `.foot`
   (time and context under an answer), `.card` (`.ask` questions, `.changes` uncommitted changes), `#pane` (the diff
-  view), `#plan-now`, `#composer`, `#box`, `textarea`, `.ctl`, `#folder`, `#send`, `#empty`, `.chip`.
+  view), `html.float body` (the card a chat floats in over a space), `#plan-now`, `#composer`, `#box`, `textarea`, `.ctl`, `#folder`, `#send`, `#empty`, `.chip`.
 - `ui/terminal.css`: the terminal panel. Variables `--bg`, `--fg`, `--dim`, `--faint`, `--line`, `--accent`. Parts:
   `#bar`, `.tab` (`.on`), `#new`, `#ask`, `#max`, `#hide`, `#terms`, `.xterm` (font and colours are `terminal_panel`
   settings).
@@ -211,6 +211,8 @@ several chats can change one project at once; auto skips repos six-ten manages. 
 go and `chats.worktree_copy` the untracked files (like `.env`) copied in. Change-action prompts can use {{folder}},
 {{branch}} and {{base}}. The terminal panel (`toggle_terminal`, Ctrl+`; settings under `terminal_panel`) runs real shells
 along the bottom of the window; in a coding chat it opens in that chat's project or worktree.
+A chat started from a space floats in the middle of the window (`chats.from_space`: float | chats): Esc sends it on
+to Chats and the user stays in their space, Shift+Esc goes to Chats with it.
 Closed chats go to a folded "Closed" list at the bottom of the Chats sidebar (`chats.closed_list`); `reopen_chat`
 brings one back (a coding chat gets its worktree again).
 Spaces: right-click a space's icon to rename or remove it (`delete_space` archives its tabs and takes a space from
