@@ -6926,7 +6926,7 @@ impl App {
             return None;
         }
         let repo = PathBuf::from(git(&f, &["rev-parse", "--show-toplevel"])?.trim());
-        let sub = f.canonicalize().ok().and_then(|f| f.strip_prefix(&repo).ok().map(|s| s.components().count())).unwrap_or(0);
+        let sub = subfolder(&f, &repo).components().count();
         let workdir = PathBuf::from(&c.worktree);
         let root = workdir.ancestors().nth(sub).map(Path::to_path_buf).unwrap_or_else(|| workdir.clone());
         Some(WorktreePlan { workdir, root, repo, branch: c.branch.clone(), base: c.base.clone() })
@@ -9398,6 +9398,13 @@ fn slug(text: &str) -> String {
     s.trim_end_matches('-').to_string()
 }
 
+/// Where `folder` sits inside the repo at `repo` ("" = its top). Both are compared canonical: git writes C:/x on
+/// Windows, where a canonical path reads \\?\C:\x.
+fn subfolder(folder: &Path, repo: &Path) -> PathBuf {
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    canon(folder).strip_prefix(canon(repo)).map(Path::to_path_buf).unwrap_or_default()
+}
+
 /// A chat's own worktree, planned before it exists: (working folder, worktree root, repo root, branch, base).
 struct WorktreePlan {
     workdir: PathBuf,
@@ -9428,7 +9435,7 @@ fn plan_worktree(folder: &Path, mode: &str, place: &str, title: &str, chat: &str
     let name = format!("{name}-{}", &chat[chat.len().saturating_sub(4)..]);
     let place = if place.trim().is_empty() { config::data_dir().join("worktrees") } else { expand_home(place.trim()) };
     let root = place.join(folder_name(&repo.to_string_lossy())).join(&name);
-    let sub = folder.canonicalize().ok().and_then(|f| f.strip_prefix(&repo).ok().map(Path::to_path_buf)).unwrap_or_default();
+    let sub = subfolder(folder, &repo);
     Some(WorktreePlan { workdir: root.join(sub), root, repo, branch: format!("valerie/{name}"), base })
 }
 
