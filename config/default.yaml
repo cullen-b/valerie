@@ -811,6 +811,9 @@ app:
   dock_menu: []            # commands in the Dock icon's right-click menu, e.g. [new_tab, { cmd: switch_space, name: Work }]
   menu_bar_icon: ""        # text or an emoji for an icon at the right of the menu bar (e.g. "✦"); empty = no icon
   menu_bar_menu: [open_command_bar, new_tab, open_chats]   # what that icon's menu offers
+  command_line_tool: true  # each start, make sure a terminal can run `valerie` (a link in Homebrew's bin, /usr/local/bin
+                           # or ~/.local/bin, whichever exists and Valerie may write to; never over another program).
+                           # true | false (Install Command Line Tool in the command bar does it by hand)
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.

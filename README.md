@@ -180,9 +180,10 @@ right-click entries, sidebar buttons with live text, live command-bar results an
 toast, a page, a list to pick from, a notification or the clipboard. Page scripts reach the browser through
 `valerie.call(tool, args)` with the tools their plugin lists (you're asked once). Local code drives the browser with
 `valerie call <tool> '<json>'` (for example `valerie call read_page '{}'`). `valerie screenshot --full page.png` saves the
-whole active page as a picture (`--tab N` for another tab; without `--full`, what's on screen). Run **Install Command
-Line Tool** from the command bar once to get `valerie` in your terminal (it links it into Homebrew's bin, /usr/local/bin
-or ~/.local/bin).
+whole active page as a picture (`--tab N` for another tab; without `--full`, what's on screen). Every way of
+installing Valerie puts `valerie` in your terminal: Homebrew links it, the install line links it (adding ~/.local/bin to
+your shell's PATH if that's where it went), and the app itself checks at each start (`app.command_line_tool`; never
+over another program called valerie). **Install Command Line Tool** in the command bar does it by hand.
 
 **Almost everything else is a setting**, so an assistant can change it from a sentence: Valerie's own look
 (`ui/chrome.css` and friends), its language (`language` + `strings/<code>.yaml`), the sidebar's order, the menu bar,
