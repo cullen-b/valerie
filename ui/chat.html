@@ -656,11 +656,16 @@ function fillModels(current) {
 }
 // Codex says which reasoning levels each model supports; others get the usual four.
 function fillEfforts() {
-  const info = (D.models || {})[$("#agent").value] || {}, m = (info.models || []).find((x) => x.id === $("#model").value);
-  const levels = m && m.efforts && m.efforts.length ? m.efforts : ["low", "medium", "high", "max"];
+  // The model that will answer: the one picked, else the agent's default. Its own levels when it lists them (none at
+  // all: only the default), else the usual four.
+  const info = (D.models || {})[$("#agent").value] || {}, id = $("#model").value || info.default_model;
+  const m = (info.models || []).find((x) => x.id === id);
+  const levels = m && Array.isArray(m.efforts) ? m.efforts : ["low", "medium", "high", "max"];
   const sel = $("#effort"), cur = sel.value; sel.replaceChildren();
   const d = el("option", null, (info.default_effort || "auto") + " effort (default)"); d.value = ""; sel.append(d);
-  levels.forEach((l) => { const o = el("option", null, l + " effort"); o.value = l; sel.append(o); });
+  // OpenCode's models name their own levels; a few are on/off rather than how hard.
+  const named = { none: "no thinking", thinking: "thinking", minimal: "minimal effort" };
+  levels.forEach((l) => { const o = el("option", null, named[l] || l + " effort"); o.value = l; sel.append(o); });
   sel.value = levels.includes(cur) ? cur : "";
 }
 // The folder menu: no folder, recent projects, or pick one. Fixed once the chat has started.
