@@ -214,6 +214,8 @@ pub struct App {
     chat_asks: HashMap<String, ChatAsk>,
     /// What's uncommitted in each coding chat's project folder, by folder.
     chat_changes: HashMap<String, Value>,
+    /// Chats that were closed, for the Closed list in the Chats sidebar.
+    closed_chats: Vec<crate::ai::ClosedChat>,
     /// The models each CLI says it has: { id, label, group?, efforts? }.
     found_models: std::collections::BTreeMap<String, Vec<Value>>,
     /// Each tab's last question from find: (question, answer so far, agent), for "Open in Chats".
@@ -1098,6 +1100,7 @@ impl App {
             chat_started: HashMap::new(),
             chat_asks: HashMap::new(),
             chat_changes: HashMap::new(),
+            closed_chats: crate::ai::load_closed(&chats_dir(&config)),
             found_models: Default::default(),
             page_answers: HashMap::new(),
             page_ask_times: Vec::new(),
@@ -2151,6 +2154,7 @@ impl App {
                     "project": c.folder, "asking": self.chat_asks.values().any(|a| a.chat == c.id),
                 })).collect::<Vec<_>>(),
                 "group_by_project": self.config.chats.group_by_project,
+                "closed": if self.chats_open && self.config.chats.closed_list { &self.closed_chats[..self.closed_chats.len().min(300)] } else { &[] },
             },
             "now_playing": self.now_playing(),
         });
@@ -3729,8 +3733,14 @@ impl App {
                     None => self.chats.push(c),
                 }
             }
+            // Chats closed on another machine leave the list here too.
+            let dir = chats_dir(&self.config);
+            let running = self.chat_running.clone();
+            self.chats.retain(|c| running.contains(&c.id) || !dir.join("closed").join(format!("{}.json", c.id)).is_file());
+            self.closed_chats = crate::ai::load_closed(&dir);
             self.chats.sort_by(|a, b| b.updated.cmp(&a.updated));
             if self.chats_open {
+                self.render();
                 self.render_chat();
             }
         }
@@ -4754,6 +4764,21 @@ impl App {
                     }
                 });
             }
+            Command::ReopenChat { chat } => {
+                let dir = chats_dir(&self.config);
+                let Some(c) = crate::ai::reopen_chat(&dir, &chat) else { return self.toast("That chat isn't in the Closed list anymore") };
+                self.closed_chats.retain(|x| x.id != chat);
+                // A coding chat's worktree was taken away when it closed: make it again from its branch.
+                if let Some(plan) = self.worktree_again(&c) {
+                    let (copy, p, id) = (self.config.chats.worktree_copy.clone(), self.proxy.clone(), c.id.clone());
+                    std::thread::spawn(move || match make_worktree(&plan, &copy) {
+                        Ok(()) => send(&p, UserEvent::ChatChanges { folder: plan.workdir.to_string_lossy().into_owned(), info: folder_changes(&plan.workdir) }),
+                        Err(e) => crate::log::line("chats", format!("worktree for chat {id}: {e}")),
+                    });
+                }
+                self.chats.insert(0, c);
+                self.dispatch(Command::ActivateChat { chat }, elwt);
+            }
             Command::RetryChat { chat } => {
                 let Some(id) = chat.or_else(|| self.active_chat.clone()).filter(|id| !self.chat_running.contains(id)) else { return };
                 let Some(c) = self.chats.iter_mut().find(|c| c.id == id) else { return };
@@ -4783,8 +4808,14 @@ impl App {
                     });
                 }
                 self.terminals.retain(|t| t.chat.as_deref() != Some(id.as_str()));
-                self.chats.retain(|c| c.id != id);
-                crate::ai::close_chat(&chats_dir(&self.config), &id);
+                let dir = chats_dir(&self.config);
+                if let Some(pos) = self.chats.iter().position(|c| c.id == id) {
+                    let mut c = self.chats.remove(pos);
+                    c.closed_at = now();
+                    crate::ai::save_chat(&dir, &c);
+                }
+                crate::ai::close_chat(&dir, &id);
+                self.closed_chats = crate::ai::load_closed(&dir);
                 if self.active_chat.as_deref() == Some(id.as_str()) {
                     self.active_chat = self.chats.first().map(|c| c.id.clone());
                 }
@@ -6820,6 +6851,19 @@ impl App {
         self.refresh_changes(id);
     }
 
+    /// The worktree a chat had, when it's gone (closed and brought back, or another computer): to make again.
+    fn worktree_again(&self, c: &crate::ai::Chat) -> Option<WorktreePlan> {
+        let f = PathBuf::from(&c.folder);
+        if c.worktree.is_empty() || Path::new(&c.worktree).is_dir() || !f.is_dir() {
+            return None;
+        }
+        let repo = PathBuf::from(git(&f, &["rev-parse", "--show-toplevel"])?.trim());
+        let sub = f.canonicalize().ok().and_then(|f| f.strip_prefix(&repo).ok().map(|s| s.components().count())).unwrap_or(0);
+        let workdir = PathBuf::from(&c.worktree);
+        let root = workdir.ancestors().nth(sub).map(Path::to_path_buf).unwrap_or_else(|| workdir.clone());
+        Some(WorktreePlan { workdir, root, repo, branch: c.branch.clone(), base: c.base.clone() })
+    }
+
     /// Look at what's uncommitted in a coding chat's folder, in the background.
     fn refresh_changes(&self, chat: &str) {
         let Some(folder) = self.chats.iter().find(|c| c.id == chat).and_then(chat_workdir).map(|f| f.to_string_lossy().into_owned()) else { return };
@@ -6898,13 +6942,8 @@ impl App {
                     c.branch = pl.branch.clone();
                     c.base = pl.base.clone();
                 }
-            } else if !c.worktree.is_empty() && !Path::new(&c.worktree).is_dir() {
-                plan = git(f, &["rev-parse", "--show-toplevel"]).map(|r| PathBuf::from(r.trim())).map(|repo| {
-                    let sub = f.canonicalize().ok().and_then(|f| f.strip_prefix(&repo).ok().map(|s| s.components().count())).unwrap_or(0);
-                    let workdir = PathBuf::from(&c.worktree);
-                    let root = workdir.ancestors().nth(sub).map(Path::to_path_buf).unwrap_or_else(|| workdir.clone());
-                    WorktreePlan { workdir, root, repo, branch: c.branch.clone(), base: c.base.clone() }
-                });
+            } else {
+                plan = self.worktree_again(&c);
             }
         }
         let copy = self.config.chats.worktree_copy.clone();

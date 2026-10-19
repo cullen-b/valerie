@@ -580,6 +580,7 @@ pub struct ChatsConfig {
     pub worktrees: String,
     pub worktree_folder: String,
     pub worktree_copy: Vec<String>,
+    pub closed_list: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

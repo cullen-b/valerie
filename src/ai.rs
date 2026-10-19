@@ -1010,6 +1010,9 @@ pub struct Chat {
     pub snoozed_until: u64,
     #[serde(default)]
     pub unread: bool,
+    /// When it was closed (it sits in the Closed list until it's reopened).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub closed_at: u64,
     /// Extra instructions for this chat's agent the user doesn't see (a "Report a Problem" chat's playbook).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub brief: String,
@@ -1088,7 +1091,47 @@ pub fn save_chat(dir: &Path, c: &Chat) {
     }
 }
 
-/// Closing a chat moves it aside (it still syncs, and can be brought back by hand).
+/// A closed chat, as the Closed list shows it (the whole chat is read when it's reopened).
+#[derive(Debug, Clone, Serialize)]
+pub struct ClosedChat {
+    pub id: String,
+    pub title: String,
+    pub folder: String,
+    pub agent: String,
+    pub closed: u64,
+}
+
+/// Closed chats, most recently closed first.
+pub fn load_closed(dir: &Path) -> Vec<ClosedChat> {
+    let mut out: Vec<ClosedChat> = std::fs::read_dir(dir.join("closed"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| {
+            let c: Chat = serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok()?;
+            let title = if c.title.is_empty() { "New chat".to_string() } else { c.title };
+            Some(ClosedChat { id: c.id, title, folder: c.folder, agent: c.agent, closed: if c.closed_at > 0 { c.closed_at } else { c.updated } })
+        })
+        .collect();
+    out.sort_by(|a, b| b.closed.cmp(&a.closed));
+    out
+}
+
+/// Bring a closed chat back into the list.
+pub fn reopen_chat(dir: &Path, id: &str) -> Option<Chat> {
+    let from = dir.join("closed").join(format!("{id}.json"));
+    let mut c: Chat = serde_json::from_str(&std::fs::read_to_string(&from).ok()?).ok()?;
+    c.closed_at = 0;
+    c.settled = false;
+    // Back at the top, and not settled again straight away by chats.auto_settle_days.
+    c.updated = crate::state::now();
+    save_chat(dir, &c);
+    let _ = std::fs::remove_file(from);
+    Some(c)
+}
+
+/// Closing a chat moves it aside to the Closed list (it still syncs).
 pub fn close_chat(dir: &Path, id: &str) {
     let closed = dir.join("closed");
     let _ = std::fs::create_dir_all(&closed);
@@ -1145,6 +1188,32 @@ mod tests {
         assert!(matches!(&parse(Format::Codex, end)[..], [Ev::StepDone { id, output, error: true }] if id == "i1" && output == "boom"));
         let files = r#"{"type":"item.completed","item":{"id":"i2","type":"file_change","changes":[{"path":"a.rs","kind":"update"},{"path":"b.rs","kind":"add"}],"status":"completed"}}"#;
         assert!(matches!(&parse(Format::Codex, files)[..], [Ev::Step { step }] if step.detail == "a.rs, b.rs" && step.state == "done"));
+    }
+
+    #[test]
+    fn closed_chats_list_and_come_back() {
+        let dir = std::env::temp_dir().join(format!("valerie-closed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut a = super::Chat::new("claude");
+        a.title = "Fix login".into();
+        a.folder = "/code/app".into();
+        let mut b = super::Chat::new("codex");
+        b.id.push('b');
+        for (c, at) in [(&mut a, 100), (&mut b, 200)] {
+            c.closed_at = at;
+            c.settled = true;
+            super::save_chat(&dir, c);
+            super::close_chat(&dir, &c.id);
+        }
+        let list = super::load_closed(&dir);
+        assert_eq!(list.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["New chat", "Fix login"]);
+        assert_eq!(list[1].folder, "/code/app");
+        let back = super::reopen_chat(&dir, &a.id).unwrap();
+        assert!(back.closed_at == 0 && !back.settled && back.updated >= crate::state::now() - 5);
+        assert_eq!(super::load_chats(&dir).len(), 1);
+        assert_eq!(super::load_closed(&dir).len(), 1);
+        assert!(super::reopen_chat(&dir, &a.id).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

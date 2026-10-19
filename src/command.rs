@@ -308,6 +308,10 @@ pub enum Command {
         chat: Option<String>,
         path: String,
     },
+    /// Bring a closed chat back from the Closed list.
+    ReopenChat {
+        chat: String,
+    },
     /// Ask the last question in a chat again.
     RetryChat {
         #[serde(default)]
@@ -757,7 +761,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_chat", "{ prompt?, agent?, folder?, in_project? }  (ask an agent something in a new chat; it can see and use the browser)"),
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),
-    ("close_chat", "{ chat? }"),
+    ("close_chat", "{ chat? }  (it moves to the Closed list)"),
+    ("reopen_chat", "{ chat }  (from the Closed list)"),
     ("rename_chat", "{ chat, title }"),
     ("set_chat_options", "{ chat, agent?, model?, effort?: low|medium|high|max, access?: read|ask|full, plan? }"),
     ("toggle_settle_chat", "{ chat? }"),
