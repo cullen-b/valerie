@@ -1,6 +1,7 @@
 # Valerie
 
-A homemade browser: **Rust-native, configured with a text file, synced through GitHub, and drivable by AI agents.**
+A homemade browser: **Rust-native, configured with a text file, synced (encrypted) through GitHub, and drivable by AI
+agents**, with a coding workspace for the agent you already use.
 Arc's best ideas (spaces, pinned tabs and folders, the command bar, little windows, Air Traffic Control, split
 view) on top of the system web engine, so on macOS you get Safari's engine and its speed and battery life.
 
@@ -102,9 +103,17 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   - Pin, **snooze** (an hour, this evening, tomorrow, next week…) or **settle** chats; untouched chats settle after
     3 days (`chats.auto_settle_days`). Working and snoozed chats sit at the bottom of the sidebar; unread answers
     get a dot.
+  - A chat started from a space (the command bar, an AI action, `⌘N`) **floats** over the middle of the window: `Esc`
+    sends it on to Chats so you keep working, `Shift+Esc` goes with it (`chats.from_space`). Closed chats sit in a
+    folded Closed list; click one to bring it back.
   - **Copy Chat ID** and paste `chat:<id>` into another chat to bring that conversation along.
   - Chats sync between your machines, encrypted with your sync passphrase (`chats.sync`). A chat started on
     another machine carries on here with whichever AI this machine has.
+- **Coding:** give a chat a project folder (the folder button in the composer) and its agent works there, with your
+  browser to check what it builds. Each step shows its diff or output, approvals happen in the chat, and a card lists
+  the uncommitted changes with Commit, Open a pull request and Merge back buttons (`chats.change_actions`). Several
+  chats on one project each get their own git worktree (`chats.worktrees`). The terminal panel (`Ctrl+'`) runs real
+  shells along the bottom, in the chat's project; the agent can start a dev server there and read its output.
 - **Ask from the command bar:** type a question or a request; it opens in Chats (`> do this` / `? ask that` force it).
 - **Ask from find:** press `/`, type a question ("what's the return policy here?"), Enter: the answer appears right
   under the find bar, in Valerie's own panel (the page can't read it). Any agent works; it only sees that page and runs
@@ -115,9 +124,11 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   fast one for find.
 
 - **AI actions** (`ai_actions`): one-click jobs in the command bar, bindable to keys: Summarize this page, Explain
-  the selection, Key facts and dates, Tidy my tabs, Short tab titles, Find related reading, and anything you add in
-  YAML (`{title}`, `{url}`, `{selection}`, `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use
-  the browser).
+  the selection, Key facts and dates, Tidy my tabs, Triage my tabs (a plan for every open tab, done only when you say
+  go), Short tab titles, Find related reading, and anything you add in YAML (`{title}`, `{url}`, `{selection}`,
+  `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use the browser).
+- **Report a Problem…:** your AI reads Valerie's log, works out what went wrong, and fixes the setting or writes the
+  bug report for you.
 - **Tasks:** "Create Task…" in the command bar asks two things in plain words: what ("go through my Jira and tell
   me what's on my plate today", "join my Google Meet calls when they start", "open my dashboards side by side") and
   when ("weekdays at 8am", "every 2 minutes", "when Valerie starts", "only when I ask"). An agent with your signed-in
