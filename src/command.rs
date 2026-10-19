@@ -467,6 +467,10 @@ pub enum Command {
     },
     /// Screenshot the visible page: copied to the clipboard and/or saved to Downloads (see `capture` settings).
     CapturePage,
+    /// The whole page, top to bottom, as a picture (clipboard and Downloads, like capture_page).
+    CaptureFullPage,
+    /// Put the `valerie` command on PATH so a terminal can use it.
+    InstallCommandLineTool,
     /// Open a file from the downloads list (the command bar shows them). Never available to pages or agents.
     OpenDownload {
         index: usize,
@@ -707,6 +711,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
+    ("capture_full_page", "Capture Full Page (screenshot of the whole page)"),
+    ("install_command_line_tool", "Install Command Line Tool (valerie in your terminal)"),
     ("downloads", "Downloads (every file you've downloaded: open, show in folder, clear)"),
     ("history", "History (every page you've visited, by day; search and forget)"),
     ("show_downloads", "Show Downloads Folder"),
