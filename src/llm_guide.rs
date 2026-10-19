@@ -48,7 +48,9 @@ Valerie's binary: `{exe}`
 4. Check how it looks when it's about Valerie's own look: `"{exe}" call screenshot_ui '{{"part": "sidebar"}}'` saves a
    picture of the sidebar (also command_bar, chats, welcome, plugins); `"{exe}" call read_ui '{{}}'` lists its elements,
    ids and classes.
-5. Tell the user what changed and which setting turns it back off. Every AI change can be undone: "Undo Last
+5. Check it works: run it, then read what happened in Valerie's log (`"{exe}" call read_logs '{{"since_minutes": 5}}'`;
+   a plugin's own messages and errors are under `"area": "plugin:<name>"`). Fix and try again until the log is clean.
+6. Tell the user what changed and which setting turns it back off. Every AI change can be undone: "Undo Last
    Customization" in the command bar (or `"{exe}" call run_command '{{"command": {{"cmd": "undo_customization"}}}}'`)
    puts the settings, plugins, boosts, ui/ and strings/ back as they were before the last change (again goes further back).
 
@@ -259,6 +261,9 @@ What each piece can do:
     `await valerie.call("<tool>", {{ …arguments }})` for the browser tools listed below (e.g. `list_tabs`, `open_tab`,
     `read_page`, `run_command`). List the tools it uses under `permissions:` in plugin.yaml; the user is asked once,
     the first time. Tools that act on a tab act on the page the script is in unless given `tab`.
+    `valerie.log("loaded", data)` writes to Valerie's log as `[plugin:<name>]` (no permission needed): log what the
+    script found or did, then read it back with `read_logs` to see why it isn't working. Errors thrown by script.js
+    and refused tool calls are logged there too.
 - **events**: things to do when something happens: `on:` one of {events}. Optional `matches` (sites), then `actions`
   (built-in commands; ones that act on a tab act on the event's tab, e.g. `on: tab_opened, matches: [figma.com],
   actions: [toggle_pin]`) and/or `run` (gets `VALERIE_EVENT`, `VALERIE_URL`, `VALERIE_TAB`, `VALERIE_SPACE`,
@@ -297,6 +302,24 @@ People share plugins in a public marketplace ("Plugins" in the command bar; repo
 - Shared plugins need a folder name of lowercase words with hyphens, a one-line `description` in `plugin.yaml`, and
   readable text files only. Valerie fills in `author` with their GitHub name.
 
+## Pages: features that are just a page
+
+In Valerie anything worth seeing can be a page: a dashboard, a chart, a report, a little tool. A page is one HTML file,
+`pages/<name>.html` in this folder, shown at `valerie://page/<name>` ("open_page" in the command bar lists them by
+title). The Downloads and History pages are built the same way: a `pages/downloads.html` or `pages/history.html` here
+replaces Valerie's own (their settings are `downloads.page` and `history.page`). Agents in chats make pages with the
+`show_page` tool; here, write the file and open it with `"{exe}" call run_command '{{"command": {{"cmd": "open_page", "name": "<name>"}}}}'`.
+
+- Inside a page, `await valerie.call("<tool>", {{ …arguments }})` uses the same browser tools as `valerie call`. Tools
+  that only look (list_tabs, read_page, search_history, list_downloads, get_settings, read_logs…) work at once; list any
+  other in `<meta name="valerie-tools" content="open_tab close_tab">` and the user is asked once.
+- `valerie.log("…", data)` writes to Valerie's log as `[page:<name>]`, with the page's own errors; read it back with
+  `read_logs` (`"area": "page:<name>"`) to check the page works. `valerie.on("downloads", fn)` runs when downloads change.
+- Valerie's colours are CSS variables: `var(--v-bg)`, `--v-fg`, `--v-dim`, `--v-line`, `--v-card`, `--v-accent`.
+- Only `<script>` tags run, and scripts from `https://` addresses: no `onclick="…"` attributes (use addEventListener).
+  Build what you show from data with `textContent`, not by pasting it into innerHTML.
+- Check a page with `"{exe}" call screenshot '{{}}'` while it's the active tab.
+
 ## Controlling the browser from code
 
 `"{exe}" call <tool> '<json arguments>'` prints the result. Use it from plugin scripts or from your own shell to look
@@ -333,8 +356,12 @@ and opens their popups and options pages. `extensions.enabled: false` turns them
   (which the user approves); pages themselves can't use a plugin's key.
 - Clearing a site's data (`clear_site_data`) always asks the user.
 - Data (tabs, history) lives in `{data}`; don't edit it by hand while Valerie is running.
-- When something fails (sync, updates, plugins, hooks), read the newest `valerie-<date>.log` in `{logs}`: one line per
-  error or message shown to the user, times in UTC. `logs.keep_days` sets how long they're kept (default 7).
+- When something fails (sync, updates, plugins, hooks, a page), read Valerie's log: the `read_logs` tool (filter by
+  `area`, `contains`, `since_minutes`) or the newest `valerie-<date>.log` in `{logs}`. It has errors, messages shown to
+  the user, commands run, agents' tool calls with how long they took, crashed pages and plugins' `valerie.log` lines,
+  times in UTC. `logs.level` (errors | events | verbose) sets how much is written, `logs.keep_days` how long it's kept.
+- Agents outside the config folder change settings with the `get_settings` / `set_setting` tools: `get_settings`
+  shows a setting's value and what it does, `set_setting` checks the change like check-config and undoes nothing else.
 "#,
         data = data_dir().display(),
         logs = crate::log::dir().display(),

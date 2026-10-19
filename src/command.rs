@@ -397,6 +397,14 @@ pub enum Command {
         index: usize,
     },
     ShowDownloads,
+    /// The Downloads page: every file you've downloaded (valerie://page/downloads).
+    Downloads,
+    /// The History page: every page you've visited (valerie://page/history).
+    History,
+    /// A page from the config folder's pages/ (or a built-in one) at valerie://page/<name>.
+    OpenPage {
+        name: String,
+    },
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
     /// Open this page in Safari, where passkeys work, then offer to bring the login back.
@@ -450,6 +458,8 @@ pub enum Command {
     },
     /// Put Valerie's settings, plugins and styles back the way they were before the last change an AI made.
     UndoCustomization,
+    /// A chat where the user's AI helps find out what went wrong (the triage playbook).
+    ReportProblem,
     /// The browser extensions Valerie loaded (and their buttons).
     Extensions,
     /// Open an extension's popup or options page.
@@ -611,6 +621,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
+    ("downloads", "Downloads (every file you've downloaded: open, show in folder, clear)"),
+    ("history", "History (every page you've visited, by day; search and forget)"),
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
@@ -624,6 +636,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("sync_passphrase", "Sync Passphrase (set, enter or change the one that encrypts your synced tabs, chats and passwords)"),
     ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
+    ("report_problem", "Report a Problem… (your AI helps find what went wrong, fixes it or writes the bug report)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),
@@ -683,6 +696,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("new_window", "{ url? }  (a separate window for one page)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
+    ("open_page", "{ name }  (a page from the config folder's pages/, e.g. one an agent made with show_page; or downloads, history)"),
     ("plugin", "{ plugin, command, context? }  (run a plugin command by its title; context: { link?, selection?, image?, page? })"),
 ];
 

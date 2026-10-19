@@ -229,6 +229,12 @@ history:
   max_pages: 5000          # pages kept in history (the command bar searches them)
   max_archived_tabs: 1000  # auto-archived tabs kept (searchable in the command bar)
   max_closed_tabs: 50      # closed tabs ⌘⇧T can bring back
+  page:                    # the History page ("History" in the command bar). Your own pages/history.html in the
+                           # config folder replaces it entirely
+    group_by: day          # one of: day | site | none
+    site_icons: true       # show each site's icon (loaded from the site). false = its first letter
+    show_visits: true      # show how many times you've visited a page. true | false
+    show_address: true     # show the page's address under its title. true | false
 
 downloads:
   folder: ""               # where downloads and page captures go (e.g. "~/Desktop"); empty = your Downloads folder
@@ -239,6 +245,11 @@ downloads:
   #  - { match: "*.pdf", folder: "~/Documents/PDFs", open: true }
   #  - { site: github.com, folder: "~/Code/downloads" }
   #  - { match: "*.{dmg,pkg}", ask: true }
+  page:                    # the Downloads page ("Downloads" in the command bar). Your own pages/downloads.html in the
+                           # config folder replaces it entirely
+    group_by: day          # one of: day | site | type | none
+    show_site: true        # show which site each file came from. true | false
+    click_opens: file      # what clicking a download does. one of: file (open it) | folder (show it in its folder)
 
 # Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
 reader_view:
@@ -281,6 +292,7 @@ ai_actions:
   Explain the selection: { mode: page, prompt: "Explain this in plain words, using the page for context: {selection}" }
   Key facts and dates: { mode: page, prompt: "List the key facts, numbers, prices and dates on this page." }
   Ask about this page…: { mode: page, prompt: "{input}" }
+  Triage my tabs: { mode: chat, prompt: "Go through all my open tabs in every space (list_tabs; read a page only when its title doesn't say enough). Sort them into: done with (close), duplicates (close), worth keeping (which Kept folder), still to do today (stay), and ones to rename. Show me that plan as a short list grouped by what you'd do, then wait: do it only when I say go, with any changes I ask for." }
   Tidy my tabs: { mode: chat, prompt: "Tidy my tabs in this space: close duplicates and pages I'm clearly done with, then group what's left in Today into Kept folders by topic. Tell me what you did." }
   Short tab titles: { mode: chat, prompt: "Give every tab in this space a short, clear title (2 to 4 words) with rename_tab." }
   Find related reading: { mode: chat, prompt: "Find three good pages related to \"{title}\" ({url}) and open them as background tabs. Say why each is worth reading." }
@@ -713,10 +725,14 @@ updates:
   feed: "https://github.com/cullen-b/valerie/releases/latest/download/latest.json"   # where stable releases are
                            # described (a fork can point this at its own releases)
 
-# Valerie's log: what went wrong (sync, updates, plugins, …), one file a day in the `logs` folder inside Valerie's data
-# folder (`valerie paths` shows where). Read it, or ask your AI to, when something fails.
+# Valerie's log: what went wrong and what happened (sync, updates, plugins, commands, agents' tool calls, …), one file
+# a day in the `logs` folder inside Valerie's data folder (`valerie paths` shows where). Read it, or ask your AI to
+# (agents read it with the read_logs tool), when something fails. Passwords, tokens and keys are never written to it.
 logs:
   keep_days: 7             # remove log files older than this many days; 0 = don't write log files
+  level: events            # how much to write. one of: errors (failures and messages you saw) | events (also commands
+                           # run, agents' tool calls with how long they took, plugin messages, crashed pages) |
+                           # verbose (also every page load)
 
 # The plugin marketplace: plugins people shared ("Plugins" in the command bar to browse and install them).
 plugin_marketplace:

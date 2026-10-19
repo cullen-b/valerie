@@ -1,0 +1,182 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Downloads</title>
+<meta name="valerie-tools" content="open_download reveal_download forget_download run_command">
+<style>
+:root { --bg: var(--v-bg, #16151c); --fg: var(--v-fg, #ecebf5); --dim: var(--v-dim, rgba(236,235,245,.55)); --line: var(--v-line, rgba(255,255,255,.08));
+  --card: var(--v-card, rgba(255,255,255,.045)); --accent: var(--v-accent, #9d8cff); --danger: #ff7a7a; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 820px; margin: 0 auto; padding: 44px 32px 80px; }
+header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+h1 { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 0; flex: 1; }
+button { font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px; cursor: default; }
+button:hover { background: var(--card); }
+button.quiet { border-color: transparent; color: var(--dim); padding: 4px 8px; }
+button.quiet:hover { color: var(--fg); }
+button.danger { color: var(--danger); }
+.search { position: relative; margin-bottom: 8px; }
+.search input { width: 100%; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px 9px 34px; outline: none; }
+.search input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); opacity: .5; }
+.summary { color: var(--dim); font-size: 12.5px; margin: 0 2px 22px; }
+.group { margin-bottom: 22px; }
+.group h2 { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 6px 10px; }
+.row { display: flex; align-items: center; gap: 13px; padding: 9px 10px; border-radius: 12px; position: relative; }
+.row:hover { background: var(--card); }
+.tile { width: 40px; height: 40px; border-radius: 10px; flex: none; display: grid; place-items: center; font-size: 10px; font-weight: 700;
+  letter-spacing: .03em; color: #fff; }
+.info { flex: 1; min-width: 0; }
+.name { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.missing .name { color: var(--dim); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg) 30%, transparent); }
+.row.failed .sub { color: var(--danger); }
+.bar { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 6px; max-width: 260px; }
+.bar i { display: block; height: 100%; width: 35%; background: var(--accent); border-radius: 3px; animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.actions { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.row:hover .actions, .row:focus-within .actions { opacity: 1; }
+.actions button { border: none; padding: 5px 7px; color: var(--dim); display: grid; place-items: center; }
+.actions button:hover { color: var(--fg); }
+.empty { text-align: center; color: var(--dim); padding: 90px 0; }
+.empty b { display: block; color: var(--fg); font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.confirm { display: none; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; }
+header.asking .confirm { display: flex; } header.asking .normal { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header id="head">
+    <h1>Downloads</h1>
+    <span class="normal"><button id="folder">Open Folder</button> <button id="clear" class="quiet">Clear List</button></span>
+    <span class="confirm">Remove every finished download from this list? (The files stay.) <button id="yes" class="danger">Clear</button><button id="no" class="quiet">Cancel</button></span>
+  </header>
+  <div class="search"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <input id="q" placeholder="Search downloads" autocomplete="off" spellcheck="false"></div>
+  <div class="summary" id="summary"></div>
+  <div id="list"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let items = [], opts = { group_by: "day", show_site: true, click_opens: "file" };
+
+const KINDS = [
+  ["Documents", "#e5484d", ["pdf"]], ["Documents", "#3e63dd", ["doc", "docx", "pages", "rtf", "txt", "md", "odt"]],
+  ["Documents", "#30a46c", ["xls", "xlsx", "csv", "numbers", "ods"]], ["Documents", "#f76b15", ["ppt", "pptx", "key", "odp"]],
+  ["Images", "#8e4ec6", ["png", "jpg", "jpeg", "gif", "webp", "heic", "svg", "avif", "bmp", "tiff"]],
+  ["Video", "#d6409f", ["mp4", "mov", "mkv", "webm", "avi", "m4v"]], ["Audio", "#12a594", ["mp3", "wav", "m4a", "flac", "aac", "ogg"]],
+  ["Apps and archives", "#6f6e77", ["dmg", "pkg", "zip", "tar", "gz", "tgz", "7z", "rar", "exe", "msi", "deb", "appimage", "iso"]],
+  ["Code and data", "#0090ff", ["json", "js", "ts", "py", "rs", "html", "css", "xml", "yaml", "yml", "sql", "sh"]],
+];
+function kindOf(name) {
+  const ext = (name.includes(".") ? name.split(".").pop() : "").toLowerCase();
+  for (const [group, color, exts] of KINDS) if (exts.includes(ext)) return { group, color, ext };
+  return { group: "Other", color: "#5b5a63", ext };
+}
+function size(b) {
+  if (b == null) return "";
+  const u = ["bytes", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (b >= 1000 && i < u.length - 1) { b /= 1000; i++; }
+  return (i ? b.toFixed(b < 10 ? 1 : 0) : b) + " " + u[i];
+}
+function dayLabel(t) {
+  const d = new Date(t * 1000), today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((today - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { month: "long", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+}
+const time = (t) => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+function svg(d) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("width", "15"); s.setAttribute("height", "15"); s.setAttribute("viewBox", "0 0 16 16");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "1.5");
+  p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+  s.append(p); return s;
+}
+const ICON = {
+  folder: "M2 4.5A1.5 1.5 0 013.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5z",
+  link: "M6.5 9.5l3-3M7 4.5l1-1a2.8 2.8 0 014 4l-1 1M9 11.5l-1 1a2.8 2.8 0 01-4-4l1-1",
+  x: "M4.5 4.5l7 7M11.5 4.5l-7 7",
+};
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function iconButton(icon, title, fn) {
+  const b = el("button"); b.title = title; b.append(svg(ICON[icon]));
+  b.addEventListener("click", (e) => { e.stopPropagation(); fn(); }); return b;
+}
+async function act(tool, args) {
+  try { await valerie.call(tool, args); } catch (e) { flash(e.message); }
+  if (tool === "forget_download") load();
+}
+function flash(msg) { $("summary").textContent = msg; setTimeout(render, 2500); }
+
+function row(d) {
+  const k = kindOf(d.name);
+  const r = el("div", "row" + (d.state === "failed" ? " failed" : "") + (d.state === "done" && !d.exists ? " missing" : ""));
+  const tile = el("div", "tile", (k.ext || "file").slice(0, 4).toUpperCase());
+  tile.style.background = k.color;
+  const info = el("div", "info");
+  info.append(el("div", "name", d.name));
+  const bits = [];
+  if (d.state === "downloading") bits.push("Downloading…");
+  else if (d.state === "failed") bits.push("Failed");
+  else if (!d.exists) bits.push("Moved or deleted");
+  if (opts.show_site && d.site) bits.push(d.site);
+  if (d.state === "done" && d.exists) bits.push(size(d.bytes));
+  bits.push(time(d.at));
+  info.append(el("div", "sub", bits.filter(Boolean).join(" · ")));
+  if (d.state === "downloading") { const b = el("div", "bar"); b.append(el("i")); info.append(b); }
+  const actions = el("div", "actions");
+  if (d.state === "done" && d.exists) actions.append(iconButton("folder", "Show in Folder", () => act("reveal_download", { path: d.path })));
+  if (d.from) actions.append(iconButton("link", "Copy Link", () => act("run_command", { command: { cmd: "copy_text", text: d.from } })));
+  if (d.state !== "downloading") actions.append(iconButton("x", "Remove from List", () => act("forget_download", { path: d.path })));
+  r.append(tile, info, actions);
+  if (d.state === "done" && d.exists) {
+    r.addEventListener("click", () => act(opts.click_opens === "folder" ? "reveal_download" : "open_download", { path: d.path }));
+  }
+  return r;
+}
+
+function render() {
+  const q = $("q").value.trim().toLowerCase();
+  const shown = items.filter((d) => !q || d.name.toLowerCase().includes(q) || (d.site || "").includes(q));
+  const list = $("list"); list.replaceChildren();
+  const total = items.filter((d) => d.exists).reduce((n, d) => n + (d.bytes || 0), 0);
+  $("summary").textContent = items.length ? `${items.length} ${items.length === 1 ? "file" : "files"}` + (total ? ` · ${size(total)}` : "") : "";
+  if (!shown.length) {
+    const e = el("div", "empty"); e.append(el("b", null, q ? "Nothing matches" : "No downloads yet"), el("span", null, q ? "Try other words." : "Files you download show up here."));
+    return list.append(e);
+  }
+  const key = { day: (d) => dayLabel(d.at), site: (d) => d.site || "Other", type: (d) => kindOf(d.name).group, none: () => "" }[opts.group_by] || ((d) => dayLabel(d.at));
+  const groups = new Map();
+  for (const d of shown) { const g = key(d); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+  for (const [name, ds] of groups) {
+    const g = el("section", "group");
+    if (name) g.append(el("h2", null, name));
+    for (const d of ds) g.append(row(d));
+    list.append(g);
+  }
+}
+
+async function load() {
+  try { items = await valerie.call("list_downloads", {}); } catch (e) { valerie.log("error: list_downloads", e); }
+  render();
+}
+
+$("q").addEventListener("input", render);
+$("folder").addEventListener("click", () => act("run_command", { command: { cmd: "show_downloads" } }));
+$("clear").addEventListener("click", () => $("head").classList.add("asking"));
+$("no").addEventListener("click", () => $("head").classList.remove("asking"));
+$("yes").addEventListener("click", () => { $("head").classList.remove("asking"); act("forget_download", {}); });
+addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("q").focus(); } });
+valerie.on("downloads", load);
+valerie.call("get_settings", { key: "downloads.page" }).then((s) => { Object.assign(opts, s.in_use || {}); render(); }).catch(() => {});
+load();
+</script>
+</body>
+</html>

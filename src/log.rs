@@ -1,13 +1,17 @@
-//! Valerie's log: what went wrong (and a few notable events), one file a day in the data folder's `logs`, so people
-//! and agents can see why something failed after the fact. Files older than `logs.keep_days` are removed.
+//! Valerie's log: what went wrong and what happened (commands, agent tool calls, page loads, plugin messages), one
+//! file a day in the data folder's `logs`, so people and agents can see why something failed after the fact. Files
+//! older than `logs.keep_days` are removed; `logs.level` sets how much goes in.
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Days to keep (0 = no log files) and the day last written, to prune again when the date changes.
 static STATE: Mutex<Option<(u64, String)>> = Mutex::new(None);
+/// 0 = errors and messages only, 1 = also events, 2 = also every page load.
+static LEVEL: AtomicU8 = AtomicU8::new(1);
 
 pub fn dir() -> PathBuf {
     crate::config::data_dir().join("logs")
@@ -16,6 +20,25 @@ pub fn dir() -> PathBuf {
 /// Start logging to files (until this runs, lines only go to stderr, which keeps tests out of the real log).
 pub fn init(keep_days: u64) {
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some((keep_days, String::new()));
+}
+
+/// `logs.level`: errors | events | verbose.
+pub fn set_level(level: &str) {
+    LEVEL.store(match level { "errors" => 0, "verbose" => 2, _ => 1 }, Ordering::Relaxed);
+}
+
+/// Log something that happened (not a failure): kept at `logs.level` events or verbose.
+pub fn event(area: &str, msg: impl std::fmt::Display) {
+    if LEVEL.load(Ordering::Relaxed) >= 1 {
+        line(area, msg);
+    }
+}
+
+/// Log something frequent (every page load): kept only at `logs.level: verbose`.
+pub fn verbose(area: &str, msg: impl std::fmt::Display) {
+    if LEVEL.load(Ordering::Relaxed) >= 2 {
+        line(area, msg);
+    }
 }
 
 /// Log one line: `line("sync", format!("failed: {e}"))`. Also printed to stderr.
@@ -48,9 +71,62 @@ fn prune(keep_days: u64) {
     }
 }
 
+/// The newest log entries, oldest first: only `area` (a prefix, so "plugin" takes in "plugin:dark-reader"), only
+/// entries containing `contains` (any case), only the last `since_minutes`; at most `limit` of them.
+pub fn read(area: &str, contains: &str, since_minutes: Option<u64>, limit: usize) -> Vec<String> {
+    let cutoff = since_minutes.map(|m| {
+        let (d, t) = stamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().saturating_sub(m * 60));
+        format!("{d}T{t}Z")
+    });
+    let needle = contains.to_lowercase();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir()).into_iter().flatten().flatten().map(|e| e.path())
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("valerie-") && n.to_string_lossy().ends_with(".log")))
+        .collect();
+    files.sort();
+    let mut out: Vec<String> = Vec::new();
+    for f in files.iter().rev() {
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        // An entry is its first line plus the indented lines after it.
+        let mut entries: Vec<String> = Vec::new();
+        for l in text.lines() {
+            match entries.last_mut() {
+                Some(e) if l.starts_with("    ") => {
+                    e.push('\n');
+                    e.push_str(l);
+                }
+                _ => entries.push(l.to_string()),
+            }
+        }
+        let mut done = false;
+        for e in entries.into_iter().rev() {
+            if cutoff.as_ref().is_some_and(|c| e.as_str() < c.as_str()) {
+                done = true;
+                break;
+            }
+            let tag = e.split_once(" [").and_then(|(_, r)| r.split_once(']')).map_or("", |(a, _)| a);
+            if (area.is_empty() || tag.starts_with(area)) && (needle.is_empty() || e.to_lowercase().contains(&needle)) {
+                out.push(e);
+                if out.len() >= limit {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if done {
+            break;
+        }
+    }
+    out.reverse();
+    out
+}
+
 /// ("2026-10-18", "17:03:12") in UTC.
 fn now() -> (String, String) {
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    stamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
+}
+
+/// A UTC time in seconds since 1970 as ("2026-10-18", "17:03:12").
+fn stamp(secs: u64) -> (String, String) {
     let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
     // Days since 1970-01-01 to a calendar date (Howard Hinnant's civil_from_days).
     let z = days + 719_468;
@@ -87,5 +163,27 @@ mod tests {
         assert!(text.contains("[test] first\n    second\n"), "{text:?}");
         assert!(pruned, "an 8-day-old log wasn't removed");
         assert_eq!(day.len(), 10);
+    }
+
+    #[test]
+    fn reads_entries_by_area_and_text() {
+        let _g = crate::config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let data = std::env::temp_dir().join(format!("valerie-log-read-{}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        std::env::set_var("VALERIE_DATA_DIR", &data);
+        std::fs::create_dir_all(super::dir()).unwrap();
+        std::fs::write(super::dir().join("valerie-2026-10-17.log"), "2026-10-17T10:00:00Z [sync] old failure\n").unwrap();
+        std::fs::write(super::dir().join("valerie-2026-10-18.log"),
+            "2026-10-18T09:00:00Z [plugin:dark] TypeError: x\n    at line 3\n2026-10-18T09:01:00Z [mcp] click 12ms ok\n2026-10-18T09:02:00Z [plugin:dark] hello\n").unwrap();
+        let plugin = super::read("plugin", "", None, 50);
+        let errors = super::read("", "typeerror", None, 50);
+        let last = super::read("", "", None, 2);
+        let all = super::read("", "", None, 50);
+        std::env::remove_var("VALERIE_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&data);
+        assert_eq!(plugin.len(), 2, "{plugin:?}");
+        assert_eq!(errors, vec!["2026-10-18T09:00:00Z [plugin:dark] TypeError: x\n    at line 3".to_string()]);
+        assert_eq!(last.len(), 2);
+        assert!(last[1].ends_with("hello"), "{last:?}");
+        assert!(all[0].contains("old failure"), "oldest first: {all:?}");
     }
 }

@@ -153,6 +153,18 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 - [x] Signing pipeline: Apple Development / Developer ID detection, hardened runtime, notarization, passkey
       entitlement when a provisioning profile is supplied; "Make Valerie the Default Browser"
 
+### Everything is a page ✅ (2026-10-18)
+- [x] `valerie://page/<name>`: one HTML file in the config folder's `pages/`, with Valerie's colours and a `valerie`
+      object (`call` browser tools, `log` into the log, `on` changes); looking tools are free, others are declared in a
+      `valerie-tools` meta tag and approved once; a per-response nonce CSP keeps shown text from running code
+- [x] Agents make them with `show_page`; they're listed in the command bar; undo covers `pages/`
+- [x] Downloads and History are built-in pages (commands `downloads`, `history`), configurable under `downloads.page`
+      and `history.page`, replaceable by a page of the same name
+- [x] Logs for agents: `logs.level`, `read_logs`, plugin and page `valerie.log`, every agent tool call timed
+- [x] `get_settings` / `set_setting` for any agent; "Report a Problem…" + `valerie triage`; "Triage my tabs"
+- [ ] Show an agent's page inside the chat, not only as a tab
+- [ ] Chat UI polish: tool steps with durations, diffs of what a customization changed
+
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
 - Updates: done. Every push to main is a release (website, Homebrew tap `cullen-b/homebrew-valerie`, GitHub
@@ -165,7 +177,7 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
   `bundle-macos.sh` only when the profile grants it. Until then `passwords.offer_passkeys: auto` hides passkeys from sites and
   "Sign In with Safari" brings a Safari login's cookies over (needs Full Disk Access).
 - Agent approvals for sensitive actions, action log, Notification Center results
-- Download manager panel, history page, site permissions UI
+- Site permissions UI
 
 ### Phase 2: daily driver
 - Password generator, TOTP codes, Keychain-backed vaults on Windows/Linux (Credential Manager / Secret Service)
