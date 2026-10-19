@@ -133,10 +133,17 @@ pub enum Command {
     },
     RenameSpace {
         name: String,
+        /// The space to rename (default: the one you're in).
+        #[serde(default)]
+        space: Option<String>,
     },
+    /// Remove a space; its tabs are archived (still searchable). Spaces from config.yaml are taken out of it too.
     DeleteSpace {
         #[serde(default)]
         name: Option<String>,
+        /// Ask first ("Remove the space …?").
+        #[serde(default)]
+        confirm: bool,
     },
     SetSpaceTheme {
         theme: String,
@@ -644,7 +651,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("next_space", "Next Space"),
     ("prev_space", "Previous Space"),
     ("new_space", "New Space"),
-    ("delete_space", "Delete Space"),
+    ("delete_space", "Remove Space (archives its tabs)"),
     ("split_view", "Split View"),
     ("unsplit", "Close Split View"),
     ("focus_next_pane", "Focus Next Split Pane"),
@@ -730,8 +737,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_folder", "{ name?, section?: kept | pinned }"),
     ("switch_space", "{ index? | name? }"),
     ("new_space", "{ name? }"),
-    ("rename_space", "{ name }"),
-    ("delete_space", "{ name? }"),
+    ("rename_space", "{ name, space? }"),
+    ("delete_space", "{ name?, confirm? }  (its tabs are archived)"),
     ("set_space_theme", "{ theme }"),
     ("split_view", "{ tab? }"),
     ("focus_pane", "{ direction: left | right }  (outside split view: back / forward)"),

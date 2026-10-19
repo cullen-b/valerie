@@ -302,6 +302,23 @@ impl State {
         Ok(())
     }
 
+    /// With the favorites row off (sidebar.favorites), favorites become pinned tabs in the space you're in, at the
+    /// front: one Pinned section instead of two kinds of tile.
+    pub fn favorites_into_pinned(&mut self) -> usize {
+        let favs = std::mem::take(&mut self.favorites);
+        let n = favs.len();
+        if n > 0 {
+            let i = self.active_space.min(self.spaces.len().saturating_sub(1));
+            if let Some(sp) = self.spaces.get_mut(i) {
+                for (k, id) in favs.into_iter().enumerate() {
+                    sp.pinned.insert(k, Node::Tab { id });
+                }
+            }
+            self.favorites_modified = now();
+        }
+        n
+    }
+
     pub fn new_id(&mut self) -> TabId {
         self.next_id += 1;
         self.next_id

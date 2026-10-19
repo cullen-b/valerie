@@ -86,7 +86,8 @@ sidebar:
   url_path: false          # show the page's path after the domain (clicking the pill always shows the full URL)
   url_lock_icon: false     # a 🔒 before secure sites (insecure http:// sites are always marked)
   space_name: false        # the space's icon and name ("Personal", "School") above its pinned tabs
-  favorites: false         # a row of favorite tiles shared by every space, above the pinned tabs
+  favorites: false         # a row of favorite tiles shared by every space, above the pinned tabs. Off: one Pinned
+                           # section per space (favorites you had become pinned tabs in the space you're in). true | false
   pinned_hint: true        # "Drag here to pin" when a space has no pinned tabs
   compact_pinned: folder   # pinned tabs in the icons-only sidebar. one of: folder (one icon; hover it to pick a tab) | icons (every tab shown)
   pinned_folder_icon: pin  # what that folder icon shows. one of: pin | star | favicons (the first four sites)

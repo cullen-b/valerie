@@ -181,6 +181,8 @@ pub struct App {
     chats_open: bool,
     active_chat: Option<String>,
     chat_view: Option<WebView>,
+    /// Pages on screen after the last layout.
+    shown_panes: Vec<TabId>,
     /// The terminal panel along the bottom of the content area, and its shells.
     terminal_view: Option<WebView>,
     terminal_open: bool,
@@ -1054,6 +1056,9 @@ impl App {
         trace("  state loaded");
         state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
         state.reconcile_spaces(&config);
+        if !config.sidebar.favorites && state.favorites_into_pinned() > 0 {
+            crate::log::event("tabs", "favorites moved into Pinned (sidebar.favorites is off)");
+        }
         let user_agent = if config.user_agent.is_empty() { platform::safari_user_agent() } else { config.user_agent.clone() };
         trace("  user agent");
         Ok(App {
@@ -1073,6 +1078,7 @@ impl App {
             chats_open: false,
             active_chat: None,
             chat_view: None,
+            shown_panes: Vec::new(),
             terminal_view: None,
             terminal_open: false,
             terminal_max: false,
@@ -1472,8 +1478,13 @@ impl App {
         let start = if url.is_empty() { "about:blank" } else { url };
         let headers = self.header_map(start);
         let base = if headers.is_empty() { base.with_url(start) } else { base.with_url_and_headers(start, headers) };
+        // Born at the size it will show at: wry's default is 200×200 in the window's top-left corner, and WebKit can
+        // flash that small first render there when the page appears.
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (cx, cy, cw, ch) = self.content_area(size.width, size.height);
         let built = base
             .with_visible(false)
+            .with_bounds(rect(cx, cy, cw, ch))
             .with_devtools(true)
             .with_user_agent(&self.agent_for_url(url))
             .with_back_forward_navigation_gestures(self.config.gestures.swipe_to_go_back)
@@ -1691,12 +1702,14 @@ impl App {
             if let Some(v) = self.views.get(id) {
                 platform::round_corners(v, self.config.layout.corner_radius, self.pane_corners(i, panes.len()));
                 let px = x + i as f64 * (pw + gap);
-                if secs <= 0.0 || !platform::animate_bounds(v, px, y, pw, h, secs) {
+                // Only a page already on screen glides; one appearing would glide in from wherever it was last.
+                if secs <= 0.0 || !self.shown_panes.contains(id) || !platform::animate_bounds(v, px, y, pw, h, secs) {
                     let _ = v.set_bounds(rect(px, y, pw, h));
                 }
                 let _ = v.set_visible(true);
             }
         }
+        self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id)).collect();
         if let Some(av) = &self.answer_view {
             match self.answer_tab.filter(|t| panes.contains(t)) {
                 Some(_) => {
@@ -2564,6 +2577,24 @@ impl App {
         }
     }
 
+    /// Right-click on a space's icon.
+    fn space_menu(&mut self, i: usize, x: f64, y: f64) {
+        let Some(name) = self.state.spaces.get(i).map(|s| s.name.clone()) else { return };
+        let mut e: Vec<Option<(String, Value)>> = Vec::new();
+        if i != self.state.active_space || self.chats_open {
+            e.push(Some((format!("Go to {name}"), json!({ "cmd": "switch_space", "index": i }))));
+            e.push(None);
+        }
+        e.push(Some(("Rename Space…".into(), json!({ "cmd": "prompt", "label": "Rename space", "value": name, "field": "name",
+            "then": { "cmd": "rename_space", "space": name } }))));
+        e.push(Some(("New Space…".into(), json!({ "cmd": "prompt", "label": "New space name", "field": "name", "then": { "cmd": "new_space" } }))));
+        if self.state.spaces.len() > 1 {
+            e.push(None);
+            e.push(Some(("Remove Space…".into(), json!({ "cmd": "delete_space", "name": name, "confirm": true }))));
+        }
+        self.popup(e, x, y);
+    }
+
     fn tab_menu(&mut self, tab: TabId, x: f64, y: f64) {
         let Some(t) = self.state.tabs.get(&tab).cloned() else { return };
         let section = self.state.section_of(tab).unwrap_or("today");
@@ -2865,6 +2896,9 @@ impl App {
         match loaded.map(|c| self.with_space_settings(c)) {
             Ok(c) => {
                 self.state.limits = crate::state::Limits { history: c.history.max_pages, archive: c.history.max_archived_tabs, closed: c.history.max_closed_tabs };
+                if !c.sidebar.favorites && self.state.favorites_into_pinned() > 0 {
+                    self.dirty = true;
+                }
                 let blocking = |c: &Config| {
                     let off: Vec<&String> = c.sites.iter().filter(|(_, s)| s.as_ref().and_then(|s| s.ad_blocking) == Some(false)).map(|(k, _)| k).collect();
                     serde_json::to_value((&c.content_blocking, c.rules.iter().map(|r| (&r.block, &r.site)).collect::<Vec<_>>(), off)).ok()
@@ -4081,6 +4115,8 @@ impl App {
                     self.render();
                 }
             }
+            // Without the favorites row there's one Pinned section, so favoriting pins.
+            Command::ToggleFavorite { tab } if !self.config.sidebar.favorites => self.dispatch(Command::TogglePin { tab }, elwt),
             Command::ToggleFavorite { tab } => {
                 if let Some(t) = self.target_tab(tab) {
                     let space = self.state.space_of(t).unwrap_or(self.state.active_space);
@@ -4262,23 +4298,54 @@ impl App {
                 let i = self.state.spaces.len() - 1;
                 self.switch_space(i);
             }
-            Command::RenameSpace { name } => {
-                let i = self.state.active_space;
-                if self.space_cfg(i).is_some() {
-                    self.toast("This space is defined in config.yaml: rename it there");
-                } else if self.state.space_index(&name).is_none() {
-                    self.state.spaces[i].name = name;
-                    self.dirty = true;
-                    self.render();
-                }
-            }
-            Command::DeleteSpace { name } => {
-                let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
-                if self.space_cfg(i).is_some() {
-                    return self.toast("This space is defined in config.yaml: remove it there");
-                }
-                if self.state.spaces.len() < 2 {
+            Command::RenameSpace { name, space } => {
+                let name = name.trim().to_string();
+                let i = space.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+                if name.is_empty() || self.state.space_index(&name).is_some() {
                     return;
+                }
+                let old = self.state.spaces[i].name.clone();
+                if self.space_cfg(i).is_some() {
+                    let new = name.clone();
+                    if let Err(e) = edit_config_spaces(&format!("rename space {old}"), |list| {
+                        for s in list.iter_mut().filter(|s| s.get("name").and_then(|n| n.as_str()) == Some(old.as_str())) {
+                            s["name"] = serde_yaml::Value::String(new.clone());
+                        }
+                    }) {
+                        return self.toast(&format!("Couldn't rename it in config.yaml: {e:#}"));
+                    }
+                }
+                self.state.spaces[i].name = name;
+                self.dirty = true;
+                self.reload_config();
+                self.render();
+            }
+            Command::DeleteSpace { name, confirm } => {
+                let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+                if self.state.spaces.len() < 2 {
+                    return self.toast("Valerie needs at least one space");
+                }
+                let sname = self.state.spaces[i].name.clone();
+                if confirm && cfg!(target_os = "macos") {
+                    let n = self.state.order(i, false).len();
+                    let body = match n {
+                        0 => "It has no tabs.".to_string(),
+                        1 => "Its one tab is archived (find it again in the command bar).".to_string(),
+                        n => format!("Its {n} tabs, pinned and kept ones too, are archived (find them again in the command bar)."),
+                    };
+                    let p = self.proxy.clone();
+                    let msg = json!({ "t": "cmd", "cmd": { "cmd": "delete_space", "name": sname } }).to_string();
+                    return platform::ask(&self.chrome, &format!("Remove the space “{sname}”?"), &body, "Remove Space", "Cancel", move |ok| {
+                        if ok {
+                            send(&p, UserEvent::Ipc { from: Source::Chrome, msg });
+                        }
+                    });
+                }
+                // A space from config.yaml comes out of the user's list (the built-in list if they had none).
+                if self.space_cfg(i).is_some() {
+                    if let Err(e) = edit_config_spaces(&format!("remove space {sname}"), |list| list.retain(|s| s.get("name").and_then(|n| n.as_str()) != Some(sname.as_str()))) {
+                        return self.toast(&format!("Couldn't take it out of config.yaml: {e:#}"));
+                    }
                 }
                 for id in self.state.order(i, false) {
                     self.state.archive_tab(id);
@@ -4286,8 +4353,11 @@ impl App {
                 }
                 self.state.spaces.remove(i);
                 self.state.active_space = self.state.active_space.min(self.state.spaces.len() - 1);
+                crate::log::event("spaces", format!("removed space {sname}"));
+                self.reload_config();
                 let a = self.state.active_space;
                 self.switch_space(a);
+                self.toast(&format!("Removed {sname}"));
             }
             Command::SetSpaceTheme { theme } => {
                 self.close_bar();
@@ -5147,6 +5217,11 @@ impl App {
             (Source::Chrome, "tab_menu") => {
                 if let Some(tab) = m["tab"].as_u64() {
                     self.tab_menu(tab, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
+                }
+            }
+            (Source::Chrome, "space_menu") => {
+                if let Some(i) = m["space"].as_u64() {
+                    self.space_menu(i as usize, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
                 }
             }
             (Source::Chrome, "folder_menu") => {
@@ -9179,6 +9254,19 @@ impl App {
             }
         }
     }
+}
+
+/// Change the user's `spaces:` list in config.yaml (starting from the built-in list when they haven't set their own).
+fn edit_config_spaces(why: &str, f: impl FnOnce(&mut Vec<serde_yaml::Value>)) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(config::config_path()).unwrap_or_default();
+    let user: serde_yaml::Value = serde_yaml::from_str(&text).unwrap_or_default();
+    let mut list = match user.get("spaces").and_then(|s| s.as_sequence()) {
+        Some(s) => s.clone(),
+        None => serde_yaml::from_str::<serde_yaml::Value>(config::DEFAULT_YAML)?.get("spaces").and_then(|s| s.as_sequence()).cloned().unwrap_or_default(),
+    };
+    f(&mut list);
+    snapshot_config(why);
+    config::set_setting(&["spaces"], &serde_json::to_string(&serde_json::to_value(&list)?)?)
 }
 
 /// A coding chat's working folder: its own worktree when it has one, else its project folder.
