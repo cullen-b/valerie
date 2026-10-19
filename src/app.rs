@@ -9968,7 +9968,8 @@ mod tests {
         std::fs::write(plan.workdir.join("a.txt"), "changed\n").unwrap();
         assert!(super::remove_worktree(&folder, &plan.workdir, &plan.branch).is_err());
         assert!(plan.root.is_dir());
-        std::fs::write(plan.workdir.join("a.txt"), "a\n").unwrap();
+        // Undone with git: on Windows a checkout's line endings differ from what the test wrote.
+        assert!(std::process::Command::new("git").arg("-C").arg(&plan.workdir).args(["checkout", "--", "a.txt"]).status().unwrap().success());
         std::fs::remove_file(plan.root.join(".env")).unwrap();
         super::remove_worktree(&folder, &plan.workdir, &plan.branch).unwrap();
         assert!(!plan.root.exists());
