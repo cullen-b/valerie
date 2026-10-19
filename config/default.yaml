@@ -279,6 +279,18 @@ chats:
     - "Summarize the page I'm on"
     - "Find the cheapest flight in my tabs"
     - "Merge my approved GitHub PRs once their checks pass"
+  # Coding: give a chat a project folder (the folder button in the composer) and its agent works there like in a
+  # terminal, with your browser to check what it builds. The folder is fixed once the chat starts.
+  projects: []             # folders always offered in the composer's folder menu, besides ones you've used (e.g. ~/code/app)
+  group_by_project: true   # in the Chats sidebar, chats with a project folder sit under that project's name
+  steps: summary           # what the agent did while answering. one of: summary (finished work folds into "Worked 2m · 14 steps")
+                           # | open (every step stays listed) | hidden (only the answer)
+  usage: true              # under each answer: how long it took and how full the model's context is
+  changes: true            # a card under a coding chat's answers listing the project's uncommitted changes, with their diffs
+  change_actions:          # buttons on that card; each sends its prompt to the chat. Set one to null to remove it.
+    Commit: "Commit the changes you made in this chat with a clear message."
+    Commit and push: "Commit the changes you made in this chat with a clear message, then push."
+    Open a pull request: "Put the changes from this chat on a new branch, commit them with a clear message, push, and open a pull request with gh. Give me its link."
 
 # AI actions: one-click jobs for your agents. They show up in the command bar (type part of the name) and can go on a
 # key: "CmdOrCtrl+Shift+S": { cmd: ai_action, name: "Summarize this page" }. Add your own; set one to null to remove it.

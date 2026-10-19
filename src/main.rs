@@ -93,6 +93,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["errors", "events", "verbose"].contains(&c.logs.level.as_str()) {
                 problems.push(format!("logs: level is {:?}; use errors, events or verbose", c.logs.level));
             }
+            if !["summary", "open", "hidden"].contains(&c.chats.steps.as_str()) {
+                problems.push(format!("chats: steps is {:?}; use summary, open or hidden", c.chats.steps));
+            }
             if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
                 problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));
             }

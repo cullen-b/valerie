@@ -163,7 +163,21 @@ WebAuthn/passkeys only work in a WKWebView browser that holds Apple's
 - [x] Logs for agents: `logs.level`, `read_logs`, plugin and page `valerie.log`, every agent tool call timed
 - [x] `get_settings` / `set_setting` for any agent; "Report a Problem…" + `valerie triage`; "Triage my tabs"
 - [ ] Show an agent's page inside the chat, not only as a tab
-- [ ] Chat UI polish: tool steps with durations, diffs of what a customization changed
+
+### Coding harness ✅ (2026-10-18)
+Chats good enough to replace a separate coding-agent app (T3 Code, Conductor…), with the browser as the edge.
+- [x] A project folder per chat (composer menu, `chats.projects`, native folder window); fixed once started (the CLI's
+      session belongs to it); sidebar groups chats by project with a + for a new one there
+- [x] Steps where they happened in the answer: edits as diffs, commands with output and exit status, durations,
+      thinking, the agent's plan (also pinned above the composer while it works); finished runs fold into a summary
+      (`chats.steps`); time and context under each answer (`chats.usage`); Claude Code and Codex in full, others by name
+- [x] Ask-first questions inside the chat (with the command or the edit), "Always Allow" per chat, a notification when
+      the chat isn't in view
+- [x] Uncommitted changes card (git, never taking the lock) with a full diff view and buttons from `chats.change_actions`
+- [x] Pasted/dropped images go to the agent; file paths in answers open in the editor; Try Again on errors
+- [x] `read_console` so an agent can check the app it's building
+- [ ] Run several turns side by side in one project without them editing the same files (worktrees, or a lock)
+- [ ] Slash commands and @file mentions in the composer; a terminal pane
 
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)

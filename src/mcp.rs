@@ -138,7 +138,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages",
+    "list_pages", "read_console",
 ];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
@@ -279,6 +279,10 @@ pub fn tools() -> Vec<Value> {
             "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
         tool("screenshot", "Capture what the tab looks like as a PNG image (the visible viewport).",
              json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024)" } }), &[]),
+        tool("read_console", "Read what the page wrote to its console since it loaded, oldest first: console.log/info/warn/error/debug, \
+             uncaught errors, failed promises and files that failed to load. Use it to check a page or app you're building.",
+             json!({ "tab": tab_prop(), "level": { "type": "string", "enum": ["error", "warn", "info", "log", "debug"], "description": "Only this level (warn includes errors)" },
+                     "limit": { "type": "integer", "default": 100 } }), &[]),
         tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited.",
              json!({ "tab": tab_prop(), "script": { "type": "string" } }), &["script"]),
         tool("run_command", &format!(
@@ -500,6 +504,13 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let tab = wait_ready(proxy, tab)?;
             let js = with_args(&a, "const max = A.max_chars || 20000; const body = A.html ? document.documentElement.outerHTML : (document.body ? document.body.innerText : ''); \
                 return { url: location.href, title: document.title, truncated: body.length > max, content: body.slice(0, max) };");
+            eval(proxy, tab, &js)
+        }
+        "read_console" => {
+            let js = with_args(&a, "const all = window.__valerie && window.__valerie.consoleLines ? window.__valerie.consoleLines() : []; \
+                const keep = { error: ['error'], warn: ['error', 'warn'] }[A.level] || (A.level ? [A.level] : null); \
+                const lines = all.filter((l) => !keep || keep.includes(l.level)); \
+                return lines.slice(-(A.limit || 100)).map((l) => ({ level: l.level, text: l.text, seconds_ago: Math.round((Date.now() - l.at) / 1000) }));");
             eval(proxy, tab, &js)
         }
         "snapshot" => {

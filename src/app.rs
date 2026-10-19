@@ -7,7 +7,7 @@ use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
@@ -74,6 +74,10 @@ pub enum UserEvent {
     SyncSetup(crate::github::Step),
     ChatEv { chat: String, ev: crate::ai::Ev },
     ChatDone { chat: String },
+    /// What's uncommitted in a project folder (git), for coding chats' changes card.
+    ChatChanges { folder: String, info: Value },
+    /// A diff to show in a chat (one file, or all of them).
+    ChatDiff { chat: String, path: Option<String>, text: String },
     PageAnswer { tab: TabId, ev: crate::ai::Ev },
     PageAnswerDone { tab: TabId },
     /// A chat-mode AI action whose {selection} has been read from the page.
@@ -186,6 +190,10 @@ pub struct App {
     chat_running: std::collections::HashSet<String>,
     /// When each running chat's agent started (for the Working section's timers).
     chat_started: HashMap<String, u64>,
+    /// Ask-first chats' questions about an action, waiting for the user, by id.
+    chat_asks: HashMap<String, ChatAsk>,
+    /// What's uncommitted in each coding chat's project folder, by folder.
+    chat_changes: HashMap<String, Value>,
     /// The models each CLI says it has: { id, label, group?, efforts? }.
     found_models: std::collections::BTreeMap<String, Vec<Value>>,
     /// Each tab's last question from find: (question, answer so far, agent), for "Open in Chats".
@@ -568,6 +576,134 @@ fn chats_dir(_config: &Config) -> PathBuf {
     config::data_dir().join("chats")
 }
 
+/// An Ask-first chat's question about one action, answered in the chat.
+struct ChatAsk {
+    chat: String,
+    tool: String,
+    what: String,
+    args: Value,
+    reply: std::sync::mpsc::Sender<Result<Value, String>>,
+}
+
+/// A folder's last part ("valerie" for ~/code/valerie).
+fn folder_name(path: &str) -> String {
+    Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Files pasted into a chat's composer (not synced: they stay on this machine).
+fn attachments_dir() -> PathBuf {
+    config::data_dir().join("chat-files")
+}
+
+fn is_image(path: &str) -> bool {
+    let p = path.to_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|e| p.ends_with(e))
+}
+
+/// A git command in a project folder; its output when it worked. It never takes git's lock, so it can't get in the
+/// way of the agent's own git commands.
+fn git(folder: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["-c", "core.quotepath=off"])
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("PATH", crate::ai::search_path())
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    // `diff --no-index` says "they differ" with exit code 1.
+    (out.status.success() || (args.contains(&"--no-index") && out.status.code() == Some(1))).then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// What's uncommitted in a folder: its branch and each changed file with lines added and removed.
+fn folder_changes(folder: &Path) -> Value {
+    if git(folder, &["rev-parse", "--is-inside-work-tree"]).is_none_or(|o| o.trim() != "true") {
+        return json!({ "repo": false });
+    }
+    let branch = git(folder, &["branch", "--show-current"]).map(|b| b.trim().to_string()).unwrap_or_default();
+    let has_head = git(folder, &["rev-parse", "--verify", "-q", "HEAD"]).is_some();
+    let mut counts: HashMap<String, (Option<u64>, Option<u64>)> = HashMap::new();
+    let numstat = if has_head { git(folder, &["diff", "HEAD", "--numstat"]) } else { git(folder, &["diff", "--cached", "--numstat"]) };
+    for line in numstat.unwrap_or_default().lines() {
+        let mut p = line.splitn(3, '\t');
+        if let (Some(a), Some(r), Some(path)) = (p.next(), p.next(), p.next()) {
+            counts.insert(path.to_string(), (a.parse().ok(), r.parse().ok()));
+        }
+    }
+    let status = git(folder, &["status", "--porcelain=v1", "-z", "-uall"]).unwrap_or_default();
+    let mut files = Vec::new();
+    let mut parts = status.split('\0');
+    while let Some(entry) = parts.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let (code, path) = (entry[..2].to_string(), entry[3..].to_string());
+        if code.starts_with('R') || code.starts_with('C') {
+            parts.next(); // the old name
+        }
+        let (added, removed) = match counts.get(&path) {
+            Some(c) => *c,
+            // A new file git doesn't track yet: all its lines are added.
+            None if code == "??" => {
+                let full = folder.join(&path);
+                let small = std::fs::metadata(&full).is_ok_and(|m| m.len() < 2_000_000);
+                let lines = small.then(|| std::fs::read_to_string(&full).ok()).flatten().map(|t| t.lines().count() as u64);
+                (lines, lines.map(|_| 0))
+            }
+            None => (None, None),
+        };
+        files.push(json!({ "path": path, "status": code.trim(), "added": added, "removed": removed }));
+        if files.len() >= 300 {
+            break;
+        }
+    }
+    json!({ "repo": true, "branch": branch, "files": files })
+}
+
+/// The diff of one changed file, or of every change, in a folder (clipped to a size a page can show).
+fn folder_diff(folder: &Path, path: Option<&str>) -> String {
+    let has_head = git(folder, &["rev-parse", "--verify", "-q", "HEAD"]).is_some();
+    let base: &[&str] = if has_head { &["diff", "HEAD"] } else { &["diff", "--cached"] };
+    let untracked: Vec<String> = git(folder, &["ls-files", "--others", "--exclude-standard", "-z"])
+        .unwrap_or_default()
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    let new_file = |p: &str| git(folder, &["diff", "--no-index", "--", "/dev/null", p]).unwrap_or_default();
+    let mut out = match path {
+        // Only a file git lists as new is read outside git's own diff.
+        Some(p) if untracked.iter().any(|u| u == p) => new_file(p),
+        Some(p) => git(folder, &[base, &["--", p]].concat()).unwrap_or_default(),
+        None => {
+            let mut all = git(folder, base).unwrap_or_default();
+            for p in untracked.iter().take(100) {
+                all.push_str(&new_file(p));
+                if all.len() > 1_500_000 {
+                    break;
+                }
+            }
+            all
+        }
+    };
+    if out.len() > 1_500_000 {
+        let mut cut = 1_500_000;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        out.push_str("\n… (the rest is too long to show here)\n");
+    }
+    out
+}
+
 /// Chats used to sit in the config folder (and sync readable): move them here, keeping whichever copy is newer.
 fn move_old_chats() {
     let (from, to) = (config::config_dir().join("chats"), config::data_dir().join("chats"));
@@ -923,6 +1059,8 @@ impl App {
             known_plugins: Default::default(),
             chat_running: Default::default(),
             chat_started: HashMap::new(),
+            chat_asks: HashMap::new(),
+            chat_changes: HashMap::new(),
             found_models: Default::default(),
             page_answers: HashMap::new(),
             page_ask_times: Vec::new(),
@@ -1923,7 +2061,9 @@ impl App {
                     "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "pinned": c.pinned,
                     "running": self.chat_running.contains(&c.id), "started": self.chat_started.get(&c.id), "updated": c.updated,
                     "agent": c.agent, "settled": c.settled, "snoozed": c.snoozed_until > now(), "unread": c.unread,
+                    "project": c.folder, "asking": self.chat_asks.values().any(|a| a.chat == c.id),
                 })).collect::<Vec<_>>(),
+                "group_by_project": self.config.chats.group_by_project,
             },
             "now_playing": self.now_playing(),
         });
@@ -4331,7 +4471,7 @@ impl App {
                 self.open_chats();
                 self.render_chat();
             }
-            Command::NewChat { prompt, agent } => {
+            Command::NewChat { prompt, agent, folder } => {
                 let name = match &agent {
                     Some(a) => self.config.agent_named(a).0,
                     None => self.config.agent_for("chat").0,
@@ -4348,12 +4488,15 @@ impl App {
                     }
                 };
                 self.active_chat = Some(id.clone());
+                if let Some(f) = folder {
+                    self.set_chat_folder(&id, &f);
+                }
                 self.open_chats();
                 if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
-                    self.send_chat(Some(id), p, agent);
+                    self.send_chat(Some(id), p, agent, vec![]);
                 }
             }
-            Command::SendChat { chat, text, agent, model, effort, access, plan } => {
+            Command::SendChat { chat, text, agent, model, effort, access, plan, files } => {
                 // A brand-new chat takes the options picked in the composer before its first message.
                 let id = match chat.or_else(|| self.active_chat.clone()).filter(|id| self.chats.iter().any(|c| &c.id == id)) {
                     Some(id) => id,
@@ -4370,7 +4513,86 @@ impl App {
                     c.access = access.unwrap_or_default();
                     c.plan = plan.unwrap_or(false);
                 }
-                self.send_chat(Some(id), text, agent);
+                self.send_chat(Some(id), text, agent, files);
+            }
+            Command::SetChatFolder { chat, folder } => {
+                let id = self.chat_for_options(chat);
+                self.set_chat_folder(&id, &folder);
+                self.render();
+                self.render_chat();
+            }
+            Command::PickChatFolder { chat } => {
+                let id = self.chat_for_options(chat);
+                match platform::pick_folder("Pick the project folder this chat's agent works in") {
+                    Some(f) => {
+                        self.set_chat_folder(&id, &f.to_string_lossy());
+                        self.render();
+                        self.render_chat();
+                    }
+                    // No folder window here: type the path instead.
+                    None if !cfg!(target_os = "macos") => {
+                        let ask = json!({ "cmd": "prompt", "label": "Project folder for this chat", "value": "~/", "then": { "cmd": "set_chat_folder", "chat": id }, "field": "folder" });
+                        if let Ok(c) = serde_json::from_value(ask) {
+                            self.dispatch(c, elwt);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            Command::AnswerChatAsk { id, allow, always } => {
+                if let Some(a) = self.chat_asks.remove(&id) {
+                    if allow && always {
+                        if let Some(c) = self.chats.iter_mut().find(|c| c.id == a.chat) {
+                            if !c.allowed.contains(&a.tool) {
+                                c.allowed.push(a.tool.clone());
+                            }
+                            crate::ai::save_chat(&chats_dir(&self.config), c);
+                        }
+                    }
+                    crate::log::event("chats", format!("chat {}: {} {}", a.chat, a.tool, if allow { "allowed" } else { "refused" }));
+                    let _ = a.reply.send(Ok(json!({ "allowed": allow })));
+                }
+                self.render();
+                self.render_chat();
+            }
+            Command::ChatChanges { chat } => {
+                if let Some(id) = chat.or_else(|| self.active_chat.clone()) {
+                    self.refresh_changes(&id);
+                }
+            }
+            Command::ChatDiff { chat, path } => {
+                let Some(id) = chat.or_else(|| self.active_chat.clone()) else { return };
+                let Some(folder) = self.chats.iter().find(|c| c.id == id).map(|c| PathBuf::from(&c.folder)).filter(|f| f.is_dir()) else { return };
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let text = folder_diff(&folder, path.as_deref());
+                    send(&p, UserEvent::ChatDiff { chat: id, path, text });
+                });
+            }
+            Command::OpenChatFile { chat, path } => {
+                let Some(id) = chat.or_else(|| self.active_chat.clone()) else { return };
+                let Some(folder) = self.chats.iter().find(|c| c.id == id).map(|c| PathBuf::from(&c.folder)).filter(|f| f.is_dir()) else { return };
+                // Only files inside the chat's own folder.
+                let file = folder.join(path.trim_start_matches("./"));
+                let inside = file.canonicalize().ok().zip(folder.canonicalize().ok()).is_some_and(|(f, d)| f.starts_with(d) && f.is_file());
+                if !inside {
+                    return self.toast(&format!("{path} isn't a file in this chat's folder"));
+                }
+                let (editor, terminal, p) = (self.config.editor.clone(), self.config.terminal.clone(), self.proxy.clone());
+                std::thread::spawn(move || {
+                    if let Err(e) = platform::open_in_editor(&file, &editor, &terminal) {
+                        send(&p, UserEvent::Toast(format!("Couldn't open {} with {editor}: {e}", file.display())));
+                    }
+                });
+            }
+            Command::RetryChat { chat } => {
+                let Some(id) = chat.or_else(|| self.active_chat.clone()).filter(|id| !self.chat_running.contains(id)) else { return };
+                let Some(c) = self.chats.iter_mut().find(|c| c.id == id) else { return };
+                if c.messages.last().is_some_and(|m| m.role == "assistant") {
+                    c.messages.pop();
+                }
+                let Some(last) = c.messages.pop().filter(|m| m.role == "user") else { return };
+                self.send_chat(Some(id), last.text, None, last.files);
             }
             Command::StopChat { chat } => {
                 if let Some(id) = chat.or_else(|| self.active_chat.clone()) {
@@ -4402,8 +4624,9 @@ impl App {
                         c.unread = false;
                         crate::ai::save_chat(&chats_dir(&self.config), c);
                     }
-                    self.active_chat = Some(chat);
+                    self.active_chat = Some(chat.clone());
                     self.open_chats();
+                    self.refresh_changes(&chat);
                 }
             }
             Command::RenameChat { chat, title } => {
@@ -4961,6 +5184,7 @@ impl App {
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => self.render_chat(),
+            (Source::Chat, "attach") => self.chat_attach(&m),
             (Source::Welcome, _) => self.welcome_message(&m, elwt),
             (Source::Market, _) => self.market_message(&m, elwt),
             (Source::Answer, "ready") => {
@@ -5526,6 +5750,15 @@ impl App {
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
+            UserEvent::ChatChanges { folder, info } => {
+                self.chat_changes.insert(folder, info);
+                self.render_chat();
+            }
+            UserEvent::ChatDiff { chat, path, text } => {
+                if let Some(v) = self.chat_view.as_ref().filter(|_| self.active_chat.as_deref() == Some(chat.as_str())) {
+                    let _ = v.evaluate_script(&format!("window.chat && chat.showDiff({}, {})", json!(path), json!(text)));
+                }
+            }
             UserEvent::RevealTimeout => self.reveal("timeout"),
             UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
@@ -5562,14 +5795,23 @@ impl App {
                     self.run_task(&t.name);
                 }
             }
-            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt),
+            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None }, elwt),
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
                 if let Some(started) = self.chat_started.remove(&chat) {
-                    let steps = self.chats.iter().find(|c| c.id == chat).and_then(|c| c.messages.last()).map_or(0, |m| m.tools.len());
+                    let steps = self.chats.iter().find(|c| c.id == chat).and_then(|c| c.messages.last()).map_or(0, |m| m.steps.len());
                     crate::log::event("chats", format!("chat {chat} answered in {}s after {steps} step(s)", now().saturating_sub(started)));
+                    if let Some(m) = self.chats.iter_mut().find(|c| c.id == chat).and_then(|c| c.messages.last_mut()).filter(|m| m.role == "assistant") {
+                        m.ms = now().saturating_sub(started) * 1000;
+                        for s in m.steps.iter_mut().filter(|s| s.state.is_empty()) {
+                            s.state = "stopped".into();
+                        }
+                    }
                 }
+                // Questions it was still waiting on go away with it.
+                self.chat_asks.retain(|_, a| a.chat != chat);
+                self.refresh_changes(&chat);
                 let shown = self.chats_open && self.active_chat.as_deref() == Some(chat.as_str()) && self.window_focused;
                 // Messages sent while it was busy go next.
                 let next = self.chats.iter_mut().find(|c| c.id == chat).and_then(|c| {
@@ -5590,7 +5832,7 @@ impl App {
                 self.render();
                 self.render_chat();
                 if let Some(text) = next {
-                    self.send_chat(Some(chat), text, None);
+                    self.send_chat(Some(chat), text, None, vec![]);
                 }
             }
             UserEvent::PageAnswer { tab, ev } => {
@@ -6218,6 +6460,9 @@ impl App {
         self.render();
         self.render_chat();
         self.focus_active();
+        if let Some(id) = self.active_chat.clone() {
+            self.refresh_changes(&id);
+        }
     }
 
     /// Model names to offer, by agent name (its CLI's own list plus agents.models), with the model and effort it uses
@@ -6255,6 +6500,11 @@ impl App {
             "default_effort": self.config.chats.effort, "suggestions": self.config.chats.suggestions,
             "plan_button": self.config.chats.plan_button, "composer_hint": self.config.chats.composer_hint,
             "theme": self.chats_theme(), "font": self.config.layout.font,
+            "projects": self.recent_projects(), "home": dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
+            "changes": chat.and_then(|c| self.chat_changes.get(&c.folder)).filter(|_| self.config.chats.changes),
+            "change_actions": self.config.chats.change_actions.iter().filter_map(|(k, v)| v.as_ref().map(|p| json!({ "label": k, "prompt": p }))).collect::<Vec<_>>(),
+            "asks": chat.map(|c| self.chat_asks.iter().filter(|(_, a)| a.chat == c.id).map(|(id, a)| json!({ "id": id, "tool": a.tool, "what": a.what, "args": a.args })).collect::<Vec<_>>()),
+            "steps": self.config.chats.steps, "usage": self.config.chats.usage,
         });
         let _ = v.evaluate_script(&format!("window.chat && chat.render({data})"));
     }
@@ -6305,10 +6555,96 @@ impl App {
         out
     }
 
-    fn send_chat(&mut self, chat: Option<String>, text: String, agent: Option<String>) {
+    /// An image pasted or dropped into the composer: saved here, and its path handed back to go with the message.
+    fn chat_attach(&mut self, m: &Value) {
+        let Some(bytes) = m["data"].as_str().and_then(crate::mcp::unbase64).filter(|b| !b.is_empty() && b.len() <= 20_000_000) else {
+            return self.toast("That file is too big to attach (20 MB at most)");
+        };
+        let ext = match m["mime"].as_str().unwrap_or("") {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            _ => return self.toast("Only images can be pasted into a chat"),
+        };
+        let dir = attachments_dir();
+        let path = dir.join(format!("{}-{}.{ext}", now(), &crate::mcp::random_hex()[..6]));
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &bytes)) {
+            crate::log::line("chats", format!("couldn't save a pasted image: {e}"));
+            return self.toast("Couldn't save that image");
+        }
+        if let Some(v) = &self.chat_view {
+            let _ = v.evaluate_script(&format!("window.chat && chat.attached({}, {})", json!(path.to_string_lossy()), json!(m["key"])));
+        }
+    }
+
+    /// The chat a composer option is for: the one given, the open one, or a new empty one.
+    fn chat_for_options(&mut self, chat: Option<String>) -> String {
+        if let Some(id) = chat.or_else(|| self.active_chat.clone()).filter(|id| self.chats.iter().any(|c| &c.id == id)) {
+            return id;
+        }
+        let c = crate::ai::Chat::new(&self.config.agent_for("chat").0);
+        let id = c.id.clone();
+        self.chats.insert(0, c);
+        self.active_chat = Some(id.clone());
+        id
+    }
+
+    /// Give a chat that hasn't started a project folder ("" = none).
+    fn set_chat_folder(&mut self, id: &str, folder: &str) {
+        let folder = folder.trim();
+        let path = match folder.strip_prefix("~/") {
+            Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
+            None if folder == "~" => dirs::home_dir().unwrap_or_default(),
+            None => PathBuf::from(folder),
+        };
+        if !folder.is_empty() && !path.is_dir() {
+            return self.toast(&format!("There's no folder at {}", path.display()));
+        }
+        let Some(c) = self.chats.iter_mut().find(|c| c.id == id) else { return };
+        if !c.messages.is_empty() {
+            return self.toast("A chat keeps the folder it started in: start a new chat for another folder");
+        }
+        c.folder = if folder.is_empty() { String::new() } else { path.to_string_lossy().into_owned() };
+        self.refresh_changes(id);
+    }
+
+    /// Look at what's uncommitted in a coding chat's folder, in the background.
+    fn refresh_changes(&self, chat: &str) {
+        let Some(folder) = self.chats.iter().find(|c| c.id == chat).map(|c| c.folder.clone()).filter(|f| !f.is_empty()) else { return };
+        if !self.config.chats.changes || !Path::new(&folder).is_dir() {
+            return;
+        }
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            let info = folder_changes(Path::new(&folder));
+            send(&p, UserEvent::ChatChanges { folder, info });
+        });
+    }
+
+    /// Project folders to offer in the composer: the ones in chats.projects, then ones chats used, newest first.
+    fn recent_projects(&self) -> Vec<Value> {
+        let home = dirs::home_dir().unwrap_or_default();
+        let mut seen: Vec<String> = Vec::new();
+        let listed = self.config.chats.projects.iter().map(|p| match p.strip_prefix("~/") {
+            Some(rest) => home.join(rest).to_string_lossy().into_owned(),
+            None => p.clone(),
+        });
+        for f in listed.chain(self.chats.iter().map(|c| c.folder.clone())) {
+            if !f.is_empty() && !seen.contains(&f) && Path::new(&f).is_dir() {
+                seen.push(f);
+            }
+        }
+        seen.into_iter().take(15).map(|f| json!({ "path": f, "name": folder_name(&f) })).collect()
+    }
+
+    fn send_chat(&mut self, chat: Option<String>, text: String, agent: Option<String>, files: Vec<String>) {
         use crate::ai::{Chat, Msg};
         let text = text.trim().to_string();
-        if text.is_empty() {
+        // Only files Valerie saved for this chat (pasted into the composer) go along.
+        let attach_dir = attachments_dir();
+        let files: Vec<String> = files.into_iter().filter(|f| Path::new(f).starts_with(&attach_dir) && Path::new(f).is_file()).collect();
+        if text.is_empty() && files.is_empty() {
             return;
         }
         let default_name = self.config.agent_for("chat").0;
@@ -6324,15 +6660,20 @@ impl App {
         if self.chat_running.contains(&id) {
             // Queued: it goes as soon as the agent finishes.
             if let Some(c) = self.chats.iter_mut().find(|c| c.id == id) {
-                c.queue.push(text);
+                c.queue.push(if files.is_empty() { text } else { format!("{text}\n\nAttached: {}", files.join(", ")) });
                 crate::ai::save_chat(&chats_dir(&self.config), c);
             }
             self.render_chat();
             return;
         }
         self.active_chat = Some(id.clone());
-        let context = if self.config.chats.browser_context { self.browser_context() } else { String::new() };
         let Some(pos) = self.chats.iter().position(|c| c.id == id) else { return };
+        let folder = (!self.chats[pos].folder.is_empty()).then(|| PathBuf::from(&self.chats[pos].folder));
+        if let Some(f) = folder.as_ref().filter(|f| !f.is_dir()) {
+            return self.toast(&format!("This chat's folder isn't on this computer: {}", f.display()));
+        }
+        // A coding chat doesn't need the list of open tabs; it can ask for them.
+        let context = if self.config.chats.browser_context && folder.is_none() { self.browser_context() } else { String::new() };
         let mut c = self.chats.remove(pos);
         if let Some(a) = agent.filter(|a| !a.is_empty()) {
             c.agent = a;
@@ -6354,14 +6695,15 @@ impl App {
             effort: if c.effort.is_empty() { self.config.chats.effort.clone() } else { c.effort.clone() },
             plan: c.plan,
             own_tools: self.config.chats.own_tools,
+            images: files.iter().filter(|f| is_image(f)).map(PathBuf::from).collect(),
         };
         // chat:<id> in the message brings that chat's conversation along.
         let shared = self.shared_chats(&text, &c.id);
         if c.title.is_empty() {
-            c.title = text.chars().take(60).collect();
+            c.title = if text.is_empty() { "Image".into() } else { text.chars().take(60).collect() };
         }
         let t = now();
-        c.messages.push(Msg { role: "user".into(), text: text.clone(), at: t, ..Default::default() });
+        c.messages.push(Msg { role: "user".into(), text: text.clone(), files: files.clone(), at: t, ..Default::default() });
         c.messages.push(Msg { role: "assistant".into(), agent: name.clone(), at: t, ..Default::default() });
         c.updated = t;
         // Agents that can continue their own session get just the new message; others get the conversation so far.
@@ -6372,11 +6714,19 @@ impl App {
         } else {
             ""
         };
-        let text = format!("{text}{shared}{plan_note}");
+        let attached = if files.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nAttached files (open them with your file tools): {}", files.join(", "))
+        };
+        let text = format!("{text}{attached}{shared}{plan_note}");
         let prompt = match &session {
             Some(_) => text,
             None => {
-                let mut p = crate::ai::browser_preamble(&def, &context);
+                let mut p = match &folder {
+                    Some(f) => crate::ai::coding_preamble(&def, f),
+                    None => crate::ai::browser_preamble(&def, &context),
+                };
                 p.push_str(&self.config.extra_instructions("chat"));
                 if !c.brief.is_empty() {
                     p.push_str("\n\n");
@@ -6404,7 +6754,7 @@ impl App {
         }
         let p = self.proxy.clone();
         let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
-        let work = config::data_dir().join("agents").join("chat");
+        let work = folder.unwrap_or_else(|| config::data_dir().join("agents").join("chat"));
         std::thread::spawn(move || {
             let _ = std::fs::create_dir_all(&work);
             let on = |ev: crate::ai::Ev| send(&p, UserEvent::ChatEv { chat: id.clone(), ev });
@@ -6429,6 +6779,7 @@ impl App {
             return;
         }
         let Some(m) = c.messages.last_mut().filter(|m| m.role == "assistant") else { return };
+        let here = m.text.encode_utf16().count();
         match ev {
             Ev::Delta { text } => m.text.push_str(&text),
             Ev::Block { text } => {
@@ -6449,7 +6800,53 @@ impl App {
                     None => text.chars().take(80).collect(),
                 };
                 crate::log::event("chats", format!("chat {chat}: {short}"));
-                m.tools.push(text)
+                // These CLIs only say a tool was used, not when it finished.
+                m.steps.push(crate::ai::Step { name: text, at: here, state: "done".into(), started_ms: now_ms(), ..Default::default() });
+            }
+            Ev::Step { mut step } => match m.steps.iter_mut().find(|s| !step.id.is_empty() && s.id == step.id) {
+                // More about a step already shown (Claude names the tool first, then gives its input).
+                Some(s) => {
+                    for (have, new) in [(&mut s.detail, step.detail), (&mut s.before, step.before), (&mut s.after, step.after), (&mut s.state, step.state)] {
+                        if !new.is_empty() {
+                            *have = new;
+                        }
+                    }
+                    if !step.todos.is_empty() {
+                        s.todos = step.todos;
+                    }
+                }
+                None => {
+                    // Only the tool's name is logged: a command or an edit can hold a secret.
+                    crate::log::event("chats", format!("chat {chat}: {}", step.name));
+                    step.at = here;
+                    step.started_ms = now_ms();
+                    m.steps.push(step);
+                }
+            },
+            Ev::StepDone { id, output, error } => {
+                let s = m.steps.iter_mut().rev().find(|s| s.id == id && (s.state.is_empty() || !id.is_empty()));
+                if let Some(s) = s {
+                    s.state = if error { "error" } else { "done" }.into();
+                    s.output = output;
+                    s.ms = now_ms().saturating_sub(s.started_ms);
+                    if error {
+                        crate::log::event("chats", format!("chat {chat}: {} failed", s.name));
+                    }
+                }
+            }
+            Ev::Thinking { text } => match m.steps.last_mut().filter(|s| s.name == "thinking" && s.at == here) {
+                Some(s) if s.output.len() < 40_000 => {
+                    s.output.push_str(&text);
+                    s.ms = now_ms().saturating_sub(s.started_ms);
+                }
+                Some(_) => {}
+                None => m.steps.push(crate::ai::Step { name: "thinking".into(), output: text, at: here, state: "done".into(), started_ms: now_ms(), ..Default::default() }),
+            },
+            Ev::Usage { context, output } => {
+                if context > 0 {
+                    m.context = context;
+                }
+                m.output_tokens += output;
             }
             Ev::Error { text } => {
                 crate::log::line("chats", format!("chat {chat} ({}): {}", m.agent, text.chars().take(400).collect::<String>()));
@@ -6600,7 +6997,7 @@ impl App {
         let view = tab.and_then(|t| self.views.get(&t.id));
         if a.mode == "chat" {
             if !prompt.contains("{selection}") {
-                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent }, elwt);
+                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None }, elwt);
             }
             let Some(v) = view else { return self.toast("Open a page and select some text first") };
             let p = self.proxy.clone();
@@ -7834,6 +8231,27 @@ impl App {
                 format!("use {other}{}{}", if detail.is_empty() { "" } else { ": " }, detail.chars().take(160).collect::<String>())
             }
         };
+        // A chat asks in the chat itself, with what the agent wants to run or change.
+        let chat_id = args["chat"].as_str().unwrap_or("").to_string();
+        if let Some(c) = self.chats.iter().find(|c| c.id == chat_id) {
+            if c.allowed.iter().any(|t| t == tool) {
+                let _ = reply.send(Ok(json!({ "allowed": true })));
+                return;
+            }
+            let clip = |v: &Value| match v {
+                Value::Object(m) => Value::Object(m.iter().map(|(k, v)| (k.clone(), match v.as_str() { Some(s) => json!(crate::ai::clip(s, 8000)), None => v.clone() })).collect()),
+                other => other.clone(),
+            };
+            let id = crate::mcp::random_hex()[..10].to_string();
+            let seen = self.chats_open && self.active_chat.as_deref() == Some(chat_id.as_str()) && self.window_focused;
+            if !seen {
+                self.notify_valerie(&format!("✦ {chat} needs you"), &format!("Let the agent {what}?"), Some(json!({ "cmd": "activate_chat", "chat": chat_id })));
+            }
+            self.chat_asks.insert(id, ChatAsk { chat: chat_id, tool: tool.to_string(), what, args: clip(a), reply });
+            self.render();
+            self.render_chat();
+            return;
+        }
         platform::ask(&self.chrome, &format!("Let the agent {what}?"), &format!("{chat} wants to do this. Its chat is set to ask first."), "Allow", "Don't Allow", move |ok| {
             let _ = reply.send(Ok(json!({ "allowed": ok })));
         });
@@ -8668,6 +9086,33 @@ mod custom_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn folder_changes_and_diffs_come_from_git() {
+        let dir = std::env::temp_dir().join(format!("valerie-git-{}", crate::mcp::random_hex()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success());
+        run(&["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        run(&["add", "."]);
+        run(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "first"]);
+        std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
+        let c = super::folder_changes(&dir);
+        assert_eq!(c["branch"], "main");
+        let files = c["files"].as_array().unwrap();
+        let a = files.iter().find(|f| f["path"] == "a.txt").unwrap();
+        assert_eq!((a["status"].as_str(), a["added"].as_u64(), a["removed"].as_u64()), (Some("M"), Some(2), Some(1)));
+        let n = files.iter().find(|f| f["path"] == "new.txt").unwrap();
+        assert_eq!((n["status"].as_str(), n["added"].as_u64()), (Some("??"), Some(2)));
+        let all = super::folder_diff(&dir, None);
+        assert!(all.contains("+TWO") && all.contains("+three") && all.contains("+y"), "{all}");
+        assert!(super::folder_diff(&dir, Some("new.txt")).contains("+x"));
+        // A file git doesn't list as changed isn't read.
+        assert!(super::folder_diff(&dir, Some("../../etc/passwd")).is_empty());
+        assert_eq!(super::folder_changes(&std::env::temp_dir())["repo"], false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn cookie_base_keeps_the_shared_part() {
         assert_eq!(super::cookie_base("accounts.google.com"), "google.com");

@@ -604,6 +604,33 @@ mod mac {
         }
     }
 
+    /// A folder window (NSOpenPanel); the chosen folder, or None if cancelled.
+    pub fn pick_folder(message: &str) -> Option<std::path::PathBuf> {
+        use objc2::class;
+        unsafe {
+            let panel: *mut AnyObject = msg_send![class!(NSOpenPanel), openPanel];
+            if panel.is_null() {
+                return None;
+            }
+            let _: () = msg_send![panel, setCanChooseDirectories: true];
+            let _: () = msg_send![panel, setCanChooseFiles: false];
+            let _: () = msg_send![panel, setAllowsMultipleSelection: false];
+            let _: () = msg_send![panel, setCanCreateDirectories: true];
+            let m = objc2_foundation::NSString::from_str(message);
+            let _: () = msg_send![panel, setMessage: &*m];
+            let r: isize = msg_send![panel, runModal];
+            if r != 1 {
+                return None;
+            }
+            let url: *mut AnyObject = msg_send![panel, URL];
+            if url.is_null() {
+                return None;
+            }
+            let path: *mut objc2_foundation::NSString = msg_send![url, path];
+            path.as_ref().map(|p| std::path::PathBuf::from(p.to_string()))
+        }
+    }
+
     pub fn has_entitlement(name: &str) -> bool {
         use std::ffi::{c_char, c_void, CString};
         #[link(name = "Security", kind = "framework")]
@@ -1470,6 +1497,17 @@ pub fn choose(wv: &WebView, title: &str, body: &str, buttons: &[&str], done: imp
     {
         let _ = (wv, title, body, buttons);
         done(None);
+    }
+}
+
+/// Pick a folder in the system's folder window. None when cancelled, and elsewhere than macOS (ask for a path instead).
+pub fn pick_folder(message: &str) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    return mac::pick_folder(message);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = message;
+        None
     }
 }
 

@@ -161,6 +161,12 @@ body.size-compact #nowplaying .title { display: none; }
 .row.chat .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; margin-right: 4px; }
 body.pointer .row.chat:hover .dot { display: none; }
 .chat-label.fold { cursor: default; }
+.chat-label.project { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+.chat-label.project .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-label.project .name::before { content: "▤ "; opacity: .6; }
+.chat-label.project .add { opacity: 0; font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 5px; cursor: default; }
+body.pointer .chat-label.project:hover .add { opacity: .7; } body.pointer .chat-label.project .add:hover { opacity: 1; background: var(--hover, rgba(127,127,127,.15)); }
+.row.chat .when.asking { color: #f0b45a; font-weight: 600; }
 .chat-label.fold::before { content: "▾ "; } .chat-label.fold.closed::before { content: "▸ "; }
 body.pointer .chat-label.fold:hover { color: var(--fg); }
 #scroll.chats { display: flex; flex-direction: column; }
@@ -498,13 +504,14 @@ function chatRow(c) {
   const r = el("div", "row chat" + (c.id === S.chats.active ? " active" : "") + (c.unread ? " unread" : ""));
   const ic = el("div", "chat-ic" + (c.running ? " running" : ""), c.running ? "" : "✦");
   r.append(ic, el("div", "title", c.title));
-  if (c.running && c.started) { const t = el("div", "when elapsed", elapsed(c.started)); t.dataset.started = c.started; r.append(t); }
+  if (c.asking) { const a = el("div", "when asking", "needs you"); r.append(a); }
+  else if (c.running && c.started) { const t = el("div", "when elapsed", elapsed(c.started)); t.dataset.started = c.started; r.append(t); }
   else if (c.unread) r.append(el("div", "dot"));
   else r.append(el("div", "when", ago(c.updated)));
   const x = el("div", "x", "×"); x.title = "Close chat";
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_chat", chat: c.id }); };
   r.append(x);
-  r.title = c.title + " · " + c.agent;
+  r.title = c.title + " · " + c.agent + (c.project ? " · " + c.project : "");
   r.onclick = () => cmd({ cmd: "activate_chat", chat: c.id });
   r.onauxclick = (e) => { if (e.button === 1) cmd({ cmd: "close_chat", chat: c.id }); };
   r.oncontextmenu = (e) => { e.preventDefault(); send({ t: "chat_menu", chat: c.id, x: e.clientX, y: e.clientY }); };
@@ -521,7 +528,18 @@ function renderChatList(sc) {
   const active = rest.filter((c) => !c.pinned && !c.settled && !c.snoozed);
   const snoozed = rest.filter((c) => c.snoozed), settled = rest.filter((c) => c.settled && !c.snoozed);
   if (pinned.length) { sc.append(el("div", "chat-label", "Pinned")); pinned.forEach((c) => sc.append(chatRow(c))); }
-  if (active.length) { sc.append(el("div", "chat-label", "Chats")); active.forEach((c) => sc.append(chatRow(c))); }
+  // Chats with a project folder sit under the project's name, newest project first; a + starts another chat there.
+  const byProject = new Map(), plain = [];
+  active.forEach((c) => (S.chats.group_by_project && c.project ? (byProject.get(c.project) || byProject.set(c.project, []).get(c.project)).push(c) : plain.push(c)));
+  for (const [path, cs] of byProject) {
+    const h = el("div", "chat-label project"); h.title = path;
+    h.append(el("span", "name", path.replace(/\/+$/, "").split("/").pop()));
+    const add = el("span", "add", "+"); add.title = "New chat in this project";
+    add.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "new_chat", folder: path }); };
+    h.append(add); sc.append(h);
+    cs.forEach((c) => sc.append(chatRow(c)));
+  }
+  if (plain.length) { sc.append(el("div", "chat-label", "Chats")); plain.forEach((c) => sc.append(chatRow(c))); }
   const fold = (into, key, label, items) => {
     if (!items.length) return;
     const h = el("div", "chat-label fold" + (chatFolds[key] ? " closed" : ""), `${label} · ${items.length}`);

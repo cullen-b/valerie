@@ -246,6 +246,50 @@ pub enum Command {
         prompt: Option<String>,
         #[serde(default)]
         agent: Option<String>,
+        /// A project folder for the agent to work in.
+        #[serde(default)]
+        folder: Option<String>,
+    },
+    /// The project folder a chat's agent works in ("" = none), before its first message.
+    SetChatFolder {
+        #[serde(default)]
+        chat: Option<String>,
+        folder: String,
+    },
+    /// Pick a chat's project folder in a folder window.
+    PickChatFolder {
+        #[serde(default)]
+        chat: Option<String>,
+    },
+    /// Answer an Ask-first chat's question about an action.
+    AnswerChatAsk {
+        id: String,
+        allow: bool,
+        #[serde(default)]
+        always: bool,
+    },
+    /// Look again at what's changed in a chat's project folder.
+    ChatChanges {
+        #[serde(default)]
+        chat: Option<String>,
+    },
+    /// Show the changes in a chat's project folder (one file, or all).
+    ChatDiff {
+        #[serde(default)]
+        chat: Option<String>,
+        #[serde(default)]
+        path: Option<String>,
+    },
+    /// Open a file from a coding chat's project folder in your editor (the `editor` setting).
+    OpenChatFile {
+        #[serde(default)]
+        chat: Option<String>,
+        path: String,
+    },
+    /// Ask the last question in a chat again.
+    RetryChat {
+        #[serde(default)]
+        chat: Option<String>,
     },
     /// Send a message in a chat (the open one if none is given; a new one if none is open).
     SendChat {
@@ -263,6 +307,9 @@ pub enum Command {
         access: Option<String>,
         #[serde(default)]
         plan: Option<bool>,
+        /// Files pasted into the composer (saved by Valerie first).
+        #[serde(default)]
+        files: Vec<String>,
     },
     StopChat {
         #[serde(default)]
@@ -497,6 +544,12 @@ impl Command {
                 // An agent starting agents could loop forever; setting one up installs software.
                 | Command::NewChat { .. }
                 | Command::SendChat { .. }
+                | Command::RetryChat { .. }
+                // Only the person answers a chat's questions and picks the folder its agent works in.
+                | Command::AnswerChatAsk { .. }
+                | Command::SetChatFolder { .. }
+                | Command::PickChatFolder { .. }
+                | Command::OpenChatFile { .. }
                 | Command::AiAction { .. }
                 | Command::WatchPage { .. }
                 | Command::NewTask { .. }

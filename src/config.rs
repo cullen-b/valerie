@@ -570,6 +570,12 @@ pub struct ChatsConfig {
     pub page_text_limit: usize,
     pub browser_context: bool,
     pub suggestions: Vec<String>,
+    pub projects: Vec<String>,
+    pub group_by_project: bool,
+    pub steps: String,
+    pub usage: bool,
+    pub changes: bool,
+    pub change_actions: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
