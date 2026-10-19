@@ -74,6 +74,11 @@ onto the pinned tiles, into Kept or a folder, onto the favorites row, or onto a 
 resize it: narrow it to show icon + domain, narrower still for icons only (`layout.sidebar_size`, double-click the
 edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
 
+**Markdown files** (`.md`, on your computer or the web) open as formatted documents: GitHub-style tables, task lists,
+notes and warnings, footnotes, highlighted code with a Copy button, and an outline of the headings beside the text.
+Source shows the plain text; for a file on your computer, Edit opens it in your `editor` and the page updates the
+moment the file is saved, by you or your AI (`pages.markdown`, `markdown_theme`, `markdown_outline`, `markdown_live`).
+
 **Media:** tabs opened in the background wait to play until you look at them; a playing video pops out into
 picture-in-picture when you switch away; a mini player above the space icons pauses, mutes or jumps back to whatever
 is playing in another tab; click a tab's ♪ to mute it. **Downloads** go to your Downloads folder and show up in the

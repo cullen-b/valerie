@@ -53,6 +53,8 @@ pub enum UserEvent {
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
+    /// A Markdown file a page shows changed on disk.
+    MarkdownChanged(Target),
     ConfigChanged,
     SyncDone(Result<sync::Outcome, String>),
     /// The answer about saved tabs not opened in a long while: 0 keep all, 1 remove all, 2 one by one.
@@ -332,6 +334,8 @@ pub struct App {
     plugin_calls: HashMap<String, Vec<std::time::Instant>>,
     /// The address plugin scripts last ran on in each page (to run them again when a web app changes its address).
     script_urls: HashMap<Target, String>,
+    /// Markdown files on this computer that pages show, watched so they update when saved (pages.markdown_live).
+    md_watch: std::sync::Arc<std::sync::Mutex<HashMap<Target, PathBuf>>>,
     /// Plugin start scripts the open pages were built with; pages are rebuilt when these change.
     init_print: String,
     /// Browser events waiting for plugins' `events` hooks.
@@ -863,6 +867,7 @@ fn ui(name: &str) -> String {
         "plugins.html" => include_str!("../ui/plugins.html"),
         "brief.html" => include_str!("../ui/brief.html"),
         "content.js" => include_str!("../ui/content.js"),
+        "markdown.js" => include_str!("../ui/markdown.js"),
         "custom.js" => include_str!("../ui/custom.js"),
         "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
         "pages/downloads.html" => include_str!("../ui/pages/downloads.html"),
@@ -1178,6 +1183,7 @@ impl App {
             page_theme: Default::default(),
             plugin_calls: HashMap::new(),
             script_urls: HashMap::new(),
+            md_watch: Default::default(),
             init_print: String::new(),
             event_queue: Vec::new(),
             in_hook: false,
@@ -1290,8 +1296,17 @@ impl App {
         c
     }
 
+    /// The Markdown file on this computer that a page shows, if it shows one.
+    fn markdown_file(&self, target: Target) -> Option<PathBuf> {
+        let url = url::Url::parse(&self.view_for(target)?.url().ok()?).ok().filter(|u| u.scheme() == "file")?;
+        let file = url.to_file_path().ok()?;
+        let ext = file.extension()?.to_str()?.to_lowercase();
+        (matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkdn" | "mkd" | "mdwn") && file.is_file()).then_some(file)
+    }
+
     fn content_script(&self, target: Target) -> String {
-        format!("(function (CFG) {{\n{}\n}})({});", ui("content.js"), self.page_config_for(target, &self.page_config()))
+        // markdown.js shares content.js's function, after it (it needs content.js's helpers and settings).
+        format!("(function (CFG) {{\n{}\n{}\n}})({});", ui("content.js"), ui("markdown.js"), self.page_config_for(target, &self.page_config()))
     }
 
     /// The space a page belongs to (little windows and Peek count as the space they were opened from).
@@ -1468,6 +1483,7 @@ impl App {
         let saved = saving.clone();
         let p6 = p.clone();
         let briefs_proxy = std::sync::Mutex::new(self.proxy.clone());
+        let md_proxy = std::sync::Mutex::new(self.proxy.clone());
         let (page_key, page_theme) = (self.page_key.clone(), self.page_theme.clone());
         let popup_windows = self.config.links.popups == "window";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
@@ -1521,6 +1537,17 @@ impl App {
             })
             .with_custom_protocol("valerie".into(), move |_, req| match req.uri().host() {
                 Some("page") => serve_page(req.uri().path().trim_matches('/'), &page_key, &page_theme.read().map(|t| t.clone()).unwrap_or_default()),
+                // The Markdown viewer's Edit button and live updates: a file:// page's own messages never arrive (wry
+                // can't make a request out of a file:// address), so it asks for valerie://md/<what> instead.
+                Some("md") => {
+                    let what = req.uri().path().trim_matches('/');
+                    if matches!(what, "edit" | "watch") {
+                        if let Ok(p) = md_proxy.lock() {
+                            send(&p, UserEvent::Ipc { from: Source::Page(target), msg: json!({ "t": format!("markdown_{what}") }).to_string() });
+                        }
+                    }
+                    wry::http::Response::builder().status(204).body(std::borrow::Cow::Borrowed(&[][..])).unwrap()
+                }
                 _ => brief_page(req.uri(), &briefs_proxy),
             })
             .with_permission_handler(move |kind| {
@@ -3896,6 +3923,11 @@ impl App {
     }
 
     fn tick(&mut self) {
+        let shown: Vec<(Target, PathBuf)> = self.md_watch.lock().map(|w| w.iter().map(|(t, f)| (*t, f.clone())).collect()).unwrap_or_default();
+        let gone: Vec<Target> = shown.into_iter().filter(|(t, f)| self.markdown_file(*t).as_ref() != Some(f)).map(|(t, _)| t).collect();
+        if let Ok(mut w) = self.md_watch.lock() {
+            w.retain(|t, _| !gone.contains(t));
+        }
         if let Some(n) = config::take_fallback_note() {
             self.toast(&n);
         }
@@ -5385,6 +5417,40 @@ impl App {
                     self.render();
                 }
             }
+            (Source::Page(target), "markdown_watch") => {
+                let Some(file) = self.markdown_file(target).filter(|_| self.config.pages.markdown_live) else { return };
+                let Ok(mut w) = self.md_watch.lock() else { return };
+                if w.get(&target) == Some(&file) {
+                    return;
+                }
+                w.insert(target, file.clone());
+                let (watch, p) = (self.md_watch.clone(), self.proxy.clone());
+                std::thread::spawn(move || {
+                    let stamp = |f: &std::path::Path| std::fs::metadata(f).and_then(|m| m.modified()).ok();
+                    let mut last = stamp(&file);
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(600));
+                        // Stops once the page shows something else (a newer watch replaces this one).
+                        if watch.lock().map(|w| w.get(&target) != Some(&file)).unwrap_or(true) {
+                            return;
+                        }
+                        let now = stamp(&file);
+                        if now != last {
+                            last = now;
+                            send(&p, UserEvent::MarkdownChanged(target));
+                        }
+                    }
+                });
+            }
+            (Source::Page(target), "markdown_edit") => {
+                let Some(file) = self.markdown_file(target) else { return };
+                let (editor, terminal, p) = (self.config.editor.clone(), self.config.terminal.clone(), self.proxy.clone());
+                std::thread::spawn(move || {
+                    if let Err(e) = platform::open_in_editor(&file, &editor, &terminal) {
+                        send(&p, UserEvent::Toast(format!("Couldn't open {} with {editor}: {e}", file.display())));
+                    }
+                });
+            }
             (Source::Page(target), "keyed") => {
                 if m["on"].as_bool() == Some(true) {
                     self.keyed.insert(target, now());
@@ -5624,6 +5690,20 @@ impl App {
             }
             UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
             UserEvent::Tick => self.tick(),
+            UserEvent::MarkdownChanged(target) => {
+                let watched = self.md_watch.lock().ok().and_then(|w| w.get(&target).cloned());
+                let Some(file) = watched.filter(|f| self.markdown_file(target).as_ref() == Some(f)) else {
+                    if let Ok(mut w) = self.md_watch.lock() {
+                        w.remove(&target);
+                    }
+                    return;
+                };
+                let Ok(bytes) = std::fs::read(&file) else { return };
+                if let Some(v) = self.view_for(target) {
+                    let text = String::from_utf8_lossy(&bytes);
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.markdownUpdate({})", json!(text)));
+                }
+            }
             UserEvent::ConfigChanged => {
                 self.reload_config();
                 self.schedule_sync();
