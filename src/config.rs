@@ -598,6 +598,42 @@ pub struct HistoryConfig {
     pub max_pages: usize,
     pub max_archived_tabs: usize,
     pub max_closed_tabs: usize,
+    #[serde(default)]
+    pub page: HistoryPage,
+}
+
+/// The History page (valerie://page/history).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistoryPage {
+    /// day | site | none
+    pub group_by: String,
+    pub site_icons: bool,
+    pub show_visits: bool,
+    pub show_address: bool,
+}
+
+impl Default for HistoryPage {
+    fn default() -> Self {
+        HistoryPage { group_by: "day".into(), site_icons: true, show_visits: true, show_address: true }
+    }
+}
+
+/// The Downloads page (valerie://page/downloads).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DownloadsPage {
+    /// day | site | type | none
+    pub group_by: String,
+    pub show_site: bool,
+    /// file | folder
+    pub click_opens: String,
+}
+
+impl Default for DownloadsPage {
+    fn default() -> Self {
+        DownloadsPage { group_by: "day".into(), show_site: true, click_opens: "file".into() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -607,6 +643,8 @@ pub struct DownloadsConfig {
     pub ask: bool,
     pub open_when_done: bool,
     pub rules: Vec<DownloadRule>,
+    #[serde(default)]
+    pub page: DownloadsPage,
 }
 
 /// Where files of a kind (or from a site) go.

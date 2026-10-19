@@ -70,7 +70,7 @@ pub enum UserEvent {
     AskHeld(Vec<String>, Vec<String>, bool),
     Downloaded { ok: bool, path: Option<PathBuf>, url: String, open: bool },
     Captured(Result<Vec<u8>, String>),
-    DownloadStarted { target: Target },
+    DownloadStarted { target: Target, name: String, path: PathBuf, url: String },
     SyncSetup(crate::github::Step),
     ChatEv { chat: String, ev: crate::ai::Ev },
     ChatDone { chat: String },
@@ -292,6 +292,10 @@ pub struct App {
     plugin_denied: std::collections::HashSet<String>,
     /// Tool calls waiting for the user to approve a plugin's permissions: (page, plugin, call id, tool, args).
     plugin_waiting: Vec<(Target, String, String, String, Value)>,
+    /// The key valerie://page pages send with their tool calls (new every launch; only those pages are given it).
+    page_key: String,
+    /// Valerie's colours as CSS variables for valerie://page pages (--v-bg, --v-fg, --v-dim, --v-accent).
+    page_theme: std::sync::Arc<std::sync::RwLock<String>>,
     /// Recent tool calls per plugin, so a page can't flood the browser through one.
     plugin_calls: HashMap<String, Vec<std::time::Instant>>,
     /// The address plugin scripts last ran on in each page (to run them again when a web app changes its address).
@@ -433,6 +437,126 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
         )),
     }
 }
+
+/// Built-in pages: what Valerie shows at valerie://page/<name> unless the config folder's pages/ has one by that name.
+const BUILT_IN_PAGES: &[&str] = &["downloads", "history"];
+
+/// Tools only built-in pages (and pages that list them) can use: they act on files Valerie downloaded.
+const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download"];
+
+fn pages_dir() -> PathBuf {
+    config::config_dir().join("pages")
+}
+
+fn page_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 60 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A page's HTML and whether it's Valerie's own (a file in pages/ wins over the built-in one).
+fn page_source(name: &str) -> Option<(String, bool)> {
+    if !page_name_ok(name) {
+        return None;
+    }
+    if let Ok(html) = std::fs::read_to_string(pages_dir().join(format!("{name}.html"))) {
+        return Some((html, false));
+    }
+    BUILT_IN_PAGES.contains(&name).then(|| (ui(&format!("pages/{name}.html")), true))
+}
+
+/// The tools a page asks for: `<meta name="valerie-tools" content="open_tab close_tab">`.
+fn page_tools(html: &str) -> Vec<String> {
+    let lower = html.to_lowercase();
+    let Some(at) = lower.find("name=\"valerie-tools\"") else { return Vec::new() };
+    let tag_start = lower[..at].rfind('<').unwrap_or(0);
+    let tag_end = lower[at..].find('>').map_or(lower.len(), |e| at + e);
+    let tag = &html[tag_start..tag_end];
+    let Some(c) = tag.find("content=\"") else { return Vec::new() };
+    let rest = &tag[c + 9..];
+    let mut tools: Vec<String> = rest[..rest.find('"').unwrap_or(rest.len())].split([' ', ',']).filter(|t| !t.is_empty()).map(str::to_string).collect();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
+/// A page's <title>, for lists.
+fn page_title(html: &str) -> String {
+    let lower = html.to_lowercase();
+    lower.find("<title>").and_then(|a| lower[a..].find("</title>").map(|b| html[a + 7..a + b].trim().to_string())).unwrap_or_default()
+}
+
+/// The pages in the config folder's pages/ and the built-in ones: (name, title, built in).
+fn list_pages() -> Vec<(String, String, bool)> {
+    let mut out: Vec<(String, String, bool)> = std::fs::read_dir(pages_dir()).into_iter().flatten().flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".html")).map(str::to_string))
+        .filter(|n| page_name_ok(n))
+        .map(|n| { let t = page_source(&n).map(|(h, _)| page_title(&h)).unwrap_or_default(); (n, t, false) })
+        .collect();
+    for b in BUILT_IN_PAGES {
+        if !out.iter().any(|(n, _, _)| n == b) {
+            out.push((b.to_string(), page_title(&ui(&format!("pages/{b}.html"))), true));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// valerie://page/<name>: the page with Valerie's colours and its `valerie` object (browser tools through
+/// `valerie.call`, `valerie.log` into the log). Only scripts carrying this response's nonce run, so text a page shows
+/// (titles, file names) can't run code even if it's put in with innerHTML.
+fn serve_page(name: &str, key: &str, theme: &str) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
+    let Some((html, _)) = page_source(name) else {
+        let body = format!("<meta charset=utf-8><body style=\"font:15px -apple-system,system-ui;padding:60px;color:#888\">\
+            <h2>No page called “{name}”</h2><p>Pages live in {}.</p>", pages_dir().display().to_string().replace('<', "&lt;"));
+        return wry::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(body.into_bytes())).unwrap();
+    };
+    let nonce = crate::mcp::random_hex()[..24].to_string();
+    let csp = format!("script-src 'nonce-{nonce}' https:; object-src 'none'; base-uri 'none'");
+    let bridge = PAGE_BRIDGE.replace("__KEY__", key).replace("__NAME__", name);
+    let head = format!(
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\"><style id=\"valerie-theme\">{theme}</style><script nonce=\"{nonce}\">{bridge}</script>"
+    );
+    // Every script the page wrote itself gets the nonce.
+    let mut body = String::with_capacity(html.len() + 200);
+    let lower = html.to_lowercase();
+    let mut last = 0;
+    for (i, _) in lower.match_indices("<script") {
+        body.push_str(&html[last..i + 7]);
+        body.push_str(&format!(" nonce=\"{nonce}\""));
+        last = i + 7;
+    }
+    body.push_str(&html[last..]);
+    let lower = body.to_lowercase();
+    let at = lower.find("<head").and_then(|h| lower[h..].find('>').map(|e| h + e + 1))
+        .or_else(|| lower.starts_with("<!doctype").then(|| lower.find('>').map(|e| e + 1)).flatten())
+        .unwrap_or(0);
+    body.insert_str(at, &head);
+    wry::http::Response::builder()
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header("Content-Security-Policy", format!("{csp}; frame-ancestors 'self'"))
+        .body(std::borrow::Cow::Owned(body.into_bytes()))
+        .unwrap()
+}
+
+/// The `valerie` object pages get. Replies come back through __valeriePage.reply.
+const PAGE_BRIDGE: &str = r#"(function () {
+  const key = "__KEY__", post = window.ipc.postMessage.bind(window.ipc), waits = new Map(); let n = 0;
+  const text = (v) => v instanceof Error ? String(v.stack || v.message) : typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch (_) { return String(v); } })();
+  const valerie = Object.freeze({
+    page: "__NAME__",
+    call: (tool, args) => new Promise((resolve, reject) => {
+      const id = "p" + (++n); waits.set(id, [resolve, reject]);
+      post(JSON.stringify({ t: "page_call", key, id, tool: String(tool), args: args || {} }));
+    }),
+    log: (...parts) => post(JSON.stringify({ t: "page_log", key, text: parts.map(text).join(" ").slice(0, 2000) })),
+    on: (what, fn) => addEventListener("valerie:changed", (e) => { if (!what || e.detail === what) fn(e.detail); }),
+  });
+  Object.defineProperty(window, "valerie", { value: valerie, writable: false, configurable: false });
+  Object.defineProperty(window, "__valeriePage", { value: Object.freeze({ reply(id, ok, v) {
+    const w = waits.get(id); if (!w) return; waits.delete(id); ok ? w[0](v) : w[1](new Error(String(v)));
+  } }), writable: false, configurable: false });
+  addEventListener("error", (e) => valerie.log("error:", e.message, (e.filename || "").split("/").pop() + ":" + e.lineno));
+  addEventListener("unhandledrejection", (e) => valerie.log("error: unhandled", text(e.reason)));
+})();"#;
 
 /// What this machine's tabs file was called before machines had ids (its short hostname).
 fn legacy_device_name() -> String {
@@ -577,6 +701,8 @@ fn ui(name: &str) -> String {
         "content.js" => include_str!("../ui/content.js"),
         "custom.js" => include_str!("../ui/custom.js"),
         "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
+        "pages/downloads.html" => include_str!("../ui/pages/downloads.html"),
+        "pages/history.html" => include_str!("../ui/pages/history.html"),
         _ => "",
     }
     .to_string()
@@ -705,6 +831,10 @@ impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
         // Last session's size and place (if it still fits a screen), else the configured size, else most of the screen.
         let mut state = State::load(&state_path());
+        // Downloads that were running when Valerie last quit didn't finish.
+        for d in state.downloads.iter_mut().filter(|d| d.state == "downloading") {
+            d.state = "failed".into();
+        }
         let saved = if config.window.remember { state.window_frame } else { None };
         let screen = elwt.primary_monitor().map(|m| {
             let s = m.size().to_logical::<f64>(m.scale_factor());
@@ -863,6 +993,8 @@ impl App {
             plugin_keys: HashMap::new(),
             plugin_denied: Default::default(),
             plugin_waiting: Vec::new(),
+            page_key: crate::mcp::random_hex(),
+            page_theme: Default::default(),
             plugin_calls: HashMap::new(),
             script_urls: HashMap::new(),
             init_print: String::new(),
@@ -1155,6 +1287,7 @@ impl App {
         let saved = saving.clone();
         let p6 = p.clone();
         let briefs_proxy = std::sync::Mutex::new(self.proxy.clone());
+        let (page_key, page_theme) = (self.page_key.clone(), self.page_theme.clone());
         let popup_windows = self.config.links.popups == "window";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
         // The page's address right now, for `sites:` settings decided as the page asks (camera, pop-ups).
@@ -1200,7 +1333,10 @@ impl App {
                 send(&p4, UserEvent::NewWindow { target, url });
                 NewWindowResponse::Deny
             })
-            .with_custom_protocol("valerie".into(), move |_, req| brief_page(req.uri(), &briefs_proxy))
+            .with_custom_protocol("valerie".into(), move |_, req| match req.uri().host() {
+                Some("page") => serve_page(req.uri().path().trim_matches('/'), &page_key, &page_theme.read().map(|t| t.clone()).unwrap_or_default()),
+                _ => brief_page(req.uri(), &briefs_proxy),
+            })
             .with_permission_handler(move |kind| {
                 let site = site_of_page(&current3, &sites2);
                 let choice = match kind {
@@ -1244,8 +1380,9 @@ impl App {
                 } else {
                     free_name(&folder, &name)
                 };
-                saving.lock().unwrap().insert(url, (dest.clone(), open));
-                send(&p6, UserEvent::DownloadStarted { target });
+                saving.lock().unwrap().insert(url.clone(), (dest.clone(), open));
+                let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name);
+                send(&p6, UserEvent::DownloadStarted { target, name, path: dest.clone(), url });
                 *path = dest;
                 true
             })
@@ -1736,6 +1873,20 @@ impl App {
     }
 
     fn render(&self) {
+        let theme = self.theme_for(self.state.active_space);
+        let light = theme.mode == "light";
+        let bg = theme.background.first().cloned().unwrap_or_else(|| if light { "#fbfaf8".into() } else { "#16151c".into() });
+        let fg = theme.foreground.clone().unwrap_or_else(|| if light { "#23201c".into() } else { "#ecebf5".into() });
+        let css = format!(
+            ":root{{color-scheme:{};--v-bg:{bg};--v-fg:{fg};--v-dim:color-mix(in srgb,{fg} 55%,transparent);--v-line:color-mix(in srgb,{fg} 9%,transparent);--v-card:color-mix(in srgb,{fg} 5%,transparent);--v-accent:{}}}",
+            if light { "light" } else { "dark" },
+            theme.accent
+        );
+        if let Ok(mut t) = self.page_theme.write() {
+            if *t != css {
+                *t = css;
+            }
+        }
         let s = self.state.space();
         let active = self.state.active_tab();
         let mut layout = serde_json::to_value(&self.config.layout).unwrap_or_default();
@@ -2064,6 +2215,11 @@ impl App {
             for c in p.manifest.commands.iter().filter(|c| c.command_bar) {
                 items.push(json!({ "kind": "plugin", "title": c.title, "sub": p.name, "cmd": { "cmd": "plugin", "plugin": p.name, "command": c.title } }));
             }
+        }
+        // Pages people and agents made (the built-in ones are the Downloads and History commands).
+        for (name, title, _) in list_pages().into_iter().filter(|p| !p.2) {
+            let title = if title.is_empty() { name.replace(['-', '_'], " ") } else { title };
+            items.push(json!({ "kind": "page", "title": title, "sub": format!("valerie://page/{name}"), "cmd": { "cmd": "open_page", "name": name } }));
         }
         let plugin_search = self.plugins.iter().any(|p| p.active_in(&space_name) && !p.manifest.search.is_empty());
         for name in &self.agents_running {
@@ -4038,6 +4194,17 @@ impl App {
                     None => self.toast("That file is no longer there"),
                 }
             }
+            Command::Downloads | Command::History | Command::OpenPage { .. } => {
+                let name = match &cmd {
+                    Command::Downloads => "downloads".to_string(),
+                    Command::History => "history".to_string(),
+                    Command::OpenPage { name } => name.trim().to_string(),
+                    _ => unreachable!(),
+                };
+                if let Err(e) = self.open_page(&name, true) {
+                    self.toast(&e);
+                }
+            }
             Command::ShowDownloads => {
                 platform::open_external(&self.config.downloads.dir().to_string_lossy());
             }
@@ -4773,6 +4940,10 @@ impl App {
                 let k = k.to_string();
                 self.plugin_message(target, &k, &m);
             }
+            (Source::Page(target), k @ ("page_call" | "page_log")) => {
+                let k = k.to_string();
+                self.page_message(target, &k, &m);
+            }
             (Source::Overlay, "search") => {
                 if let Some(q) = m["query"].as_str() {
                     self.plugin_search(q);
@@ -5334,12 +5505,24 @@ impl App {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     self.toast(&format!("Downloaded {name}"));
                     self.queue_event("download_finished", self.state.active_tab(), Some(path.to_string_lossy().into_owned()));
-                    self.state.downloads.retain(|d| d.path != path.to_string_lossy());
-                    self.state.downloads.insert(0, crate::state::Download { name, path: path.to_string_lossy().into_owned(), url, at: now() });
+                    self.state.downloads.retain(|d| d.path != path.to_string_lossy() && !(d.url == url && d.state == "downloading"));
+                    self.state.downloads.insert(0, crate::state::Download { name, path: path.to_string_lossy().into_owned(), url, at: now(), state: String::new() });
                     self.state.downloads.truncate(self.config.downloads.keep_in_list);
                     self.dirty = true;
+                    self.pages_changed("downloads");
                 }
-                None => self.toast(if ok { "Download complete" } else { "Download failed" }),
+                None => {
+                    if !ok {
+                        crate::log::line("downloads", format!("failed: {}", site_of(&url).unwrap_or_default()));
+                    }
+                    if let Some(d) = self.state.downloads.iter_mut().find(|d| d.url == url && d.state == "downloading") {
+                        d.state = if ok { String::new() } else { "failed".into() };
+                        d.at = now();
+                        self.dirty = true;
+                        self.pages_changed("downloads");
+                    }
+                    self.toast(if ok { "Download complete" } else { "Download failed" })
+                }
             },
             UserEvent::Captured(r) => self.captured(r),
             UserEvent::ChatEv { chat, ev } => self.chat_event(chat, ev),
@@ -5434,7 +5617,12 @@ impl App {
                     let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "done", "agent": agent })));
                 }
             }
-            UserEvent::DownloadStarted { target } => {
+            UserEvent::DownloadStarted { target, name, path, url } => {
+                let path = path.to_string_lossy().into_owned();
+                self.state.downloads.retain(|d| d.path != path);
+                self.state.downloads.insert(0, crate::state::Download { name, path, url, at: now(), state: "downloading".into() });
+                self.dirty = true;
+                self.pages_changed("downloads");
                 // The link was a file, not a page: the tab stays on the page it was showing.
                 if let Target::Tab(id) = target {
                     if let (Some(prev), Some(t)) = (self.committed_url.get(&id), self.state.tabs.get_mut(&id)) {
@@ -5587,7 +5775,7 @@ impl App {
             }
             "search_history" => {
                 let words: Vec<String> = args["query"].as_str().unwrap_or("").to_lowercase().split_whitespace().map(str::to_string).collect();
-                let limit = args["limit"].as_u64().unwrap_or(50).min(500) as usize;
+                let limit = args["limit"].as_u64().unwrap_or(50).min(5000) as usize;
                 let mut hits: Vec<&crate::state::HistoryEntry> =
                     self.state.history.iter().filter(|h| words.iter().all(|w| h.title.to_lowercase().contains(w) || h.url.to_lowercase().contains(w))).collect();
                 hits.sort_by(|a, b| b.last.cmp(&a.last));
@@ -5595,11 +5783,13 @@ impl App {
             }
             "delete_history" => {
                 let (q, url) = (args["query"].as_str().unwrap_or("").to_lowercase(), args["url"].as_str().unwrap_or(""));
-                if q.trim().is_empty() && url.is_empty() {
-                    Err("give a query or a url".into())
+                let since = args["since_minutes"].as_u64().map(|m| now().saturating_sub(m * 60));
+                if q.trim().is_empty() && url.is_empty() && since.is_none() {
+                    Err("give a query, a url or since_minutes".into())
                 } else {
                     let before = self.state.history.len();
-                    self.state.history.retain(|h| !(h.url == url || (!q.trim().is_empty() && (h.title.to_lowercase().contains(&q) || h.url.to_lowercase().contains(&q)))));
+                    self.state.history.retain(|h| !(h.url == url || since.is_some_and(|s| h.last >= s)
+                        || (!q.trim().is_empty() && (h.title.to_lowercase().contains(&q) || h.url.to_lowercase().contains(&q)))));
                     self.dirty = true;
                     Ok(json!({ "removed": before - self.state.history.len() }))
                 }
@@ -5614,6 +5804,12 @@ impl App {
                     .collect::<Vec<_>>()))
             }
             "list_closed_tabs" => Ok(json!(self.state.closed.iter().rev().map(|c| json!({ "url": c.tab.url, "title": c.tab.display_title(), "space": self.space_name(c.space) })).collect::<Vec<_>>())),
+            "open_page" => self.open_page(args["name"].as_str().unwrap_or(""), args["activate"].as_bool().unwrap_or(true))
+                .map(|tab| json!({ "tab": tab, "url": format!("valerie://page/{}", args["name"].as_str().unwrap_or("")) })),
+            "list_pages" => Ok(json!(list_pages().into_iter().map(|(name, title, built_in)| json!({
+                "name": name, "title": title, "url": format!("valerie://page/{name}"), "built_in": built_in,
+                "file": pages_dir().join(format!("{name}.html")),
+            })).collect::<Vec<_>>())),
             "get_settings" => {
                 let key = args["key"].as_str().unwrap_or("").trim().to_string();
                 let path: Vec<&str> = key.split('.').filter(|k| !k.is_empty()).collect();
@@ -5626,7 +5822,13 @@ impl App {
                                "hint": "pass key (a section or section.setting) to see what it does and its allowed values" }))
                 } else {
                     let pick = |v: Option<serde_yaml::Value>| path.iter().try_fold(v?, |v, k| v.get(*k).cloned());
-                    let in_use = pick(serde_yaml::to_value(&self.config).ok());
+                    // From the files, so a change made a moment ago shows before the reload catches up; a space's own
+                    // settings go on top as they do in use.
+                    let mut files = config::Config::merged(&yours).ok();
+                    if let (Some(f), Some(over)) = (files.as_mut(), self.space_cfg(self.state.active_space).and_then(|s| s.settings.clone())) {
+                        config::merge(f, serde_yaml::to_value(over).unwrap_or_default());
+                    }
+                    let in_use = pick(files.or_else(|| serde_yaml::to_value(&self.config).ok()));
                     match config::reference(&path) {
                         None if in_use.is_none() => Err(format!("`{key}` isn't a setting (call get_settings with no key for the sections)")),
                         reference => Ok(json!({
@@ -5636,7 +5838,12 @@ impl App {
                     }
                 }
             }
-            "list_downloads" => Ok(json!(self.state.downloads.iter().map(|d| json!({ "name": d.name, "path": d.path, "from": d.url, "at": d.at })).collect::<Vec<_>>())),
+            "list_downloads" => Ok(json!(self.state.downloads.iter().map(|d| {
+                let meta = std::fs::metadata(&d.path).ok();
+                json!({ "name": d.name, "path": d.path, "from": d.url, "site": site_of(&d.url), "at": d.at,
+                        "state": if d.state.is_empty() { "done" } else { d.state.as_str() },
+                        "exists": meta.is_some(), "bytes": meta.map(|m| m.len()) })
+            }).collect::<Vec<_>>())),
             "site_state" => {
                 let site = args["site"].as_str().map(|s| s.trim().trim_start_matches("www.").to_lowercase())
                     .or_else(|| self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)));
@@ -7702,7 +7909,7 @@ impl App {
 // ---------------------------------------------------------------- customising: key sequences, language, undo
 
 /// Folders and files in the config folder that "Undo Last Customization" restores.
-const UNDO_ITEMS: &[&str] = &["config.yaml", "NOTES.md", "plugins", "boosts", "ui", "strings"];
+const UNDO_ITEMS: &[&str] = &["config.yaml", "NOTES.md", "plugins", "boosts", "ui", "strings", "pages"];
 
 fn undo_dir() -> PathBuf {
     config::data_dir().join("undo")
@@ -8156,9 +8363,16 @@ impl App {
 
     fn plugin_grant(&mut self, plugin: String, allowed: bool) {
         if allowed {
-            if let Some(p) = self.plugins.iter().find(|p| p.name == plugin) {
-                let mut perms = p.manifest.permissions.clone();
-                perms.sort();
+            // Pages ask as "page:<name>" with the tools in their valerie-tools tag.
+            let perms = match plugin.strip_prefix("page:") {
+                Some(name) => page_source(name).map(|(html, _)| page_tools(&html)),
+                None => self.plugins.iter().find(|p| p.name == plugin).map(|p| {
+                    let mut perms = p.manifest.permissions.clone();
+                    perms.sort();
+                    perms
+                }),
+            };
+            if let Some(perms) = perms {
                 self.state.plugin_grants.insert(plugin.clone(), perms);
                 self.dirty = true;
             }
@@ -8167,8 +8381,11 @@ impl App {
         }
         let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.plugin_waiting).into_iter().partition(|w| w.1 == plugin);
         self.plugin_waiting = rest;
-        for (target, _, id, tool, args) in mine {
-            if allowed {
+        for (target, name, id, tool, args) in mine {
+            if allowed && name.starts_with("page:") && PAGE_OPS.contains(&tool.as_str()) {
+                let r = self.page_op(&tool, &args);
+                self.plugin_reply(target, &id, r);
+            } else if allowed {
                 self.plugin_tool(target, id, tool, args);
             } else {
                 self.plugin_reply(target, &id, Err("the user didn't allow this plugin to use browser tools".into()));
@@ -8191,7 +8408,118 @@ impl App {
             Err(e) => (false, json!(e)),
         };
         if let Some(v) = self.view_for(target) {
-            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.pluginReply({}, {ok}, {value})", json!(id)));
+            let _ = v.evaluate_script(&format!(
+                "window.__valerie && __valerie.pluginReply({id}, {ok}, {value}); window.__valeriePage && __valeriePage.reply({id}, {ok}, {value})",
+                id = json!(id)
+            ));
+        }
+    }
+
+    /// A message from a valerie://page page: a tool call or a log line. Only pages Valerie served (they hold the key)
+    /// and only while the tab shows one; looking tools are free, others must be in the page's valerie-tools tag and
+    /// the user is asked once (built-in pages are trusted).
+    fn page_message(&mut self, target: Target, kind: &str, m: &Value) {
+        if !m["key"].as_str().is_some_and(|k| crate::mcp::same_secret(k, &self.page_key)) {
+            return;
+        }
+        let url = self.view_for(target).and_then(|v| v.url().ok()).unwrap_or_default();
+        let Some(name) = url.strip_prefix("valerie://page/").map(|r| r.split(['?', '#', '/']).next().unwrap_or("").to_string()).filter(|n| page_name_ok(n)) else { return };
+        let who = format!("page:{name}");
+        let now_i = std::time::Instant::now();
+        let recent = self.plugin_calls.entry(who.clone()).or_default();
+        recent.retain(|t| now_i.duration_since(*t) < std::time::Duration::from_secs(10));
+        if recent.len() >= 200 {
+            return;
+        }
+        recent.push(now_i);
+        if kind == "page_log" {
+            let text = m["text"].as_str().unwrap_or("");
+            return if text.starts_with("error") { crate::log::line(&who, text) } else { crate::log::event(&who, text) };
+        }
+        let (id, tool, args) = (m["id"].as_str().unwrap_or("").to_string(), m["tool"].as_str().unwrap_or("").to_string(), m["args"].clone());
+        let Some((html, built_in)) = page_source(&name) else { return };
+        let wanted = page_tools(&html);
+        let looking = crate::mcp::LOOKING.contains(&tool.as_str()) && tool != "screenshot_ui";
+        if !looking && !wanted.contains(&tool) {
+            crate::log::line(&who, format!("called {tool}, which isn't in its valerie-tools tag"));
+            return self.plugin_reply(target, &id, Err(format!("{tool} isn't in this page's <meta name=\"valerie-tools\" content=\"…\"> tag")));
+        }
+        if PAGE_OPS.contains(&tool.as_str()) && (built_in || self.state.plugin_grants.get(&who) == Some(&wanted)) {
+            let r = self.page_op(&tool, &args);
+            return self.plugin_reply(target, &id, r);
+        }
+        if looking || built_in || self.state.plugin_grants.get(&who) == Some(&wanted) {
+            return self.plugin_tool(target, id, tool, args);
+        }
+        if self.plugin_denied.contains(&who) {
+            return self.plugin_reply(target, &id, Err("the user didn't allow this page to use browser tools".into()));
+        }
+        let asking = self.plugin_waiting.iter().any(|w| w.1 == who);
+        self.plugin_waiting.push((target, who.clone(), id, tool, args));
+        if !asking {
+            let px = self.proxy.clone();
+            let list = wanted.iter().map(|t| t.replace('_', " ")).collect::<Vec<_>>().join(", ");
+            platform::ask(&self.chrome, &format!("Let the page “{name}” use the browser?"),
+                &format!("It wants to: {list}. You're asked once; it's in {}.", pages_dir().join(format!("{name}.html")).display()), "Allow", "Don't Allow",
+                move |ok| send(&px, UserEvent::PluginGrant { plugin: who, allowed: ok }));
+        }
+    }
+
+    /// The download actions only pages get: open a file Valerie downloaded, show it in its folder, or take it off
+    /// the list (all finished ones without `path`). Only paths on the downloads list, never any other file.
+    fn page_op(&mut self, op: &str, args: &Value) -> Result<Value, String> {
+        let path = args["path"].as_str().unwrap_or("");
+        let listed = || self.state.downloads.iter().any(|d| !path.is_empty() && d.path == path);
+        match op {
+            "open_download" | "reveal_download" if !listed() => Err("that file isn't on the downloads list".into()),
+            "open_download" | "reveal_download" if !std::path::Path::new(path).exists() => Err("the file has been moved or deleted".into()),
+            "open_download" => {
+                platform::open_external(path);
+                Ok(json!("opened"))
+            }
+            "reveal_download" => {
+                platform::reveal(path);
+                Ok(json!("shown"))
+            }
+            "forget_download" => {
+                let before = self.state.downloads.len();
+                self.state.downloads.retain(|d| if path.is_empty() { d.state == "downloading" } else { d.path != path });
+                self.dirty = true;
+                self.pages_changed("downloads");
+                Ok(json!({ "removed": before - self.state.downloads.len() }))
+            }
+            _ => Err(format!("unknown {op}")),
+        }
+    }
+
+    /// Tell open valerie://page pages that something they may show changed (`valerie.on("downloads", …)`).
+    fn pages_changed(&self, what: &str) {
+        let js = format!("dispatchEvent(new CustomEvent('valerie:changed', {{ detail: {} }}))", json!(what));
+        for v in self.views.values().chain(self.littles.values().map(|l| &l.view)) {
+            if v.url().is_ok_and(|u| u.starts_with("valerie://page/")) {
+                let _ = v.evaluate_script(&js);
+            }
+        }
+    }
+
+    /// Show valerie://page/<name>: switch to a tab already showing it (reloaded), or open one.
+    fn open_page(&mut self, name: &str, activate: bool) -> Result<TabId, String> {
+        if page_source(name).is_none() {
+            return Err(format!("there's no page called {name:?} (pages live in {})", pages_dir().display()));
+        }
+        let url = format!("valerie://page/{name}");
+        let existing = self.state.tabs.values().find(|t| t.url.split(['?', '#']).next() == Some(url.as_str())).map(|t| t.id);
+        match existing {
+            Some(id) => {
+                if let Some(v) = self.views.get(&id) {
+                    let _ = v.reload();
+                }
+                if activate {
+                    self.activate(id);
+                }
+                Ok(id)
+            }
+            None => Ok(self.open_tab(&url, None, activate)),
         }
     }
 
@@ -8285,6 +8613,7 @@ mod custom_tests {
                 config::DownloadRule { pattern: "*.{jpg,png}".into(), folder: "~/Pictures".into(), ..Default::default() },
                 config::DownloadRule { site: "github.com".into(), folder: "~/Code".into(), ..Default::default() },
             ],
+            page: Default::default(),
         };
         assert_eq!(download_rule(&d, "Cat.PNG", "https://x.com/c.png", "").unwrap().folder, "~/Pictures");
         assert_eq!(download_rule(&d, "a.zip", "https://objects.githubusercontent.com/a.zip", "https://github.com/x").unwrap().folder, "~/Code");

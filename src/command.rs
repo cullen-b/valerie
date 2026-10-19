@@ -397,6 +397,14 @@ pub enum Command {
         index: usize,
     },
     ShowDownloads,
+    /// The Downloads page: every file you've downloaded (valerie://page/downloads).
+    Downloads,
+    /// The History page: every page you've visited (valerie://page/history).
+    History,
+    /// A page from the config folder's pages/ (or a built-in one) at valerie://page/<name>.
+    OpenPage {
+        name: String,
+    },
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
     /// Open this page in Safari, where passkeys work, then offer to bring the login back.
@@ -613,6 +621,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),
+    ("downloads", "Downloads (every file you've downloaded: open, show in folder, clear)"),
+    ("history", "History (every page you've visited, by day; search and forget)"),
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
@@ -686,6 +696,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("new_window", "{ url? }  (a separate window for one page)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
+    ("open_page", "{ name }  (a page from the config folder's pages/, e.g. one an agent made with show_page; or downloads, history)"),
     ("plugin", "{ plugin, command, context? }  (run a plugin command by its title; context: { link?, selection?, image?, page? })"),
 ];
 

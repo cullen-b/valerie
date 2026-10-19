@@ -229,6 +229,12 @@ history:
   max_pages: 5000          # pages kept in history (the command bar searches them)
   max_archived_tabs: 1000  # auto-archived tabs kept (searchable in the command bar)
   max_closed_tabs: 50      # closed tabs ⌘⇧T can bring back
+  page:                    # the History page ("History" in the command bar). Your own pages/history.html in the
+                           # config folder replaces it entirely
+    group_by: day          # one of: day | site | none
+    site_icons: true       # show each site's icon (loaded from the site). false = its first letter
+    show_visits: true      # show how many times you've visited a page. true | false
+    show_address: true     # show the page's address under its title. true | false
 
 downloads:
   folder: ""               # where downloads and page captures go (e.g. "~/Desktop"); empty = your Downloads folder
@@ -239,6 +245,11 @@ downloads:
   #  - { match: "*.pdf", folder: "~/Documents/PDFs", open: true }
   #  - { site: github.com, folder: "~/Code/downloads" }
   #  - { match: "*.{dmg,pkg}", ask: true }
+  page:                    # the Downloads page ("Downloads" in the command bar). Your own pages/downloads.html in the
+                           # config folder replaces it entirely
+    group_by: day          # one of: day | site | type | none
+    show_site: true        # show which site each file came from. true | false
+    click_opens: file      # what clicking a download does. one of: file (open it) | folder (show it in its folder)
 
 # Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
 reader_view:

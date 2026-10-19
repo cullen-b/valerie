@@ -302,6 +302,24 @@ People share plugins in a public marketplace ("Plugins" in the command bar; repo
 - Shared plugins need a folder name of lowercase words with hyphens, a one-line `description` in `plugin.yaml`, and
   readable text files only. Valerie fills in `author` with their GitHub name.
 
+## Pages: features that are just a page
+
+In Valerie anything worth seeing can be a page: a dashboard, a chart, a report, a little tool. A page is one HTML file,
+`pages/<name>.html` in this folder, shown at `valerie://page/<name>` ("open_page" in the command bar lists them by
+title). The Downloads and History pages are built the same way: a `pages/downloads.html` or `pages/history.html` here
+replaces Valerie's own (their settings are `downloads.page` and `history.page`). Agents in chats make pages with the
+`show_page` tool; here, write the file and open it with `"{exe}" call run_command '{{"command": {{"cmd": "open_page", "name": "<name>"}}}}'`.
+
+- Inside a page, `await valerie.call("<tool>", {{ …arguments }})` uses the same browser tools as `valerie call`. Tools
+  that only look (list_tabs, read_page, search_history, list_downloads, get_settings, read_logs…) work at once; list any
+  other in `<meta name="valerie-tools" content="open_tab close_tab">` and the user is asked once.
+- `valerie.log("…", data)` writes to Valerie's log as `[page:<name>]`, with the page's own errors; read it back with
+  `read_logs` (`"area": "page:<name>"`) to check the page works. `valerie.on("downloads", fn)` runs when downloads change.
+- Valerie's colours are CSS variables: `var(--v-bg)`, `--v-fg`, `--v-dim`, `--v-line`, `--v-card`, `--v-accent`.
+- Only `<script>` tags run, and scripts from `https://` addresses: no `onclick="…"` attributes (use addEventListener).
+  Build what you show from data with `textContent`, not by pasting it into innerHTML.
+- Check a page with `"{exe}" call screenshot '{{}}'` while it's the active tab.
+
 ## Controlling the browser from code
 
 `"{exe}" call <tool> '<json arguments>'` prints the result. Use it from plugin scripts or from your own shell to look

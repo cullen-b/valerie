@@ -135,9 +135,10 @@ struct Caller {
 }
 
 /// Tools that only look; everything else changes something and needs the chat's permission.
-const LOOKING: &[&str] = &[
+pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
+    "list_pages",
 ];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
@@ -212,6 +213,7 @@ fn log_call(name: &str, args: &Value, who: &Caller, took: Duration, result: &Res
     let what = match name {
         "run_command" => format!(" {}", args["command"]["cmd"].as_str().unwrap_or("?")),
         "set_setting" | "get_settings" => format!(" {}", args["key"].as_str().unwrap_or("")),
+        "show_page" => format!(" {}", args["name"].as_str().unwrap_or("")),
         _ => String::new(),
     };
     let ms = took.as_millis();
@@ -286,8 +288,8 @@ pub fn tools() -> Vec<Value> {
              json!({ "command": { "type": "object" } }), &["command"]),
         tool("search_history", "Search the pages the user visited (title or address contains the words), most recent first.",
              json!({ "query": { "type": "string" }, "limit": { "type": "integer", "default": 50 } }), &[]),
-        tool("delete_history", "Remove pages from history: those whose title or address contains `query`, or exactly `url`.",
-             json!({ "query": { "type": "string" }, "url": { "type": "string" } }), &[]),
+        tool("delete_history", "Remove pages from history: those whose title or address contains `query`, exactly `url`, or visited in the last `since_minutes`.",
+             json!({ "query": { "type": "string" }, "url": { "type": "string" }, "since_minutes": { "type": "integer" } }), &[]),
         tool("list_archived", "List tabs Valerie archived (closed after a while unused), newest first; reopen one with run_command restore_archived.",
              json!({ "query": { "type": "string" }, "limit": { "type": "integer", "default": 50 } }), &[]),
         tool("list_closed_tabs", "List recently closed tabs, most recent first (reopen_closed_tab brings back the latest).", json!({}), &[]),
@@ -296,6 +298,19 @@ pub fn tools() -> Vec<Value> {
              json!({ "site": { "type": "string", "description": "e.g. example.com; defaults to the active tab's site" } }), &[]),
         tool("site_state", "What Valerie remembers about a site: zoom, dark mode, notifications, ad blocking, hidden elements, boosts, \
              plugins and per-site settings.", json!({ "site": { "type": "string", "description": "Defaults to the active tab's site" } }), &[]),
+        tool("show_page", "Make or update a page and show it in a tab: a whole HTML document saved as pages/<name>.html in the \
+             config folder and opened at valerie://page/<name>. Use it for anything worth seeing rather than reading: a dashboard, \
+             a chart, a table, a little tool. It stays (the user finds it with \"open_page\" or the command bar) and can use the \
+             browser itself: `await valerie.call(\"<tool>\", {…})` for these same tools (looking ones freely; list others in \
+             <meta name=\"valerie-tools\" content=\"open_tab close_tab\">, the user approves once), `valerie.log(…)` into the log \
+             (area page:<name>), `valerie.on(\"downloads\", fn)` when downloads change. Colours: var(--v-bg), --v-fg, --v-dim, \
+             --v-line, --v-card, --v-accent. Only <script> tags run (no onclick=\"…\" attributes; use addEventListener); \
+             scripts from https:// load.", json!({
+            "name": { "type": "string", "description": "Letters, digits, - and _ (e.g. tab-report)" },
+            "html": { "type": "string", "description": "The whole page" },
+            "activate": { "type": "boolean", "description": "Switch to it (default true)" } }), &["name", "html"]),
+        tool("list_pages", "List the pages at valerie://page/<name>: ones agents or the user made (pages/ in the config folder) and \
+             the built-in downloads and history pages (a pages/downloads.html or history.html replaces those).", json!({}), &[]),
         tool("read_logs", "Read Valerie's log, oldest first: failures, messages the user saw, commands run, agents' tool calls with \
              how long they took, page crashes, and plugins' own messages (`valerie.log` in a plugin script, area `plugin:<name>`). \
              Read it first when something didn't work, including a plugin or page you just made.", json!({
@@ -434,7 +449,24 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
         | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
         "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
-        "screenshot_ui" | "get_settings" => call(proxy, name, a),
+        "screenshot_ui" | "get_settings" | "list_pages" => call(proxy, name, a),
+        "show_page" => {
+            let page = a["name"].as_str().unwrap_or("").trim().to_string();
+            let html = a["html"].as_str().unwrap_or("");
+            if page.is_empty() || page.len() > 60 || !page.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Err("name must be letters, digits, - and _ (up to 60)".into());
+            }
+            if html.trim().is_empty() || html.len() > 4 << 20 {
+                return Err("html must be a whole page, up to 4 MB".into());
+            }
+            crate::app::snapshot_config(&format!("page {page}"));
+            let dir = crate::config::config_dir().join("pages");
+            std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(format!("{page}.html")), html)).map_err(|e| e.to_string())?;
+            crate::log::event(&format!("page:{page}"), "saved by an agent");
+            let shown = call(proxy, "open_page", json!({ "name": page, "activate": a["activate"].as_bool().unwrap_or(true) }))?;
+            Ok(json!({ "url": shown["url"], "tab": shown["tab"], "file": dir.join(format!("{page}.html")),
+                       "next": "Check it: screenshot the tab, and read_logs with area page:<name> for script errors." }))
+        }
         "read_logs" => {
             let limit = a["limit"].as_u64().unwrap_or(100).clamp(1, 2000) as usize;
             let entries = crate::log::read(a["area"].as_str().unwrap_or(""), a["contains"].as_str().unwrap_or(""), a["since_minutes"].as_u64(), limit);

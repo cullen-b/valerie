@@ -31,6 +31,19 @@ pub fn open_external(target: &str) {
     }
 }
 
+/// Show a file in its folder (Finder, Explorer), selected where the system can.
+pub fn reveal(path: &str) {
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").args(["-R", path]).spawn();
+    #[cfg(target_os = "windows")]
+    let r = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("/"))).spawn();
+    if let Err(e) = r {
+        crate::log::line("open", format!("could not show {path}: {e}"));
+    }
+}
+
 /// Terminal apps a terminal editor can open in (the `terminal` setting).
 pub const TERMINALS: &[&str] = &["Terminal", "iTerm", "Ghostty", "WezTerm", "kitty", "Alacritty"];
 const TERMINAL_EDITORS: &[&str] = &["vim", "vi", "nvim", "nano", "emacs", "hx", "helix", "micro", "kak", "pico", "ed"];

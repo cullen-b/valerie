@@ -123,6 +123,9 @@ pub struct Download {
     pub path: String,
     pub url: String,
     pub at: u64,
+    /// "" = finished, "downloading" or "failed".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
