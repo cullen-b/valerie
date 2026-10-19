@@ -846,6 +846,18 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     }
 }
 
+/// Why nothing can be saved in `dir`, found by making (and removing) an empty file there; None when it's writable.
+fn cannot_write(dir: &Path) -> Option<std::io::Error> {
+    let probe = dir.join(format!(".valerie-can-write-{}", std::process::id()));
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            None
+        }
+        Err(e) => Some(e),
+    }
+}
+
 /// UI files are compiled in; set VALERIE_UI_DIR to load them from disk while iterating on the design.
 fn ui(name: &str) -> String {
     if let Ok(dir) = std::env::var("VALERIE_UI_DIR") {
@@ -1298,7 +1310,7 @@ impl App {
 
     /// The Markdown file on this computer that a page shows, if it shows one.
     fn markdown_file(&self, target: Target) -> Option<PathBuf> {
-        let url = url::Url::parse(&self.view_for(target)?.url().ok()?).ok().filter(|u| u.scheme() == "file")?;
+        let url = url::Url::parse(&platform::page_url(self.view_for(target)?)?).ok().filter(|u| u.scheme() == "file")?;
         let file = url.to_file_path().ok()?;
         let ext = file.extension()?.to_str()?.to_lowercase();
         (matches!(ext.as_str(), "md" | "markdown" | "mdown" | "mkdn" | "mkd" | "mdwn") && file.is_file()).then_some(file)
@@ -2726,7 +2738,7 @@ impl App {
             }
         }
         // The page's own address, from the page itself, not from the message.
-        ctx.insert("page".into(), v.url().unwrap_or_default());
+        ctx.insert("page".into(), platform::page_url(v).unwrap_or_default());
         let mut e: Vec<Option<(String, Value)>> = Vec::new();
         if let Some(link) = ctx.get("link").filter(|l| matches!(scheme_of(l).as_str(), "http" | "https")).cloned() {
             for (label, mode) in [("Open Link in New Tab", "new_tab"), ("Open Link in Background", "background_tab"), ("Open in Split View", "split"), ("Peek", "peek"), ("Open in Little Window", "little_window")] {
@@ -3281,7 +3293,7 @@ impl App {
 
     /// The page's real origin, read from the webview rather than trusting the page.
     fn origin_of_target(&self, target: Target) -> Option<String> {
-        self.view_for(target).and_then(|v| v.url().ok()).and_then(|u| passwords::origin_of(&u))
+        self.view_for(target).and_then(platform::page_url).and_then(|u| passwords::origin_of(&u))
     }
 
     fn offer_pending_save(&self) {
@@ -5382,7 +5394,7 @@ impl App {
                         let _ = v.focus();
                     }
                 }
-                let real_url = self.views.get(&id).and_then(|v| v.url().ok());
+                let real_url = self.views.get(&id).and_then(platform::page_url);
                 // A web app changed its address without loading a page: plugins that asked to run again do.
                 let loaded = self.state.tabs.get(&id).is_some_and(|t| !t.loading);
                 let moved = real_url.clone().filter(|u| loaded && u.starts_with("http") && self.script_urls.get(&target).is_some_and(|last| last != u));
@@ -5959,7 +5971,7 @@ impl App {
             UserEvent::Toast(msg) => self.toast(&msg),
             UserEvent::PageCrashed { target } => {
                 trace(&format!("page process ended: {target:?}"));
-                let url = self.view_for(target).and_then(|v| v.url().ok()).unwrap_or_default();
+                let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
                 crate::log::line("page", format!("the page's web process ended (crashed or ran out of memory): {target:?} {}", site_of(&url).unwrap_or_default()));
                 match target {
                     Target::Tab(id) if !self.panes().contains(&id) => {
@@ -6059,8 +6071,15 @@ impl App {
                     self.pages_changed("downloads");
                 }
                 None => {
+                    // WebKit doesn't say why a download failed; the usual reason is a folder Valerie may not write to.
+                    let unwritable = (!ok)
+                        .then(|| self.state.downloads.iter().find(|d| d.url == url && d.state == "downloading"))
+                        .flatten()
+                        .and_then(|d| Path::new(&d.path).parent().map(Path::to_path_buf))
+                        .and_then(|dir| cannot_write(&dir).map(|e| (dir, e)));
                     if !ok {
-                        crate::log::line("downloads", format!("failed: {}", site_of(&url).unwrap_or_default()));
+                        let why = unwritable.as_ref().map(|(dir, e)| format!(" ({} isn't writable: {e})", dir.display())).unwrap_or_default();
+                        crate::log::line("downloads", format!("failed: {}{why}", site_of(&url).unwrap_or_default()));
                     }
                     if let Some(d) = self.state.downloads.iter_mut().find(|d| d.url == url && d.state == "downloading") {
                         d.state = if ok { String::new() } else { "failed".into() };
@@ -6068,7 +6087,21 @@ impl App {
                         self.dirty = true;
                         self.pages_changed("downloads");
                     }
-                    self.toast(if ok { "Download complete" } else { "Download failed" })
+                    match unwritable {
+                        Some((dir, e)) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                            let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string());
+                            // macOS asks before an app uses these folders; the answer lives in System Settings.
+                            let home = dirs::home_dir().unwrap_or_default();
+                            let guarded = ["Downloads", "Desktop", "Documents"].iter().any(|f| dir.starts_with(home.join(f)));
+                            self.toast(&if guarded {
+                                format!("Download failed: Valerie isn't allowed to save in {name}. Allow it in System Settings › Privacy & Security › Files and Folders")
+                            } else {
+                                format!("Download failed: Valerie isn't allowed to save in {name}")
+                            })
+                        }
+                        Some((dir, e)) => self.toast(&format!("Download failed: couldn't save in {} ({e})", dir.display())),
+                        None => self.toast(if ok { "Download complete" } else { "Download failed" }),
+                    }
                 }
             },
             UserEvent::Captured(r) => self.captured(r),
@@ -9186,7 +9219,7 @@ impl App {
         if self.plugin_keys.get(name).is_none_or(|k| !crate::mcp::same_secret(k, key)) {
             return;
         }
-        let url = self.view_for(target).and_then(|v| v.url().ok()).unwrap_or_default();
+        let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
         let Some(p) = self.plugins.iter().find(|p| p.name == name && p.manifest.enabled && plugins::matches(&p.manifest.matches, &url)) else { return };
         let now_i = std::time::Instant::now();
         let recent = self.plugin_calls.entry(name.to_string()).or_default();
@@ -9298,7 +9331,7 @@ impl App {
         if !m["key"].as_str().is_some_and(|k| crate::mcp::same_secret(k, &self.page_key)) {
             return;
         }
-        let url = self.view_for(target).and_then(|v| v.url().ok()).unwrap_or_default();
+        let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
         let Some(name) = url.strip_prefix("valerie://page/").map(|r| r.split(['?', '#', '/']).next().unwrap_or("").to_string()).filter(|n| page_name_ok(n)) else { return };
         let who = format!("page:{name}");
         let now_i = std::time::Instant::now();
@@ -9372,7 +9405,7 @@ impl App {
     fn pages_changed(&self, what: &str) {
         let js = format!("dispatchEvent(new CustomEvent('valerie:changed', {{ detail: {} }}))", json!(what));
         for v in self.views.values().chain(self.littles.values().map(|l| &l.view)) {
-            if v.url().is_ok_and(|u| u.starts_with("valerie://page/")) {
+            if platform::page_url(v).is_some_and(|u| u.starts_with("valerie://page/")) {
                 let _ = v.evaluate_script(&js);
             }
         }
