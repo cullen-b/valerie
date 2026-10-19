@@ -301,7 +301,7 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
     }
     let k = kind(&def.cli).with_context(|| format!("unknown agent CLI `{}` (use claude, codex, opencode, pi, cursor or hermes, or `command`)", def.cli))?;
     let bin = find_bin(k, &path).with_context(|| format!("{} isn't installed: run \"Set Up {}\" from the command bar", k.title, k.title))?;
-    let mut c = Command::new(bin);
+    let mut c = Command::new(&bin);
     // Some CLIs take their folder from PWD (inherited from whoever started Valerie) rather than the real one.
     c.current_dir(work).env("PWD", work);
     // Valerie's MCP server, told this run's access level (some CLIs start MCP servers with a scrubbed environment).
@@ -404,11 +404,24 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
             Format::Codex
         }
         "opencode" => {
-            c.args(["run", prompt]).arg("--dir").arg(work);
+            // The folder is the process's own. OpenCode 2 talks to a shared background service unless told otherwise,
+            // and that service wouldn't see this run's settings (Valerie's tools, the chat's access).
+            let v2 = opencode_major(&bin) >= 2;
+            c.args(["run", prompt]);
+            if v2 {
+                c.arg("--standalone");
+                // It refuses anything it would have to ask about; with full access, the settings below decide.
+                if access == "full" {
+                    c.arg("--auto");
+                }
+            }
             if stream {
                 c.args(["--format", "json"]);
             }
             let cfg = match mode {
+                // OpenCode 2's free models refuse a request with no tools, so the tools stay but every use needs a "yes"
+                // a non-interactive run can't give: it's refused.
+                Mode::PageOnly if v2 => json!({ "mcp": {}, "permission": { "*": "ask" } }),
                 Mode::PageOnly => json!({ "mcp": {}, "tools": { "*": false } }),
                 // Changing Valerie means editing its settings file; the only command it may run is the settings check.
                 Mode::Customize => json!({
@@ -429,14 +442,17 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
                 }
             };
             c.env("OPENCODE_CONFIG_CONTENT", cfg.to_string());
-            if !effort.is_empty() {
-                c.args(["--variant", effort]);
-            }
             if let Some(s) = session {
                 c.args(["--session", s]);
             }
-            if !model.is_empty() {
-                c.args(["-m", model]);
+            // OpenCode 2 takes the reasoning effort on the model ("provider/model#high"); older ones as --variant.
+            match (v2, model.is_empty(), effort.is_empty()) {
+                (true, false, false) if !model.contains('#') => c.args(["-m", &format!("{model}#{effort}")]),
+                (_, false, _) => c.args(["-m", model]),
+                _ => &mut c,
+            };
+            if !v2 && !effort.is_empty() {
+                c.args(["--variant", effort]);
             }
             Format::OpenCode
         }
@@ -849,6 +865,19 @@ pub fn cli_defaults(cli: &str) -> (String, String) {
     }
 }
 
+/// OpenCode's major version ("opencode v2.0.32" → 2; older ones print "1.0.3"), asked once.
+fn opencode_major(bin: &Path) -> u32 {
+    static MAJOR: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MAJOR.get_or_init(|| {
+        let out = Command::new(bin).arg("--version").stdin(std::process::Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        version_major(&out)
+    })
+}
+
+fn version_major(text: &str) -> u32 {
+    text.split(|c: char| !c.is_ascii_digit() && c != '.').find(|w| w.contains('.')).and_then(|w| w.split('.').next()?.parse().ok()).unwrap_or(1)
+}
+
 /// For people without an AI subscription: install OpenCode (no Terminal needed) and find a free model that answers.
 /// Returns that model ("opencode/…"). `step` hears what's happening.
 pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
@@ -866,9 +895,10 @@ pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
     step("Finding a free model…");
     let bin = find_bin(k, &search_path()).context("OpenCode isn't installed")?;
     let mut c = Command::new(bin);
-    c.args(["models", "opencode"]).env("PATH", &path).stdin(std::process::Stdio::null());
+    // Every provider's models (OpenCode 2 can't list just one); its own free ones are "opencode/…-free".
+    c.arg("models").env("PATH", &path).stdin(std::process::Stdio::null());
     let listed = String::from_utf8_lossy(&run_with_timeout(&mut c, Duration::from_secs(60))?.stdout).to_string();
-    let free: Vec<&str> = listed.lines().map(str::trim).filter(|m| m.ends_with("-free")).collect();
+    let free: Vec<&str> = listed.lines().map(str::trim).filter(|m| m.starts_with("opencode/") && m.ends_with("-free")).collect();
     let mut order: Vec<String> = FREE_MODELS.iter().map(|m| format!("opencode/{m}")).filter(|m| free.contains(&m.as_str())).collect();
     let rest: Vec<String> = free.iter().map(|m| m.to_string()).filter(|m| !order.contains(m)).collect();
     order.extend(rest);
@@ -1150,6 +1180,7 @@ mod tests {
         assert!(matches!(&parse(Format::Codex, codex)[..], [Ev::Block { text }] if text == "done"));
         let err = r#"{"type":"error","message":"{\"error\":{\"message\":\"bad model\"}}"}"#;
         assert!(matches!(&parse(Format::Codex, err)[..], [Ev::Error { text }] if text == "bad model"));
+        assert_eq!((super::version_major("opencode v2.0.32\n"), super::version_major("1.0.3"), super::version_major("")), (2, 1, 1));
         let oc = r#"{"type":"text","sessionID":"s1","part":{"type":"text","text":"yo"}}"#;
         assert!(matches!(&parse(Format::OpenCode, oc)[..], [Ev::Session { .. }, Ev::Block { text }] if text == "yo"));
         let cursor = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]},"timestamp_ms":1}"#;
@@ -1214,6 +1245,27 @@ mod tests {
         assert_eq!(super::load_closed(&dir).len(), 1);
         assert!(super::reopen_chat(&dir, &a.id).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Talks to OpenCode's free model: `cargo test -- --ignored opencode_answers`.
+    #[test]
+    #[ignore]
+    fn opencode_answers() {
+        let def = AgentDef { cli: "opencode".into(), model: "opencode/deepseek-v4.1-flash-free".into(), command: vec![] };
+        let o = Opts { effort: "high".into(), ..Default::default() };
+        let dir = std::env::temp_dir();
+        let (cmd, fmt) = build(&def, Mode::PageOnly, "Reply with just the word pong", None, true, &dir, &o).unwrap();
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        eprintln!("{args:?}");
+        assert!(!args.contains(&"--dir".to_string()));
+        let got = std::cell::RefCell::new(String::new());
+        stream("test-oc", cmd, fmt, std::time::Duration::from_secs(120), &|ev| match ev {
+            Ev::Block { text } | Ev::Delta { text } => got.borrow_mut().push_str(&text),
+            Ev::Error { text } => panic!("{text}"),
+            _ => {}
+        })
+        .unwrap();
+        assert!(got.borrow().to_lowercase().contains("pong"), "{:?}", got.borrow());
     }
 
     #[test]
