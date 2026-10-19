@@ -153,8 +153,10 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
   `--top`, `--input-size`. Parts: `#backdrop`, `#card`, `#inputrow`, `#q` (the text box), `#list`, `.item` (`.sel`),
   `.item .t` (title), `.item .u` (address), `.item .kind`, `.item .ic`, `.section`, `#foot`, `mark` (matched text).
 - `ui/chat.css`: Chats. Variables `--bg`, `--fg`, `--dim`, `--faint`, `--line`, `--card`, `--accent`. Parts: `#top`,
-  `#log`, `.msg.user .bubble`, `.msg.assistant`, `.md` (answers), `.work` (tool steps), `#composer`, `#box`,
-  `textarea`, `.ctl`, `#send`, `#empty`, `.chip`.
+  `#log`, `.msg.user .bubble`, `.msg.assistant`, `.md` (answers), `.steps` (a run of steps; `.sum` its one-line
+  summary), `.step` (`.running`, `.error`, `.thinking`), `.diff` (`.a` added, `.d` removed lines), `.todos`, `.foot`
+  (time and context under an answer), `.card` (`.ask` questions, `.changes` uncommitted changes), `#pane` (the diff
+  view), `#plan-now`, `#composer`, `#box`, `textarea`, `.ctl`, `#folder`, `#send`, `#empty`, `.chip`.
 - `ui/little.css`: the bar on little windows: `#title`, `.btn`, `#open`, `#pick`.
 - `ui/page.css`: what Valerie draws inside pages: `.hint` (link hints), `.toast`, `.menu` (link menu), `.find`
   (find bar) and `.find input`, `.minimap`, `.pill` (link address on hover), `.save` (save password), `.loadbar`,
@@ -196,7 +198,11 @@ Tasks (`tasks:` in config.yaml) are things an agent does for the user, described
 `when` ("weekdays at 8am", "every 5 minutes", "when Valerie starts", "only when I ask"), with the result as a page tab,
 a chat or a notification. A morning brief is a task; so is "join my meetings when they start". To change a task, edit
 its `want` or `when`; `check-config` tells you if `when` can't be understood. Chats are JSON files in Valerie's data folder (`"{exe}" paths`), not here; with `chats.sync` they also travel encrypted. Settings for the Chats space and asking
-questions from find are under `chats`.
+questions from find are under `chats`. A chat can have a project folder (the folder menu in the composer, or
+`chats.projects` for folders always offered): its agent works there like a coding agent in a terminal, the chat shows
+its edits as diffs and its commands with their output, and a card lists the folder's uncommitted git changes with
+buttons from `chats.change_actions` (label: prompt). `chats.steps` (summary | open | hidden) sets how much of an
+agent's work is shown, `chats.usage` the time and context line under answers, `chats.group_by_project` the sidebar.
 
 ## Settings
 
@@ -360,6 +366,8 @@ and opens their popups and options pages. `extensions.enabled: false` turns them
   `area`, `contains`, `since_minutes`) or the newest `valerie-<date>.log` in `{logs}`. It has errors, messages shown to
   the user, commands run, agents' tool calls with how long they took, crashed pages and plugins' `valerie.log` lines,
   times in UTC. `logs.level` (errors | events | verbose) sets how much is written, `logs.keep_days` how long it's kept.
+- To check a web page or app you're building, open it in a background tab and use `read_console` (what the page wrote
+  to its console: logs, warnings, uncaught errors, files that failed to load), `screenshot` and `read_page`.
 - Agents outside the config folder change settings with the `get_settings` / `set_setting` tools: `get_settings`
   shows a setting's value and what it does, `set_setting` checks the change like check-config and undoes nothing else.
 "#,

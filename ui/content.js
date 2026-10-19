@@ -2,6 +2,27 @@
 // browser through a whitelist of harmless messages.
 if (window.__valerie || window.top !== window) return;
 
+// ---------- the console, kept for an agent checking a page it built (read_console) ----------
+const consoleKept = [];
+(() => {
+  const keep = (level, parts) => {
+    try {
+      consoleKept.push({ level, text: parts.map(logText).join(" ").slice(0, 1000), at: Date.now() });
+      if (consoleKept.length > 300) consoleKept.shift();
+    } catch (_) {}
+  };
+  for (const level of ["log", "info", "warn", "error", "debug"]) {
+    const orig = console[level];
+    if (typeof orig === "function") console[level] = function (...a) { keep(level, a); return orig.apply(this, a); };
+  }
+  addEventListener("error", (e) => {
+    const t = e.target;
+    if (t && t !== window && (t.src || t.href)) keep("error", ["Failed to load " + (t.src || t.href)]);
+    else keep("error", [String(e.message || "Error") + (e.filename ? ` (${e.filename}:${e.lineno})` : "")]);
+  }, true);
+  addEventListener("unhandledrejection", (e) => keep("error", ["Unhandled promise rejection:", e.reason]));
+})();
+
 // ---------- notifications from websites: shown by the computer, once you've allowed the site ----------
 // WebKit gives apps like Valerie no working Notification, so pages get this one; Valerie decides per site.
 const notifyHooks = { permission() {}, clicked() {} };
@@ -1462,6 +1483,7 @@ Object.defineProperty(window, "__valerie", {
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
+    consoleLines: () => consoleKept.slice(),
   }),
   writable: false, configurable: false,
 });
