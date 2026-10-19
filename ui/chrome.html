@@ -76,6 +76,7 @@ body.pointer .row:hover { background: var(--hover); }
 .row .x { width: min(22px, calc(var(--tab-h) * .65)); height: min(22px, calc(var(--tab-h) * .65)); border-radius: 6px; display: none; place-items: center; color: var(--fg-dim); font-size: 14px; }
 body.pointer .row:hover .x { display: grid; }
 body.pointer.dragging .row:hover .x { display: none; }
+body.pointer.dragging .row:not(.active):not(.dragging-src):hover { background: transparent; }
 body.pointer .row .x:hover { background: var(--hover); color: var(--fg); }
 .row .x.minus { font-size: 15px; font-weight: 600; }
 .tile .x.minus { position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; display: none; place-items: center;
@@ -190,7 +191,10 @@ body.size-compact .chat-label, body.size-compact .row.chat .when { display: none
 #pinfly .grid { margin-bottom: 0; }
 .ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: .97; box-shadow: 0 10px 28px rgba(0,0,0,.35);
   background: color-mix(in srgb, var(--bg2) 88%, #fff); border-radius: 10px; }
-.dragging-src { opacity: .3; }
+/* where the dragged tab will land: an empty slot the others slide around */
+.dragging-src { background: color-mix(in srgb, var(--accent) 14%, transparent) !important; border-radius: 10px; }
+.dragging-src > * { opacity: 0; }
+.ghost { transition: none; }
 body.dragging, body.dragging * { cursor: grabbing !important; }
 .drop-before::before, .drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--accent); z-index: 2; }
 .drop-before::before { top: -1px; }
@@ -306,12 +310,16 @@ const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.
 const click = (fn) => (e) => { if (!suppressClick) fn(e); };
 
 // ---------- drag and drop (pointer based; HTML5 DnD is unreliable inside native webviews) ----------
-// Every tab element gets a source {id, list, index}; drop zones carry {kind, list, index, payload}.
+// Every tab element gets a source {id, list, index}; drop zones carry {kind, list, index, payload}. While dragging, the
+// tab's own row moves through its list (the others slide out of the way); dropping on a folder, an empty section or
+// another kind of list shows a line or highlight instead. Resting on a space's icon switches to it, so a tab can go
+// anywhere in another space.
 let drag = null;
 function source(node, id, list, index) {
+  node.dataset.tab = id;
   node.addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || e.target.closest(".x")) return;
-    drag = { id, list, index, node, x: e.clientX, y: e.clientY, active: false };
+    if (e.button !== 0 || e.target.closest(".x, .audio")) return;
+    drag = { id, list, index, node, space: S.active_space, x: e.clientX, y: e.clientY, active: false };
   });
 }
 function zone(node, z) { node.dataset.drop = "1"; node._drop = z; }
@@ -324,7 +332,63 @@ function locate(x, y) {
   if (z.kind === "into") return { node, cls: "drop-into", payload: z.payload, list: null };
   const after = z.kind === "tile" ? x > r.left + r.width / 2 : y > r.top + r.height / 2;
   if (z.kind === "area") return { node, cls: "drop-into", payload: { ...z.payload }, list: z.list, index: z.index };
-  return { node, cls: after ? "drop-after" : "drop-before", payload: { ...z.payload }, list: z.list, index: z.index + (after ? 1 : 0) };
+  return { node, cls: after ? "drop-after" : "drop-before", after, kind: z.kind, payload: { ...z.payload }, list: z.list, index: z.index + (after ? 1 : 0) };
+}
+// Slide every row and tile from where it was to where it is now (after the dragged one moved in the DOM).
+function flip(change) {
+  const items = [...document.querySelectorAll("#scroll .row, #scroll .tile, #pinfly .row, #pinfly .tile")];
+  const before = new Map(items.map((n) => [n, n.getBoundingClientRect()]));
+  change();
+  for (const n of items) {
+    const a = before.get(n), b = n.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) continue;
+    n.style.transition = "none"; n.style.transform = `translate(${dx}px, ${dy}px)`;
+    n.getBoundingClientRect();
+    n.style.transition = "transform 150ms cubic-bezier(.2,.8,.2,1)"; n.style.transform = "";
+    clearTimeout(n._flip); n._flip = setTimeout(() => { n.style.transition = ""; }, 170);
+  }
+}
+// Move the dragged element into place when the target is the same kind of thing (row among rows, tile among tiles).
+function liveMove(t) {
+  const src = drag.node, dst = t.node;
+  if (!t.kind || src === drag.ghost || !src.isConnected || dst === src || src.classList.contains("tile") !== dst.classList.contains("tile")) return false;
+  // Only move once the pointer has crossed the target's middle in the direction of travel (no flicker at the edge).
+  const pos = src.compareDocumentPosition(dst);
+  const srcBefore = !!(pos & Node.DOCUMENT_POSITION_FOLLOWING);
+  if (src.parentNode === dst.parentNode && ((srcBefore && !t.after) || (!srcBefore && t.after))) return true;
+  flip(() => (t.after ? dst.after(src) : dst.before(src)));
+  return true;
+}
+let spaceHover = null, scrollTimer = 0;
+function dragMove(x, y) {
+  drag.ghost.style.transform = `translate(${x - drag.dx}px, ${y - drag.dy}px) scale(1.03)`;
+  drag.mx = x; drag.my = y;
+  clearIndicators();
+  const t = locate(x, y);
+  // Rest on a space's icon to go there (drop on it to send the tab to the top of that space).
+  const sp = t && t.payload && t.payload.space != null ? t.node : null;
+  if (sp !== (spaceHover && spaceHover.node)) {
+    clearTimeout(spaceHover && spaceHover.timer); spaceHover = null;
+    if (sp && !sp.classList.contains("active")) spaceHover = { node: sp, timer: setTimeout(() => { sp.click(); drag && (drag.switched = true); }, 550) };
+  }
+  // Over the tab itself, or a gap in the list it's already sliding through: it stays where it is.
+  const inGap = t && drag.live && t.cls === "drop-into" && t.node.contains(drag.node);
+  if (!t || t.payload.tab === drag.id || inGap) { drag.target = drag.live || null; return; }
+  if (liveMove(t)) { drag.live = t; drag.target = t; return; }
+  drag.target = t; t.node.classList.add(t.cls);
+}
+// Near the top or bottom of the list, scroll it.
+function autoScroll(y) {
+  const sc = $("#scroll"), r = sc.getBoundingClientRect(), edge = 36;
+  const v = y < r.top + edge ? -(r.top + edge - y) : y > r.bottom - edge ? y - (r.bottom - edge) : 0;
+  cancelAnimationFrame(scrollTimer);
+  if (!v || !drag) return;
+  scrollTimer = requestAnimationFrame(() => {
+    if (!drag) return;
+    sc.scrollTop += Math.max(-14, Math.min(14, v / 3));
+    dragMove(drag.mx, drag.my); autoScroll(drag.my);
+  });
 }
 document.addEventListener("mousemove", (e) => {
   if (!drag) return;
@@ -333,31 +397,51 @@ document.addEventListener("mousemove", (e) => {
     drag.active = true;
     const r = drag.node.getBoundingClientRect();
     drag.dx = e.clientX - r.left; drag.dy = e.clientY - r.top;
-    const g = drag.node.cloneNode(true); g.classList.add("ghost"); g.classList.remove("active", "drop-before", "drop-after");
+    const g = drag.node.cloneNode(true); g.classList.add("ghost"); g.classList.remove("active", "drop-before", "drop-after", "dragging-src");
     g.style.width = r.width + "px"; g.style.height = r.height + "px";
     document.body.append(g); drag.ghost = g;
-    drag.node.classList.add("dragging-src"); document.body.classList.add("dragging"); hideMenu();
+    drag.node.classList.add("dragging-src"); document.body.classList.add("dragging"); hideMenu(); clearTimeout(preloadTimer);
   }
-  drag.ghost.style.transform = `translate(${e.clientX - drag.dx}px, ${e.clientY - drag.dy}px) scale(1.03)`;
-  clearIndicators();
-  drag.target = locate(e.clientX, e.clientY);
-  if (drag.target) drag.target.node.classList.add(drag.target.cls);
+  dragMove(e.clientX, e.clientY);
+  autoScroll(e.clientY);
 });
-document.addEventListener("mouseup", () => {
+function endDrag(drop) {
   const d = drag; drag = null;
+  cancelAnimationFrame(scrollTimer); clearTimeout(spaceHover && spaceHover.timer); spaceHover = null;
   if (!d || !d.active) return;
-  d.ghost.remove(); d.node.classList.remove("dragging-src"); document.body.classList.remove("dragging"); clearIndicators();
+  document.body.classList.remove("dragging"); clearIndicators();
   suppressClick = true; setTimeout(() => (suppressClick = false), 0);
-  const t = d.target;
-  if (!t || (t.payload.tab === d.id)) return;
+  const t = drop ? d.target : null;
+  // The ghost settles where the tab now sits; without a move it goes back.
+  const home = d.node.isConnected ? d.node.getBoundingClientRect() : null;
+  const settle = () => { d.ghost.remove(); d.node.classList.remove("dragging-src"); };
+  if (home && (t === d.live || !t)) {
+    d.ghost.style.transition = "transform 140ms cubic-bezier(.2,.8,.2,1)";
+    d.ghost.style.transform = `translate(${home.left}px, ${home.top}px)`;
+    setTimeout(settle, 140);
+  } else settle();
+  if (!t || t.payload.tab === d.id) { if (!drop || !t) S && render(S); return; }
   const { tab: _target, ...p } = t.payload;
   if (t.index != null) {
     // Removing the tab first shifts later positions in the same list up by one.
-    p.index = t.list === d.list && d.index < t.index ? t.index - 1 : t.index;
-    if (t.list === d.list && p.index === d.index) return;
+    const same = t.list === d.list && d.space === S.active_space;
+    p.index = same && d.index < t.index ? t.index - 1 : t.index;
+    if (same && p.index === d.index) return;
   }
+  // Lists are the space on screen (which may not be the one the drag started in).
+  if (p.space == null && !p.favorite) p.space = S.spaces[S.active_space].name;
   cmd({ cmd: "move_tab", tab: d.id, ...p });
-});
+}
+document.addEventListener("mouseup", () => endDrag(true));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && drag && drag.active) { e.preventDefault(); endDrag(false); } }, true);
+// After the sidebar is drawn again mid-drag (a space switch, a title changing), pick the dragged tab up again.
+function keepDrag() {
+  if (!drag || !drag.active) return;
+  const n = document.querySelector(`[data-tab="${drag.id}"]:not(.ghost)`);
+  drag.live = null;
+  if (n) { n.classList.add("dragging-src"); drag.node = n; }
+  else drag.node = drag.ghost; // dragged into another space: nothing to hold its place yet
+}
 
 // ---------- elements ----------
 // Resting the pointer on a tab that isn't loaded yet starts loading it (sidebar.preload_on_hover).
@@ -731,6 +815,7 @@ function render(state) {
   if (O.space_switcher) S.spaces.forEach((s, i) => {
     const d = el("div", "sp" + (i === S.active_space && !chatsOpen ? " active" : ""), s.icon || s.name[0]);
     d.title = s.name; d.onclick = () => cmd({ cmd: "switch_space", index: i });
+    d.oncontextmenu = (e) => { e.preventDefault(); send({ t: "space_menu", space: i, x: e.clientX, y: e.clientY }); };
     zone(d, { kind: "into", payload: { space: s.name } });
     bottom.append(d);
   });
@@ -750,6 +835,7 @@ function render(state) {
   prevSpace = where;
   renderNowPlaying();
   renderTop();
+  keepDrag();
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }
 

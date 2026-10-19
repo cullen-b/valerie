@@ -168,6 +168,9 @@ pub struct State {
     /// Sidebar width the user dragged to (overrides layout.sidebar_size until they pick a size again).
     #[serde(default)]
     pub sidebar_width: Option<f64>,
+    /// Terminal panel height the user dragged to (overrides terminal_panel.height).
+    #[serde(default)]
+    pub terminal_height: Option<f64>,
     /// Where the window was last (x, y, width, height in points), to reopen it there.
     #[serde(default)]
     pub window_frame: Option<(f64, f64, f64, f64)>,
@@ -297,6 +300,23 @@ impl State {
         std::fs::write(&tmp, serde_json::to_vec(self)?)?;
         std::fs::rename(tmp, path)?;
         Ok(())
+    }
+
+    /// With the favorites row off (sidebar.favorites), favorites become pinned tabs in the space you're in, at the
+    /// front: one Pinned section instead of two kinds of tile.
+    pub fn favorites_into_pinned(&mut self) -> usize {
+        let favs = std::mem::take(&mut self.favorites);
+        let n = favs.len();
+        if n > 0 {
+            let i = self.active_space.min(self.spaces.len().saturating_sub(1));
+            if let Some(sp) = self.spaces.get_mut(i) {
+                for (k, id) in favs.into_iter().enumerate() {
+                    sp.pinned.insert(k, Node::Tab { id });
+                }
+            }
+            self.favorites_modified = now();
+        }
+        n
     }
 
     pub fn new_id(&mut self) -> TabId {

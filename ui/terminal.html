@@ -1,0 +1,199 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--XTERM-->
+<style>
+:root { --bg: #141318; --fg: #e6e4ef; --dim: rgba(230,228,239,.5); --faint: rgba(255,255,255,.07); --line: rgba(255,255,255,.08); --accent: #9d8cff; }
+:root.light { --bg: #fbfaf8; --fg: #23201c; --dim: rgba(35,32,28,.55); --faint: rgba(0,0,0,.05); --line: rgba(0,0,0,.09); }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+body { font: 12px/1 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
+#bar { position: absolute; top: 0; left: 0; right: 0; height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--line); }
+#grip { position: absolute; top: 0; left: 0; right: 0; height: 5px; cursor: row-resize; z-index: 3; }
+#tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; flex: 0 1 auto; scrollbar-width: none; }
+#tabs::-webkit-scrollbar { display: none; }
+.tab { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 9px; border-radius: 7px; color: var(--dim); cursor: default; white-space: nowrap; flex: none; max-width: 220px; }
+.tab:hover { background: var(--faint); color: var(--fg); }
+.tab.on { background: var(--faint); color: var(--fg); }
+.tab .name { overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.tab .x { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; font-size: 10px; opacity: 0; }
+.tab:hover .x, .tab.on .x { opacity: .7; } .tab .x:hover { opacity: 1; background: var(--faint); }
+.tab i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+button { height: 24px; min-width: 24px; border: 0; border-radius: 7px; background: none; color: var(--dim); font: inherit; padding: 0 7px; display: grid; place-items: center; flex: none; }
+button:hover { background: var(--faint); color: var(--fg); }
+#fill { flex: 1; align-self: stretch; }
+#ask { border: 1px solid var(--line); }
+#terms { position: absolute; top: 33px; left: 0; right: 0; bottom: 0; padding: 6px 4px 4px 12px; }
+.t { position: absolute; inset: 6px 4px 4px 12px; display: none; }
+.t.on { display: block; }
+.xterm .xterm-viewport { scrollbar-width: thin; }
+.xterm .xterm-viewport::-webkit-scrollbar { width: 8px; } .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: var(--faint); border-radius: 8px; }
+</style>
+</head>
+<body>
+<div id="bar"><div id="grip" title="Drag to resize"></div><div id="tabs"></div><button id="new" title="New terminal">+</button><div id="fill"></div>
+  <button id="ask" title="Send the selection (or what's on screen) to the chat">Ask Agent</button>
+  <button id="max" title="Fill the window">⤢</button><button id="hide" title="Hide (Ctrl+`)">⌄</button></div>
+<div id="terms"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const send = (o) => window.ipc.postMessage(JSON.stringify(o));
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+let D = { sessions: [], cfg: {} }, active = null;
+const T = new Map(); // id -> { term, fit, box, cols, rows }
+const early = new Map(); // output that came before its terminal was drawn
+
+const DARK = { background: "#141318", foreground: "#e6e4ef", black: "#1c1b22", red: "#ff7a85", green: "#7fd88f", yellow: "#f0c674", blue: "#7aa2f7",
+  magenta: "#c49bff", cyan: "#6fd3d8", white: "#d6d4de", brightBlack: "#6c6a78", brightRed: "#ff98a1", brightGreen: "#9be6a8", brightYellow: "#f7d794",
+  brightBlue: "#9bbaff", brightMagenta: "#d6b8ff", brightCyan: "#93e3e7", brightWhite: "#ffffff" };
+const LIGHT = { background: "#fbfaf8", foreground: "#23201c", black: "#23201c", red: "#c43c3c", green: "#1f8a4c", yellow: "#a06a00", blue: "#2f5fd0",
+  magenta: "#8a3fc7", cyan: "#13808a", white: "#b8b4ae", brightBlack: "#7a756e", brightRed: "#d9534f", brightGreen: "#2ea05f", brightYellow: "#b7791f",
+  brightBlue: "#4a78e0", brightMagenta: "#a259db", brightCyan: "#1c98a3", brightWhite: "#23201c" };
+function palette() {
+  const light = D.theme && D.theme.mode === "light", base = light ? LIGHT : DARK, accent = (D.theme && D.theme.accent) || "#9d8cff";
+  const sel = /^#[0-9a-f]{6}$/i.test(accent) ? accent + "55" : "rgba(157,140,255,.33)";
+  return { ...base, cursor: accent, cursorAccent: base.background, selectionBackground: sel };
+}
+function options() {
+  const c = D.cfg || {};
+  return {
+    fontFamily: c.font ? `${c.font}, ui-monospace, SFMono-Regular, Menlo, monospace` : "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: c.font_size || 13, lineHeight: c.line_height || 1.2, cursorStyle: c.cursor || "block", cursorBlink: c.cursor_blink !== false,
+    scrollback: c.scrollback || 10000, theme: palette(), allowProposedApi: true, macOptionClickForcesSelection: true, drawBoldTextInBrightColors: false,
+  };
+}
+// macOS keys people expect in a terminal: ⌘← / ⌘→ start and end of line, ⌥← / ⌥→ by word, ⌘⌫ / ⌥⌫ delete back, ⌘K clear.
+const MAC_KEYS = { "meta:ArrowLeft": "\x01", "meta:ArrowRight": "\x05", "meta:Backspace": "\x15", "alt:ArrowLeft": "\x1bb", "alt:ArrowRight": "\x1bf", "alt:Backspace": "\x17" };
+function make(s) {
+  const box = el("div", "t"); $("#terms").append(box);
+  const term = new Terminal(options()), fit = new FitAddon.FitAddon();
+  term.loadAddon(fit); term.open(box);
+  const id = s.id, entry = { term, fit, box, cols: 0, rows: 0 };
+  T.set(id, entry);
+  term.onData((d) => send({ t: "input", id, data: d }));
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown") return true;
+    const mod = e.metaKey && !e.altKey && !e.ctrlKey ? "meta" : e.altKey && !e.metaKey && !e.ctrlKey ? "alt" : "";
+    if (mod === "meta" && e.key === "k") { term.clear(); return false; }
+    const seq = mod && MAC_KEYS[mod + ":" + e.key];
+    if (seq) { send({ t: "input", id, data: seq }); e.preventDefault(); return false; }
+    // ⌘ shortcuts belong to Valerie (copy, paste, the command bar …).
+    return !e.metaKey;
+  });
+  term.onSelectionChange(() => { if (D.cfg.copy_on_select && term.hasSelection()) navigator.clipboard && navigator.clipboard.writeText(term.getSelection()).catch(() => {}); });
+  // Web addresses (a dev server's http://localhost:3000) open as a tab.
+  term.registerLinkProvider({
+    provideLinks(y, done) {
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line) return done(undefined);
+      const text = line.translateToString(true), links = [], re = /https?:\/\/[^\s"'`<>()\[\]{}]+[^\s"'`<>()\[\]{}.,;:!?]/g;
+      let m;
+      while ((m = re.exec(text))) {
+        const url = m[0];
+        links.push({ text: url, range: { start: { x: m.index + 1, y }, end: { x: m.index + url.length, y } }, activate: (ev) => send({ t: "link", url }) });
+      }
+      done(links.length ? links : undefined);
+    },
+  });
+  if (early.has(id)) { term.write(early.get(id)); early.delete(id); }
+  return entry;
+}
+function fitActive() {
+  const e = T.get(active);
+  if (!e || !e.box.offsetWidth) return;
+  try { e.fit.fit(); } catch (_) { return; }
+  if (e.term.cols !== e.cols || e.term.rows !== e.rows) {
+    e.cols = e.term.cols; e.rows = e.term.rows;
+    send({ t: "resize", id: active, cols: e.cols, rows: e.rows });
+  }
+}
+function drawTabs() {
+  const box = $("#tabs"); box.replaceChildren();
+  D.sessions.forEach((s) => {
+    const t = el("div", "tab" + (s.id === active ? " on" : ""));
+    if (s.chat) t.append(el("i"));
+    t.append(el("span", "name", s.title || s.cwd));
+    const x = el("span", "x", "✕"); x.title = "Close (ends the shell)";
+    x.onclick = (e) => { e.stopPropagation(); send({ t: "close", id: s.id }); };
+    t.append(x);
+    t.title = s.cwd + (s.chat ? "\nChat: " + s.chat : "");
+    t.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); send({ t: "close", id: s.id }); } };
+    t.onclick = () => { if (s.id !== active) send({ t: "select", id: s.id }); else T.get(active) && T.get(active).term.focus(); };
+    box.append(t);
+  });
+}
+function screenText(term) {
+  const b = term.buffer.active, out = [];
+  for (let y = b.viewportY; y < b.viewportY + term.rows; y++) { const l = b.getLine(y); if (l) out.push(l.translateToString(true)); }
+  return out.join("\n").replace(/\s+$/, "");
+}
+
+$("#new").onclick = () => send({ t: "new" });
+$("#hide").onclick = () => send({ t: "hide" });
+$("#max").onclick = () => send({ t: "max" });
+$("#bar").addEventListener("dblclick", (e) => { if (e.target.id === "fill" || e.target.id === "bar") send({ t: "max" }); });
+$("#ask").onclick = () => {
+  const e = T.get(active);
+  if (!e) return;
+  send({ t: "ask", id: active, text: e.term.getSelection() || screenText(e.term) });
+};
+// Drag the top edge: the panel keeps getting the mouse while the button is down, even outside it.
+$("#grip").addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  const y0 = e.screenY, h0 = window.innerHeight;
+  let raf = 0, h = h0;
+  const move = (m) => { h = h0 - (m.screenY - y0); if (!raf) raf = requestAnimationFrame(() => { raf = 0; send({ t: "height", h }); }); };
+  const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+  window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+});
+window.addEventListener("focus", () => send({ t: "focus", on: true }));
+window.addEventListener("blur", () => send({ t: "focus", on: false }));
+new ResizeObserver(() => fitActive()).observe($("#terms"));
+
+window.term = {
+  render(d) {
+    D = d;
+    const r = document.documentElement;
+    r.classList.toggle("light", d.theme && d.theme.mode === "light");
+    r.style.setProperty("--accent", (d.theme && d.theme.accent) || "#9d8cff");
+    r.style.setProperty("--bg", palette().background);
+    const ids = new Set(d.sessions.map((s) => s.id));
+    for (const [id, e] of T) if (!ids.has(id)) { e.term.dispose(); e.box.remove(); T.delete(id); }
+    const opts = options();
+    d.sessions.forEach((s) => {
+      const e = T.get(s.id) || make(s);
+      for (const k of ["fontFamily", "fontSize", "lineHeight", "cursorStyle", "cursorBlink", "scrollback", "theme"])
+        if (JSON.stringify(e.term.options[k]) !== JSON.stringify(opts[k])) e.term.options[k] = opts[k];
+    });
+    const was = active;
+    active = d.active;
+    for (const [id, e] of T) e.box.classList.toggle("on", id === active);
+    $("#ask").style.display = d.can_ask ? "" : "none";
+    $("#max").textContent = d.max ? "⤡" : "⤢"; $("#max").title = d.max ? "Back to the panel" : "Fill the window";
+    drawTabs();
+    requestAnimationFrame(() => { fitActive(); if (was !== active && document.hasFocus()) T.get(active) && T.get(active).term.focus(); });
+  },
+  out(id, text) {
+    const e = T.get(id);
+    if (e) e.term.write(text); else early.set(id, (early.get(id) || "") + text);
+  },
+  gone(id) {
+    const e = T.get(id);
+    if (e) { e.term.dispose(); e.box.remove(); T.delete(id); }
+    early.delete(id);
+  },
+  focus() { const e = T.get(active); if (e) e.term.focus(); },
+  // The last `n` lines a shell shows, for read_terminal.
+  lines(id, n) {
+    const e = T.get(id);
+    if (!e) return "";
+    const b = e.term.buffer.active, out = [];
+    for (let y = Math.max(0, b.length - n); y < b.length; y++) { const l = b.getLine(y); if (l) out.push(l.translateToString(true)); }
+    return out.join("\n").replace(/\s+$/, "");
+  },
+};
+send({ t: "ready" });
+</script>
+</body>
+</html>

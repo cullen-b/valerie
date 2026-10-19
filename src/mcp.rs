@@ -138,7 +138,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "read_console",
+    "list_pages", "read_console", "read_terminal",
 ];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
@@ -183,6 +183,12 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
                     } else {
                         json!({ "behavior": "deny", "message": "The user said no." }).to_string()
                     }))
+                }
+                // The terminal tools default to the calling chat's own shell.
+                "read_terminal" | "run_in_terminal" => {
+                    let mut a = args.clone();
+                    a["_chat"] = json!(who.chat);
+                    call(proxy, name, a)
                 }
                 _ => call_tool(name, args.clone(), proxy),
             });
@@ -283,6 +289,16 @@ pub fn tools() -> Vec<Value> {
              uncaught errors, failed promises and files that failed to load. Use it to check a page or app you're building.",
              json!({ "tab": tab_prop(), "level": { "type": "string", "enum": ["error", "warn", "info", "log", "debug"], "description": "Only this level (warn includes errors)" },
                      "limit": { "type": "integer", "default": 100 } }), &[]),
+        tool("read_terminal", "Read what a shell in Valerie's terminal panel shows (the last lines, as on screen): a dev server or \
+             test run you or the user started there. Defaults to your chat's own terminal, else the one on screen; the reply \
+             lists every open terminal.",
+             json!({ "terminal": { "type": "integer", "description": "A terminal id from the list" },
+                     "lines": { "type": "integer", "default": 200 } }), &[]),
+        tool("run_in_terminal", "Start a command in a new shell in Valerie's terminal panel, where the user can see it and stop it \
+             (Ctrl-C), e.g. a dev server or a watcher. It runs in your project folder unless you give one, and keeps going after \
+             you answer; read its output with read_terminal. For quick commands, use your own shell instead.",
+             json!({ "command": { "type": "string", "description": "One line, as you'd type it" },
+                     "folder": { "type": "string", "description": "Where to run it (default: your project folder)" } }), &["command"]),
         tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited.",
              json!({ "tab": tab_prop(), "script": { "type": "string" } }), &["script"]),
         tool("run_command", &format!(

@@ -160,6 +160,7 @@ option, optgroup { background: #111; color: #eee; }
 /* the diff pane */
 #pane { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: none; flex-direction: column; }
 #pane.on { display: flex; }
+#termBtn { font-family: var(--mono); font-size: 11.5px; padding: 3px 8px; }
 #pane header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); font-size: 13px; }
 #pane header b { font-weight: 600; } #pane header .sub { color: var(--dim); font-family: var(--mono); font-size: 11.5px; flex: 1; }
 #pane .split { flex: 1; display: flex; min-height: 0; }
@@ -173,7 +174,7 @@ option, optgroup { background: #111; color: #eee; }
 </style>
 </head>
 <body>
-<div id="top"><div class="title" id="title">New chat</div><div class="proj" id="projBadge"></div><div class="agent" id="agentBadge"></div><div style="flex:1"></div><div id="working"></div></div>
+<div id="top"><div class="title" id="title">New chat</div><div class="proj" id="projBadge"></div><div class="agent" id="agentBadge"></div><div style="flex:1"></div><div id="working"></div><button class="btn quiet" id="termBtn" title="Terminal in this project (Ctrl+`)">&gt;_</button></div>
 <div id="scroll"><div id="log"></div></div>
 <div id="composer"><details id="plan-now" open><summary></summary><ul class="todos"></ul></details><div id="queue"></div><div id="box">
   <div id="attach" class="files"></div>
@@ -663,7 +664,13 @@ function renderControls() {
   $("#agentBadge").textContent = sel.value;
   const f = D.chat && D.chat.folder, pb = $("#projBadge");
   pb.style.display = f ? "" : "none"; pb.replaceChildren();
-  if (f) { pb.append(el("b", null, folderName(f))); if (D.changes && D.changes.branch) pb.append(" · " + D.changes.branch); pb.title = f; }
+  if (f) {
+    pb.append(el("b", null, folderName(f)));
+    const wt = D.worktree, br = (D.changes && D.changes.branch) || (wt && wt.branch);
+    if (br) pb.append(" · " + br);
+    pb.title = wt ? `Its own worktree of ${f}, on branch ${wt.branch} (made from ${wt.base}):\n${wt.path}` : f;
+  }
+  $("#termBtn").style.display = f && D.terminal ? "" : "none";
   $("#input").placeholder = f ? "Ask for a change, a fix, or anything about " + folderName(f) + "…" : "Ask anything, or ask for something to be done…";
   const q = (D.chat && D.chat.queue) || [], qe = $("#queue");
   qe.style.display = q.length ? "block" : "none"; qe.replaceChildren();
@@ -807,7 +814,14 @@ window.chat = {
     if (paneFocus && paneFiles[paneFocus]) requestAnimationFrame(() => paneFiles[paneFocus].scrollIntoView({ block: "start" }));
   },
   focus() { $("#input").focus(); },
+  // Text from elsewhere (the terminal's Ask Agent) goes into the composer, ready for a question.
+  insert(text) {
+    const t = $("#input"), v = t.value.trim();
+    t.value = (v ? v + "\n\n" : "") + text + "\n";
+    grow(); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
+  },
 };
+$("#termBtn").onclick = () => cmd({ cmd: "open_terminal", chat: D.chat && D.chat.id });
 send({ t: "ready" });
 </script>
 </body>

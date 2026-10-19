@@ -133,10 +133,17 @@ pub enum Command {
     },
     RenameSpace {
         name: String,
+        /// The space to rename (default: the one you're in).
+        #[serde(default)]
+        space: Option<String>,
     },
+    /// Remove a space; its tabs are archived (still searchable). Spaces from config.yaml are taken out of it too.
     DeleteSpace {
         #[serde(default)]
         name: Option<String>,
+        /// Ask first ("Remove the space …?").
+        #[serde(default)]
+        confirm: bool,
     },
     SetSpaceTheme {
         theme: String,
@@ -240,6 +247,18 @@ pub enum Command {
     Print,
     /// The Chats space: conversations with your agents (left of the first space).
     OpenChats,
+    /// Show or hide the terminal panel (in a coding chat it opens on that chat's project).
+    ToggleTerminal,
+    /// A new shell in the terminal panel: in `folder`, else the open coding chat's project, else terminal_panel.folder.
+    NewTerminal {
+        #[serde(default)]
+        folder: Option<String>,
+    },
+    /// The terminal panel on a coding chat's project (its shell is started if it has none).
+    OpenTerminal {
+        #[serde(default)]
+        chat: Option<String>,
+    },
     /// Start a chat, optionally asking something right away.
     NewChat {
         #[serde(default)]
@@ -632,7 +651,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("next_space", "Next Space"),
     ("prev_space", "Previous Space"),
     ("new_space", "New Space"),
-    ("delete_space", "Delete Space"),
+    ("delete_space", "Remove Space (archives its tabs)"),
     ("split_view", "Split View"),
     ("unsplit", "Close Split View"),
     ("focus_next_pane", "Focus Next Split Pane"),
@@ -658,6 +677,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("review_saved_tabs", "Review Saved Tabs (pinned and kept ones you haven't opened in a while)"),
     ("print", "Print Page…"),
     ("open_chats", "Chats"),
+    ("toggle_terminal", "Terminal (show or hide the terminal panel)"),
+    ("new_terminal", "New Terminal"),
     ("new_chat", "New Chat"),
     ("stop_chat", "Stop the Agent in This Chat"),
     ("close_chat", "Close Chat"),
@@ -716,8 +737,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_folder", "{ name?, section?: kept | pinned }"),
     ("switch_space", "{ index? | name? }"),
     ("new_space", "{ name? }"),
-    ("rename_space", "{ name }"),
-    ("delete_space", "{ name? }"),
+    ("rename_space", "{ name, space? }"),
+    ("delete_space", "{ name?, confirm? }  (its tabs are archived)"),
     ("set_space_theme", "{ theme }"),
     ("split_view", "{ tab? }"),
     ("focus_pane", "{ direction: left | right }  (outside split view: back / forward)"),
@@ -728,6 +749,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("find_in_page", "{ query? }"),
     ("toggle_mute", "{ tab? }"),
     ("copy_text", "{ text }"),
+    ("new_terminal", "{ folder? }  (a shell in the terminal panel; default: the open coding chat's project)"),
+    ("open_terminal", "{ chat? }  (the terminal panel on a coding chat's project)"),
     ("new_chat", "{ prompt?, agent? }  (ask an agent something in a new chat; it can see and use the browser)"),
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),

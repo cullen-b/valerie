@@ -34,6 +34,7 @@ pub struct Config {
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
     pub chats: ChatsConfig,
+    pub terminal_panel: TerminalPanelConfig,
     pub ai_actions: BTreeMap<String, Option<AiAction>>,
     pub watch: WatchConfig,
     pub notifications: NotificationsConfig,
@@ -576,6 +577,26 @@ pub struct ChatsConfig {
     pub usage: bool,
     pub changes: bool,
     pub change_actions: BTreeMap<String, Option<String>>,
+    pub worktrees: String,
+    pub worktree_folder: String,
+    pub worktree_copy: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalPanelConfig {
+    pub enabled: bool,
+    pub shell: String,
+    pub folder: String,
+    pub height: f64,
+    pub font: String,
+    pub font_size: f64,
+    pub line_height: f64,
+    pub cursor: String,
+    pub cursor_blink: bool,
+    pub scrollback: u32,
+    pub copy_on_select: bool,
+    pub follow_chat: bool,
+    pub ask_agent_button: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1064,6 +1085,10 @@ fn set_in_text(text: &str, path: &[&str], value: &str) -> Option<String> {
                 let rest = rest.split(" #").next().unwrap_or("").trim().to_string();
                 if last {
                     lines[i] = format!("{}{key}: {value}", " ".repeat(indent));
+                    // A block value (a list or map on the lines below) is replaced too, not left behind.
+                    let below = (i + 1..end).find(|&j| !blank(&lines[j]) && (indent_of(&lines[j]) <= indent && !lines[j].trim_start().starts_with("- ") || indent_of(&lines[j]) < indent)).unwrap_or(end);
+                    let last_child = (i + 1..below).rev().find(|&j| !blank(&lines[j])).map_or(i, |j| j);
+                    lines.drain(i + 1..=last_child);
                     return Some(lines.join("\n") + "\n");
                 }
                 if !rest.is_empty() {
@@ -1412,6 +1437,10 @@ mod tests {
         let t = super::set_in_text(&t, &["welcome"], "false").unwrap();
         assert!(t.ends_with("sync: { repo: x }\n\nwelcome: false\n"), "{t}");
         assert!(super::set_in_text(&t, &["sync", "repo"], "y").is_none());
+        let blocks = "spaces:\n  - name: A\n    icon: x\n  - name: B\nwelcome: true\nlist:\n- a\n- b\n# end\n";
+        let t = super::set_in_text(blocks, &["spaces"], "[{\"name\":\"B\"}]").unwrap();
+        let t = super::set_in_text(&t, &["list"], "[c]").unwrap();
+        assert_eq!(t, "spaces: [{\"name\":\"B\"}]\nwelcome: true\nlist: [c]\n# end\n");
         let t = super::set_in_text("", &["agents", "default"], "pi").unwrap();
         assert_eq!(t, "agents:\n  default: pi\n");
         let parsed: serde_yaml::Value = serde_yaml::from_str(&super::set_in_text(text, &["agents", "available", "pi"], "{ cli: pi }").unwrap()).unwrap();

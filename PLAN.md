@@ -176,8 +176,9 @@ Chats good enough to replace a separate coding-agent app (T3 Code, Conductor…)
 - [x] Uncommitted changes card (git, never taking the lock) with a full diff view and buttons from `chats.change_actions`
 - [x] Pasted/dropped images go to the agent; file paths in answers open in the editor; Try Again on errors
 - [x] `read_console` so an agent can check the app it's building
-- [ ] Run several turns side by side in one project without them editing the same files (worktrees, or a lock)
-- [ ] Slash commands and @file mentions in the composer; a terminal pane
+- [x] Several chats on one project at once: each coding chat gets its own git worktree (`chats.worktrees`: auto skips six-ten repos)
+- [x] Terminal panel (Ctrl+`): real shells (portable-pty + xterm.js), opens in the chat's project; `read_terminal`, `run_in_terminal`, Ask Agent
+- [ ] Slash commands and @file mentions in the composer
 
 ### Next up
 - Developer ID signing + notarisation (needs an Apple Developer account; also unlocks the passkey entitlement)
