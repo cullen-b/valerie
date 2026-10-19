@@ -258,6 +258,18 @@ one Google account while the rest of Google uses another. `routes`
 send matching links to a space (e.g. `*.edu` → School); other external links open in a little window, whose
 "Open in …" button has a ▾ to move the page into any space.
 
+**A little window from anywhere:** `Ctrl+;` (from any app; change it under `global_keybindings`) opens an empty little
+window asking where to go: type an address or a search and press Enter, or Esc to close it. Another app can do the same
+with `open -b dev.valerie.browser 'valerie://little'` (`?url=https://…` opens that page instead). With Karabiner-Elements,
+for example, right ⌥A for Valerie and right ⌥V for a little window:
+
+```json
+{ "from": { "key_code": "a", "modifiers": { "mandatory": ["right_option"] } },
+  "to": [{ "shell_command": "open -b dev.valerie.browser" }], "type": "basic" },
+{ "from": { "key_code": "v", "modifiers": { "mandatory": ["right_option"] } },
+  "to": [{ "shell_command": "open -b dev.valerie.browser 'valerie://little'" }], "type": "basic" }
+```
+
 ## Import
 
 Open the command bar and type "import": Arc (spaces, pinned tabs, folders, favorites), Chrome, Brave, Edge,

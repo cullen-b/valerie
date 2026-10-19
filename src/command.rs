@@ -165,6 +165,8 @@ pub enum Command {
     OpenLittleWindow {
         url: String,
     },
+    /// An empty little window asking where to go (bind it under global_keybindings to open one from any app).
+    NewLittleWindow,
     /// Move a little window (or a Peek) into the main window, optionally into a named space.
     MoveToMainWindow {
         #[serde(default)]
@@ -666,6 +668,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("zoom_out", "Zoom Out"),
     ("zoom_reset", "Actual Size"),
     ("dev_tools", "Developer Tools"),
+    ("new_little_window", "New Little Window"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
     ("last_tab", "Switch to Last Tab"),

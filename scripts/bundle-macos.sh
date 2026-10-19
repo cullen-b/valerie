@@ -48,6 +48,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
       <key>CFBundleURLName</key><string>Web site URL</string>
       <key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array>
     </dict>
+    <dict>
+      <key>CFBundleURLName</key><string>Valerie</string>
+      <key>CFBundleURLSchemes</key><array><string>valerie</string></array>
+    </dict>
   </array>
   <key>CFBundleDocumentTypes</key>
   <array>

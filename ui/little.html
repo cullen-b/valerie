@@ -22,11 +22,17 @@ body {
 #pick { display: none; background: var(--accent); color: #fff; border-radius: 0 7px 7px 0; padding: 0 8px; margin-left: 1px; font-size: 13px; }
 .split.picker #pick { display: flex; }
 #pick:hover { filter: brightness(1.12); background: var(--accent); color: #fff; }
+#addr { display: none; flex: 1; min-width: 0; height: 24px; padding: 0 10px; border: 0; outline: 0; border-radius: 7px; background: var(--hover);
+  color: var(--fg); font: inherit; -webkit-user-select: text; user-select: text; }
+#addr::placeholder { color: var(--dim); }
+#addr:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
 </style>
 </head>
 <body>
 <div class="btn" id="back">‹</div>
 <div id="title"></div>
+<input id="addr" placeholder="Search or enter address" spellcheck="false" autocomplete="off">
 <div class="btn" id="copy" title="Copy URL (⌘⇧C)">Copy link</div>
 <div class="split" id="split"><div class="btn" id="open" title="⌘O">Open in Valerie</div><div class="btn" id="pick" title="Open in another space">▾</div></div>
 <script>
@@ -39,6 +45,12 @@ document.getElementById("pick").onclick = (e) => {
 };
 document.getElementById("copy").onclick = () => cmd({ cmd: "copy_url" });
 document.getElementById("back").onclick = () => cmd({ cmd: "back" });
+// A new empty little window asks where to go: Enter goes there, Esc closes it.
+const addr = document.getElementById("addr");
+addr.onkeydown = (e) => {
+  if (e.key === "Enter" && addr.value.trim()) send({ t: "go", text: addr.value });
+  else if (e.key === "Escape") cmd({ cmd: "close_tab" });
+};
 document.body.onmousedown = (e) => { if (e.target === document.body || e.target.id === "title") send({ t: "drag" }); };
 window.little = {
   render(s) {
@@ -54,6 +66,9 @@ window.little = {
     document.getElementById("open").textContent = "Open in " + (s.space || "Valerie");
     document.getElementById("split").classList.toggle("picker", !!s.picker);
     document.getElementById("copy").style.display = s.copy_button ? "" : "none";
+    const asking = !!s.ask && !document.body.classList.contains("ask");
+    document.body.classList.toggle("ask", !!s.ask);
+    if (asking) { addr.value = ""; addr.focus(); }
   },
 };
 send({ t: "ready" });
