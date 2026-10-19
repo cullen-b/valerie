@@ -846,6 +846,9 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     }
 }
 
+/// What a new empty little window shows until you say where to go: an empty page in the system's light or dark.
+const LITTLE_BLANK: &str = "data:text/html,%3Cmeta%20name=color-scheme%20content=%22light%20dark%22%3E";
+
 /// Why nothing can be saved in `dir`, found by making (and removing) an empty file there; None when it's writable.
 fn cannot_write(dir: &Path) -> Option<std::io::Error> {
     let probe = dir.join(format!(".valerie-can-write-{}", std::process::id()));
@@ -2229,6 +2232,7 @@ impl App {
                 "picker": self.config.little_window.space_picker && self.state.spaces.len() > 1,
                 "copy_button": self.config.little_window.copy_button,
                 "font": self.config.layout.font,
+                "ask": l.url.is_empty() || l.url == LITTLE_BLANK || l.url.starts_with("about:") || l.url.starts_with("data:"),
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -2826,7 +2830,8 @@ impl App {
                 .build_as_child(&window)
         });
         let (Ok(bar), Ok(view)) = (bar, view) else { return crate::log::line("little-window", "little window webviews failed") };
-        let _ = view.focus();
+        // A new empty one types into its address box; otherwise the page has the keyboard.
+        let _ = if url == LITTLE_BLANK { bar.focus() } else { view.focus() };
         window.set_focus();
         #[cfg(target_os = "macos")]
         if self.rules.is_some() {
@@ -2888,6 +2893,20 @@ impl App {
         let lw = &self.config.little_window;
         let alone = lw.enabled && lw.open_links_alone && (self.main_hidden || !self.revealed);
         for url in urls {
+            // valerie://little (Karabiner, Shortcuts, a script): a new little window, or ?url=… opens that page in one.
+            if let Some(rest) = url.strip_prefix("valerie://little") {
+                let page = url::Url::parse(&url).ok().and_then(|u| u.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.into_owned()));
+                if rest.is_empty() || rest.starts_with(['/', '?']) {
+                    match page {
+                        Some(p) => self.dispatch(Command::OpenLittleWindow { url: p }, elwt),
+                        None => self.dispatch(Command::NewLittleWindow, elwt),
+                    }
+                    if !self.revealed {
+                        self.main_hidden = true;
+                    }
+                }
+                continue;
+            }
             let url = self.clean(&url);
             let routed = routing::route(&self.config.routes, &url).and_then(|s| self.state.space_index(s));
             if alone {
@@ -5067,6 +5086,7 @@ impl App {
                 let url = routing::resolve_input(&url, &self.config.search_engine);
                 self.open_little(&url, self.state.active_space, elwt)
             }
+            Command::NewLittleWindow => self.open_little(LITTLE_BLANK, self.state.active_space, elwt),
             Command::MoveToMainWindow { .. } | Command::ClosePeek => {}
             Command::Peek { url } => {
                 let url = routing::resolve_input(&url, &self.config.search_engine);
@@ -5348,6 +5368,16 @@ impl App {
                 let _ = self.window.drag_window();
             }
             (Source::LittleBar(id), "ready") => self.render_little(id),
+            (Source::LittleBar(id), "go") => {
+                let Some(text) = m["text"].as_str().map(str::trim).filter(|t| !t.is_empty()) else { return };
+                let url = self.rewrite(&routing::resolve_input(text, &self.config.search_engine));
+                if let Some(l) = self.littles.get_mut(&id) {
+                    l.url = url.clone();
+                    let _ = l.view.load_url(&url);
+                    let _ = l.view.focus();
+                }
+                self.render_little(id);
+            }
             (Source::LittleBar(id), "space_menu") => {
                 let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
                 self.show_space_menu(id, x, y);
@@ -5936,9 +5966,11 @@ impl App {
             }
             UserEvent::GlobalKey(i) => {
                 if let Some(cmd) = self.global_keys.get(i).cloned() {
-                    // Shortcuts from another app bring Valerie forward first.
+                    // Shortcuts from another app bring Valerie forward first (a little window comes on its own).
                     platform::activate_app();
-                    self.show_main();
+                    if !matches!(cmd, Command::NewLittleWindow | Command::OpenLittleWindow { .. }) {
+                        self.show_main();
+                    }
                     self.dispatch(cmd, elwt);
                 }
             }
@@ -6289,7 +6321,7 @@ impl App {
             }
             "open_link" => {
                 let url = args["url"].as_str().unwrap_or("").to_string();
-                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") {
+                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") {
                     self.open_external(vec![url], elwt);
                     Ok(json!("opened"))
                 } else {

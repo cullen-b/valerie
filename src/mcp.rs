@@ -261,7 +261,7 @@ pub fn tools() -> Vec<Value> {
         tool("open_tab", "Open a URL (or search terms) in a new tab.", json!({
             "url": { "type": "string" }, "space": { "type": "string", "description": "Space name; defaults to the active space" },
             "activate": { "type": "boolean", "description": "Switch to the tab (default false: open in background)" } }), &["url"]),
-        tool("open_link", "Open a URL the way an external link would: Air Traffic Control rules, then a little window.",
+        tool("open_link", "Open a URL the way an external link would: Air Traffic Control rules, then a little window. valerie://little opens an empty little window that asks where to go.",
              json!({ "url": { "type": "string" } }), &["url"]),
         tool("navigate", "Load a URL in an existing tab.", json!({ "url": { "type": "string" }, "tab": tab_prop() }), &["url"]),
         tool("activate_tab", "Switch to a tab (also switches space).", json!({ "tab": tab_prop() }), &["tab"]),

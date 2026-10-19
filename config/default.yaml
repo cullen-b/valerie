@@ -561,7 +561,10 @@ keybindings:
 
 # Shortcuts that work in every app, even when Valerie isn't in front (macOS). Same format as keybindings, e.g.
 #   "Ctrl+Alt+Space": open_command_bar       # brings Valerie forward with the command bar open
-global_keybindings: {}
+# Set one to null to turn it off. Another app (Karabiner, Raycast, a script) can open a little window with
+#   open -b dev.valerie.browser 'valerie://little'       (or 'valerie://little?url=https://…' for a page)
+global_keybindings:
+  "Ctrl+Semicolon": new_little_window   # Ctrl+; a new little window from any app, asking where to go
 
 # The menu bar at the top of the screen. Its menus: Valerie, Edit, Tabs, Spaces, View, Tools, Plugins, Window.
 menu:
