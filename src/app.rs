@@ -885,6 +885,10 @@ fn ui(name: &str) -> String {
         "brief.html" => include_str!("../ui/brief.html"),
         "content.js" => include_str!("../ui/content.js"),
         "markdown.js" => include_str!("../ui/markdown.js"),
+        "pdf-viewer.js" => include_str!("../ui/pdf-viewer.js"),
+        "vendor/pdf.js" => include_str!("../ui/vendor/pdf.js"),
+        "vendor/pdf.worker.js" => include_str!("../ui/vendor/pdf.worker.js"),
+        "vendor/pdf-lib.js" => include_str!("../ui/vendor/pdf-lib.js"),
         "custom.js" => include_str!("../ui/custom.js"),
         "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
         "pages/downloads.html" => include_str!("../ui/pages/downloads.html"),
@@ -5491,6 +5495,31 @@ impl App {
                         }
                     }
                 });
+            }
+            (Source::Page(target), "pdf_viewer") => {
+                let Some(v) = self.view_for(target).filter(|_| self.config.pages.pdf_viewer) else { return };
+                let url = platform::page_url(v).unwrap_or_default();
+                // A file:// page can't read itself, so a PDF on this computer comes with its bytes.
+                let data = if url.starts_with("file:") {
+                    let file = url::Url::parse(&url).ok().and_then(|u| u.to_file_path().ok());
+                    let Some(file) = file.filter(|f| f.is_file() && f.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))) else { return };
+                    match std::fs::read(&file) {
+                        Ok(b) if b.len() <= 200 * 1024 * 1024 => json!(crate::mcp::base64(&b)),
+                        Ok(_) => return, // very big: macOS's own viewer shows it
+                        Err(e) => return crate::log::line("pdf", format!("couldn't read {}: {e}", file.display())),
+                    }
+                } else {
+                    Value::Null
+                };
+                let cfg = self.page_config_for(target, &self.page_config());
+                let script = format!(
+                    "{}\n{}\n{}\n(function (CFG, LOCAL) {{\n{}\n}})({cfg}, {data});",
+                    ui("vendor/pdf.worker.js"),
+                    ui("vendor/pdf.js"),
+                    ui("vendor/pdf-lib.js"),
+                    ui("pdf-viewer.js")
+                );
+                let _ = v.evaluate_script(&script);
             }
             (Source::Page(target), "markdown_save") => {
                 // The text is read from the page (it can be long), and only goes to the file that page shows.

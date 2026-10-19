@@ -1140,6 +1140,8 @@ function applyDark() {
 }
 function darkOn() { return !!document.getElementById("__valerie_dark"); }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", applyDark); else applyDark();
+// A PDF: Valerie puts its own viewer in (pages.pdf_viewer), which can mark it up.
+if (document.contentType === "application/pdf" && cfg.pages && cfg.pages.pdf_viewer !== false) post({ t: "pdf_viewer" });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { darkSkipped = false; applyDark(); });
 
 // ---------- cookie banners: click "Reject all" when we can, otherwise hide the banner ----------
