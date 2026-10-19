@@ -1124,7 +1124,7 @@ function pageLooksDark() {
 }
 let darkSkipped = false;
 function applyDark() {
-  const want = darkWanted();
+  const want = !isMarkdownDoc() && darkWanted();   // the Markdown viewer has its own dark look
   let st = document.getElementById("__valerie_dark");
   // "auto" leaves sites that are already dark alone (the filter doesn't change the colours this reads).
   if (want === "auto" && !darkSkipped && document.body && pageLooksDark()) darkSkipped = true;
@@ -1479,11 +1479,12 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); }, toast, find: openFind, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
     consoleLines: () => consoleKept.slice(),
+    markdownUpdate: (text) => mdUpdate(String(text)),
   }),
   writable: false, configurable: false,
 });

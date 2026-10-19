@@ -495,6 +495,7 @@ pub fn strings_template() -> String {
         include_str!("../ui/answer.html"),
         include_str!("../ui/plugins.html"),
         include_str!("../ui/content.js"),
+        include_str!("../ui/markdown.js"),
     ] {
         visible_strings(src, &mut words);
     }

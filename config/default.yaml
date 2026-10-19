@@ -397,6 +397,11 @@ pages:
   dark_mode: off           # make light websites dark. one of: off | system (when your computer is in dark mode) | always
                            # (sites that are already dark are left alone; toggle_dark_page flips it for one site)
   loading_bar: true        # a thin line across the top of a page while it loads
+  markdown: true           # show Markdown files (.md, on this computer or the web) as formatted documents: headings,
+                           # tables, highlighted code, task lists, GitHub-style notes. false = the plain text
+  markdown_theme: auto     # their look. one of: auto (dark when your computer or dark_mode is) | light | dark
+  markdown_outline: true   # an outline of the document's headings beside it (a button on narrow windows)
+  markdown_live: true      # a file on this computer updates on screen as soon as it's saved (yours or your AI's edits)
 
 # Translate page (translate_page command)
 translate:
