@@ -848,41 +848,59 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     }
 }
 
-/// Puts a `valerie` link to this app in the first folder on PATH it may write to (Homebrew's, /usr/local/bin, then
-/// ~/.local/bin), so a terminal can run `valerie screenshot`, `valerie call` and the rest.
-fn install_command_line_tool() -> Result<PathBuf, String> {
+/// Puts a `valerie` link to this app in the first folder a terminal looks in that it may write to (Homebrew's bin,
+/// /usr/local/bin, ~/.local/bin), so a terminal can run `valerie screenshot`, `valerie call` and the rest.
+/// `on_launch` is the quiet check every start makes (app.command_line_tool): only for the app in Applications, only in
+/// folders that already exist, and it only replaces a link to some Valerie.app or to nothing; asked for by name it may
+/// make ~/.local/bin and replace any link called valerie.
+fn install_command_line_tool(on_launch: bool) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe = exe.canonicalize().unwrap_or(exe);
-    if exe.to_string_lossy().contains("/AppTranslocation/") {
+    let shown = exe.to_string_lossy().into_owned();
+    if shown.contains("/AppTranslocation/") {
         return Err("move Valerie to Applications first (macOS is running it from a temporary copy)".into());
     }
     let home = dirs::home_dir().unwrap_or_default();
-    let on_path: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
-    let mut dirs: Vec<PathBuf> = vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin"), home.join(".local/bin")];
-    dirs.retain(|d| d.is_dir() || d.starts_with(&home));
-    // A folder the shell looks in comes first; ~/.local/bin is the fallback (made if needed).
-    dirs.sort_by_key(|d| !on_path.contains(d) && !crate::ai::search_path().contains(&*d.to_string_lossy()));
+    if on_launch && !(shown.starts_with("/Applications/") || shown.starts_with(&*home.join("Applications").to_string_lossy())) {
+        return Err("not the installed app".into());
+    }
+    // Installed with Homebrew: the cask links the command itself (and would refuse a link it didn't make).
+    if on_launch && ["/opt/homebrew/Caskroom/valerie", "/usr/local/Caskroom/valerie"].iter().any(|d| std::path::Path::new(d).is_dir()) {
+        return Err("Homebrew links it".into());
+    }
+    let dirs = [PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin"), home.join(".local/bin")];
+    link_valerie(&exe, &dirs, &home, on_launch)
+}
+
+/// The first of `dirs` that takes a `valerie` link to `exe` (see install_command_line_tool).
+fn link_valerie(exe: &std::path::Path, dirs: &[PathBuf], home: &std::path::Path, on_launch: bool) -> Result<PathBuf, String> {
+    let ours = |target: &std::path::Path| target.canonicalize().map_or(true, |t| t == exe || t.to_string_lossy().contains("Valerie.app/Contents/MacOS/"));
     for dir in dirs {
+        if !dir.is_dir() && (on_launch || !dir.starts_with(home)) {
+            continue;
+        }
         let link = dir.join("valerie");
         match std::fs::symlink_metadata(&link) {
             Ok(m) if m.file_type().is_symlink() => {
-                if std::fs::read_link(&link).ok().as_deref() == Some(exe.as_path()) {
+                let target = std::fs::read_link(&link).unwrap_or_default();
+                let target = if target.is_relative() { dir.join(target) } else { target };
+                if target.canonicalize().ok().as_deref() == Some(exe) {
                     return Ok(link);
                 }
-                if std::fs::remove_file(&link).is_err() {
+                if (on_launch && !ours(&target)) || std::fs::remove_file(&link).is_err() {
                     continue;
                 }
             }
             Ok(_) => continue, // something else called valerie lives there: leave it alone
             Err(_) => {}
         }
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::create_dir_all(dir);
         #[cfg(unix)]
-        if std::os::unix::fs::symlink(&exe, &link).is_ok() {
+        if std::os::unix::fs::symlink(exe, &link).is_ok() {
             return Ok(link);
         }
     }
-    Err("no folder on your PATH could take it".into())
+    Err("no folder your terminal uses could take it".into())
 }
 
 /// What a new empty little window shows until you say where to go: an empty page in the system's light or dark.
@@ -4613,7 +4631,7 @@ impl App {
                     send(&p, UserEvent::Captured(r));
                 });
             }
-            Command::InstallCommandLineTool => match install_command_line_tool() {
+            Command::InstallCommandLineTool => match install_command_line_tool(false) {
                 Ok(link) => self.toast(&format!("Installed {}: try `valerie screenshot --full` in a terminal", link.display())),
                 Err(e) => self.toast(&format!("Couldn't install the valerie command: {e}")),
             },
@@ -6804,6 +6822,12 @@ impl App {
     fn after_reveal(&mut self) {
         self.queue_event("valerie_started", self.state.active_tab(), None);
         self.load_extensions(false);
+        if self.config.app.command_line_tool {
+            std::thread::spawn(|| match install_command_line_tool(true) {
+                Ok(link) => crate::log::verbose("app", format!("valerie command: {}", link.display())),
+                Err(e) => crate::log::verbose("app", format!("valerie command not linked: {e}")),
+            });
+        }
         self.start_blocklist();
         std::thread::spawn(crate::llm_guide::install);
         self.check_tasks(true);
@@ -10199,6 +10223,49 @@ mod custom_tests {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn links_the_valerie_command_without_taking_over() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("valerie-link-{}", crate::mcp::random_hex())).canonicalize().unwrap_or_else(|_| std::env::temp_dir());
+        let root = root.join(crate::mcp::random_hex());
+        let (home, brew, other) = (root.join("home"), root.join("brew-bin"), root.join("other-bin"));
+        let app = root.join("Applications/Valerie.app/Contents/MacOS/valerie");
+        for d in [&home, &brew, &other, &app.parent().unwrap().to_path_buf()] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(&app, "#!/bin/sh\n").unwrap();
+        let exe = app.canonicalize().unwrap();
+        let local = home.join(".local/bin");
+        // Someone else's valerie (a real file) is left alone; the next folder gets the link.
+        std::fs::write(other.join("valerie"), "not ours").unwrap();
+        let got = super::link_valerie(&exe, &[other.clone(), brew.clone()], &home, true).unwrap();
+        assert_eq!(got, brew.join("valerie"));
+        assert_eq!(std::fs::read_to_string(other.join("valerie")).unwrap(), "not ours");
+        assert_eq!(std::fs::read_link(brew.join("valerie")).unwrap(), exe);
+        // Already linked: nothing changes.
+        assert_eq!(super::link_valerie(&exe, &[brew.clone()], &home, true).unwrap(), brew.join("valerie"));
+        // At launch, a link to some other program (a dev build) stays; asked for by name, it's replaced.
+        std::fs::remove_file(brew.join("valerie")).unwrap();
+        let dev = root.join("target/debug/valerie");
+        std::fs::create_dir_all(dev.parent().unwrap()).unwrap();
+        std::fs::write(&dev, "dev").unwrap();
+        symlink(&dev, brew.join("valerie")).unwrap();
+        assert!(super::link_valerie(&exe, &[brew.clone()], &home, true).is_err());
+        assert_eq!(std::fs::read_link(brew.join("valerie")).unwrap(), dev);
+        assert_eq!(super::link_valerie(&exe, &[brew.clone()], &home, false).unwrap(), brew.join("valerie"));
+        assert_eq!(std::fs::read_link(brew.join("valerie")).unwrap(), exe);
+        // A link left pointing at nothing (an old copy) is fixed even at launch.
+        std::fs::remove_file(brew.join("valerie")).unwrap();
+        symlink(root.join("gone/Valerie.app/Contents/MacOS/valerie"), brew.join("valerie")).unwrap();
+        assert_eq!(super::link_valerie(&exe, &[brew.clone()], &home, true).unwrap(), brew.join("valerie"));
+        // ~/.local/bin is only made when asked for by name.
+        let none = root.join("missing-bin");
+        assert!(super::link_valerie(&exe, &[none.clone(), local.clone()], &home, true).is_err());
+        assert_eq!(super::link_valerie(&exe, &[none, local.clone()], &home, false).unwrap(), local.join("valerie"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn folder_changes_and_diffs_come_from_git() {
         let dir = std::env::temp_dir().join(format!("valerie-git-{}", crate::mcp::random_hex()));

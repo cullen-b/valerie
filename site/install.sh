@@ -46,6 +46,29 @@ rm -rf "${DEST}/Valerie.app.old"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "${DEST}/Valerie.app" >/dev/null 2>&1 || true
 
 echo "Installed Valerie ${VERSION} in ${DEST}."
+
+# The valerie command for terminals (valerie screenshot, valerie call…): a link in the first folder on PATH it may
+# write to, never over another program called valerie. ~/.local/bin is added to the shell's PATH if it isn't there.
+APP_BIN="${DEST}/Valerie.app/Contents/MacOS/valerie"
+LINKED=""
+for dir in /opt/homebrew/bin /usr/local/bin "${HOME}/.local/bin"; do
+  [ "${dir}" = "${HOME}/.local/bin" ] && mkdir -p "${dir}"
+  { [ -d "${dir}" ] && [ -w "${dir}" ]; } || continue
+  if [ -e "${dir}/valerie" ] && [ ! -L "${dir}/valerie" ]; then continue; fi
+  ln -sfn "${APP_BIN}" "${dir}/valerie" && LINKED="${dir}" && break
+done
+if [ -n "${LINKED}" ]; then
+  case ":${PATH}:" in
+    *":${LINKED}:"*) ;;
+    *)
+      PROFILE="${HOME}/.zprofile"
+      [ "${SHELL##*/}" = "bash" ] && PROFILE="${HOME}/.bash_profile"
+      LINE="export PATH=\"${LINKED/#${HOME}/\$HOME}:\$PATH\""
+      grep -qsF "${LINE}" "${PROFILE}" || printf '\n# Added by the Valerie installer, for the valerie command\n%s\n' "${LINE}" >> "${PROFILE}"
+      ;;
+  esac
+  echo "The valerie command works in new terminal windows (try: valerie screenshot --full page.png)."
+fi
 if pgrep -xq valerie; then
   echo "Valerie is open: the new version starts next time you open it (or run Restart Valerie from the command bar)."
 else
