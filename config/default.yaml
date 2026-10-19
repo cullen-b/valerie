@@ -402,6 +402,8 @@ pages:
   markdown_theme: auto     # their look. one of: auto (dark when your computer or dark_mode is) | light | dark
   markdown_outline: true   # an outline of the document's headings beside it (a button on narrow windows)
   markdown_live: true      # a file on this computer updates on screen as soon as it's saved (yours or your AI's edits)
+  pdf_viewer: true         # show PDFs in Valerie's own viewer, which can add text, a signature or arrows and save a
+                           # marked-up copy to your downloads. false = macOS's built-in PDF view
   markdown_edit: here      # what Edit does on a file on this computer. one of: here (Valerie's own editor beside a live
                            # preview; saves as you type) | editor (opens it in your `editor` app)
                            # ("Open Markdown Files in Valerie" in the command bar makes Valerie the app .md files open in;

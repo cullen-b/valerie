@@ -809,6 +809,7 @@ pub struct PagesConfig {
     pub markdown_outline: bool,
     pub markdown_live: bool,
     pub markdown_edit: String,
+    pub pdf_viewer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

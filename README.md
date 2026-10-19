@@ -84,6 +84,12 @@ saved, by you or your AI. "Open Markdown Files in Valerie" in the command bar ma
 one opened from Finder or another app comes up in a little window (`pages.markdown`, `markdown_theme`,
 `markdown_outline`, `markdown_live`, `markdown_edit`).
 
+**PDFs** open in Valerie's own viewer (pdf.js): text stays selectable and findable, and you can mark them up: **Text**
+(click, type; drag to move), **Sign** (draw your signature once; it's kept for PDFs from that site, drag the corner to
+size it), and **Arrow** (drag), in the colour you pick. Select a mark to move or delete it, `⌘Z` undoes. **Save Copy**
+writes the marks into the PDF itself (pdf-lib) and saves `<name> (marked up).pdf` to your downloads; the original is
+left alone. `pages.pdf_viewer: false` goes back to macOS's own PDF view.
+
 **Media:** tabs opened in the background wait to play until you look at them; a playing video pops out into
 picture-in-picture when you switch away; a mini player above the space icons pauses, mutes or jumps back to whatever
 is playing in another tab; click a tab's ♪ to mute it. **Downloads** go to your Downloads folder and show up in the
