@@ -23,7 +23,7 @@ body::before { /* soft accent glow */
   content: ""; position: fixed; inset: 0; pointer-events: none; transition: background .35s;
   background: radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
 }
-.bgfade { position: fixed; inset: 0; pointer-events: none; transition: opacity .4s ease; }
+.bgfade { position: fixed; inset: 0; pointer-events: none; }
 /* window.vibrancy: the desktop shows through, frosted, behind a lighter wash of the theme */
 html.vibrant body { background: linear-gradient(160deg, color-mix(in srgb, var(--bg1) 58%, transparent), color-mix(in srgb, var(--bg2) 58%, transparent)); }
 html.vibrant { background: transparent; }
@@ -669,13 +669,15 @@ setInterval(() => document.querySelectorAll(".elapsed").forEach((e) => (e.textCo
 // ---------- render ----------
 function applyTheme(th) {
   const root = document.documentElement, key = JSON.stringify(th);
-  if (prevTheme && prevTheme !== key) {
-    // Crossfade: freeze the old gradient on top, then fade it out.
+  const ms = S && S.layout ? +S.layout.animation_ms || 0 : 180;
+  if (prevTheme && prevTheme !== key && ms > 0) {
+    // Crossfade: freeze the old gradient on top and fade it out with the space's slide (layout.animation_ms). It starts
+    // at once and fades fastest first, since the text has already changed colour (dark text on the old light look).
     const cs = getComputedStyle(root), old = el("div", "bgfade");
     old.style.background = `linear-gradient(160deg, ${cs.getPropertyValue("--bg1")}, ${cs.getPropertyValue("--bg2")})`;
     document.body.prepend(old);
-    requestAnimationFrame(() => requestAnimationFrame(() => (old.style.opacity = "0")));
-    setTimeout(() => old.remove(), 450);
+    const fade = old.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" });
+    fade.onfinish = fade.oncancel = () => old.remove();
   }
   prevTheme = key;
   root.classList.toggle("light", th.mode === "light");
