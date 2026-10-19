@@ -181,6 +181,8 @@ pub struct App {
     chats_open: bool,
     active_chat: Option<String>,
     chat_view: Option<WebView>,
+    /// A chat started from a space floats over it (chats.from_space) instead of switching to the Chats space.
+    chat_float: bool,
     /// Pages on screen after the last layout.
     shown_panes: Vec<TabId>,
     /// The terminal panel along the bottom of the content area, and its shells.
@@ -1080,6 +1082,7 @@ impl App {
             chats_open: false,
             active_chat: None,
             chat_view: None,
+            chat_float: false,
             shown_panes: Vec::new(),
             terminal_view: None,
             terminal_open: false,
@@ -1731,6 +1734,11 @@ impl App {
                 platform::round_corners(cv, self.config.layout.corner_radius, self.pane_corners(0, 1));
                 let _ = cv.set_bounds(rect(x, y, w, h));
                 let _ = cv.set_visible(true);
+            } else if self.chat_float {
+                // The whole window: the page dims behind the chat's card, like behind the command bar.
+                platform::round_corners(cv, 0.0, platform::Corners::None);
+                let _ = cv.set_bounds(full);
+                let _ = cv.set_visible(true);
             } else {
                 let _ = cv.set_visible(false);
             }
@@ -1747,6 +1755,9 @@ impl App {
                     let _ = tv.set_visible(false);
                 }
             }
+        }
+        if let Some(cv) = self.chat_view.as_ref().filter(|_| self.chat_float) {
+            platform::bring_to_front(cv);
         }
         if let Some(mv) = &self.market_view {
             if self.market_open {
@@ -1862,6 +1873,11 @@ impl App {
         }
         if let Some(v) = self.market_view.as_ref().filter(|_| self.market_open) {
             let _ = v.focus();
+            return;
+        }
+        if let Some(v) = self.chat_view.as_ref().filter(|_| self.chat_float) {
+            let _ = v.focus();
+            let _ = v.evaluate_script("window.chat && chat.focus()");
             return;
         }
         if let Some(v) = self.terminal_view.as_ref().filter(|_| self.terminal_open && (self.terminal_focused || self.terminal_max)) {
@@ -4642,8 +4658,7 @@ impl App {
                 crate::ai::save_chat(&chats_dir(&self.config), &c);
                 self.active_chat = Some(c.id.clone());
                 self.chats.insert(0, c);
-                self.open_chats();
-                self.render_chat();
+                self.show_chat_here();
             }
             Command::NewChat { prompt, agent, folder, in_project } => {
                 // ⌘N in a coding chat: another chat on the same project.
@@ -4670,7 +4685,7 @@ impl App {
                 if let Some(f) = folder {
                     self.set_chat_folder(&id, &f);
                 }
-                self.open_chats();
+                self.show_chat_here();
                 if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
                     self.send_chat(Some(id), p, agent, vec![]);
                 }
@@ -4691,6 +4706,11 @@ impl App {
                     c.effort = effort.unwrap_or_default();
                     c.access = access.unwrap_or_default();
                     c.plan = plan.unwrap_or(false);
+                }
+                // Sent from outside the chat (the command bar, a key): show it where the user is.
+                if !self.chats_open && !self.chat_float {
+                    self.active_chat = Some(id.clone());
+                    self.show_chat_here();
                 }
                 self.send_chat(Some(id), text, agent, files);
             }
@@ -5405,6 +5425,8 @@ impl App {
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => self.render_chat(),
             (Source::Chat, "attach") => self.chat_attach(&m),
+            // Esc on a floating chat: it carries on in Chats; with Shift, the user goes there with it.
+            (Source::Chat, "float_close") => self.close_chat_float(m["follow"].as_bool().unwrap_or(false)),
             (Source::Terminal, _) => self.terminal_message(kind, &m),
             (Source::Welcome, _) => self.welcome_message(&m, elwt),
             (Source::Market, _) => self.market_message(&m, elwt),
@@ -6035,7 +6057,7 @@ impl App {
                 // Questions it was still waiting on go away with it.
                 self.chat_asks.retain(|_, a| a.chat != chat);
                 self.refresh_changes(&chat);
-                let shown = self.chats_open && self.active_chat.as_deref() == Some(chat.as_str()) && self.window_focused;
+                let shown = self.chat_shown(&chat) && self.window_focused;
                 // Messages sent while it was busy go next.
                 let next = self.chats.iter_mut().find(|c| c.id == chat).and_then(|c| {
                     c.unread |= !shown;
@@ -6043,7 +6065,7 @@ impl App {
                 });
                 if let Some(c) = self.chats.iter().find(|c| c.id == chat) {
                     crate::ai::save_chat(&chats_dir(&self.config), c);
-                    let shown = self.chats_open && self.active_chat.as_deref() == Some(chat.as_str());
+                    let shown = self.chat_shown(&chat);
                     if !shown {
                         self.toast(&format!("✦ {} has an answer", c.title));
                     }
@@ -6646,6 +6668,7 @@ impl App {
         let built = WebViewBuilder::new()
             .with_html(ui_page("chat.html", &self.config))
             .with_visible(false)
+            .with_transparent(true)
             .with_accept_first_mouse(true)
             .with_devtools(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Chat, msg: r.into_body() }))
@@ -6678,6 +6701,7 @@ impl App {
         self.touch_panes();
         let was = self.chats_open;
         self.chats_open = true;
+        self.chat_float = false;
         let secs = self.anim_secs();
         self.layout();
         if let Some(v) = self.chat_view.as_ref().filter(|_| !was && secs > 0.0) {
@@ -6689,6 +6713,46 @@ impl App {
         if let Some(id) = self.active_chat.clone() {
             self.refresh_changes(&id);
         }
+    }
+
+    /// Show the open chat where the user is: floating over their space (chats.from_space: float), else in Chats.
+    fn show_chat_here(&mut self) {
+        if self.chats_open || self.config.chats.from_space != "float" || !self.config.chats.enabled {
+            return self.open_chats();
+        }
+        self.close_bar();
+        self.close_peek();
+        self.ensure_chat_view();
+        if self.active_chat.as_ref().is_none_or(|id| !self.chats.iter().any(|c| &c.id == id)) {
+            return self.open_chats();
+        }
+        self.chat_float = true;
+        self.layout();
+        self.render();
+        self.render_chat();
+        self.focus_active();
+        if let Some(id) = self.active_chat.clone() {
+            self.refresh_changes(&id);
+        }
+    }
+
+    fn close_chat_float(&mut self, follow: bool) {
+        if !self.chat_float {
+            return;
+        }
+        if follow {
+            return self.open_chats();
+        }
+        self.chat_float = false;
+        self.layout();
+        self.render();
+        self.render_chat();
+        self.focus_active();
+    }
+
+    /// The user can see this chat right now (in Chats, or floating over a space).
+    fn chat_shown(&self, chat: &str) -> bool {
+        (self.chats_open || self.chat_float) && self.active_chat.as_deref() == Some(chat)
     }
 
     /// Model names to offer, by agent name (its CLI's own list plus agents.models), with the model and effort it uses
@@ -6733,6 +6797,10 @@ impl App {
             "terminal": self.config.terminal_panel.enabled,
             "asks": chat.map(|c| self.chat_asks.iter().filter(|(_, a)| a.chat == c.id).map(|(id, a)| json!({ "id": id, "tool": a.tool, "what": a.what, "args": a.args })).collect::<Vec<_>>()),
             "steps": self.config.chats.steps, "usage": self.config.chats.usage,
+            "float": self.chat_float.then(|| json!({
+                "width": self.config.command_bar.width.max(560.0), "top": self.config.command_bar.top,
+                "dim": self.config.command_bar.dim_background, "hints": self.config.escape_hints,
+            })),
         });
         let _ = v.evaluate_script(&format!("window.chat && chat.render({data})"));
     }
@@ -7026,12 +7094,8 @@ impl App {
         self.chats.insert(0, c);
         self.chat_running.insert(id.clone());
         self.chat_started.insert(id.clone(), now());
-        if self.chats_open {
-            self.render();
-            self.render_chat();
-        } else {
-            self.open_chats();
-        }
+        self.render();
+        self.render_chat();
         let p = self.proxy.clone();
         let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
         let work = self
@@ -7145,7 +7209,7 @@ impl App {
             }
             Ev::Session { .. } => {}
         }
-        if self.chats_open && self.active_chat.as_deref() == Some(chat.as_str()) {
+        if (self.chats_open || self.chat_float) && self.active_chat.as_deref() == Some(chat.as_str()) {
             let i = c.messages.len() - 1;
             if let Some(v) = &self.chat_view {
                 let _ = v.evaluate_script(&format!("window.chat && chat.update({i}, {}, true)", json!(c.messages[i])));
@@ -7266,7 +7330,7 @@ impl App {
         crate::ai::save_chat(&chats_dir(&self.config), &c);
         self.active_chat = Some(c.id.clone());
         self.chats.insert(0, c);
-        self.open_chats();
+        self.show_chat_here();
     }
 }
 
@@ -8534,7 +8598,7 @@ impl App {
                 other => other.clone(),
             };
             let id = crate::mcp::random_hex()[..10].to_string();
-            let seen = self.chats_open && self.active_chat.as_deref() == Some(chat_id.as_str()) && self.window_focused;
+            let seen = self.chat_shown(&chat_id) && self.window_focused;
             if !seen {
                 self.notify_valerie(&format!("✦ {chat} needs you"), &format!("Let the agent {what}?"), Some(json!({ "cmd": "activate_chat", "chat": chat_id })));
             }

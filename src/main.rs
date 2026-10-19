@@ -97,6 +97,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["summary", "open", "hidden"].contains(&c.chats.steps.as_str()) {
                 problems.push(format!("chats: steps is {:?}; use summary, open or hidden", c.chats.steps));
             }
+            if !["float", "chats"].contains(&c.chats.from_space.as_str()) {
+                problems.push(format!("chats: from_space is {:?}; use float or chats", c.chats.from_space));
+            }
             if !["auto", "always", "never"].contains(&c.chats.worktrees.as_str()) {
                 problems.push(format!("chats: worktrees is {:?}; use auto, always or never", c.chats.worktrees));
             }

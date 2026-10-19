@@ -160,6 +160,24 @@ option, optgroup { background: #111; color: #eee; }
 /* the diff pane */
 #pane { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: none; flex-direction: column; }
 #pane.on { display: flex; }
+/* a chat started from a space floats in the middle, where the command bar was, over the dimmed page */
+html.float { background: rgba(0,0,0,var(--fdim, .22)); animation: dimIn 220ms ease both; }
+html.float body { position: fixed; left: 50%; top: var(--ftop, 18%); transform: translateX(-50%);
+  width: min(var(--fw, 680px), calc(100vw - 32px)); height: min(62vh, calc(100vh - var(--ftop, 18%) - 24px)); min-height: 220px;
+  border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 28px 90px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.25);
+  animation: growIn 300ms cubic-bezier(.2,.85,.25,1) both; }
+html.float #scroll { padding-left: 18px; padding-right: 18px; }
+html.float #composer { padding: 0 14px 14px; }
+html.leaving { animation: dimOut 160ms ease both; }
+html.leaving body { animation: shrinkOut 160ms ease both; }
+@keyframes dimIn { from { background: transparent; } }
+@keyframes dimOut { to { background: transparent; } }
+/* it grows down out of the command bar's box */
+@keyframes growIn { from { height: 64px; min-height: 0; opacity: .4; } 60% { opacity: 1; } }
+@keyframes shrinkOut { to { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.97); } }
+#toChats, #floatHint { display: none; }
+html.float #toChats { display: grid; }
+html.float.hints #floatHint { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; }
 #termBtn { font-family: var(--mono); font-size: 11.5px; padding: 3px 8px; }
 #pane header { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); font-size: 13px; }
 #pane header b { font-weight: 600; } #pane header .sub { color: var(--dim); font-family: var(--mono); font-size: 11.5px; flex: 1; }
@@ -174,7 +192,7 @@ option, optgroup { background: #111; color: #eee; }
 </style>
 </head>
 <body>
-<div id="top"><div class="title" id="title">New chat</div><div class="proj" id="projBadge"></div><div class="agent" id="agentBadge"></div><div style="flex:1"></div><div id="working"></div><button class="btn quiet" id="termBtn" title="Terminal in this project (Ctrl+`)">&gt;_</button></div>
+<div id="top"><div class="title" id="title">New chat</div><div class="proj" id="projBadge"></div><div class="agent" id="agentBadge"></div><div style="flex:1"></div><div id="working"></div><div id="floatHint">esc · keep working&nbsp;&nbsp;⇧esc · go to Chats</div><button class="btn quiet" id="toChats" title="Open in Chats (⇧Esc)">⤢</button><button class="btn quiet" id="termBtn" title="Terminal in this project (Ctrl+`)">&gt;_</button></div>
 <div id="scroll"><div id="log"></div></div>
 <div id="composer"><details id="plan-now" open><summary></summary><ul class="todos"></ul></details><div id="queue"></div><div id="box">
   <div id="attach" class="files"></div>
@@ -566,7 +584,22 @@ function openPane(path) {
 function closePane() { $("#pane").classList.remove("on"); }
 $("#paneClose").onclick = closePane;
 $("#paneRefresh").onclick = () => { cmd({ cmd: "chat_changes", chat: D.chat.id }); openPane(paneFocus); };
-addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#pane").classList.contains("on")) { e.preventDefault(); closePane(); } });
+addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if ($("#pane").classList.contains("on")) { e.preventDefault(); closePane(); return; }
+  if (D && D.float) { e.preventDefault(); leaveFloat(e.shiftKey); }
+});
+// A floating chat goes on to Chats: fade it out first (Shift: the user goes with it, no fade needed).
+let leaving = false;
+function leaveFloat(follow) {
+  if (leaving) return;
+  if (follow) return send({ t: "float_close", follow: true });
+  leaving = true;
+  document.documentElement.classList.add("leaving");
+  setTimeout(() => send({ t: "float_close", follow: false }), 150);
+}
+// A click on the dimmed page around the card works like Esc.
+addEventListener("mousedown", (e) => { if (D && D.float && e.target === document.documentElement) leaveFloat(false); });
 
 // ---------- the conversation ----------
 function atBottom() { const s = $("#scroll"); return s.scrollHeight - s.scrollTop - s.clientHeight < 80; }
@@ -787,6 +820,10 @@ window.chat = {
     upd.clear();
     const r = document.documentElement;
     r.classList.toggle("light", d.theme.mode === "light");
+    const f = d.float;
+    r.classList.toggle("float", !!f); r.classList.toggle("hints", !!(f && f.hints));
+    if (!f) { r.classList.remove("leaving"); leaving = false; }
+    if (f) { r.style.setProperty("--fw", f.width + "px"); r.style.setProperty("--ftop", f.top + "%"); r.style.setProperty("--fdim", f.dim); }
     r.style.setProperty("--accent", d.theme.accent);
     if (d.theme.mode !== "light") r.style.setProperty("--bg", "color-mix(in srgb, " + d.theme.background[0] + " 45%, #121117)"); else r.style.removeProperty("--bg");
     document.body.style.fontFamily = d.font ? `${d.font}, -apple-system, system-ui, sans-serif` : "";
@@ -821,6 +858,7 @@ window.chat = {
     grow(); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
   },
 };
+$("#toChats").onclick = () => leaveFloat(true);
 $("#termBtn").onclick = () => cmd({ cmd: "open_terminal", chat: D.chat && D.chat.id });
 send({ t: "ready" });
 </script>
