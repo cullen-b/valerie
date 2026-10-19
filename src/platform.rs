@@ -137,6 +137,12 @@ mod mac {
         objc2::rc::Retained::as_ptr(&v) as *mut AnyObject
     }
 
+    /// Whether the page has an address: a view whose only load became a download has none.
+    pub fn has_url(wv: &WebView) -> bool {
+        let url: *mut AnyObject = unsafe { msg_send![ptr(wv), URL] };
+        !url.is_null()
+    }
+
     /// Re-adding a subview moves it to the top of its siblings.
     pub fn bring_to_front(wv: &WebView) {
         let v = ptr(wv);
@@ -1267,6 +1273,16 @@ pub fn set_global_hotkeys(keys: &[(u32, u32)], on: impl Fn(u32) + Send + 'static
         let _ = on;
         (0..keys.len()).collect()
     }
+}
+
+/// The page's address. wry's own `url()` panics on macOS when the page has none (a little window opened straight onto a
+/// download), so ask this instead.
+pub fn page_url(wv: &WebView) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    if !mac::has_url(wv) {
+        return None;
+    }
+    wv.url().ok()
 }
 
 pub fn bring_to_front(wv: &WebView) {
