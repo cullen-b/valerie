@@ -808,6 +808,7 @@ pub struct PagesConfig {
     pub markdown_theme: String,
     pub markdown_outline: bool,
     pub markdown_live: bool,
+    pub markdown_edit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1385,6 +1385,32 @@ pub fn clear_site_data(wv: &WebView, host: &str, done: impl FnOnce(usize) + 'sta
     }
 }
 
+/// Make Valerie the app that opens Markdown files. Needs the bundled Valerie.app, which says it can open them.
+pub fn set_default_markdown_app() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        #[link(name = "CoreServices", kind = "framework")]
+        extern "C" {
+            fn LSSetDefaultRoleHandlerForContentType(content_type: *const AnyObject, role: u32, bundle_id: *const AnyObject) -> i32;
+        }
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
+        if id.is_null() {
+            return Err("run Valerie.app (scripts/bundle-macos.sh) to open Markdown files with it".into());
+        }
+        let kind = objc2_foundation::NSString::from_str("net.daringfireball.markdown");
+        // kLSRolesAll: viewing and editing.
+        match LSSetDefaultRoleHandlerForContentType(&*kind as *const _ as *const AnyObject, 0xFFFF_FFFF, id) {
+            0 => Ok(()),
+            status => Err(format!("macOS refused ({status})")),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("choose Valerie for .md files in your system settings".into())
+}
+
 /// Ask macOS to make Valerie the default browser (macOS shows its own confirmation). Needs the bundled Valerie.app.
 pub fn set_default_browser() -> Result<(), String> {
     #[cfg(target_os = "macos")]

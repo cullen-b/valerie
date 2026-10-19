@@ -76,8 +76,13 @@ edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek
 
 **Markdown files** (`.md`, on your computer or the web) open as formatted documents: GitHub-style tables, task lists,
 notes and warnings, footnotes, highlighted code with a Copy button, and an outline of the headings beside the text.
-Source shows the plain text; for a file on your computer, Edit opens it in your `editor` and the page updates the
-moment the file is saved, by you or your AI (`pages.markdown`, `markdown_theme`, `markdown_outline`, `markdown_live`).
+Source shows the plain text. For a file on your computer, Edit opens Valerie's own editor: the text beside a live
+preview, saved as you type (`⌘S` saves now, `⌘B`/`⌘I` bold and italic, lists carry on when you press Enter, Esc is
+Done). If the file changes somewhere else while you have unsaved edits, Valerie waits for you to choose. Prefer your own
+app? `pages.markdown_edit: editor` opens your `editor` instead. Either way the page updates the moment the file is
+saved, by you or your AI. "Open Markdown Files in Valerie" in the command bar makes Valerie the app `.md` files open in;
+one opened from Finder or another app comes up in a little window (`pages.markdown`, `markdown_theme`,
+`markdown_outline`, `markdown_live`, `markdown_edit`).
 
 **Media:** tabs opened in the background wait to play until you look at them; a playing video pops out into
 picture-in-picture when you switch away; a mini player above the space icons pauses, mutes or jumps back to whatever

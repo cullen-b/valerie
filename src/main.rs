@@ -109,6 +109,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !(4.0..=60.0).contains(&c.terminal_panel.font_size) {
                 problems.push(format!("terminal_panel: font_size is {}; use 4 to 60 (pixels)", c.terminal_panel.font_size));
             }
+            if !["here", "editor"].contains(&c.pages.markdown_edit.as_str()) {
+                problems.push(format!("pages: markdown_edit is {:?}; use here or editor", c.pages.markdown_edit));
+            }
             if !["auto", "light", "dark"].contains(&c.pages.markdown_theme.as_str()) {
                 problems.push(format!("pages: markdown_theme is {:?}; use auto, light or dark", c.pages.markdown_theme));
             }
