@@ -506,6 +506,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 16.5px/1.72 -ap
 .vmd-bar button { all: unset; cursor: pointer; padding: 6px 11px; border-radius: 8px; color: var(--dim); font-weight: 550; white-space: nowrap; transition: background .12s, color .12s; }
 .vmd-bar button:hover { background: var(--soft); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
 .vmd-bar button.on { color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.vmd-bar [hidden], .vmd-editor[hidden], main[hidden], .vmd-source[hidden] { display: none !important; }
 .vmd-live { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; box-shadow: 0 0 0 3px rgba(63,185,80,.18); flex: none; }
 .vmd-live.flash { animation: vmdflash 1s; } @keyframes vmdflash { 30% { box-shadow: 0 0 0 7px rgba(63,185,80,.3); } }
 .vmd-toc { position: fixed; top: 86px; left: max(20px, calc(50vw - 380px - 290px)); width: 230px; max-height: calc(100vh - 120px); overflow-y: auto; scrollbar-width: none;
@@ -575,7 +576,16 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 16.5px/1.72 -ap
 .md :target { scroll-margin-top: 64px; } .md li:target, .md h1:target, .md h2:target, .md h3:target, .md h4:target { animation: vmdtarget 1.6s; }
 @keyframes vmdtarget { from { background: color-mix(in srgb, var(--accent) 22%, transparent); } }
 @media (max-width: 700px) { body { font-size: 16px; } .md { padding: 32px 20px 120px; } .vmd-bar .time { display: none; } .md .anchor { display: none; } }
-@media print { .vmd-bar, .vmd-toc { display: none !important; } .md { max-width: none; padding: 0; } .md .code-bar { display: none; } :root { --bg: #fff; } }`;
+.vmd-editor { display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - 47px); }
+.vmd-editor textarea { all: unset; box-sizing: border-box; display: block; width: 100%; height: 100%; overflow-y: auto; padding: 30px 34px 160px;
+  font: 13.5px/1.75 ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace; color: var(--fg); white-space: pre-wrap; overflow-wrap: break-word;
+  caret-color: var(--accent); tab-size: 4; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--code) 55%, var(--bg)); }
+.vmd-editor textarea::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.vmd-preview { height: 100%; overflow-y: auto; } .vmd-preview .md { padding: 30px 36px 160px; max-width: 720px; }
+body.vmd-editing { overflow: hidden; } body.vmd-editing .vmd-bar .time { display: none; }
+.vmd-status { color: var(--faint); white-space: nowrap; } .vmd-status.bad { color: var(--caution); } .vmd-status.warn { color: var(--warning); cursor: pointer; text-decoration: underline; }
+@media (max-width: 860px) { .vmd-editor { grid-template-columns: 1fr; } .vmd-preview { display: none; } .vmd-editor textarea { border-right: 0; } }
+@media print { .vmd-bar, .vmd-toc, .vmd-editor { display: none !important; } .md { max-width: none; padding: 0; } .md .code-bar { display: none; } :root { --bg: #fff; } }`;
 
 // Windows-1252's characters for the bytes 0x80–0x9f (what browsers use for "Latin-1"); "_" where it has none.
 const MD_CP1252 = "€_‚ƒ„…†‡ˆ‰Š‹Œ_Ž__‘’“”•–—˜™š›œ_žŸ";
@@ -590,7 +600,7 @@ function mdUtf8(text) {
   }
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch (_) { return text; }
 }
-let mdShown = false, mdTheme = () => {}, mdUpdate = () => {};
+let mdShown = false, mdTheme = () => {}, mdUpdate = () => {}, mdEditorText = () => null, mdEditorSaved = () => {};
 function markdownViewer() {
   if (!isMarkdownDoc()) return;
   const start = () => {
@@ -629,9 +639,11 @@ function markdownViewer() {
     bar.append(time);
     if (tocWanted) bar.append(tocBtn);
     bar.append(srcBtn);
-    // A file:// page can't send Valerie messages, so it asks for a valerie:// address Valerie answers instead.
-    const tell = (what) => { const i = new Image(); i.src = "valerie://md/" + what + "?" + Date.now(); };
-    if (local) bar.append(btn("Edit", "Open this file in your editor", () => tell("edit")));
+    const tell = (what) => post({ t: "markdown_" + what });
+    const editHere = local && cfg.pages.markdown_edit !== "editor", status = mdEl("span", "vmd-status");
+    const editBtn = local ? btn("Edit", editHere ? "Edit this file here" : "Open this file in your editor", () => (editHere ? setEditing(!editing) : tell("edit"))) : null;
+    if (editHere) bar.insertBefore(status, time);
+    if (editBtn) bar.append(editBtn);
 
     let current = null, outline = [];
     const draw = (text, keepScroll) => {
@@ -687,9 +699,94 @@ function markdownViewer() {
     theme(); dark.addEventListener("change", theme);
     mdTheme = theme;
 
+    // ---------- the built-in editor: the text beside a live preview, saved as you type (pages.markdown_edit: here) ----------
+    const ed = mdEl("div", "vmd-editor"), ta = mdEl("textarea"), pv = mdEl("div", "vmd-preview");
+    ta.spellcheck = true; ta.setAttribute("aria-label", tr("Markdown text"));
+    ed.append(ta, pv); ed.hidden = true; document.body.append(ed);
+    let editing = false, dirty = false, saving = null, again = false, saveTimer = 0, previewTimer = 0, theirs = null;
+    const setStatus = (text, cls, title) => { status.textContent = text ? tr(text) : ""; status.className = "vmd-status" + (cls ? " " + cls : ""); status.title = title || ""; };
+    const preview = () => { const y = pv.scrollTop; pv.replaceChildren(mdRender(ta.value).body); pv.scrollTop = y; };
+    // Valerie reads the text back with markdownText() and writes the file, then calls markdownSaved(error or null).
+    // While the file has changed somewhere else, nothing is saved over it until you choose (⌘S keeps yours).
+    const save = (force) => {
+      clearTimeout(saveTimer);
+      if (!dirty || (theirs != null && force !== true)) return;
+      if (force === true) { theirs = null; status.onclick = null; }
+      if (saving != null) { again = true; return; }
+      saving = ta.value; again = false; setStatus("Saving…"); tell("save");
+    };
+    mdEditorText = () => (editHere ? ta.value : null);
+    mdEditorSaved = (err) => {
+      const was = saving; saving = null;
+      if (err) return setStatus("Couldn't save", "bad", String(err));
+      src = was;
+      if (ta.value === was) { dirty = false; setStatus("Saved"); } else if (again || dirty) save();
+    };
+    const insert = (text) => { ta.focus(); if (!document.execCommand("insertText", false, text)) ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, "end"); };
+    const wrap = (mark) => {
+      const [a, b] = [ta.selectionStart, ta.selectionEnd], sel = ta.value.slice(a, b);
+      insert(mark + sel + mark);
+      if (!sel) ta.selectionStart = ta.selectionEnd = a + mark.length;
+    };
+    ta.addEventListener("keydown", (e) => {
+      const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
+      if (mod && k === "s") { e.preventDefault(); e.stopPropagation(); save(true); }
+      else if (mod && !e.shiftKey && (k === "b" || k === "i")) { e.preventDefault(); e.stopPropagation(); wrap(k === "b" ? "**" : "_"); }
+      else if (e.key === "Tab" && !mod && !e.shiftKey) { e.preventDefault(); insert("  "); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setEditing(false); }
+      else if (e.key === "Enter" && !mod && !e.shiftKey && !e.isComposing) {
+        // Lists carry on: Enter after "- item" starts "- ", after "3. item" starts "4. "; on an empty item it ends the list.
+        const at = ta.selectionStart, line = ta.value.slice(ta.value.lastIndexOf("\n", at - 1) + 1, at);
+        const m = line.match(/^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?(.*)$/);
+        if (!m || ta.selectionEnd !== at) return;
+        e.preventDefault();
+        if (!m[5].trim()) { ta.selectionStart = at - line.length; insert(""); return; }
+        const next = /\d/.test(m[2]) ? parseInt(m[2], 10) + 1 + m[2].slice(-1) : m[2];
+        insert("\n" + m[1] + next + m[3] + (m[4] ? "[ ] " : ""));
+      }
+    });
+    ta.addEventListener("input", () => {
+      dirty = true;
+      if (saving == null && theirs == null) setStatus("Edited");
+      clearTimeout(previewTimer); previewTimer = setTimeout(preview, 120);
+      clearTimeout(saveTimer); saveTimer = setTimeout(save, 700);
+    });
+    // Scrolling the text scrolls the preview to the same place.
+    ta.addEventListener("scroll", () => { const f = ta.scrollTop / Math.max(1, ta.scrollHeight - ta.clientHeight); pv.scrollTop = f * (pv.scrollHeight - pv.clientHeight); }, { passive: true });
+    addEventListener("pagehide", () => { if (dirty) save(); });
+    const setEditing = (on) => {
+      if (on === editing) return;
+      // Done waits while the file changed elsewhere and your edits aren't saved: load theirs or ⌘S to keep yours.
+      if (!on && theirs != null) { status.classList.remove("warn"); void status.offsetWidth; status.classList.add("warn"); return; }
+      editing = on;
+      document.body.classList.toggle("vmd-editing", on);
+      editBtn.textContent = tr(on ? "Done" : "Edit"); editBtn.classList.toggle("on", on);
+      srcBtn.hidden = on; tocBtn.hidden = on || outline.length < 2;
+      if (on) {
+        ta.value = src; dirty = false; setStatus(""); preview();
+        ed.hidden = false; main.hidden = true; source.hidden = true; toc.style.visibility = "hidden";
+        ta.focus(); ta.setSelectionRange(0, 0); ta.scrollTop = 0;
+      } else {
+        const text = ta.value;
+        if (dirty) save();
+        ed.hidden = true; showSource(!!saved.source);
+        if (text !== src || dirty) draw(text, true);
+        if (!dirty) setStatus("");
+      }
+    };
+
     // Valerie watches a file on this computer and sends it again when it's saved (yours or your AI's edits).
     if (local && cfg.pages.markdown_live !== false) {
       mdUpdate = (text) => {
+        if (editing) {
+          if (text === ta.value || text === saving) { src = text; return; }   // our own save
+          if (!dirty) { src = text; ta.value = text; preview(); return; }
+          // Changed somewhere else while you have unsaved edits here: yours stay until you choose.
+          clearTimeout(saveTimer);
+          theirs = text; setStatus("Changed elsewhere · load it", "warn", tr("Click to load the file as it is now (your unsaved changes go); ⌘S keeps yours"));
+          status.onclick = () => { if (theirs == null) return; src = theirs; ta.value = theirs; theirs = null; dirty = false; status.onclick = null; setStatus(""); preview(); };
+          return;
+        }
         if (text === src) return;
         src = text; draw(src, true);
         live.classList.remove("flash"); void live.offsetWidth; live.classList.add("flash");

@@ -487,6 +487,8 @@ pub enum Command {
     /// Copy this site's login (its cookies) from Safari into this tab's profile, then reload.
     BringLoginFromSafari,
     SetDefaultBrowser,
+    /// Make Valerie the app Markdown files (.md) open in (macOS).
+    SetDefaultMarkdownApp,
     /// Run a command defined by a plugin in `<config dir>/plugins/<plugin>/plugin.yaml`.
     Plugin {
         plugin: String,
@@ -713,6 +715,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("sign_in_with_safari", "Sign In with Safari (for passkeys)"),
     ("bring_login_from_safari", "Bring Login from Safari"),
     ("set_default_browser", "Make Valerie the Default Browser"),
+    ("set_default_markdown_app", "Open Markdown Files in Valerie"),
     ("open_config", "Open Config File"),
     ("reload_config", "Reload Config"),
     ("sync", "Sync Now"),

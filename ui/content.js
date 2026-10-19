@@ -111,7 +111,11 @@ const notifyHooks = { permission() {}, clicked() {} };
 })();
 // Capture natives before page scripts run, so pages can't intercept what we send or fill.
 const stringify = JSON.stringify, keysOf = Object.keys, isArray = Array.isArray;
-const ipcPost = window.ipc ? window.ipc.postMessage.bind(window.ipc) : null;
+// A file:// page's messages never reach Valerie (wry can't make a request out of a file:// address), so there they go
+// as a request for valerie://ipc/?<message>, made with natives captured before the page's own scripts run.
+const imgSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src").set, makeEl = Document.prototype.createElement, encUri = encodeURIComponent;
+const ipcPost = location.protocol === "file:" ? (m) => imgSrc.call(makeEl.call(document, "img"), "valerie://ipc/?" + encUri(m))
+  : window.ipc ? window.ipc.postMessage.bind(window.ipc) : null;
 // Our own JSON writer: JSON.stringify would hand each object to a page's Object.prototype.toJSON first, letting the page
 // read what Valerie sends (nonces, plugin keys). Strings and numbers go through stringify, which never asks them.
 function toJson(v, depth = 0) {
@@ -1485,6 +1489,8 @@ Object.defineProperty(window, "__valerie", {
     fill, offerSave,
     consoleLines: () => consoleKept.slice(),
     markdownUpdate: (text) => mdUpdate(String(text)),
+    markdownText: () => mdEditorText(),
+    markdownSaved: (err) => mdEditorSaved(err),
   }),
   writable: false, configurable: false,
 });

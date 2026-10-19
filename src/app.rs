@@ -55,6 +55,8 @@ pub enum UserEvent {
     Tick,
     /// A Markdown file a page shows changed on disk.
     MarkdownChanged(Target),
+    /// The built-in Markdown editor's text, to write to the file the page shows.
+    MarkdownSave { target: Target, file: PathBuf, text: String },
     ConfigChanged,
     SyncDone(Result<sync::Outcome, String>),
     /// The answer about saved tabs not opened in a long while: 0 keep all, 1 remove all, 2 one by one.
@@ -1498,7 +1500,7 @@ impl App {
         let saved = saving.clone();
         let p6 = p.clone();
         let briefs_proxy = std::sync::Mutex::new(self.proxy.clone());
-        let md_proxy = std::sync::Mutex::new(self.proxy.clone());
+        let ipc_proxy = std::sync::Mutex::new(self.proxy.clone());
         let (page_key, page_theme) = (self.page_key.clone(), self.page_theme.clone());
         let popup_windows = self.config.links.popups == "window";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
@@ -1552,13 +1554,12 @@ impl App {
             })
             .with_custom_protocol("valerie".into(), move |_, req| match req.uri().host() {
                 Some("page") => serve_page(req.uri().path().trim_matches('/'), &page_key, &page_theme.read().map(|t| t.clone()).unwrap_or_default()),
-                // The Markdown viewer's Edit button and live updates: a file:// page's own messages never arrive (wry
-                // can't make a request out of a file:// address), so it asks for valerie://md/<what> instead.
-                Some("md") => {
-                    let what = req.uri().path().trim_matches('/');
-                    if matches!(what, "edit" | "watch") {
-                        if let Ok(p) = md_proxy.lock() {
-                            send(&p, UserEvent::Ipc { from: Source::Page(target), msg: json!({ "t": format!("markdown_{what}") }).to_string() });
+                // A file:// page's messages (content.js sends them this way there): wry can't make an IPC request out of
+                // a file:// address. Any page could ask for this, but it's the same message it could post anyway.
+                Some("ipc") => {
+                    if let Some(msg) = req.uri().query().and_then(|q| url::form_urlencoded::parse(q.as_bytes()).next()).map(|(m, _)| m.into_owned()) {
+                        if let Ok(p) = ipc_proxy.lock() {
+                            send(&p, UserEvent::Ipc { from: Source::Page(target), msg });
                         }
                     }
                     wry::http::Response::builder().status(204).body(std::borrow::Cow::Borrowed(&[][..])).unwrap()
@@ -5188,6 +5189,13 @@ impl App {
                     Err(e) => self.toast(&format!("Keychain: {e}")),
                 }
             }
+            Command::SetDefaultMarkdownApp => {
+                self.close_bar();
+                match platform::set_default_markdown_app() {
+                    Ok(()) => self.toast("Markdown files now open in Valerie"),
+                    Err(e) => self.toast(&format!("Couldn't make Valerie open Markdown files: {e}")),
+                }
+            }
             Command::SetDefaultBrowser => {
                 self.close_bar();
                 match platform::set_default_browser() {
@@ -5484,6 +5492,16 @@ impl App {
                     }
                 });
             }
+            (Source::Page(target), "markdown_save") => {
+                // The text is read from the page (it can be long), and only goes to the file that page shows.
+                let (Some(file), Some(v)) = (self.markdown_file(target), self.view_for(target)) else { return };
+                let p = self.proxy.clone();
+                let _ = v.evaluate_script_with_callback("window.__valerie ? __valerie.markdownText() : null", move |r| {
+                    if let Ok(text) = serde_json::from_str::<String>(&r) {
+                        send(&p, UserEvent::MarkdownSave { target, file: file.clone(), text });
+                    }
+                });
+            }
             (Source::Page(target), "markdown_edit") => {
                 let Some(file) = self.markdown_file(target) else { return };
                 let (editor, terminal, p) = (self.config.editor.clone(), self.config.terminal.clone(), self.proxy.clone());
@@ -5732,6 +5750,21 @@ impl App {
             }
             UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
             UserEvent::Tick => self.tick(),
+            UserEvent::MarkdownSave { target, file, text } => {
+                if self.markdown_file(target).as_ref() != Some(&file) {
+                    return;
+                }
+                // Keep Windows line endings if the file had them (the editor works in \n).
+                let crlf = std::fs::read(&file).is_ok_and(|b| b.windows(2).any(|w| w == b"\r\n"));
+                let text = if crlf { text.replace("\r\n", "\n").replace('\n', "\r\n") } else { text };
+                let err = std::fs::write(&file, text.as_bytes()).err().map(|e| e.to_string());
+                if let Some(e) = &err {
+                    crate::log::line("markdown", format!("couldn't save {}: {e}", file.display()));
+                }
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.markdownSaved({})", json!(err)));
+                }
+            }
             UserEvent::MarkdownChanged(target) => {
                 let watched = self.md_watch.lock().ok().and_then(|w| w.get(&target).cloned());
                 let Some(file) = watched.filter(|f| self.markdown_file(target).as_ref() == Some(f)) else {
