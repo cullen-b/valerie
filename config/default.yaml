@@ -713,10 +713,14 @@ updates:
   feed: "https://github.com/cullen-b/valerie/releases/latest/download/latest.json"   # where stable releases are
                            # described (a fork can point this at its own releases)
 
-# Valerie's log: what went wrong (sync, updates, plugins, …), one file a day in the `logs` folder inside Valerie's data
-# folder (`valerie paths` shows where). Read it, or ask your AI to, when something fails.
+# Valerie's log: what went wrong and what happened (sync, updates, plugins, commands, agents' tool calls, …), one file
+# a day in the `logs` folder inside Valerie's data folder (`valerie paths` shows where). Read it, or ask your AI to
+# (agents read it with the read_logs tool), when something fails. Passwords, tokens and keys are never written to it.
 logs:
   keep_days: 7             # remove log files older than this many days; 0 = don't write log files
+  level: events            # how much to write. one of: errors (failures and messages you saw) | events (also commands
+                           # run, agents' tool calls with how long they took, plugin messages, crashed pages) |
+                           # verbose (also every page load)
 
 # The plugin marketplace: plugins people shared ("Plugins" in the command bar to browse and install them).
 plugin_marketplace:

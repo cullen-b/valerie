@@ -1423,9 +1423,14 @@ const PromiseCtor = Promise, randomFill = crypto.getRandomValues.bind(crypto), p
 // whole message (key included); on plain strings it never looks one up.
 function pluginSend(fields, args) {
   let s = '{"key":' + stringify(fields.key);
-  for (const k of ["t", "plugin", "id", "tool", "title"]) if (fields[k] != null) s += ',"' + k + '":' + stringify(String(fields[k]));
+  for (const k of ["t", "plugin", "id", "tool", "title", "text"]) if (fields[k] != null) s += ',"' + k + '":' + stringify(String(fields[k]));
   s += ',"args":' + (args === undefined ? "{}" : toJson(args));
   try { (ipcPost || ((m) => window.ipc.postMessage(m)))(s + "}"); } catch (_) {}
+}
+function logText(v) {
+  if (v instanceof Error) return String(v.stack || v.message || v);
+  if (typeof v === "string") return v;
+  try { return toJson(v); } catch (_) { return String(v); }
 }
 function pluginApi(plugin, key) {
   plugin = String(plugin); key = String(key);
@@ -1436,6 +1441,8 @@ function pluginApi(plugin, key) {
       pluginSend({ t: "plugin_call", plugin, key, id: n, tool }, args || {});
     }),
     run: (title) => pluginSend({ t: "plugin_run", plugin, key, title }),
+    // Goes into Valerie's log as [plugin:<name>], where the AI that made the plugin reads it (read_logs).
+    log: (...parts) => pluginSend({ t: "plugin_log", plugin, key, text: parts.map(logText).join(" ").slice(0, 2000) }),
   });
 }
 // Load-time scripts run once per page, even if Valerie hears about the load twice (a page rebuilt while loading).

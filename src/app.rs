@@ -1000,7 +1000,7 @@ impl App {
         let key = self.plugin_keys.get(&p.name).cloned().unwrap_or_default();
         let api = format!("(window.__valerie && __valerie.api ? __valerie.api({}, {}) : null)", json!(p.name), json!(key));
         format!(
-            "(function (settings, valerie) {{ try {{\n{}\n}} catch (e) {{ console.error('valerie plugin ' + {}, e) }} }})({}, {api});",
+            "(function (settings, valerie) {{ try {{\n{}\n}} catch (e) {{ console.error('valerie plugin ' + {}, e); valerie && valerie.log('error:', e) }} }})({}, {api});",
             p.js,
             json!(p.name),
             Value::Object(p.manifest.settings.clone())
@@ -2500,6 +2500,7 @@ impl App {
                     serde_json::to_value((&c.content_blocking, c.rules.iter().map(|r| (&r.block, &r.site)).collect::<Vec<_>>(), off)).ok()
                 };
                 let blocking_changed = blocking(&c) != blocking(&self.config);
+                crate::log::set_level(&c.logs.level);
                 self.config = c;
                 self.load_strings();
                 self.push_ui_custom();
@@ -3075,7 +3076,10 @@ impl App {
     fn plugin_output(&mut self, plugin: &str, title: &str, output: &str, result: Result<String, String>) {
         let text = match result {
             Ok(t) => t,
-            Err(e) => return self.toast(&format!("{title} failed: {e}")),
+            Err(e) => {
+                crate::log::line(&format!("plugin:{plugin}"), format!("command {title:?} failed: {e}"));
+                return self.toast(&format!("{title} failed: {e}"));
+            }
         };
         let enc = |t: &str| url::form_urlencoded::byte_serialize(t.as_bytes()).collect::<String>().replace('+', "%20");
         match output {
@@ -3529,6 +3533,9 @@ impl App {
     // ---------------------------------------------------------------- dispatch
 
     pub fn dispatch(&mut self, cmd: Command, elwt: &EventLoopWindowTarget<UserEvent>) {
+        if let Some(name) = serde_json::to_value(&cmd).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)) {
+            crate::log::event("command", name);
+        }
         if self.peek.is_some() {
             match &cmd {
                 Command::MoveToMainWindow { .. } => {
@@ -4746,7 +4753,7 @@ impl App {
                     }
                 }
             }
-            (Source::Page(target), k @ ("plugin_call" | "plugin_run")) => {
+            (Source::Page(target), k @ ("plugin_call" | "plugin_run" | "plugin_log")) => {
                 let k = k.to_string();
                 self.plugin_message(target, &k, &m);
             }
@@ -4867,6 +4874,10 @@ impl App {
                     self.render();
                 }
                 Target::Tab(id) => {
+                    if finished {
+                        // The query and fragment can carry sign-in codes, so they stay out of the log.
+                        crate::log::verbose("page", format!("tab {id} loaded {}", url.split(['?', '#']).next().unwrap_or("")));
+                    }
                     if finished && !self.revealed && self.state.active_tab() == Some(id) {
                         self.pending_reveal = Some("active page loaded");
                     }
@@ -5214,6 +5225,8 @@ impl App {
             UserEvent::Toast(msg) => self.toast(&msg),
             UserEvent::PageCrashed { target } => {
                 trace(&format!("page process ended: {target:?}"));
+                let url = self.view_for(target).and_then(|v| v.url().ok()).unwrap_or_default();
+                crate::log::line("page", format!("the page's web process ended (crashed or ran out of memory): {target:?} {}", site_of(&url).unwrap_or_default()));
                 match target {
                     Target::Tab(id) if !self.panes().contains(&id) => {
                         self.crashed.insert(id);
@@ -5354,7 +5367,10 @@ impl App {
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
-                self.chat_started.remove(&chat);
+                if let Some(started) = self.chat_started.remove(&chat) {
+                    let steps = self.chats.iter().find(|c| c.id == chat).and_then(|c| c.messages.last()).map_or(0, |m| m.tools.len());
+                    crate::log::event("chats", format!("chat {chat} answered in {}s after {steps} step(s)", now().saturating_sub(started)));
+                }
                 let shown = self.chats_open && self.active_chat.as_deref() == Some(chat.as_str()) && self.window_focused;
                 // Messages sent while it was busy go next.
                 let next = self.chats.iter_mut().find(|c| c.id == chat).and_then(|c| {
@@ -5582,6 +5598,28 @@ impl App {
                     .collect::<Vec<_>>()))
             }
             "list_closed_tabs" => Ok(json!(self.state.closed.iter().rev().map(|c| json!({ "url": c.tab.url, "title": c.tab.display_title(), "space": self.space_name(c.space) })).collect::<Vec<_>>())),
+            "get_settings" => {
+                let key = args["key"].as_str().unwrap_or("").trim().to_string();
+                let path: Vec<&str> = key.split('.').filter(|k| !k.is_empty()).collect();
+                let yours = std::fs::read_to_string(config::config_path()).unwrap_or_default();
+                let here = std::fs::read_to_string(config::this_mac_path()).unwrap_or_default();
+                if path.is_empty() {
+                    let sections: Vec<String> = serde_yaml::from_str::<serde_yaml::Value>(config::DEFAULT_YAML).ok()
+                        .and_then(|v| v.as_mapping().map(|m| m.keys().filter_map(|k| k.as_str().map(str::to_string)).collect())).unwrap_or_default();
+                    Ok(json!({ "sections": sections, "your_config_yaml": yours, "this_computer_yaml": here,
+                               "hint": "pass key (a section or section.setting) to see what it does and its allowed values" }))
+                } else {
+                    let pick = |v: Option<serde_yaml::Value>| path.iter().try_fold(v?, |v, k| v.get(*k).cloned());
+                    let in_use = pick(serde_yaml::to_value(&self.config).ok());
+                    match config::reference(&path) {
+                        None if in_use.is_none() => Err(format!("`{key}` isn't a setting (call get_settings with no key for the sections)")),
+                        reference => Ok(json!({
+                            "key": key, "in_use": in_use, "reference": reference,
+                            "you_set": pick(serde_yaml::from_str(&yours).ok()), "this_computer_set": pick(serde_yaml::from_str(&here).ok()),
+                        })),
+                    }
+                }
+            }
             "list_downloads" => Ok(json!(self.state.downloads.iter().map(|d| json!({ "name": d.name, "path": d.path, "from": d.url, "at": d.at })).collect::<Vec<_>>())),
             "site_state" => {
                 let site = args["site"].as_str().map(|s| s.trim().trim_start_matches("www.").to_lowercase())
@@ -6177,8 +6215,19 @@ impl App {
                     m.text = text;
                 }
             }
-            Ev::Tool { text } => m.tools.push(text),
-            Ev::Error { text } => m.error = Some(text),
+            Ev::Tool { text } => {
+                // A shell command can hold a token, so only its program is logged.
+                let short = match text.strip_prefix("Ran ") {
+                    Some(cmd) => format!("Ran {}", cmd.split_whitespace().next().unwrap_or("")),
+                    None => text.chars().take(80).collect(),
+                };
+                crate::log::event("chats", format!("chat {chat}: {short}"));
+                m.tools.push(text)
+            }
+            Ev::Error { text } => {
+                crate::log::line("chats", format!("chat {chat} ({}): {}", m.agent, text.chars().take(400).collect::<String>()));
+                m.error = Some(text)
+            }
             Ev::Session { .. } => {}
         }
         if self.chats_open && self.active_chat.as_deref() == Some(chat.as_str()) {
@@ -8043,6 +8092,12 @@ impl App {
             return;
         }
         recent.push(now_i);
+        if kind == "plugin_log" {
+            let text = m["text"].as_str().unwrap_or("");
+            let area = format!("plugin:{name}");
+            let msg = format!("{} (on {})", text, site_of(&url).unwrap_or_default());
+            return if text.starts_with("error") { crate::log::line(&area, msg) } else { crate::log::event(&area, msg) };
+        }
         if kind == "plugin_run" {
             let title = m["title"].as_str().unwrap_or("");
             if p.manifest.commands.iter().any(|c| c.title == title) {
@@ -8054,6 +8109,7 @@ impl App {
         let (id, tool) = (m["id"].as_str().unwrap_or("").to_string(), m["tool"].as_str().unwrap_or("").to_string());
         let mut args = m["args"].clone();
         if !p.manifest.permissions.contains(&tool) {
+            crate::log::line(&format!("plugin:{name}"), format!("called {tool}, which isn't in its permissions"));
             return self.plugin_reply(target, &id, Err(format!("{tool} isn't in this plugin's permissions (add it to `permissions` in plugin.yaml)")));
         }
         if let (Target::Tab(t), Some(o)) = (target, args.as_object_mut()) {

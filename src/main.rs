@@ -41,6 +41,20 @@ USAGE:
   valerie paths           show config and data locations";
 
 fn check_config() -> anyhow::Result<()> {
+    let (problems, plugins) = config_problems();
+    if problems.is_empty() {
+        println!("OK: config and {plugins} plugin(s) are valid");
+        Ok(())
+    } else {
+        for p in &problems {
+            eprintln!("error: {p}");
+        }
+        std::process::exit(1)
+    }
+}
+
+/// Every mistake `valerie check-config` would report, and how many plugins loaded.
+pub fn config_problems() -> (Vec<String>, usize) {
     let mut problems = Vec::new();
     match Config::load() {
         Ok(c) => {
@@ -73,6 +87,9 @@ fn check_config() -> anyhow::Result<()> {
             }
             if !["auto", "light", "dark", "sepia"].contains(&c.reader_view.theme.as_str()) {
                 problems.push(format!("reader_view: theme is {:?}; use auto, light, dark or sepia", c.reader_view.theme));
+            }
+            if !["errors", "events", "verbose"].contains(&c.logs.level.as_str()) {
+                problems.push(format!("logs: level is {:?}; use errors, events or verbose", c.logs.level));
             }
             if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
                 problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));
@@ -202,15 +219,7 @@ fn check_config() -> anyhow::Result<()> {
     }
     let (plugins, errors) = plugins::load_all();
     problems.extend(errors.into_iter().map(|e| format!("plugin {e}")));
-    if problems.is_empty() {
-        println!("OK: config and {} plugin(s) are valid", plugins.len());
-        Ok(())
-    } else {
-        for p in &problems {
-            eprintln!("error: {p}");
-        }
-        std::process::exit(1)
-    }
+    (problems, plugins.len())
 }
 
 /// Checks for the settings that change Valerie's menus, sites, rules, window and the rest.
@@ -391,6 +400,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let loaded = Config::load();
     log::init(loaded.as_ref().map_or(Config::defaults().logs.keep_days, |c| c.logs.keep_days));
+    log::set_level(&loaded.as_ref().map_or(Config::defaults().logs.level, |c| c.logs.level.clone()));
     let config = loaded.unwrap_or_else(|e| {
         log::line("config", format!("config error, using defaults: {e:#}"));
         Config::defaults()

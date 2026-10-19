@@ -77,6 +77,13 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogsConfig {
     pub keep_days: u64,
+    /// errors | events | verbose.
+    #[serde(default = "default_log_level")]
+    pub level: String,
+}
+
+fn default_log_level() -> String {
+    "events".into()
 }
 
 /// Your own CSS for Valerie's windows (ui/*.css in the config folder).
@@ -1051,6 +1058,61 @@ fn set_in_text(text: &str, path: &[&str], value: &str) -> Option<String> {
     None
 }
 
+/// What config/default.yaml says about a setting (`["sidebar", "tab_height"]`): its line and comments, or the whole
+/// section with its banner for a section. None when it isn't a setting.
+pub fn reference(path: &[&str]) -> Option<String> {
+    let lines: Vec<&str> = DEFAULT_YAML.lines().collect();
+    let indent_of = |l: &str| l.len() - l.trim_start().len();
+    let blank = |l: &str| l.trim().is_empty() || l.trim_start().starts_with('#');
+    let (mut start, mut end, mut indent) = (0, lines.len(), 0);
+    for (depth, key) in path.iter().enumerate() {
+        let i = (start..end).find(|&i| !blank(lines[i]) && indent_of(lines[i]) == indent && lines[i].trim_start().strip_prefix(*key).is_some_and(|r| r.starts_with(':')))?;
+        let block_end = (i + 1..end).find(|&j| !blank(lines[j]) && indent_of(lines[j]) <= indent).unwrap_or(end);
+        if depth + 1 == path.len() {
+            let mut from = i;
+            while from > start && lines[from - 1].trim_start().starts_with('#') && indent_of(lines[from - 1]) == indent {
+                from -= 1;
+            }
+            let mut to = block_end;
+            while to > i + 1 && lines[to - 1].trim().is_empty() {
+                to -= 1;
+            }
+            return Some(lines[from..to].join("\n"));
+        }
+        let child = (i + 1..block_end).find(|&j| !blank(lines[j])).map(|j| indent_of(lines[j]))?;
+        (start, end, indent) = (i + 1, block_end, child);
+    }
+    None
+}
+
+/// Change one setting the way an agent asks to (`value` is YAML or JSON): only real settings, and the file goes back
+/// to how it was if Valerie can't load the result. In this-mac.yaml when `this_computer`.
+pub fn change_setting(path: &[&str], value: &str, this_computer: bool) -> Result<()> {
+    let def: Value = serde_yaml::from_str(DEFAULT_YAML)?;
+    let mut at = &def;
+    for (i, k) in path.iter().enumerate() {
+        if FREE_FORM.contains(&path[..i].join(".").as_str()) {
+            break;
+        }
+        at = at.get(*k).with_context(|| format!("`{}` isn't a setting; look in get_settings for the right name", path[..=i].join(".")))?;
+    }
+    let parsed: Value = serde_yaml::from_str(value).with_context(|| format!("{value:?} isn't a value Valerie can read"))?;
+    let text = serde_json::to_string(&parsed)?;
+    let file = if this_computer { this_mac_path() } else { config_path() };
+    let before = std::fs::read_to_string(&file).ok();
+    let (known, _) = crate::config_problems();
+    if this_computer { set_this_mac_setting(path, &text)? } else { set_setting(path, &text)? }
+    let new: Vec<String> = crate::config_problems().0.into_iter().filter(|p| !known.contains(p)).collect();
+    if !new.is_empty() {
+        match before {
+            Some(b) => std::fs::write(&file, b)?,
+            None => std::fs::remove_file(&file)?,
+        }
+        anyhow::bail!("nothing changed, because {}", new.join("; "));
+    }
+    Ok(())
+}
+
 pub fn config_path() -> PathBuf {
     config_dir().join("config.yaml")
 }
@@ -1398,5 +1460,35 @@ mod tests {
         assert_eq!(read().updates.feed_url(), crate::update::EDGE_FEED);
         std::env::remove_var("VALERIE_CONFIG_DIR");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reference_quotes_default_yaml() {
+        let tab = super::reference(&["sidebar", "tab_height"]).unwrap();
+        assert!(tab.trim_start().starts_with("tab_height:") && tab.contains('#'), "{tab}");
+        let logs = super::reference(&["logs"]).unwrap();
+        assert!(logs.starts_with("# Valerie's log") && logs.contains("level: events"), "{logs}");
+        assert!(super::reference(&["sidebar", "nope"]).is_none());
+    }
+
+    /// Agents' set_setting: real settings only, checked values, and the file is left alone when it's refused.
+    #[test]
+    fn change_setting_checks_before_keeping() {
+        let _g = super::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("valerie-set-test-{}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        std::env::set_var("VALERIE_CONFIG_DIR", &dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(super::config_path(), "# mine\nsidebar:\n  tab_height: 30\n").unwrap();
+        super::change_setting(&["sidebar", "tab_height"], "40", false).unwrap();
+        super::change_setting(&["sites", "example.com", "ad_blocking"], "false", false).unwrap();
+        let typo = super::change_setting(&["sidebar", "tab_hieght"], "40", false).unwrap_err().to_string();
+        let bad = super::change_setting(&["logs", "level"], "\"loud\"", false).unwrap_err().to_string();
+        let text = std::fs::read_to_string(super::config_path()).unwrap();
+        std::env::remove_var("VALERIE_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(typo.contains("isn't a setting"), "{typo}");
+        assert!(bad.contains("level"), "{bad}");
+        assert!(text.starts_with("# mine") && text.contains("tab_height: 40") && !text.contains("loud"), "{text}");
+        assert!(text.contains("example.com"), "{text}");
     }
 }
