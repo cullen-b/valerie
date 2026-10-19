@@ -1017,6 +1017,14 @@ pub struct Chat {
     /// agent's session belongs to the folder it started in.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub folder: String,
+    /// The chat's own git worktree of that folder (chats.worktrees), where its agent works; its branch and the branch it
+    /// started from. Empty: the agent works in the folder itself.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub worktree: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub branch: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub base: String,
     /// Tools the user allowed for the rest of this chat ("Always Allow" on an Ask-first question).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,

@@ -290,7 +290,34 @@ chats:
   change_actions:          # buttons on that card; each sends its prompt to the chat. Set one to null to remove it.
     Commit: "Commit the changes you made in this chat with a clear message."
     Commit and push: "Commit the changes you made in this chat with a clear message, then push."
-    Open a pull request: "Put the changes from this chat on a new branch, commit them with a clear message, push, and open a pull request with gh. Give me its link."
+    Open a pull request: "Put the changes from this chat on a new branch if it isn't on one of its own, commit them with a clear message, push, and open a pull request with gh. Give me its link."
+    Merge back: "Commit the changes you made in this chat with a clear message. Then merge branch {branch} into {base} in the main checkout: git -C \"{folder}\" merge {branch}. If it conflicts, or the main checkout has uncommitted changes in the same files, stop and tell me."
+                           # fill-ins: {folder} the project, {branch} the chat's own branch and {base} the branch it
+                           # started from (buttons using {branch} or {base} only show for chats with their own worktree)
+  worktrees: auto          # several chats on one project at once: each coding chat gets its own git worktree (a
+                           # separate checkout on its own branch), so they don't edit the same files. one of: auto
+                           # (a worktree, except in repos six-ten manages, which share one checkout on purpose) |
+                           # always | never (every chat works in the project folder itself)
+  worktree_folder: ""      # where those worktrees go (e.g. "~/worktrees"); empty = worktrees/ in Valerie's data folder
+  worktree_copy: [.env, .env.local, .env.development.local]   # files git doesn't track that are copied from the project
+                           # into each new worktree, so it runs like the original
+
+# The terminal panel: shells at the bottom of the window, over pages and chats alike (Ctrl+` shows and hides it).
+# In a coding chat it opens in that chat's project (its worktree, if it has one).
+terminal_panel:
+  enabled: true            # true | false
+  shell: ""                # program to run, e.g. /bin/zsh or fish; empty = your login shell (PowerShell on Windows)
+  folder: ""               # where a terminal opened outside a coding chat starts (e.g. ~/code); empty = your home folder
+  height: 280              # panel height, pixels (drag its top edge to resize it)
+  font: ""                 # a CSS font family, e.g. "JetBrains Mono"; empty = your system's monospace font
+  font_size: 13            # text size, pixels
+  line_height: 1.2         # space between lines (1 = tight)
+  cursor: block            # one of: block | bar | underline
+  cursor_blink: true       # true | false
+  scrollback: 10000        # lines kept to scroll back through, per terminal
+  copy_on_select: false    # selecting text copies it, like many Linux terminals. true | false
+  follow_chat: true        # switching coding chats switches the panel to that chat's terminal. true | false
+  ask_agent_button: true   # an "Ask Agent" button that sends the selection (or the last screen) to the open chat
 
 # AI actions: one-click jobs for your agents. They show up in the command bar (type part of the name) and can go on a
 # key: "CmdOrCtrl+Shift+S": { cmd: ai_action, name: "Summarize this page" }. Add your own; set one to null to remove it.
@@ -515,6 +542,7 @@ keybindings:
   "CmdOrCtrl+Shift+V": paste_and_go
   "CmdOrCtrl+P": print
   "CmdOrCtrl+J": open_chats
+  "Ctrl+Backquote": toggle_terminal   # the terminal panel (Ctrl+` like VS Code)
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync

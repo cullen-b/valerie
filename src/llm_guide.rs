@@ -27,7 +27,7 @@ Everything is plain files in this folder and Valerie reloads them the moment you
 | `plugins/<name>/plugin.yaml` | A plugin: commands, shortcuts, page scripts/styles, hooks. See `plugins/_example/`. |
 | `plugins/<name>/style.css`, `script.js` | Applied to the sites listed in that plugin's `matches`. |
 | `boosts/<host>.css`, `boosts/<host>.js` | Quick per-site CSS/JS without a plugin (e.g. `boosts/github.com.css`). |
-| `ui/chrome.css`, `ui/palette.css`, `ui/chat.css`, `ui/little.css`, `ui/answer.css`, `ui/welcome.css`, `ui/plugins.css` | The user's own CSS for Valerie's windows (sidebar, command bar, Chats…). Live; see "Restyling Valerie itself". |
+| `ui/chrome.css`, `ui/palette.css`, `ui/chat.css`, `ui/terminal.css`, `ui/little.css`, `ui/answer.css`, `ui/welcome.css`, `ui/plugins.css` | The user's own CSS for Valerie's windows (sidebar, command bar, Chats…). Live; see "Restyling Valerie itself". |
 | `ui/page.css` | CSS for what Valerie draws inside web pages: find bar, link hints, menus, toasts, reader view. |
 | `strings/<language>.yaml` | Valerie's words in another language (`language: es`). `"{exe}" strings` prints every word to translate. |
 | `extensions/<name>/` | Unpacked browser extensions (folders with a manifest.json), macOS 15.4+. |
@@ -157,6 +157,9 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
   summary), `.step` (`.running`, `.error`, `.thinking`), `.diff` (`.a` added, `.d` removed lines), `.todos`, `.foot`
   (time and context under an answer), `.card` (`.ask` questions, `.changes` uncommitted changes), `#pane` (the diff
   view), `#plan-now`, `#composer`, `#box`, `textarea`, `.ctl`, `#folder`, `#send`, `#empty`, `.chip`.
+- `ui/terminal.css`: the terminal panel. Variables `--bg`, `--fg`, `--dim`, `--faint`, `--line`, `--accent`. Parts:
+  `#bar`, `.tab` (`.on`), `#new`, `#ask`, `#max`, `#hide`, `#terms`, `.xterm` (font and colours are `terminal_panel`
+  settings).
 - `ui/little.css`: the bar on little windows: `#title`, `.btn`, `#open`, `#pick`.
 - `ui/page.css`: what Valerie draws inside pages: `.hint` (link hints), `.toast`, `.menu` (link menu), `.find`
   (find bar) and `.find input`, `.minimap`, `.pill` (link address on hover), `.save` (save password), `.loadbar`,
@@ -203,6 +206,11 @@ questions from find are under `chats`. A chat can have a project folder (the fol
 its edits as diffs and its commands with their output, and a card lists the folder's uncommitted git changes with
 buttons from `chats.change_actions` (label: prompt). `chats.steps` (summary | open | hidden) sets how much of an
 agent's work is shown, `chats.usage` the time and context line under answers, `chats.group_by_project` the sidebar.
+`chats.worktrees` (auto | always | never) gives each coding chat its own git worktree on a `valerie/<name>` branch, so
+several chats can change one project at once; auto skips repos six-ten manages. `chats.worktree_folder` is where they
+go and `chats.worktree_copy` the untracked files (like `.env`) copied in. Change-action prompts can use {{folder}},
+{{branch}} and {{base}}. The terminal panel (`toggle_terminal`, Ctrl+`; settings under `terminal_panel`) runs real shells
+along the bottom of the window; in a coding chat it opens in that chat's project or worktree.
 
 ## Settings
 
@@ -368,6 +376,8 @@ and opens their popups and options pages. `extensions.enabled: false` turns them
   times in UTC. `logs.level` (errors | events | verbose) sets how much is written, `logs.keep_days` how long it's kept.
 - To check a web page or app you're building, open it in a background tab and use `read_console` (what the page wrote
   to its console: logs, warnings, uncaught errors, files that failed to load), `screenshot` and `read_page`.
+- Start a dev server or watcher with `run_in_terminal` (a new shell in the terminal panel, in your project, where the
+  user sees it and can stop it), and read what it or the user's own shells print with `read_terminal`.
 - Agents outside the config folder change settings with the `get_settings` / `set_setting` tools: `get_settings`
   shows a setting's value and what it does, `set_setting` checks the change like check-config and undoes nothing else.
 "#,

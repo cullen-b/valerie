@@ -240,6 +240,18 @@ pub enum Command {
     Print,
     /// The Chats space: conversations with your agents (left of the first space).
     OpenChats,
+    /// Show or hide the terminal panel (in a coding chat it opens on that chat's project).
+    ToggleTerminal,
+    /// A new shell in the terminal panel: in `folder`, else the open coding chat's project, else terminal_panel.folder.
+    NewTerminal {
+        #[serde(default)]
+        folder: Option<String>,
+    },
+    /// The terminal panel on a coding chat's project (its shell is started if it has none).
+    OpenTerminal {
+        #[serde(default)]
+        chat: Option<String>,
+    },
     /// Start a chat, optionally asking something right away.
     NewChat {
         #[serde(default)]
@@ -658,6 +670,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("review_saved_tabs", "Review Saved Tabs (pinned and kept ones you haven't opened in a while)"),
     ("print", "Print Page…"),
     ("open_chats", "Chats"),
+    ("toggle_terminal", "Terminal (show or hide the terminal panel)"),
+    ("new_terminal", "New Terminal"),
     ("new_chat", "New Chat"),
     ("stop_chat", "Stop the Agent in This Chat"),
     ("close_chat", "Close Chat"),
@@ -728,6 +742,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("find_in_page", "{ query? }"),
     ("toggle_mute", "{ tab? }"),
     ("copy_text", "{ text }"),
+    ("new_terminal", "{ folder? }  (a shell in the terminal panel; default: the open coding chat's project)"),
+    ("open_terminal", "{ chat? }  (the terminal panel on a coding chat's project)"),
     ("new_chat", "{ prompt?, agent? }  (ask an agent something in a new chat; it can see and use the browser)"),
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),

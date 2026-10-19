@@ -168,6 +168,9 @@ pub struct State {
     /// Sidebar width the user dragged to (overrides layout.sidebar_size until they pick a size again).
     #[serde(default)]
     pub sidebar_width: Option<f64>,
+    /// Terminal panel height the user dragged to (overrides terminal_panel.height).
+    #[serde(default)]
+    pub terminal_height: Option<f64>,
     /// Where the window was last (x, y, width, height in points), to reopen it there.
     #[serde(default)]
     pub window_frame: Option<(f64, f64, f64, f64)>,

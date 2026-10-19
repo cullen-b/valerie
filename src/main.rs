@@ -21,6 +21,7 @@ mod update;
 mod market;
 mod log;
 mod triage;
+mod terminal;
 
 use config::Config;
 
@@ -95,6 +96,15 @@ pub fn config_problems() -> (Vec<String>, usize) {
             }
             if !["summary", "open", "hidden"].contains(&c.chats.steps.as_str()) {
                 problems.push(format!("chats: steps is {:?}; use summary, open or hidden", c.chats.steps));
+            }
+            if !["auto", "always", "never"].contains(&c.chats.worktrees.as_str()) {
+                problems.push(format!("chats: worktrees is {:?}; use auto, always or never", c.chats.worktrees));
+            }
+            if !["block", "bar", "underline"].contains(&c.terminal_panel.cursor.as_str()) {
+                problems.push(format!("terminal_panel: cursor is {:?}; use block, bar or underline", c.terminal_panel.cursor));
+            }
+            if !(4.0..=60.0).contains(&c.terminal_panel.font_size) {
+                problems.push(format!("terminal_panel: font_size is {}; use 4 to 60 (pixels)", c.terminal_panel.font_size));
             }
             if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
                 problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));

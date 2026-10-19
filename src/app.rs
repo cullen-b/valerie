@@ -34,6 +34,7 @@ pub enum Source {
     Chrome,
     Overlay,
     Chat,
+    Terminal,
     Answer,
     Welcome,
     Market,
@@ -78,6 +79,9 @@ pub enum UserEvent {
     ChatChanges { folder: String, info: Value },
     /// A diff to show in a chat (one file, or all of them).
     ChatDiff { chat: String, path: Option<String>, text: String },
+    /// A terminal panel shell printed something (take it from its `pending`), or ended.
+    TermOutput { id: u32 },
+    TermExit { id: u32 },
     PageAnswer { tab: TabId, ev: crate::ai::Ev },
     PageAnswerDone { tab: TabId },
     /// A chat-mode AI action whose {selection} has been read from the page.
@@ -177,6 +181,20 @@ pub struct App {
     chats_open: bool,
     active_chat: Option<String>,
     chat_view: Option<WebView>,
+    /// The terminal panel along the bottom of the content area, and its shells.
+    terminal_view: Option<WebView>,
+    terminal_open: bool,
+    /// The panel covers the whole content area instead of sharing it.
+    terminal_max: bool,
+    /// The panel has the keyboard (so Ctrl+` hides it rather than focusing it).
+    terminal_focused: bool,
+    /// The panel's page has loaded (output waits until then).
+    terminal_ready: bool,
+    terminals: Vec<crate::terminal::Term>,
+    terminal_active: Option<u32>,
+    terminal_next: u32,
+    /// Columns and rows the panel last measured, for new shells.
+    terminal_size: (u16, u16),
     /// The welcome guide, over the whole window while it's open.
     welcome_view: Option<WebView>,
     welcome_open: bool,
@@ -830,6 +848,10 @@ fn ui(name: &str) -> String {
         "palette.html" => include_str!("../ui/palette.html"),
         "little.html" => include_str!("../ui/little.html"),
         "chat.html" => include_str!("../ui/chat.html"),
+        "terminal.html" => include_str!("../ui/terminal.html"),
+        "vendor/xterm.js" => include_str!("../ui/vendor/xterm.js"),
+        "vendor/xterm.css" => include_str!("../ui/vendor/xterm.css"),
+        "vendor/addon-fit.js" => include_str!("../ui/vendor/addon-fit.js"),
         "answer.html" => include_str!("../ui/answer.html"),
         "welcome.html" => include_str!("../ui/welcome.html"),
         "plugins.html" => include_str!("../ui/plugins.html"),
@@ -1051,6 +1073,15 @@ impl App {
             chats_open: false,
             active_chat: None,
             chat_view: None,
+            terminal_view: None,
+            terminal_open: false,
+            terminal_max: false,
+            terminal_focused: false,
+            terminal_ready: false,
+            terminals: Vec::new(),
+            terminal_active: None,
+            terminal_next: 1,
+            terminal_size: (100, 20),
             welcome_view: None,
             welcome_open: false,
             market_view: None,
@@ -1589,7 +1620,32 @@ impl App {
         }
     }
 
+    /// Where pages and chats go: the content area less the terminal panel when it's open.
     fn content_area(&self, w: f64, h: f64) -> (f64, f64, f64, f64) {
+        let (x, y, cw, ch) = self.content_area_full(w, h);
+        match self.terminal_height(ch) {
+            Some(th) if !self.terminal_max => (x, y, cw, ch - th - self.config.layout.split_gap.max(0.0)),
+            _ => (x, y, cw, ch),
+        }
+    }
+
+    /// The terminal panel's height in a content area `ch` tall, when it's showing.
+    fn terminal_height(&self, ch: f64) -> Option<f64> {
+        if !self.terminal_open || self.terminal_view.is_none() {
+            return None;
+        }
+        let want = self.state.terminal_height.unwrap_or(self.config.terminal_panel.height);
+        Some(want.clamp(90.0, (ch - 120.0).max(90.0)))
+    }
+
+    fn terminal_rect(&self) -> Option<(f64, f64, f64, f64)> {
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (x, y, w, h) = self.content_area_full(size.width, size.height);
+        let th = self.terminal_height(h)?;
+        Some(if self.terminal_max { (x, y, w, h) } else { (x, y + h - th, w, th) })
+    }
+
+    fn content_area_full(&self, w: f64, h: f64) -> (f64, f64, f64, f64) {
         let l = &self.config.layout;
         let b = l.bezel;
         match l.tab_bar {
@@ -1661,6 +1717,19 @@ impl App {
                 let _ = cv.set_visible(true);
             } else {
                 let _ = cv.set_visible(false);
+            }
+        }
+        if let Some(tv) = &self.terminal_view {
+            match self.terminal_rect() {
+                Some((tx, ty, tw, th)) => {
+                    platform::round_corners(tv, self.config.layout.corner_radius, self.pane_corners(0, 1));
+                    let _ = tv.set_bounds(rect(tx, ty, tw, th));
+                    let _ = tv.set_visible(true);
+                    platform::bring_to_front(tv);
+                }
+                None => {
+                    let _ = tv.set_visible(false);
+                }
             }
         }
         if let Some(mv) = &self.market_view {
@@ -1777,6 +1846,11 @@ impl App {
         }
         if let Some(v) = self.market_view.as_ref().filter(|_| self.market_open) {
             let _ = v.focus();
+            return;
+        }
+        if let Some(v) = self.terminal_view.as_ref().filter(|_| self.terminal_open && (self.terminal_focused || self.terminal_max)) {
+            let _ = v.focus();
+            let _ = v.evaluate_script("window.term && term.focus()");
             return;
         }
         if self.chats_open {
@@ -2954,7 +3028,8 @@ impl App {
             let usual = match &cmd {
                 Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => "Spaces",
                 Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit | Command::FocusNextPane | Command::ZoomIn
-                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } => "View",
+                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } | Command::ToggleTerminal
+                | Command::NewTerminal { .. } => "View",
                 Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => "Tools",
                 _ => "Tabs",
             };
@@ -4455,6 +4530,25 @@ impl App {
                 self.toast(&format!("Notifications from {site}: {}", if allow { "allowed" } else { "blocked" }));
             }
             Command::OpenChats => self.open_chats(),
+            Command::ToggleTerminal => self.toggle_terminal(),
+            Command::NewTerminal { folder } => {
+                let (cwd, chat) = match folder.map(|f| expand_home(f.trim())) {
+                    Some(f) if !f.is_dir() => return self.toast(&format!("There's no folder at {}", f.display())),
+                    Some(f) => (f, None),
+                    None => self.terminal_home(),
+                };
+                if let Err(e) = self.new_terminal(cwd, chat, None) {
+                    return self.toast(&e);
+                }
+                self.show_terminal(true);
+            }
+            Command::OpenTerminal { chat } => {
+                let id = chat.or_else(|| self.active_chat.clone());
+                if !self.select_chat_terminal(id.as_deref()) {
+                    return self.toast("That chat has no project folder");
+                }
+                self.show_terminal(true);
+            }
             Command::ReportProblem => {
                 let mut c = crate::ai::Chat::new(&self.config.agent_for("chat").0);
                 c.title = "Something isn't working".into();
@@ -4562,7 +4656,7 @@ impl App {
             }
             Command::ChatDiff { chat, path } => {
                 let Some(id) = chat.or_else(|| self.active_chat.clone()) else { return };
-                let Some(folder) = self.chats.iter().find(|c| c.id == id).map(|c| PathBuf::from(&c.folder)).filter(|f| f.is_dir()) else { return };
+                let Some(folder) = self.chats.iter().find(|c| c.id == id).and_then(chat_workdir).filter(|f| f.is_dir()) else { return };
                 let p = self.proxy.clone();
                 std::thread::spawn(move || {
                     let text = folder_diff(&folder, path.as_deref());
@@ -4571,7 +4665,7 @@ impl App {
             }
             Command::OpenChatFile { chat, path } => {
                 let Some(id) = chat.or_else(|| self.active_chat.clone()) else { return };
-                let Some(folder) = self.chats.iter().find(|c| c.id == id).map(|c| PathBuf::from(&c.folder)).filter(|f| f.is_dir()) else { return };
+                let Some(folder) = self.chats.iter().find(|c| c.id == id).and_then(chat_workdir).filter(|f| f.is_dir()) else { return };
                 // Only files inside the chat's own folder.
                 let file = folder.join(path.trim_start_matches("./"));
                 let inside = file.canonicalize().ok().zip(folder.canonicalize().ok()).is_some_and(|(f, d)| f.starts_with(d) && f.is_file());
@@ -4602,6 +4696,18 @@ impl App {
             Command::CloseChat { chat } => {
                 let Some(id) = chat.or_else(|| self.active_chat.clone()) else { return };
                 crate::ai::stop(&id);
+                if let Some(c) = self.chats.iter().find(|c| c.id == id && !c.worktree.is_empty()) {
+                    let (folder, wt, branch, p) = (PathBuf::from(&c.folder), PathBuf::from(&c.worktree), c.branch.clone(), self.proxy.clone());
+                    std::thread::spawn(move || {
+                        if let Err(e) = remove_worktree(&folder, &wt, &branch) {
+                            crate::log::line("chats", format!("kept worktree {}: {e}", wt.display()));
+                            if wt.is_dir() {
+                                send(&p, UserEvent::Toast(format!("Kept the chat's worktree: it has changes that aren't committed ({})", wt.display())));
+                            }
+                        }
+                    });
+                }
+                self.terminals.retain(|t| t.chat.as_deref() != Some(id.as_str()));
                 self.chats.retain(|c| c.id != id);
                 crate::ai::close_chat(&chats_dir(&self.config), &id);
                 if self.active_chat.as_deref() == Some(id.as_str()) {
@@ -4627,6 +4733,9 @@ impl App {
                     self.active_chat = Some(chat.clone());
                     self.open_chats();
                     self.refresh_changes(&chat);
+                    if self.terminal_open && self.config.terminal_panel.follow_chat && self.select_chat_terminal(Some(&chat)) {
+                        self.render_terminal();
+                    }
                 }
             }
             Command::RenameChat { chat, title } => {
@@ -5086,7 +5195,7 @@ impl App {
                             self.state.space_mut().active = Some(id);
                         }
                     }
-                    Source::Chrome | Source::Chat | Source::Answer | Source::Welcome | Source::Market => self.focused_little = None,
+                    Source::Chrome | Source::Chat | Source::Terminal | Source::Answer | Source::Welcome | Source::Market => self.focused_little = None,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -5185,6 +5294,7 @@ impl App {
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => self.render_chat(),
             (Source::Chat, "attach") => self.chat_attach(&m),
+            (Source::Terminal, _) => self.terminal_message(kind, &m),
             (Source::Welcome, _) => self.welcome_message(&m, elwt),
             (Source::Market, _) => self.market_message(&m, elwt),
             (Source::Answer, "ready") => {
@@ -5754,6 +5864,8 @@ impl App {
                 self.chat_changes.insert(folder, info);
                 self.render_chat();
             }
+            UserEvent::TermOutput { id } => self.terminal_output(id),
+            UserEvent::TermExit { id } => self.terminal_exit(id),
             UserEvent::ChatDiff { chat, path, text } => {
                 if let Some(v) = self.chat_view.as_ref().filter(|_| self.active_chat.as_deref() == Some(chat.as_str())) {
                     let _ = v.evaluate_script(&format!("window.chat && chat.showDiff({}, {})", json!(path), json!(text)));
@@ -6048,6 +6160,8 @@ impl App {
             "list_closed_tabs" => Ok(json!(self.state.closed.iter().rev().map(|c| json!({ "url": c.tab.url, "title": c.tab.display_title(), "space": self.space_name(c.space) })).collect::<Vec<_>>())),
             "open_page" => self.open_page(args["name"].as_str().unwrap_or(""), args["activate"].as_bool().unwrap_or(true))
                 .map(|tab| json!({ "tab": tab, "url": format!("valerie://page/{}", args["name"].as_str().unwrap_or("")) })),
+            "read_terminal" => return self.read_terminal(&args, reply),
+            "run_in_terminal" => self.run_in_terminal(&args),
             "list_pages" => Ok(json!(list_pages().into_iter().map(|(name, title, built_in)| json!({
                 "name": name, "title": title, "url": format!("valerie://page/{name}"), "built_in": built_in,
                 "file": pages_dir().join(format!("{name}.html")),
@@ -6107,6 +6221,7 @@ impl App {
                 let view = match args["part"].as_str().unwrap_or("sidebar") {
                     "command_bar" => Some(&self.overlay),
                     "chats" => self.chat_view.as_ref(),
+                    "terminal" => self.terminal_view.as_ref(),
                     "welcome" => self.welcome_view.as_ref(),
                     "plugins" => self.market_view.as_ref(),
                     _ => Some(&self.chrome),
@@ -6501,12 +6616,28 @@ impl App {
             "plan_button": self.config.chats.plan_button, "composer_hint": self.config.chats.composer_hint,
             "theme": self.chats_theme(), "font": self.config.layout.font,
             "projects": self.recent_projects(), "home": dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
-            "changes": chat.and_then(|c| self.chat_changes.get(&c.folder)).filter(|_| self.config.chats.changes),
-            "change_actions": self.config.chats.change_actions.iter().filter_map(|(k, v)| v.as_ref().map(|p| json!({ "label": k, "prompt": p }))).collect::<Vec<_>>(),
+            "changes": chat.and_then(chat_workdir).and_then(|w| self.chat_changes.get(&*w.to_string_lossy())).filter(|_| self.config.chats.changes),
+            "change_actions": chat.map(|c| self.change_actions(c)).unwrap_or_default(),
+            "worktree": chat.filter(|c| !c.worktree.is_empty()).map(|c| json!({ "path": c.worktree, "branch": c.branch, "base": c.base })),
+            "terminal": self.config.terminal_panel.enabled,
             "asks": chat.map(|c| self.chat_asks.iter().filter(|(_, a)| a.chat == c.id).map(|(id, a)| json!({ "id": id, "tool": a.tool, "what": a.what, "args": a.args })).collect::<Vec<_>>()),
             "steps": self.config.chats.steps, "usage": self.config.chats.usage,
         });
         let _ = v.evaluate_script(&format!("window.chat && chat.render({data})"));
+    }
+
+    /// The changes card's buttons for a chat, fill-ins done; ones about its own branch only when it has a worktree.
+    fn change_actions(&self, c: &crate::ai::Chat) -> Vec<Value> {
+        let own = !c.worktree.is_empty();
+        let fill = |s: &str| s.replace("{folder}", &c.folder).replace("{branch}", &c.branch).replace("{base}", &c.base);
+        self.config
+            .chats
+            .change_actions
+            .iter()
+            .filter_map(|(k, v)| v.as_ref().map(|p| (k, p)))
+            .filter(|(k, p)| own || !(p.contains("{branch}") || p.contains("{base}") || k.contains("{branch}") || k.contains("{base}")))
+            .map(|(k, p)| json!({ "label": fill(k), "prompt": fill(p) }))
+            .collect()
     }
 
     fn chat_menu(&mut self, id: String, x: f64, y: f64) {
@@ -6611,7 +6742,7 @@ impl App {
 
     /// Look at what's uncommitted in a coding chat's folder, in the background.
     fn refresh_changes(&self, chat: &str) {
-        let Some(folder) = self.chats.iter().find(|c| c.id == chat).map(|c| c.folder.clone()).filter(|f| !f.is_empty()) else { return };
+        let Some(folder) = self.chats.iter().find(|c| c.id == chat).and_then(chat_workdir).map(|f| f.to_string_lossy().into_owned()) else { return };
         if !self.config.chats.changes || !Path::new(&folder).is_dir() {
             return;
         }
@@ -6675,6 +6806,28 @@ impl App {
         // A coding chat doesn't need the list of open tabs; it can ask for them.
         let context = if self.config.chats.browser_context && folder.is_none() { self.browser_context() } else { String::new() };
         let mut c = self.chats.remove(pos);
+        // A coding chat gets its own worktree on its first message (chats.worktrees), so chats on one project don't
+        // edit the same files; one whose worktree went away (closed and brought back, another computer) gets it again.
+        let mut plan = None;
+        if let Some(f) = &folder {
+            let cc = &self.config.chats;
+            if c.worktree.is_empty() && c.messages.is_empty() {
+                plan = plan_worktree(f, &cc.worktrees, &cc.worktree_folder, &text, &c.id);
+                if let Some(pl) = &plan {
+                    c.worktree = pl.workdir.to_string_lossy().into_owned();
+                    c.branch = pl.branch.clone();
+                    c.base = pl.base.clone();
+                }
+            } else if !c.worktree.is_empty() && !Path::new(&c.worktree).is_dir() {
+                plan = git(f, &["rev-parse", "--show-toplevel"]).map(|r| PathBuf::from(r.trim())).map(|repo| {
+                    let sub = f.canonicalize().ok().and_then(|f| f.strip_prefix(&repo).ok().map(|s| s.components().count())).unwrap_or(0);
+                    let workdir = PathBuf::from(&c.worktree);
+                    let root = workdir.ancestors().nth(sub).map(Path::to_path_buf).unwrap_or_else(|| workdir.clone());
+                    WorktreePlan { workdir, root, repo, branch: c.branch.clone(), base: c.base.clone() }
+                });
+            }
+        }
+        let copy = self.config.chats.worktree_copy.clone();
         if let Some(a) = agent.filter(|a| !a.is_empty()) {
             c.agent = a;
         }
@@ -6723,10 +6876,18 @@ impl App {
         let prompt = match &session {
             Some(_) => text,
             None => {
-                let mut p = match &folder {
-                    Some(f) => crate::ai::coding_preamble(&def, f),
+                let mut p = match chat_workdir(&c).filter(|_| folder.is_some()) {
+                    Some(w) => crate::ai::coding_preamble(&def, &w),
                     None => crate::ai::browser_preamble(&def, &context),
                 };
+                if !c.worktree.is_empty() {
+                    p.push_str(&format!(
+                        "\n\nThis folder is a git worktree of {} on this chat's own branch, {} (made from {}), so other chats can work \
+                         on the same project at the same time. Commit on this branch; don't check out other branches here or edit the \
+                         main checkout unless the user asks.",
+                        c.folder, c.branch, c.base
+                    ));
+                }
                 p.push_str(&self.config.extra_instructions("chat"));
                 if !c.brief.is_empty() {
                     p.push_str("\n\n");
@@ -6754,10 +6915,21 @@ impl App {
         }
         let p = self.proxy.clone();
         let timeout = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
-        let work = folder.unwrap_or_else(|| config::data_dir().join("agents").join("chat"));
+        let work = self
+            .chats
+            .first()
+            .and_then(chat_workdir)
+            .filter(|_| folder.is_some())
+            .unwrap_or_else(|| config::data_dir().join("agents").join("chat"));
         std::thread::spawn(move || {
-            let _ = std::fs::create_dir_all(&work);
             let on = |ev: crate::ai::Ev| send(&p, UserEvent::ChatEv { chat: id.clone(), ev });
+            if let Some(Err(e)) = plan.as_ref().map(|pl| make_worktree(pl, &copy)) {
+                crate::log::line("chats", format!("worktree for chat {id}: {e}"));
+                on(crate::ai::Ev::Error { text: format!("Couldn't make this chat's own worktree: {e}\n\nTo work in the folder itself, set chats.worktrees to never.") });
+                send(&p, UserEvent::ChatDone { chat: id });
+                return;
+            }
+            let _ = std::fs::create_dir_all(&work);
             match crate::ai::build(&def, crate::ai::Mode::Browser, &prompt, session.as_deref(), true, &work, &opts) {
                 Ok((cmd, fmt)) => {
                     if let Err(e) = crate::ai::stream(&id, cmd, fmt, timeout, &on) {
@@ -8518,7 +8690,7 @@ impl App {
         };
         apply(&self.chrome, "chrome.html");
         apply(&self.overlay, "palette.html");
-        for (v, page) in [(&self.chat_view, "chat.html"), (&self.answer_view, "answer.html"), (&self.market_view, "plugins.html"), (&self.welcome_view, "welcome.html")] {
+        for (v, page) in [(&self.chat_view, "chat.html"), (&self.terminal_view, "terminal.html"), (&self.answer_view, "answer.html"), (&self.market_view, "plugins.html"), (&self.welcome_view, "welcome.html")] {
             if let Some(v) = v {
                 apply(v, page);
             }
@@ -9009,6 +9181,460 @@ impl App {
     }
 }
 
+/// A coding chat's working folder: its own worktree when it has one, else its project folder.
+fn chat_workdir(c: &crate::ai::Chat) -> Option<PathBuf> {
+    match (c.worktree.is_empty(), c.folder.is_empty()) {
+        (false, _) => Some(PathBuf::from(&c.worktree)),
+        (true, false) => Some(PathBuf::from(&c.folder)),
+        _ => None,
+    }
+}
+
+/// A short branch-safe name from a chat's first words ("Fix the login page!" → "fix-the-login-page").
+fn slug(text: &str) -> String {
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .take(5)
+        .map(|w| w.to_ascii_lowercase())
+        .collect();
+    let s: String = words.join("-").chars().take(40).collect();
+    s.trim_end_matches('-').to_string()
+}
+
+/// A chat's own worktree, planned before it exists: (working folder, worktree root, repo root, branch, base).
+struct WorktreePlan {
+    workdir: PathBuf,
+    root: PathBuf,
+    repo: PathBuf,
+    branch: String,
+    base: String,
+}
+
+/// Where a new coding chat in `folder` should work (chats.worktrees); None = in the folder itself.
+fn plan_worktree(folder: &Path, mode: &str, place: &str, title: &str, chat: &str) -> Option<WorktreePlan> {
+    if mode == "never" {
+        return None;
+    }
+    let repo = PathBuf::from(git(folder, &["rev-parse", "--show-toplevel"])?.trim());
+    let common = git(folder, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    // six-ten keeps several agents in one checkout on purpose; a worktree would step around it.
+    if mode == "auto" && Path::new(common.trim()).join("six-ten").is_dir() {
+        return None;
+    }
+    // A repo without a first commit has nothing to branch from.
+    let head = git(folder, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+    let base = if head == "HEAD" { git(folder, &["rev-parse", "--short", "HEAD"])?.trim().to_string() } else { head };
+    let name = match slug(title) {
+        s if s.is_empty() => "chat".to_string(),
+        s => s,
+    };
+    let name = format!("{name}-{}", &chat[chat.len().saturating_sub(4)..]);
+    let place = if place.trim().is_empty() { config::data_dir().join("worktrees") } else { expand_home(place.trim()) };
+    let root = place.join(folder_name(&repo.to_string_lossy())).join(&name);
+    let sub = folder.canonicalize().ok().and_then(|f| f.strip_prefix(&repo).ok().map(Path::to_path_buf)).unwrap_or_default();
+    Some(WorktreePlan { workdir: root.join(sub), root, repo, branch: format!("valerie/{name}"), base })
+}
+
+/// Make a planned worktree (or bring back one whose branch is still there), with the files listed in
+/// chats.worktree_copy.
+fn make_worktree(plan: &WorktreePlan, copy: &[String]) -> Result<(), String> {
+    if plan.root.join(".git").exists() {
+        return Ok(());
+    }
+    if let Some(parent) = plan.root.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let root = plan.root.to_string_lossy().into_owned();
+    let has_branch = git(&plan.repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}", plan.branch)]).is_some();
+    let args: Vec<&str> = if has_branch {
+        vec!["worktree", "add", &root, &plan.branch]
+    } else {
+        vec!["worktree", "add", "-b", &plan.branch, &root, &plan.base]
+    };
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&plan.repo)
+        .args(&args)
+        .env("PATH", crate::ai::search_path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    for f in copy {
+        let (from, to) = (plan.repo.join(f), plan.root.join(f));
+        if from.is_file() && !to.exists() && Path::new(f).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+            if let Some(d) = to.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::copy(&from, &to);
+        }
+    }
+    Ok(())
+}
+
+/// Take away a closed chat's worktree if nothing in it is uncommitted, and its branch if that's merged.
+fn remove_worktree(folder: &Path, worktree: &Path, branch: &str) -> Result<(), String> {
+    let root = git(worktree, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).ok_or("it's gone already")?;
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["worktree", "remove", &root])
+        .env("PATH", crate::ai::search_path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    if !branch.is_empty() {
+        let _ = git(folder, &["branch", "-d", branch]);
+    }
+    Ok(())
+}
+
+impl App {
+    fn ensure_terminal_view(&mut self) -> bool {
+        if self.terminal_view.is_some() {
+            return true;
+        }
+        // xterm.js is built in, so the panel works offline and loads nothing from the web.
+        let html = ui_page("terminal.html", &self.config).replacen(
+            "<!--XTERM-->",
+            &format!("<style>{}</style><script>{}\n{}</script>", ui("vendor/xterm.css"), ui("vendor/xterm.js"), ui("vendor/addon-fit.js")),
+            1,
+        );
+        let p = self.proxy.clone();
+        let built = WebViewBuilder::new()
+            .with_html(html)
+            .with_visible(false)
+            .with_accept_first_mouse(true)
+            .with_devtools(true)
+            .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Terminal, msg: r.into_body() }))
+            .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
+            .build_as_child(&self.window);
+        match built {
+            Ok(v) => {
+                self.terminal_view = Some(v);
+                true
+            }
+            Err(e) => {
+                crate::log::line("terminal", format!("terminal panel: {e}"));
+                false
+            }
+        }
+    }
+
+    /// Where a terminal opened from here starts: the open coding chat's project, else terminal_panel.folder or home.
+    fn terminal_home(&self) -> (PathBuf, Option<String>) {
+        let chat = self.active_chat.as_ref().filter(|_| self.chats_open).and_then(|id| self.chats.iter().find(|c| &c.id == id));
+        if let Some((c, dir)) = chat.and_then(|c| chat_workdir(c).filter(|d| d.is_dir()).map(|d| (c, d))) {
+            return (dir, Some(c.id.clone()));
+        }
+        let f = self.config.terminal_panel.folder.trim();
+        let dir = if f.is_empty() { None } else { Some(expand_home(f)).filter(|d| d.is_dir()) };
+        (dir.or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/")), None)
+    }
+
+    /// Start a shell in the panel (not shown yet); `run` is typed into it once it's ready.
+    fn new_terminal(&mut self, cwd: PathBuf, chat: Option<String>, run: Option<String>) -> Result<u32, String> {
+        if !self.config.terminal_panel.enabled {
+            return Err("The terminal panel is off (terminal_panel.enabled)".into());
+        }
+        if !self.ensure_terminal_view() {
+            return Err("The terminal panel couldn't open".into());
+        }
+        let id = self.terminal_next;
+        self.terminal_next += 1;
+        let (p, p2) = (self.proxy.clone(), self.proxy.clone());
+        let shell = crate::terminal::shell(&self.config.terminal_panel.shell);
+        let mut t = crate::terminal::Term::spawn(id, &shell, &cwd, self.terminal_size, move || send(&p, UserEvent::TermOutput { id }), move || {
+            send(&p2, UserEvent::TermExit { id })
+        })
+        .map_err(|e| {
+            crate::log::line("terminal", format!("{e:#}"));
+            format!("Couldn't start {shell}: {e:#}")
+        })?;
+        t.chat = chat;
+        if let Some(cmd) = run {
+            t.title = cmd.chars().take(40).collect();
+            t.queued = Some(cmd);
+        }
+        crate::log::event("terminal", format!("terminal {id} started in {}", folder_name(&cwd.to_string_lossy())));
+        self.terminals.push(t);
+        self.terminal_active = Some(id);
+        Ok(id)
+    }
+
+    /// Point the panel at a coding chat's shell, starting one in its project if there's none. False: no project.
+    fn select_chat_terminal(&mut self, chat: Option<&str>) -> bool {
+        let Some(c) = chat.and_then(|id| self.chats.iter().find(|c| c.id == id)) else { return false };
+        let Some(dir) = chat_workdir(c).filter(|d| d.is_dir()) else { return false };
+        let id = c.id.clone();
+        if let Some(t) = self.terminals.iter().find(|t| t.chat.as_deref() == Some(id.as_str())) {
+            self.terminal_active = Some(t.id);
+            return true;
+        }
+        match self.new_terminal(dir, Some(id), None) {
+            Ok(_) => true,
+            Err(e) => {
+                self.toast(&e);
+                false
+            }
+        }
+    }
+
+    /// Ctrl+`: open the panel (on the open coding chat's project), focus it if it's open but not focused, else hide it.
+    fn toggle_terminal(&mut self) {
+        if self.terminal_open && self.terminal_focused {
+            return self.hide_terminal();
+        }
+        if self.terminal_open {
+            return self.show_terminal(true);
+        }
+        let chat = self.active_chat.clone().filter(|_| self.chats_open);
+        if !self.select_chat_terminal(chat.as_deref()) && self.terminals.is_empty() {
+            let (cwd, chat) = self.terminal_home();
+            if let Err(e) = self.new_terminal(cwd, chat, None) {
+                return self.toast(&e);
+            }
+        }
+        self.show_terminal(true);
+    }
+
+    fn show_terminal(&mut self, focus: bool) {
+        if self.terminal_view.is_none() || self.terminals.is_empty() {
+            return;
+        }
+        if self.terminal_active.is_none_or(|a| !self.terminals.iter().any(|t| t.id == a)) {
+            self.terminal_active = self.terminals.last().map(|t| t.id);
+        }
+        self.terminal_open = true;
+        self.layout();
+        self.render_terminal();
+        if let Some(v) = self.terminal_view.as_ref().filter(|_| focus) {
+            self.terminal_focused = true;
+            let _ = v.focus();
+            let _ = v.evaluate_script("window.term && term.focus()");
+        }
+    }
+
+    fn hide_terminal(&mut self) {
+        self.terminal_open = false;
+        self.terminal_focused = false;
+        self.terminal_max = false;
+        self.layout();
+        self.focus_active();
+    }
+
+    fn render_terminal(&self) {
+        let Some(v) = &self.terminal_view else { return };
+        let home = dirs::home_dir().unwrap_or_default();
+        let sessions: Vec<Value> = self
+            .terminals
+            .iter()
+            .map(|t| {
+                let cwd = match t.cwd.strip_prefix(&home) {
+                    Ok(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+                    Ok(_) => "~".into(),
+                    Err(_) => t.cwd.display().to_string(),
+                };
+                let chat = t.chat.as_ref().and_then(|id| self.chats.iter().find(|c| &c.id == id)).map(|c| c.title.clone());
+                json!({ "id": t.id, "title": t.title, "cwd": cwd, "chat": chat })
+            })
+            .collect();
+        let theme = if self.chats_open { self.chats_theme() } else { self.theme_for(self.state.active_space) };
+        let data = json!({
+            "sessions": sessions, "active": self.terminal_active, "max": self.terminal_max, "cfg": self.config.terminal_panel,
+            "theme": theme, "can_ask": self.config.chats.enabled && self.config.terminal_panel.ask_agent_button,
+        });
+        let _ = v.evaluate_script(&format!("window.term && term.render({data})"));
+    }
+
+    fn terminal_output(&mut self, id: u32) {
+        if !self.terminal_ready {
+            return;
+        }
+        let Some(t) = self.terminals.iter_mut().find(|t| t.id == id) else { return };
+        let out = t.take_output();
+        // A command for a new shell waits for its first words (the prompt), so it isn't typed into nothing.
+        if let Some(cmd) = t.queued.take() {
+            t.write(format!("{cmd}\r").as_bytes());
+        }
+        if let (Some(v), false) = (&self.terminal_view, out.is_empty()) {
+            let _ = v.evaluate_script(&format!("window.term && term.out({id}, {})", json!(out)));
+        }
+    }
+
+    fn terminal_exit(&mut self, id: u32) {
+        self.terminal_output(id);
+        if let Some(pos) = self.terminals.iter().position(|t| t.id == id) {
+            self.terminals.remove(pos);
+            crate::log::event("terminal", format!("terminal {id} ended"));
+        }
+        if let Some(v) = &self.terminal_view {
+            let _ = v.evaluate_script(&format!("window.term && term.gone({id})"));
+        }
+        if self.terminal_active.is_none_or(|a| !self.terminals.iter().any(|t| t.id == a)) {
+            self.terminal_active = self.terminals.last().map(|t| t.id);
+        }
+        if self.terminals.is_empty() && self.terminal_open {
+            return self.hide_terminal();
+        }
+        self.render_terminal();
+    }
+
+    fn terminal_message(&mut self, kind: &str, m: &Value) {
+        let id = m["id"].as_u64().map(|i| i as u32);
+        match kind {
+            "ready" => {
+                self.terminal_ready = true;
+                self.render_terminal();
+                for i in self.terminals.iter().map(|t| t.id).collect::<Vec<_>>() {
+                    self.terminal_output(i);
+                }
+            }
+            "input" => {
+                if let (Some(t), Some(data)) = (self.terminals.iter_mut().find(|t| Some(t.id) == id), m["data"].as_str()) {
+                    t.write(data.as_bytes());
+                }
+            }
+            "resize" => {
+                let (cols, rows) = (m["cols"].as_u64().unwrap_or(80).min(1000) as u16, m["rows"].as_u64().unwrap_or(24).min(500) as u16);
+                self.terminal_size = (cols, rows);
+                if let Some(t) = self.terminals.iter().find(|t| Some(t.id) == id) {
+                    t.resize(cols, rows);
+                }
+            }
+            "select" => {
+                if id.is_some_and(|i| self.terminals.iter().any(|t| t.id == i)) {
+                    self.terminal_active = id;
+                    self.render_terminal();
+                }
+            }
+            "new" => {
+                let (cwd, chat) = self.terminal_home();
+                match self.new_terminal(cwd, chat, None) {
+                    Ok(_) => self.show_terminal(true),
+                    Err(e) => self.toast(&e),
+                }
+            }
+            // Closing a tab ends its shell; the exit event tidies up.
+            "close" => {
+                if let Some(pos) = self.terminals.iter().position(|t| Some(t.id) == id) {
+                    drop(self.terminals.remove(pos));
+                    if let Some(v) = &self.terminal_view {
+                        let _ = v.evaluate_script(&format!("window.term && term.gone({})", id.unwrap_or(0)));
+                    }
+                    if self.terminal_active == id {
+                        self.terminal_active = self.terminals.last().map(|t| t.id);
+                    }
+                    if self.terminals.is_empty() {
+                        return self.hide_terminal();
+                    }
+                    self.render_terminal();
+                }
+            }
+            "hide" => self.hide_terminal(),
+            "max" => {
+                self.terminal_max = !self.terminal_max;
+                self.layout();
+                self.render_terminal();
+            }
+            "height" => {
+                if let Some(h) = m["h"].as_f64().filter(|h| h.is_finite()) {
+                    let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                    let (_, _, _, ch) = self.content_area_full(size.width, size.height);
+                    self.state.terminal_height = Some(h.clamp(90.0, (ch - 120.0).max(90.0)).round());
+                    self.terminal_max = false;
+                    self.dirty = true;
+                    self.layout();
+                }
+            }
+            "focus" => self.terminal_focused = m["on"].as_bool().unwrap_or(false),
+            "link" => {
+                if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("http://") || u.starts_with("https://")) {
+                    let url = url.to_string();
+                    self.open_tab(&url, None, true);
+                }
+            }
+            // "Ask Agent": the selection (or what's on screen) goes into the composer of the shell's chat.
+            "ask" => {
+                let text = m["text"].as_str().unwrap_or("").trim_end();
+                if text.is_empty() {
+                    return;
+                }
+                let owner = self.terminals.iter().find(|t| Some(t.id) == id).and_then(|t| t.chat.clone());
+                if let Some(c) = owner.filter(|c| self.chats.iter().any(|x| &x.id == c)) {
+                    self.active_chat = Some(c);
+                }
+                self.open_chats();
+                let clipped: String = text.chars().rev().take(12_000).collect::<Vec<_>>().into_iter().rev().collect();
+                let block = format!("From my terminal:\n```\n{clipped}\n```\n");
+                if let Some(v) = &self.chat_view {
+                    let _ = v.evaluate_script(&format!("window.chat && chat.insert({})", json!(block)));
+                    let _ = v.focus();
+                }
+                self.terminal_focused = false;
+            }
+            _ => {}
+        }
+    }
+
+    /// read_terminal: the last lines a shell shows (the chat's own shell, else the one on screen).
+    fn read_terminal(&self, args: &Value, reply: std::sync::mpsc::Sender<Result<Value, String>>) {
+        let chat = args["_chat"].as_str().unwrap_or("");
+        let pick = match args["terminal"].as_u64() {
+            Some(i) => self.terminals.iter().find(|t| u64::from(t.id) == i),
+            None => self
+                .terminals
+                .iter()
+                .find(|t| !chat.is_empty() && t.chat.as_deref() == Some(chat))
+                .or_else(|| self.terminals.iter().find(|t| Some(t.id) == self.terminal_active)),
+        };
+        let list: Vec<Value> = self.terminals.iter().map(|t| json!({ "terminal": t.id, "title": t.title, "folder": t.cwd })).collect();
+        let (Some(t), Some(v)) = (pick, &self.terminal_view) else {
+            let _ = reply.send(if list.is_empty() { Err("No terminals are open. Start one with run_in_terminal.".into()) } else { Ok(json!({ "terminals": list })) });
+            return;
+        };
+        let lines = args["lines"].as_u64().unwrap_or(200).clamp(1, 5000);
+        let (id, title, folder) = (t.id, t.title.clone(), t.cwd.clone());
+        let js = format!("JSON.stringify(window.term ? term.lines({id}, {lines}) : '')");
+        let r = reply.clone();
+        if let Err(e) = v.evaluate_script_with_callback(&js, move |out| {
+            let text = decode_js(&out);
+            let _ = r.send(Ok(json!({ "terminal": id, "title": title, "folder": folder, "text": text, "terminals": list })));
+        }) {
+            let _ = reply.send(Err(e.to_string()));
+        }
+    }
+
+    /// run_in_terminal: a new shell in the panel (in the chat's project) that runs `command`, left open so the user
+    /// sees it and the agent can read it.
+    fn run_in_terminal(&mut self, args: &Value) -> Result<Value, String> {
+        let command = args["command"].as_str().unwrap_or("").trim().to_string();
+        if command.is_empty() || command.contains('\n') {
+            return Err("command must be one line".into());
+        }
+        let chat = args["_chat"].as_str().filter(|c| !c.is_empty()).map(str::to_string);
+        let cwd = match args["folder"].as_str().map(|f| expand_home(f.trim())) {
+            Some(f) if !f.is_dir() => return Err(format!("there's no folder at {}", f.display())),
+            Some(f) => f,
+            None => chat
+                .as_ref()
+                .and_then(|id| self.chats.iter().find(|c| &c.id == id))
+                .and_then(chat_workdir)
+                .filter(|d| d.is_dir())
+                .unwrap_or_else(|| self.terminal_home().0),
+        };
+        let id = self.new_terminal(cwd.clone(), chat, Some(command))?;
+        self.show_terminal(false);
+        Ok(json!({ "terminal": id, "folder": cwd, "next": "It's running where the user can see it. Read what it prints with read_terminal." }))
+    }
+}
+
 #[cfg(test)]
 mod custom_tests {
     use super::*;
@@ -9111,6 +9737,44 @@ mod tests {
         assert!(super::folder_diff(&dir, Some("../../etc/passwd")).is_empty());
         assert_eq!(super::folder_changes(&std::env::temp_dir())["repo"], false);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn coding_chats_get_their_own_worktree() {
+        let base = std::env::temp_dir().join(format!("valerie-wt-{}", std::process::id()));
+        let (repo, place) = (base.join("app"), base.join("trees"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(repo.join("web")).unwrap();
+        let sh = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap().status.success(), "{args:?}");
+        sh(&["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("web/a.txt"), "a\n").unwrap();
+        sh(&["add", "."]);
+        sh(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"]);
+        std::fs::write(repo.join(".env"), "KEY=1\n").unwrap();
+        let folder = repo.join("web");
+        assert!(super::plan_worktree(&folder, "never", "", "x", "123-abcdef").is_none());
+        let plan = super::plan_worktree(&folder, "auto", &place.to_string_lossy(), "Fix the login page!", "123-abcdef").unwrap();
+        assert_eq!(plan.branch, "valerie/fix-the-login-page-cdef");
+        assert_eq!(plan.base, "main");
+        assert!(plan.workdir.ends_with("web") && plan.root.starts_with(&place));
+        super::make_worktree(&plan, &[".env".into(), "../escape".into()]).unwrap();
+        assert!(plan.workdir.join("a.txt").is_file());
+        assert_eq!(std::fs::read_to_string(plan.root.join(".env")).unwrap(), "KEY=1\n");
+        assert!(super::folder_changes(&plan.workdir)["branch"] == "valerie/fix-the-login-page-cdef");
+        // Uncommitted work keeps it; once clean, closing the chat takes it and its (merged) branch away.
+        std::fs::write(plan.workdir.join("a.txt"), "changed\n").unwrap();
+        assert!(super::remove_worktree(&folder, &plan.workdir, &plan.branch).is_err());
+        assert!(plan.root.is_dir());
+        std::fs::write(plan.workdir.join("a.txt"), "a\n").unwrap();
+        std::fs::remove_file(plan.root.join(".env")).unwrap();
+        super::remove_worktree(&folder, &plan.workdir, &plan.branch).unwrap();
+        assert!(!plan.root.exists());
+        assert!(super::git(&repo, &["rev-parse", "--verify", "--quiet", "refs/heads/valerie/fix-the-login-page-cdef"]).is_none());
+        // Repos six-ten manages share one checkout: no worktree unless asked for always.
+        std::fs::create_dir_all(repo.join(".git/six-ten")).unwrap();
+        assert!(super::plan_worktree(&folder, "auto", "", "x", "123-abcdef").is_none());
+        assert!(super::plan_worktree(&folder, "always", "", "x", "123-abcdef").is_some());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
