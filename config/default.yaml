@@ -555,6 +555,7 @@ keybindings:
   "CmdOrCtrl+F": find_in_page
   "CmdOrCtrl+Shift+R": reader_view
   "CmdOrCtrl+Shift+2": capture_page
+  "CmdOrCtrl+Alt+Shift+2": capture_full_page   # the whole page, top to bottom
   "CmdOrCtrl+Shift+M": toggle_mute
   "CmdOrCtrl+Shift+V": paste_and_go
   "CmdOrCtrl+P": print

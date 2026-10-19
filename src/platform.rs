@@ -267,6 +267,65 @@ mod mac {
         }
     }
 
+    /// The whole page, top to bottom, as a PNG: WebKit makes a PDF of all of it, which is drawn at up to 2× (fewer for very
+    /// long pages, to stay near 30 million pixels).
+    pub fn snapshot_full(wv: &WebView, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        use objc2::class;
+        use objc2_foundation::{NSRect, NSSize};
+        let v = ptr(wv);
+        let done = std::cell::RefCell::new(Some(done));
+        let block = block2::RcBlock::new(move |pdf: *mut AnyObject, _error: *mut AnyObject| {
+            let Some(done) = done.borrow_mut().take() else { return };
+            if pdf.is_null() {
+                return done(Err("the page could not be captured (is the tab loaded?)".into()));
+            }
+            unsafe {
+                let rep: *mut AnyObject = msg_send![class!(NSPDFImageRep), imageRepWithData: pdf];
+                if rep.is_null() {
+                    return done(Err("WebKit's picture of the page couldn't be read".into()));
+                }
+                let bounds: NSRect = msg_send![rep, bounds];
+                let (w, h) = (bounds.size.width.max(1.0), bounds.size.height.max(1.0));
+                let scale = (30_000_000.0 / (w * h)).sqrt().clamp(0.25, 2.0);
+                let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
+                let image: *mut AnyObject = msg_send![image, initWithData: pdf];
+                // In points: macOS draws them at the screen's scale (2 pixels a point on a Retina screen).
+                let screen: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
+                let backing: f64 = if screen.is_null() { 1.0 } else { msg_send![screen, backingScaleFactor] };
+                let size = NSSize::new((w * scale / backing.max(1.0)).round(), (h * scale / backing.max(1.0)).round());
+                let _: () = msg_send![image, setSize: size];
+                // Drawn at that many pixels (TIFFRepresentation would draw one pixel per point).
+                let mut rect = NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), size);
+                let null: *mut AnyObject = std::ptr::null_mut();
+                let cg: *mut AnyObject = msg_send![image, CGImageForProposedRect: &mut rect as *mut NSRect, context: null, hints: null];
+                let bitmap: *mut AnyObject = if cg.is_null() { std::ptr::null_mut() } else {
+                    let b: *mut AnyObject = msg_send![class!(NSBitmapImageRep), alloc];
+                    msg_send![b, initWithCGImage: cg]
+                };
+                let props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
+                // NSBitmapImageFileTypePNG = 4
+                let png: *mut AnyObject = if bitmap.is_null() { std::ptr::null_mut() } else { msg_send![bitmap, representationUsingType: 4usize, properties: props] };
+                let out = if png.is_null() {
+                    Err("PNG encoding failed".to_string())
+                } else {
+                    let len: usize = msg_send![png, length];
+                    let bytes: *const u8 = msg_send![png, bytes];
+                    Ok(std::slice::from_raw_parts(bytes, len).to_vec())
+                };
+                if !bitmap.is_null() {
+                    let _: () = msg_send![bitmap, release];
+                }
+                let _: () = msg_send![image, release];
+                done(out)
+            }
+        });
+        unsafe {
+            let cfg: *mut AnyObject = msg_send![class!(WKPDFConfiguration), new];
+            let _: () = msg_send![v, createPDFWithConfiguration: cfg, completionHandler: &*block];
+            let _: () = msg_send![cfg, release];
+        }
+    }
+
     /// Show alert / confirm / prompt as proper dialogs. WebKit sends them to the UI delegate, and wry's delegate
     /// doesn't answer them, so `alert()` silently vanished and `confirm()` always said Cancel. The methods are added
     /// to wry's delegate class once, after the first webview exists.
@@ -1371,6 +1430,17 @@ pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, Stri
     {
         let _ = (wv, width);
         done(Err("screenshots are only implemented on macOS so far".into()));
+    }
+}
+
+/// PNG of the whole page, top to bottom. Calls `done` later on the main thread.
+pub fn snapshot_full(wv: &WebView, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::snapshot_full(wv, done);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = wv;
+        done(Err("full-page screenshots are only implemented on macOS so far".into()));
     }
 }
 

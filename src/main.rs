@@ -40,6 +40,8 @@ USAGE:
   valerie check-config    validate config.yaml and every plugin (prints exact errors)
   valerie strings         print Valerie's words, ready to translate into strings/<language>.yaml
   valerie call <tool> [json]  call a browser tool, e.g. valerie call list_tabs '{}'  
+  valerie screenshot [--full] [--tab N] [file.png]  save a picture of a tab (the active one; --full for the whole
+                          page), to file.png or a Valerie Capture <time>.png here
   valerie paths           show config and data locations
   valerie triage          something's wrong: your AI (Claude Code or Codex) helps find why, even if Valerie won't open";
 
@@ -393,6 +395,35 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     p
 }
 
+/// `valerie screenshot [--full] [--tab N] [--width W] [file.png]`: a tab's picture, written where you say.
+fn screenshot(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let (mut a, mut file) = (serde_json::json!({}), None);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--full" | "-f" => a["full_page"] = true.into(),
+            "--tab" | "--width" => {
+                let n: i64 = it.next().and_then(|v| v.parse().ok()).ok_or_else(|| anyhow::anyhow!("{arg} needs a number"))?;
+                a[arg.trim_start_matches('-')] = n.into();
+            }
+            s if s.starts_with('-') => anyhow::bail!("usage: valerie screenshot [--full] [--tab N] [--width W] [file.png]"),
+            s => file = Some(std::path::PathBuf::from(s)),
+        }
+    }
+    let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "screenshot", "arguments": a } });
+    let (status, body) = mcp::post_local(port, &mcp::load_or_create_token(), &req.to_string()).map_err(|_| anyhow::anyhow!("Valerie isn't running"))?;
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| anyhow::anyhow!("HTTP {status}: {body}"))?;
+    let content = v["result"]["content"].as_array().cloned().unwrap_or_default();
+    let Some(png) = content.iter().find(|c| c["type"] == "image").and_then(|c| mcp::unbase64(c["data"].as_str()?)) else {
+        let why = content.iter().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join(" ");
+        anyhow::bail!("no picture: {}", if why.is_empty() { v["error"]["message"].as_str().unwrap_or("unknown error") } else { &why });
+    };
+    let file = file.unwrap_or_else(|| std::path::PathBuf::from(format!("Valerie Capture {}.png", platform::local_timestamp())));
+    std::fs::write(&file, png)?;
+    println!("{}", file.display());
+    Ok(())
+}
+
 fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
     let arguments: serde_json::Value = serde_json::from_str(if args.trim().is_empty() { "{}" } else { args })?;
     let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": tool, "arguments": arguments } });
@@ -489,6 +520,7 @@ fn main() -> anyhow::Result<()> {
             print!("{}", llm_guide::strings_template());
             return Ok(());
         }
+        Some("screenshot") => return screenshot(config.mcp.port, &args[1..]),
         Some("call") => {
             let Some(tool) = args.get(1) else { anyhow::bail!("usage: valerie call <tool> [json]") };
             return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));

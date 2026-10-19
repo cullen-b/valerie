@@ -848,6 +848,43 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     }
 }
 
+/// Puts a `valerie` link to this app in the first folder on PATH it may write to (Homebrew's, /usr/local/bin, then
+/// ~/.local/bin), so a terminal can run `valerie screenshot`, `valerie call` and the rest.
+fn install_command_line_tool() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    if exe.to_string_lossy().contains("/AppTranslocation/") {
+        return Err("move Valerie to Applications first (macOS is running it from a temporary copy)".into());
+    }
+    let home = dirs::home_dir().unwrap_or_default();
+    let on_path: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    let mut dirs: Vec<PathBuf> = vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin"), home.join(".local/bin")];
+    dirs.retain(|d| d.is_dir() || d.starts_with(&home));
+    // A folder the shell looks in comes first; ~/.local/bin is the fallback (made if needed).
+    dirs.sort_by_key(|d| !on_path.contains(d) && !crate::ai::search_path().contains(&*d.to_string_lossy()));
+    for dir in dirs {
+        let link = dir.join("valerie");
+        match std::fs::symlink_metadata(&link) {
+            Ok(m) if m.file_type().is_symlink() => {
+                if std::fs::read_link(&link).ok().as_deref() == Some(exe.as_path()) {
+                    return Ok(link);
+                }
+                if std::fs::remove_file(&link).is_err() {
+                    continue;
+                }
+            }
+            Ok(_) => continue, // something else called valerie lives there: leave it alone
+            Err(_) => {}
+        }
+        let _ = std::fs::create_dir_all(&dir);
+        #[cfg(unix)]
+        if std::os::unix::fs::symlink(&exe, &link).is_ok() {
+            return Ok(link);
+        }
+    }
+    Err("no folder on your PATH could take it".into())
+}
+
 /// What a new empty little window shows until you say where to go: an empty page in the system's light or dark.
 const LITTLE_BLANK: &str = "data:text/html,%3Cmeta%20name=color-scheme%20content=%22light%20dark%22%3E";
 
@@ -4567,6 +4604,19 @@ impl App {
                     platform::snapshot(v, width, move |r| send(&p, UserEvent::Captured(r)));
                 }
             }
+            Command::CaptureFullPage => {
+                let Some(t) = self.state.active_tab() else { return };
+                self.toast("Capturing the whole page…");
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let r = crate::mcp::full_page(&p, Some(t as i64));
+                    send(&p, UserEvent::Captured(r));
+                });
+            }
+            Command::InstallCommandLineTool => match install_command_line_tool() {
+                Ok(link) => self.toast(&format!("Installed {}: try `valerie screenshot --full` in a terminal", link.display())),
+                Err(e) => self.toast(&format!("Couldn't install the valerie command: {e}")),
+            },
             Command::OpenDownload { index } => {
                 match self.state.downloads.get(index).filter(|d| std::path::Path::new(&d.path).exists()) {
                     Some(d) => platform::open_external(&d.path),
@@ -6435,10 +6485,14 @@ impl App {
                     let _ = reply.send(Err("tab has no page".into()));
                     return;
                 };
-                let width = args["width"].as_f64().unwrap_or(1024.0).clamp(200.0, 2400.0);
-                platform::snapshot(v, width, move |r| {
+                let send_png = move |r: Result<Vec<u8>, String>| {
                     let _ = reply.send(r.map(|png| json!({ "__image_png": crate::mcp::base64(&png) })));
-                });
+                };
+                if args["full_page"].as_bool() == Some(true) {
+                    platform::snapshot_full(v, send_png);
+                } else {
+                    platform::snapshot(v, args["width"].as_f64().unwrap_or(1024.0).clamp(200.0, 2400.0), send_png);
+                }
                 return;
             }
             "eval" => {

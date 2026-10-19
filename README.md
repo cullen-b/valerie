@@ -50,6 +50,7 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘O` | Move a little window into the main window |
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom (remembered per site), dev tools |
 | `⌘⇧R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
+| `⌘⌥⇧2` | Capture the whole page, top to bottom (Capture Full Page) |
 | `⌘⇧V` / `⌘⌥⇧C` | Paste and go / copy the page as a Markdown link |
 | `⌘P` | Print |
 | `⌘,` | Open config |
@@ -178,7 +179,10 @@ when a web app changes its address); hooks for browser events (a tab opens, a do
 right-click entries, sidebar buttons with live text, live command-bar results and a start page; and output as a
 toast, a page, a list to pick from, a notification or the clipboard. Page scripts reach the browser through
 `valerie.call(tool, args)` with the tools their plugin lists (you're asked once). Local code drives the browser with
-`valerie call <tool> '<json>'` (for example `valerie call read_page '{}'`).
+`valerie call <tool> '<json>'` (for example `valerie call read_page '{}'`). `valerie screenshot --full page.png` saves the
+whole active page as a picture (`--tab N` for another tab; without `--full`, what's on screen). Run **Install Command
+Line Tool** from the command bar once to get `valerie` in your terminal (it links it into Homebrew's bin, /usr/local/bin
+or ~/.local/bin).
 
 **Almost everything else is a setting**, so an assistant can change it from a sentence: Valerie's own look
 (`ui/chrome.css` and friends), its language (`language` + `strings/<code>.yaml`), the sidebar's order, the menu bar,

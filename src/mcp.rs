@@ -283,8 +283,9 @@ pub fn tools() -> Vec<Value> {
             "tab": tab_prop(), "direction": { "type": "string", "enum": ["up", "down", "top", "bottom"] }, "ref": { "type": "string" } }), &[]),
         tool("wait_for", "Wait until a selector or text appears (and the page has loaded).", json!({
             "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
-        tool("screenshot", "Capture what the tab looks like as a PNG image (the visible viewport).",
-             json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024)" } }), &[]),
+        tool("screenshot", "Capture what the tab looks like as a PNG image: the visible viewport, or with full_page the whole page top to bottom.",
+             json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
+                     "full_page": { "type": "boolean", "description": "The whole page, not just what's on screen (it's scrolled through once first, so lazy images load)" } }), &[]),
         tool("read_console", "Read what the page wrote to its console since it loaded, oldest first: console.log/info/warn/error/debug, \
              uncaught errors, failed promises and files that failed to load. Use it to check a page or app you're building.",
              json!({ "tab": tab_prop(), "level": { "type": "string", "enum": ["error", "warn", "info", "log", "debug"], "description": "Only this level (warn includes errors)" },
@@ -379,6 +380,27 @@ fn call_wait(proxy: &EventLoopProxy<UserEvent>, op: &str, args: Value, secs: u64
         .send_event(UserEvent::Mcp(McpRequest { op: op.into(), args, reply: tx }))
         .map_err(|_| "browser is shutting down".to_string())?;
     rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| "timed out waiting for the browser".to_string())?
+}
+
+/// Scrolls through the page once (images that load as they come into view do), back to where it was, with Valerie's
+/// own bits (find bar, toasts) hidden for the picture.
+const BEFORE_FULL_PAGE: &str = r#"
+const se = document.scrollingElement || document.documentElement, x0 = scrollX, y0 = scrollY;
+const go = (y) => scrollTo({ left: x0, top: y, behavior: "instant" }), wait = (ms) => new Promise((r) => setTimeout(r, ms));
+return (async () => {
+  for (let y = 0, n = 0; y < se.scrollHeight && n < 60; y += innerHeight * 0.85, n++) { go(y); await wait(90); }
+  go(se.scrollHeight); await wait(250); go(y0); await wait(150);
+  document.querySelectorAll("valerie-ui").forEach((e) => (e.style.visibility = "hidden"));
+  return true;
+})();"#;
+
+/// The whole page as a PNG, top to bottom.
+pub fn full_page(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>) -> Result<Vec<u8>, String> {
+    let _ = eval(proxy, tab, BEFORE_FULL_PAGE);
+    let shot = call_wait(proxy, "screenshot", json!({ "tab": tab, "full_page": true }), 60);
+    let _ = eval(proxy, tab, r#"document.querySelectorAll("valerie-ui").forEach((e) => (e.style.visibility = "")); return true;"#);
+    let b64 = shot?["__image_png"].as_str().map(str::to_string).ok_or("no picture came back")?;
+    unbase64(&b64).ok_or_else(|| "the picture came back damaged".to_string())
 }
 
 /// Evaluate a function body in a tab, awaiting promises.
@@ -585,6 +607,9 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         }
         "screenshot" => {
             let tab = wait_ready(proxy, tab)?;
+            if a["full_page"].as_bool() == Some(true) {
+                return full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }));
+            }
             call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width") }))
         }
         "eval_js" => {
