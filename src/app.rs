@@ -4635,7 +4635,12 @@ impl App {
                 self.open_chats();
                 self.render_chat();
             }
-            Command::NewChat { prompt, agent, folder } => {
+            Command::NewChat { prompt, agent, folder, in_project } => {
+                // ⌘N in a coding chat: another chat on the same project.
+                let folder = folder.or_else(|| {
+                    let open = self.active_chat.as_ref().filter(|_| in_project && self.chats_open)?;
+                    self.chats.iter().find(|c| &c.id == open).map(|c| c.folder.clone()).filter(|f| !f.is_empty())
+                });
                 let name = match &agent {
                     Some(a) => self.config.agent_named(a).0,
                     None => self.config.agent_for("chat").0,
@@ -5982,7 +5987,7 @@ impl App {
                     self.run_task(&t.name);
                 }
             }
-            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None }, elwt),
+            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false }, elwt),
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
@@ -7244,7 +7249,7 @@ impl App {
         let view = tab.and_then(|t| self.views.get(&t.id));
         if a.mode == "chat" {
             if !prompt.contains("{selection}") {
-                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None }, elwt);
+                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false }, elwt);
             }
             let Some(v) = view else { return self.toast("Open a page and select some text first") };
             let p = self.proxy.clone();

@@ -543,6 +543,7 @@ keybindings:
   "CmdOrCtrl+Shift+V": paste_and_go
   "CmdOrCtrl+P": print
   "CmdOrCtrl+J": open_chats
+  "CmdOrCtrl+N": { cmd: new_chat, in_project: true }   # a new chat; in a coding chat, on the same project
   "Ctrl+Backquote": toggle_terminal   # the terminal panel (Ctrl+` like VS Code)
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config

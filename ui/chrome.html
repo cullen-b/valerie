@@ -605,6 +605,7 @@ function chatRow(c) {
 const chatFolds = { snoozed: true, settled: true };
 function renderChatList(sc) {
   const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New chat"));
+  nt.title = "New chat (⌘N starts one on the open chat's project)";
   nt.onclick = () => cmd({ cmd: "new_chat" }); sc.append(nt);
   const list = S.chats.list || [];
   const working = list.filter((c) => c.running), rest = list.filter((c) => !c.running);

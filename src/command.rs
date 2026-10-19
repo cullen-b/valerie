@@ -268,6 +268,9 @@ pub enum Command {
         /// A project folder for the agent to work in.
         #[serde(default)]
         folder: Option<String>,
+        /// In Chats, start it in the open chat's project folder (when it has one and `folder` isn't given).
+        #[serde(default)]
+        in_project: bool,
     },
     /// The project folder a chat's agent works in ("" = none), before its first message.
     SetChatFolder {
@@ -751,7 +754,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("copy_text", "{ text }"),
     ("new_terminal", "{ folder? }  (a shell in the terminal panel; default: the open coding chat's project)"),
     ("open_terminal", "{ chat? }  (the terminal panel on a coding chat's project)"),
-    ("new_chat", "{ prompt?, agent? }  (ask an agent something in a new chat; it can see and use the browser)"),
+    ("new_chat", "{ prompt?, agent?, folder?, in_project? }  (ask an agent something in a new chat; it can see and use the browser)"),
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),
     ("close_chat", "{ chat? }"),
