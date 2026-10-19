@@ -176,6 +176,9 @@ body.pointer .chat-label.fold:hover { color: var(--fg); }
   background: linear-gradient(color-mix(in srgb, var(--bg2) 92%, transparent), var(--bg2)); backdrop-filter: blur(8px); }
 body.pointer .row.chat:hover .when { display: none; }
 .sp.chats-sp { color: var(--accent); }
+.row.closed-chat .title, .row.closed-chat .chat-ic { opacity: .6; }
+.row.closed-chat:hover .title { opacity: 1; }
+.row.closed-chat .when.proj { max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; }
 body.size-compact .chat-label, body.size-compact .row.chat .when { display: none; }
 /* icons-only sidebar: pinned tabs tucked into one folder tile that opens a column on hover */
 .pinfolder .mini { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; }
@@ -602,7 +605,17 @@ function chatRow(c) {
   return r;
 }
 // Pinned, then your chats; Snoozed and Settled fold away; chats whose agent is working sit on a shelf at the bottom.
-const chatFolds = { snoozed: true, settled: true };
+const chatFolds = { snoozed: true, settled: true, closed: true };
+// A chat you closed: click it to bring it back.
+function closedRow(c) {
+  const r = el("div", "row chat closed-chat");
+  r.append(el("div", "chat-ic", "✦"), el("div", "title", c.title));
+  if (c.folder) r.append(el("div", "when proj", c.folder.replace(/\/+$/, "").split("/").pop()));
+  r.append(el("div", "when", ago(c.closed)));
+  r.title = "Closed " + ago(c.closed) + " ago · " + c.agent + (c.folder ? " · " + c.folder : "") + "\nClick to open it again";
+  r.onclick = () => cmd({ cmd: "reopen_chat", chat: c.id });
+  return r;
+}
 function renderChatList(sc) {
   const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New chat"));
   nt.title = "New chat (⌘N starts one on the open chat's project)";
@@ -633,6 +646,14 @@ function renderChatList(sc) {
     if (!chatFolds[key]) items.forEach((c) => into.append(chatRow(c)));
   };
   fold(sc, "settled", "Settled", settled);
+  const closed = S.chats.closed || [];
+  if (closed.length) {
+    const h = el("div", "chat-label fold" + (chatFolds.closed ? " closed" : ""), `Closed · ${closed.length}`);
+    h.title = "Chats you've closed: open one to pick it up again";
+    h.onclick = () => { chatFolds.closed = !chatFolds.closed; render(S); };
+    sc.append(h);
+    if (!chatFolds.closed) closed.forEach((c) => sc.append(closedRow(c)));
+  }
   if (!list.length) sc.append(el("div", "kept-hint", "Ask anything: your agent can see and use your browser"));
   // Snoozed and Working live at the bottom of the sidebar.
   if (working.length || snoozed.length) {
