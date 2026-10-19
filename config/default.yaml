@@ -47,7 +47,7 @@ layout:
   split_gap: 2             # pixels between split-view panes
   split_focus: border      # how the focused split-view pane is shown. one of: border | dim (others fade) | both | none
   pinned_style: icons      # how pinned tabs look. one of: icons (Arc-style tiles) | list
-  animation_ms: 180        # sidebar / space transition length; 0 = instant
+  animation_ms: 180        # sidebar / space transition length, and the fade between spaces' themes; 0 = instant
   top_bar_height: 40       # height of the tab bar when tab_bar is top, pixels
   font: ""                 # font for Valerie's own sidebar, command bar and windows (a CSS font family, e.g.
                            # "Georgia" or "Comic Sans MS"); empty = the system font
