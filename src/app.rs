@@ -6755,6 +6755,16 @@ impl App {
         (self.chats_open || self.chat_float) && self.active_chat.as_deref() == Some(chat)
     }
 
+    /// The effort to ask for, if the model has it: models say which levels they take (OpenCode's DeepSeek has no
+    /// "medium"), and asking for one it lacks fails the turn, so the model's own default is used instead.
+    fn supported_effort(&self, cli: &str, model: &str, effort: &str) -> String {
+        let has = self.found_models.get(cli).and_then(|l| l.iter().find(|m| m["id"] == json!(model))).and_then(|m| m["efforts"].as_array());
+        match has {
+            Some(levels) if !levels.iter().any(|l| l == effort) => String::new(),
+            _ => effort.to_string(),
+        }
+    }
+
     /// Model names to offer, by agent name (its CLI's own list plus agents.models), with the model and effort it uses
     /// when none is picked: Valerie's setting, else the CLI's own.
     fn agent_models(&self) -> serde_json::Map<String, Value> {
@@ -7032,7 +7042,7 @@ impl App {
         let opts = crate::ai::Opts {
             access: if c.access.is_empty() { self.config.chats.access.clone() } else { c.access.clone() },
             chat: c.id.clone(),
-            effort: if c.effort.is_empty() { self.config.chats.effort.clone() } else { c.effort.clone() },
+            effort: self.supported_effort(&def.cli, &def.model, if c.effort.is_empty() { &self.config.chats.effort } else { &c.effort }),
             plan: c.plan,
             own_tools: self.config.chats.own_tools,
             images: files.iter().filter(|f| is_image(f)).map(PathBuf::from).collect(),
@@ -8634,8 +8644,21 @@ impl App {
                     .collect();
                 found.push(("cursor", m));
             }
-            // OpenCode: "provider/model", grouped by provider
-            if let Some(text) = run("opencode", &["models"]) {
+            // OpenCode 2: its own server lists every model with the effort levels ("variants") that model has, e.g.
+            // low / high / max, or none / thinking. Older OpenCode: just "provider/model" lines.
+            let api = run("opencode", &["api", "--standalone", "GET", "/api/model"]).and_then(|t| serde_json::from_str::<Value>(&t).ok());
+            if let Some(list) = api.as_ref().and_then(|v| v["data"].as_array()) {
+                let m: Vec<Value> = list
+                    .iter()
+                    .filter(|m| m["enabled"].as_bool() != Some(false))
+                    .filter_map(|m| {
+                        let (p, id) = (m["providerID"].as_str()?, m["id"].as_str()?);
+                        let efforts: Vec<&str> = m["variants"].as_array().into_iter().flatten().filter_map(|v| v["id"].as_str()).collect();
+                        Some(json!({ "id": format!("{p}/{id}"), "label": m["name"].as_str().unwrap_or(id), "group": p, "efforts": efforts }))
+                    })
+                    .collect();
+                found.push(("opencode", m));
+            } else if let Some(text) = run("opencode", &["models"]) {
                 let m: Vec<Value> = text
                     .lines()
                     .filter_map(|l| l.trim().split_once('/').map(|(p, m)| json!({ "id": l.trim(), "label": m, "group": p })))
