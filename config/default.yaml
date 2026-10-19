@@ -308,7 +308,7 @@ chats:
   worktree_copy: [.env, .env.local, .env.development.local]   # files git doesn't track that are copied from the project
                            # into each new worktree, so it runs like the original
 
-# The terminal panel: shells at the bottom of the window, over pages and chats alike (Ctrl+` shows and hides it).
+# The terminal panel: shells at the bottom of the window, over pages and chats alike (Ctrl+' shows and hides it).
 # In a coding chat it opens in that chat's project (its worktree, if it has one).
 terminal_panel:
   enabled: true            # true | false
@@ -549,7 +549,7 @@ keybindings:
   "CmdOrCtrl+P": print
   "CmdOrCtrl+J": open_chats
   "CmdOrCtrl+N": { cmd: new_chat, in_project: true }   # a new chat; in a coding chat, on the same project
-  "Ctrl+Backquote": toggle_terminal   # the terminal panel (Ctrl+` like VS Code)
+  "Ctrl+Quote": toggle_terminal   # the terminal panel (Ctrl+')
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync

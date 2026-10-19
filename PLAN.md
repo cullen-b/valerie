@@ -177,7 +177,7 @@ Chats good enough to replace a separate coding-agent app (T3 Code, Conductor…)
 - [x] Pasted/dropped images go to the agent; file paths in answers open in the editor; Try Again on errors
 - [x] `read_console` so an agent can check the app it's building
 - [x] Several chats on one project at once: each coding chat gets its own git worktree (`chats.worktrees`: auto skips six-ten repos)
-- [x] Terminal panel (Ctrl+`): real shells (portable-pty + xterm.js), opens in the chat's project; `read_terminal`, `run_in_terminal`, Ask Agent
+- [x] Terminal panel (Ctrl+'): real shells (portable-pty + xterm.js), opens in the chat's project; `read_terminal`, `run_in_terminal`, Ask Agent
 - [ ] Slash commands and @file mentions in the composer
 
 ### Next up

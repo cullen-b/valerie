@@ -209,7 +209,7 @@ agent's work is shown, `chats.usage` the time and context line under answers, `c
 `chats.worktrees` (auto | always | never) gives each coding chat its own git worktree on a `valerie/<name>` branch, so
 several chats can change one project at once; auto skips repos six-ten manages. `chats.worktree_folder` is where they
 go and `chats.worktree_copy` the untracked files (like `.env`) copied in. Change-action prompts can use {{folder}},
-{{branch}} and {{base}}. The terminal panel (`toggle_terminal`, Ctrl+`; settings under `terminal_panel`) runs real shells
+{{branch}} and {{base}}. The terminal panel (`toggle_terminal`, Ctrl+'; settings under `terminal_panel`) runs real shells
 along the bottom of the window; in a coding chat it opens in that chat's project or worktree.
 A chat started from a space floats in the middle of the window (`chats.from_space`: float | chats): Esc sends it on
 to Chats and the user stays in their space, Shift+Esc goes to Chats with it.

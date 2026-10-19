@@ -190,7 +190,7 @@ pub struct App {
     terminal_open: bool,
     /// The panel covers the whole content area instead of sharing it.
     terminal_max: bool,
-    /// The panel has the keyboard (so Ctrl+` hides it rather than focusing it).
+    /// The panel has the keyboard (so Ctrl+' hides it rather than focusing it).
     terminal_focused: bool,
     /// The panel's page has loaded (output waits until then).
     terminal_ready: bool,
@@ -9589,7 +9589,7 @@ impl App {
         }
     }
 
-    /// Ctrl+`: open the panel (on the open coding chat's project), focus it if it's open but not focused, else hide it.
+    /// Ctrl+': open the panel (on the open coding chat's project), focus it if it's open but not focused, else hide it.
     fn toggle_terminal(&mut self) {
         if self.terminal_open && self.terminal_focused {
             return self.hide_terminal();
