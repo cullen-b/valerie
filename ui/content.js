@@ -966,6 +966,13 @@ const inOurUi = (e) => e.composedPath && e.composedPath().some((n) => n.tagName 
 for (const ev of ["mousedown", "scroll", "blur"]) addEventListener(ev, (e) => { if (linkMenu && !inOurUi(e)) hideLinkMenu(); }, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideLinkMenu(); }, true);
 
+// ---------- ⌘Z (Ctrl+Z elsewhere) brings back the last closed tab when the page and its boxes don't use it ----------
+addEventListener("keydown", (e) => {
+  if (!e.isTrusted || e.defaultPrevented || !(cfg.tabs && cfg.tabs.undo_close) || e.shiftKey || e.altKey || e.code !== "KeyZ") return;
+  if (!(isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) || inOurUi(e) || editable(deepActive())) return;
+  e.preventDefault(); run("reopen_closed_tab");
+});
+
 // ---------- the pointer entering a page tells the sidebar to drop its hover states ----------
 if (document.documentElement) document.documentElement.addEventListener("mouseenter", () => post({ t: "pointer" }));
 
