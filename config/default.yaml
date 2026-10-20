@@ -114,6 +114,8 @@ sidebar:
   preload_delay_ms: 90     # how long the pointer rests before that, milliseconds
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
+  multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
+                           # right-click them to delete them together. Esc lets go. true | false
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank | plugin:<name> (that plugin's
                            # start.html, which can open sites and run the plugin's commands)

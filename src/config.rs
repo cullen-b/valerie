@@ -253,6 +253,7 @@ pub struct SidebarConfig {
     pub preload_delay_ms: f64,
     pub preload_at_most: f64,
     pub double_click_edge: bool,
+    pub multi_select: bool,
 }
 
 /// What modified clicks on links do; values are link actions (see config/default.yaml).

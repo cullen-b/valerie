@@ -83,6 +83,7 @@ body.pointer .row .x:hover { background: var(--hover); color: var(--fg); }
   font-size: 12px; font-weight: 700; line-height: 1; color: var(--fg); background: var(--active); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 body.pointer .tile:hover .x.minus { display: grid; } body.pointer .tile .x.minus:hover { background: var(--accent); color: #fff; }
 .row .audio { font-size: calc(var(--tab-font) * .85); color: var(--accent); }
+.row.picked, .tile.picked, body.pointer .row.picked:hover, body.pointer .tile.picked:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 .row.split::after { content: ""; position: absolute; left: 2px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
 img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .letter { display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--accent); color: #fff; }
@@ -458,6 +459,40 @@ function preloadOnHover(node, t) {
   });
   node.addEventListener("mouseleave", () => clearTimeout(preloadTimer));
 }
+// sidebar.multi_select: shift-click picks a run of tabs and folders, ⌘-click (Ctrl) adds or drops one; right-click deletes them.
+// Keys are "t<id>" for tabs and "f<id>" for folders.
+let picked = new Set(), pickAnchor = null;
+function pickable(node, key) { node.dataset.pick = key; node.classList.toggle("picked", picked.has(key)); }
+// Visible pickable rows, top to bottom.
+const pickKeys = () => [...new Set([...document.querySelectorAll("[data-pick]:not(.ghost)")].filter((n) => n.getClientRects().length).map((n) => n.dataset.pick))];
+function showPicked() { document.querySelectorAll("[data-pick]").forEach((n) => n.classList.toggle("picked", picked.has(n.dataset.pick))); }
+// Returns true when the click picked something instead of its usual action.
+function pickClick(e, key) {
+  if (!S.sidebar.multi_select || !(e.shiftKey || e.metaKey || e.ctrlKey)) {
+    pickAnchor = key;
+    if (picked.size) { picked.clear(); showPicked(); }
+    return false;
+  }
+  const keys = pickKeys(), from = [pickAnchor, "t" + S.active].find((k) => k && keys.includes(k)) || key;
+  if (e.shiftKey) {
+    const a = keys.indexOf(from), b = keys.indexOf(key);
+    picked = new Set(keys.slice(Math.min(a, b), Math.max(a, b) + 1));
+  } else {
+    if (!picked.size) picked.add(from);
+    picked.has(key) ? picked.delete(key) : picked.add(key);
+    pickAnchor = key;
+  }
+  showPicked();
+  return true;
+}
+// Right-click on one of several picked rows: the menu for all of them. Elsewhere it lets them go.
+function pickMenu(e, key) {
+  if (picked.size < 2 || !picked.has(key)) { if (picked.size) { picked.clear(); showPicked(); } return false; }
+  const ks = [...picked], ids = (c) => ks.filter((k) => k[0] === c).map((k) => +k.slice(1));
+  send({ t: "selection_menu", tabs: ids("t"), folders: ids("f"), x: e.clientX, y: e.clientY });
+  return true;
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && picked.size) { picked.clear(); showPicked(); } });
 function tile(t, list, index) {
   const f = el("div", "tile" + (isActive(t) ? " active" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));
   f.append(icon(t)); f.title = t.title || t.url;
@@ -468,9 +503,10 @@ function tile(t, list, index) {
     x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
     f.append(x);
   }
-  f.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
+  f.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
   f.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
-  f.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
+  f.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "t" + t.id)) tabMenu(e, t); };
+  pickable(f, "t" + t.id);
   source(f, t.id, list, index);
   preloadOnHover(f, t);
   return f;
@@ -491,9 +527,10 @@ function tabRow(t, list, index) {
   x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
   if (!(minus && !t.loaded)) r.append(x);
   r.title = t.url;
-  r.onclick = click(() => cmd({ cmd: "activate_tab", tab: t.id }));
+  r.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
   r.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
-  r.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
+  r.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "t" + t.id)) tabMenu(e, t); };
+  pickable(r, "t" + t.id);
   source(r, t.id, list, index);
   preloadOnHover(r, t);
   return r;
@@ -503,8 +540,9 @@ function folderEl(n, section = "pinned") {
   const r = el("div", "row");
   r.append(el("div", "chev", "▶"), el("div", "ficon", n.open ? "📂" : "📁"), el("div", "title", n.name));
   r.title = n.name;
-  r.onclick = click(() => cmd({ cmd: "toggle_folder", folder: n.id }));
-  r.oncontextmenu = (e) => { e.preventDefault(); folderMenu(e, n); };
+  r.onclick = click((e) => { if (!pickClick(e, "f" + n.id)) cmd({ cmd: "toggle_folder", folder: n.id }); });
+  r.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "f" + n.id)) folderMenu(e, n); };
+  pickable(r, "f" + n.id);
   r.classList.add("folder-row");
   zone(r, { kind: "into", payload: { section, folder: n.id } });
   const kids = el("div", "kids"), list = "folder:" + n.id;
@@ -860,6 +898,7 @@ function render(state) {
   renderNowPlaying();
   renderTop();
   keepDrag();
+  if (picked.size) { const live = new Set(pickKeys()); picked = new Set([...picked].filter((k) => live.has(k))); showPicked(); }
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }
 
