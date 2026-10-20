@@ -4268,7 +4268,8 @@ impl App {
                     let space = c.space.min(self.state.spaces.len() - 1);
                     let id = c.tab.id;
                     self.state.tabs.insert(id, c.tab);
-                    self.state.spaces[space].today.insert(0, id);
+                    let today = &mut self.state.spaces[space].today;
+                    if self.config.tabs.new_tab_position == "bottom" { today.push(id) } else { today.insert(0, id) }
                     self.activate(id);
                 }
             }

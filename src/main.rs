@@ -111,6 +111,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !(4.0..=60.0).contains(&c.terminal_panel.font_size) {
                 problems.push(format!("terminal_panel: font_size is {}; use 4 to 60 (pixels)", c.terminal_panel.font_size));
             }
+            if !["top", "bottom"].contains(&c.tabs.new_tab_position.as_str()) {
+                problems.push(format!("tabs: new_tab_position is {:?}; use top or bottom", c.tabs.new_tab_position));
+            }
             if !["here", "editor"].contains(&c.pages.markdown_edit.as_str()) {
                 problems.push(format!("pages: markdown_edit is {:?}; use here or editor", c.pages.markdown_edit));
             }
