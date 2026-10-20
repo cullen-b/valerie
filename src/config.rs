@@ -324,6 +324,7 @@ pub struct TabsConfig {
     pub new_tab_position: String,
     pub autoplay_in_background: bool,
     pub picture_in_picture_on_leave: bool,
+    pub undo_close: bool,
     pub zoom: String,
     pub default_zoom: f64,
     pub zoom_step: f64,

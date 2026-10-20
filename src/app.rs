@@ -1341,7 +1341,7 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave }, "reader": self.config.reader_view,
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
             "sites": self.config.sites, "mouse": self.config.mouse, "plugin_contexts": self.plugin_contexts(),
@@ -2260,6 +2260,7 @@ impl App {
             "start_html": self.config.start_page.strip_prefix("plugin:").and_then(|n| self.plugins.iter().find(|p| p.name == n.trim() && p.manifest.enabled)).map(|p| p.start_html.clone()),
             "widgets": self.widgets_vm(),
             "mouse": self.config.mouse,
+            "undo_close": self.config.tabs.undo_close,
             "vibrancy": self.config.window.vibrancy,
             "toast_seconds": self.config.toast_seconds,
             "chats": {

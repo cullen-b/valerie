@@ -1104,6 +1104,15 @@ addEventListener("keydown", (e) => {
   vimBuf = "";
 });
 
+// ⌘Z (Ctrl+Z elsewhere) outside a text box brings back the last closed tab.
+addEventListener("keydown", (e) => {
+  if (!S || !S.undo_close || e.defaultPrevented || e.shiftKey || e.altKey || e.code !== "KeyZ") return;
+  if (!(/Mac/.test(navigator.platform) ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
+  const a = document.activeElement;
+  if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
+  e.preventDefault(); cmd({ cmd: "reopen_closed_tab" });
+});
+
 // Hover effects only while the pointer is over the sidebar: it can't see the pointer leave onto a page.
 addEventListener("mousemove", () => document.body.classList.add("pointer"), { passive: true });
 document.documentElement.addEventListener("mouseleave", () => { document.body.classList.remove("pointer"); closeFly(); });
