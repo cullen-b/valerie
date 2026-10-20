@@ -2828,6 +2828,21 @@ impl App {
         }
     }
 
+    /// Right-click on tabs and folders picked together (shift-click, ⌘-click).
+    fn selection_menu(&mut self, tabs: Vec<TabId>, folders: Vec<TabId>, x: f64, y: f64) {
+        let n = tabs.len() + folders.len();
+        let label = match (tabs.len(), folders.len()) {
+            (_, 0) => format!("Delete {n} Tabs"),
+            (0, _) => format!("Delete {n} Folders and Their Tabs"),
+            _ => format!("Delete {n} Items"),
+        };
+        let mut e = vec![Some((label, json!({ "cmd": "delete_items", "tabs": tabs, "folders": folders })))];
+        if tabs.is_empty() {
+            e.push(Some((format!("Delete {n} Folders (keep tabs)"), json!({ "cmd": "delete_items", "folders": folders, "keep_tabs": true }))));
+        }
+        self.popup(e, x, y);
+    }
+
     fn folder_menu(&mut self, folder: TabId, x: f64, y: f64) {
         let name = match self.state.folder_mut(folder) {
             Some(Node::Folder { name, .. }) => name.clone(),
@@ -4360,6 +4375,34 @@ impl App {
                 self.dirty = true;
                 self.render();
             }
+            Command::DeleteItems { mut tabs, folders, keep_tabs } => {
+                for f in folders {
+                    if let Some(Node::Folder { children, .. }) = self.state.folder_mut(f).filter(|_| !keep_tabs) {
+                        tabs.extend(crate::state::flat_ids(children));
+                    }
+                    self.state.delete_folder(f);
+                }
+                for t in tabs {
+                    if !self.state.tabs.contains_key(&t) {
+                        continue;
+                    }
+                    self.queue_event("tab_closed", Some(t), None);
+                    let views = &self.views;
+                    self.state.close_tab(t, |v| views.contains_key(&v));
+                    self.views.remove(&t);
+                }
+                let split = &mut self.state.space_mut().split;
+                if split.len() < 2 {
+                    split.clear();
+                }
+                self.dirty = true;
+                if let Some(n) = self.state.space().active {
+                    return self.activate(n);
+                }
+                self.layout();
+                self.focus_active();
+                self.render();
+            }
             Command::ClearTodayTabs => {
                 let today = self.state.space().today.clone();
                 for id in today {
@@ -5423,6 +5466,10 @@ impl App {
                 if let Some(i) = m["space"].as_u64() {
                     self.space_menu(i as usize, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
                 }
+            }
+            (Source::Chrome, "selection_menu") => {
+                let ids = |k: &str| m[k].as_array().map(|a| a.iter().filter_map(|v| v.as_u64()).collect()).unwrap_or_default();
+                self.selection_menu(ids("tabs"), ids("folders"), m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
             }
             (Source::Chrome, "folder_menu") => {
                 if let Some(f) = m["folder"].as_u64() {

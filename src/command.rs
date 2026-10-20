@@ -96,6 +96,16 @@ pub enum Command {
     DeleteFolder {
         folder: TabId,
     },
+    /// Remove these tabs from the sidebar for good (pinned ones too) and these folders with everything in them.
+    DeleteItems {
+        #[serde(default)]
+        tabs: Vec<TabId>,
+        #[serde(default)]
+        folders: Vec<TabId>,
+        /// Leave the folders' tabs in the sidebar instead.
+        #[serde(default)]
+        keep_tabs: bool,
+    },
     ClearTodayTabs,
     RestoreArchived {
         index: usize,
@@ -754,6 +764,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("reset_pinned_url", "{ tab? }  (go back to the tab's pinned page)"),
     ("rename_tab", "{ tab, title }"),
     ("new_folder", "{ name?, section?: kept | pinned }"),
+    ("delete_items", "{ tabs?: [tab], folders?: [folder], keep_tabs? }  (closes the tabs for good, pinned ones too; folders go with their tabs unless keep_tabs)"),
     ("switch_space", "{ index? | name? }"),
     ("new_space", "{ name? }"),
     ("rename_space", "{ name, space? }"),
