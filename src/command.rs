@@ -68,6 +68,20 @@ pub enum Command {
         #[serde(default)]
         index: Option<usize>,
     },
+    /// Move tabs and folders together (ids of either), in order: like move_tab, for a group dragged in the sidebar.
+    MoveItems {
+        ids: Vec<TabId>,
+        #[serde(default)]
+        section: Option<String>,
+        #[serde(default)]
+        favorite: bool,
+        #[serde(default)]
+        space: Option<String>,
+        #[serde(default)]
+        folder: Option<TabId>,
+        #[serde(default)]
+        index: Option<usize>,
+    },
     RenameTab {
         tab: TabId,
         title: String,
@@ -758,6 +772,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("toggle_pin", "{ tab? }"),
     ("toggle_favorite", "{ tab? }"),
     ("move_tab", "{ tab, section?: pinned | kept | today, space?, folder?, index?, favorite? }"),
+    ("move_items", "{ ids: [tab or folder], section?: pinned | kept | today, space?, folder?, index?, favorite? }  (moves them together, in order; folders bring their tabs)"),
     ("toggle_keep", "{ tab? }"),
     ("copy_url", "{ tab? }"),
     ("set_pinned_url", "{ tab? }  (a pinned/kept/favorite tab's home becomes its current page)"),

@@ -199,6 +199,8 @@ body.size-compact .chat-label, body.size-compact .row.chat .when { display: none
 .dragging-src { background: color-mix(in srgb, var(--accent) 14%, transparent) !important; border-radius: 10px; }
 .dragging-src > * { opacity: 0; }
 .ghost { transition: none; }
+.ghost .count { position: absolute; right: -6px; top: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); opacity: 1; }
 body.dragging, body.dragging * { cursor: grabbing !important; }
 .drop-before::before, .drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--accent); z-index: 2; }
 .drop-before::before { top: -1px; }
@@ -323,9 +325,17 @@ function source(node, id, list, index) {
   node.dataset.tab = id;
   node.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || e.target.closest(".x, .audio")) return;
-    drag = { id, list, index, node, space: S.active_space, x: e.clientX, y: e.clientY, active: false };
+    drag = { id, list, index, node, space: S.active_space, x: e.clientX, y: e.clientY, active: false, group: pickGroup("t" + id) };
   });
 }
+// Picked tabs and folders (sidebar.multi_select) drag together, in the order they're shown.
+function pickGroup(key) { return picked.size > 1 && picked.has(key) ? pickKeys().filter((k) => picked.has(k)) : null; }
+// The tab itself, or for a group any of its tabs or a folder in it.
+function dragsOwn(d, t) {
+  if (!d.group) return t.payload.tab === d.id;
+  return d.group.includes("t" + t.payload.tab) || d.group.includes("f" + t.payload.folder);
+}
+function markGroup(d) { document.querySelectorAll("[data-pick]:not(.ghost)").forEach((n) => n.classList.toggle("dragging-src", d.group.includes(n.dataset.pick))); }
 function zone(node, z) { node.dataset.drop = "1"; node._drop = z; }
 function clearIndicators() { document.querySelectorAll(".drop-before,.drop-after,.drop-into").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-into")); }
 function locate(x, y) {
@@ -378,8 +388,8 @@ function dragMove(x, y) {
   }
   // Over the tab itself, or a gap in the list it's already sliding through: it stays where it is.
   const inGap = t && drag.live && t.cls === "drop-into" && t.node.contains(drag.node);
-  if (!t || t.payload.tab === drag.id || inGap) { drag.target = drag.live || null; return; }
-  if (liveMove(t)) { drag.live = t; drag.target = t; return; }
+  if (!t || dragsOwn(drag, t) || inGap) { drag.target = drag.live || null; return; }
+  if (!drag.group && liveMove(t)) { drag.live = t; drag.target = t; return; }
   drag.target = t; t.node.classList.add(t.cls);
 }
 // Near the top or bottom of the list, scroll it.
@@ -403,8 +413,9 @@ document.addEventListener("mousemove", (e) => {
     drag.dx = e.clientX - r.left; drag.dy = e.clientY - r.top;
     const g = drag.node.cloneNode(true); g.classList.add("ghost"); g.classList.remove("active", "drop-before", "drop-after", "dragging-src");
     g.style.width = r.width + "px"; g.style.height = r.height + "px";
+    if (drag.group) { g.classList.remove("picked"); g.append(el("div", "count", String(drag.group.length))); }
     document.body.append(g); drag.ghost = g;
-    drag.node.classList.add("dragging-src"); document.body.classList.add("dragging"); hideMenu(); clearTimeout(preloadTimer);
+    drag.node.classList.add("dragging-src"); if (drag.group) markGroup(drag); document.body.classList.add("dragging"); hideMenu(); clearTimeout(preloadTimer);
   }
   dragMove(e.clientX, e.clientY);
   autoScroll(e.clientY);
@@ -418,14 +429,19 @@ function endDrag(drop) {
   const t = drop ? d.target : null;
   // The ghost settles where the tab now sits; without a move it goes back.
   const home = d.node.isConnected ? d.node.getBoundingClientRect() : null;
-  const settle = () => { d.ghost.remove(); d.node.classList.remove("dragging-src"); };
+  const settle = () => { d.ghost.remove(); document.querySelectorAll(".dragging-src").forEach((n) => n.classList.remove("dragging-src")); };
   if (home && (t === d.live || !t)) {
     d.ghost.style.transition = "transform 140ms cubic-bezier(.2,.8,.2,1)";
     d.ghost.style.transform = `translate(${home.left}px, ${home.top}px)`;
     setTimeout(settle, 140);
   } else settle();
-  if (!t || t.payload.tab === d.id) { if (!drop || !t) S && render(S); return; }
+  if (!t || dragsOwn(d, t)) { if (!drop || !t) S && render(S); return; }
   const { tab: _target, ...p } = t.payload;
+  if (d.group) {
+    if (t.index != null) p.index = t.index;
+    if (p.space == null && !p.favorite) p.space = S.spaces[S.active_space].name;
+    return cmd({ cmd: "move_items", ids: d.group.map((k) => +k.slice(1)), ...p });
+  }
   if (t.index != null) {
     // Removing the tab first shifts later positions in the same list up by one.
     const same = t.list === d.list && d.space === S.active_space;
@@ -441,7 +457,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && drag && 
 // After the sidebar is drawn again mid-drag (a space switch, a title changing), pick the dragged tab up again.
 function keepDrag() {
   if (!drag || !drag.active) return;
-  const n = document.querySelector(`[data-tab="${drag.id}"]:not(.ghost)`);
+  if (drag.group) markGroup(drag);
+  const n = drag.id == null ? document.querySelector(`[data-pick="${drag.key}"]:not(.ghost)`) : document.querySelector(`[data-tab="${drag.id}"]:not(.ghost)`);
   drag.live = null;
   if (n) { n.classList.add("dragging-src"); drag.node = n; }
   else drag.node = drag.ghost; // dragged into another space: nothing to hold its place yet
@@ -543,6 +560,10 @@ function folderEl(n, section = "pinned") {
   r.onclick = click((e) => { if (!pickClick(e, "f" + n.id)) cmd({ cmd: "toggle_folder", folder: n.id }); });
   r.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "f" + n.id)) folderMenu(e, n); };
   pickable(r, "f" + n.id);
+  r.addEventListener("mousedown", (e) => {
+    const group = e.button === 0 && pickGroup("f" + n.id);
+    if (group) drag = { id: null, key: "f" + n.id, node: r, space: S.active_space, x: e.clientX, y: e.clientY, active: false, group };
+  });
   r.classList.add("folder-row");
   zone(r, { kind: "into", payload: { section, folder: n.id } });
   const kids = el("div", "kids"), list = "folder:" + n.id;

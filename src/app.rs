@@ -2522,6 +2522,36 @@ impl App {
         self.dirty = true;
     }
 
+    /// Tabs and folders moved together (see State::move_items); like move_tab for the active tab and loaded pages.
+    fn move_items(&mut self, ids: &[TabId], space: Option<String>, folder: Option<TabId>, section: Option<String>, favorite: bool, index: Option<usize>) {
+        let dest = space.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+        let actives: Vec<Option<TabId>> = self.state.spaces.iter().map(|s| s.active).collect();
+        let moved = self.state.move_items(ids, dest, folder, section.as_deref(), favorite, index);
+        for (i, a) in actives.into_iter().enumerate() {
+            let Some(a) = a.filter(|a| moved.iter().any(|m| m.0 == *a)) else { continue };
+            let here = self.state.space_of(a);
+            if here == Some(i) || (here.is_none() && i == self.state.active_space) {
+                self.state.spaces[i].active = Some(a);
+            } else {
+                // It left this space: its view must be moved to the new space's profile, so drop it.
+                self.unload(a);
+                self.state.spaces[i].active = self.state.order(i, true).first().copied();
+                self.toast(&format!("Moved to {}", self.state.spaces[dest].name));
+            }
+        }
+        for (t, from) in moved {
+            if self.state.space_of(t).is_some_and(|to| from != Some(to)) {
+                self.unload(t);
+            }
+        }
+        for p in self.panes() {
+            self.ensure_view(p);
+        }
+        self.layout();
+        self.render();
+        self.dirty = true;
+    }
+
     // ---------------------------------------------------------------- command bar
 
     fn open_bar(&mut self, mode: BarMode) {
@@ -4319,6 +4349,7 @@ impl App {
                 let section = section.or_else(|| pinned.map(|p| if p { "pinned".to_string() } else { "today".to_string() }));
                 self.move_tab(tab, space, folder, section, index)
             }
+            Command::MoveItems { ids, section, favorite, space, folder, index } => self.move_items(&ids, space, folder, section, favorite, index),
             Command::RenameTab { tab, title } => {
                 if let Some(t) = self.state.tabs.get_mut(&tab) {
                     t.custom_title = Some(title).filter(|s| !s.trim().is_empty());
