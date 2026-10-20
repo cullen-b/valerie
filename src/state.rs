@@ -248,6 +248,27 @@ fn walk(nodes: &[Node], out: &mut Vec<TabId>, only_open: bool) {
     }
 }
 
+/// Every id in a tree: tabs and folders.
+fn all_ids(nodes: &[Node]) -> Vec<TabId> {
+    let mut out = Vec::new();
+    for n in nodes {
+        match n {
+            Node::Tab { id } => out.push(*id),
+            Node::Folder { id, children, .. } => {
+                out.push(*id);
+                out.extend(all_ids(children));
+            }
+        }
+    }
+    out
+}
+
+fn node_id(n: &Node) -> TabId {
+    match n {
+        Node::Tab { id } | Node::Folder { id, .. } => *id,
+    }
+}
+
 fn remove_from(nodes: &mut Vec<Node>, tab: TabId) -> bool {
     if let Some(i) = nodes.iter().position(|n| matches!(n, Node::Tab { id } if *id == tab)) {
         nodes.remove(i);
@@ -543,6 +564,120 @@ impl State {
                 return;
             }
         }
+    }
+
+    /// The space and section ("pinned" or "kept") holding a folder.
+    fn folder_place(&self, folder: TabId) -> Option<(usize, &'static str)> {
+        self.spaces.iter().enumerate().find_map(|(i, s)| {
+            if all_ids(&s.pinned).contains(&folder) {
+                Some((i, "pinned"))
+            } else if all_ids(&s.kept).contains(&folder) {
+                Some((i, "kept"))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Move tabs and folders together, in the order given, into space `dest`: into `folder`, or `section` (pinned |
+    /// kept | today), or favorites. `index` is a position in that list as it is now. Without a section or folder each
+    /// item keeps the kind of section it was in. Folders take what's in them along, and can't go into today,
+    /// favorites or themselves. Returns every tab that moved with the space it came from.
+    pub fn move_items(&mut self, ids: &[TabId], dest: usize, folder: Option<TabId>, section: Option<&str>, favorite: bool, index: Option<usize>) -> Vec<(TabId, Option<usize>)> {
+        let mut inside: BTreeMap<TabId, Vec<TabId>> = BTreeMap::new();
+        for &id in ids {
+            if let Some(Node::Folder { children, .. }) = self.folder_mut(id) {
+                let v = all_ids(children);
+                inside.insert(id, v);
+            }
+        }
+        let sp = &mut self.spaces[dest];
+        let folder = folder.filter(|f| find_folder(&mut sp.pinned, *f).or_else(|| find_folder(&mut sp.kept, *f)).is_some());
+        let to_fixed = if favorite { Some("favorites") } else if folder.is_some() { Some("folder") } else { section };
+        let mut items: Vec<(TabId, &'static str, Option<usize>)> = Vec::new();
+        for &id in ids {
+            if items.iter().any(|i| i.0 == id) || inside.values().any(|v| v.contains(&id)) {
+                continue;
+            }
+            match inside.get(&id) {
+                Some(v) => {
+                    if matches!(to_fixed, Some("favorites" | "today")) || folder.is_some_and(|f| f == id || v.contains(&f)) {
+                        continue;
+                    }
+                    let Some((from, kind)) = self.folder_place(id) else { continue };
+                    items.push((id, kind, Some(from)));
+                }
+                None if self.tabs.contains_key(&id) => {
+                    let kind = match self.section_of(id) {
+                        Some(k @ ("pinned" | "kept")) => k,
+                        _ => "today",
+                    };
+                    items.push((id, kind, self.space_of(id)));
+                }
+                None => {}
+            }
+        }
+        // Where the group lands: before the first item at `index` that isn't moving.
+        let sp = &mut self.spaces[dest];
+        let list: Vec<TabId> = match (to_fixed, folder) {
+            (_, Some(f)) => match find_folder(&mut sp.pinned, f).or_else(|| find_folder(&mut sp.kept, f)) {
+                Some(Node::Folder { children, .. }) => children.iter().map(node_id).collect(),
+                _ => vec![],
+            },
+            (Some("favorites"), _) => self.favorites.clone(),
+            (Some("pinned"), _) => sp.pinned.iter().map(node_id).collect(),
+            (Some("kept"), _) => sp.kept.iter().map(node_id).collect(),
+            _ => sp.today.clone(),
+        };
+        let anchor = index.and_then(|i| list.get(i..)).and_then(|rest| rest.iter().copied().find(|id| !items.iter().any(|m| m.0 == *id)));
+        let mut moved = Vec::new();
+        let mut nodes = Vec::new();
+        for &(id, _, from) in &items {
+            if let Some(v) = inside.get(&id) {
+                moved.extend(v.iter().copied().filter(|t| self.tabs.contains_key(t)).map(|t| (t, from)));
+                let taken = self.spaces.iter_mut().find_map(|s| take_folder(&mut s.pinned, id).or_else(|| take_folder(&mut s.kept, id)));
+                nodes.push(taken);
+            } else {
+                moved.push((id, from));
+                self.detach(id);
+                nodes.push(Some(Node::Tab { id }));
+            }
+        }
+        let mut cursor: BTreeMap<&str, usize> = BTreeMap::new();
+        for ((id, kind, _), node) in items.iter().zip(nodes) {
+            let Some(node) = node else { continue };
+            let to = to_fixed.filter(|t| matches!(*t, "favorites" | "folder" | "pinned" | "kept")).unwrap_or(if to_fixed.is_some() { "today" } else { kind });
+            let start = |list: Vec<TabId>| {
+                let end = if index.is_some() || to != "today" { list.len() } else { 0 };
+                anchor.and_then(|a| list.iter().position(|x| *x == a)).unwrap_or(end)
+            };
+            let sp = &mut self.spaces[dest];
+            match to {
+                "favorites" | "today" => {
+                    let list = if to == "favorites" { &mut self.favorites } else { &mut sp.today };
+                    let c = cursor.entry(to).or_insert_with(|| start(list.clone()));
+                    list.insert(*c, *id);
+                    *c += 1;
+                }
+                _ => {
+                    let list = match folder.filter(|_| to == "folder") {
+                        Some(f) => match find_folder(&mut sp.pinned, f).or_else(|| find_folder(&mut sp.kept, f)) {
+                            Some(Node::Folder { children, open, .. }) => {
+                                *open = true;
+                                children
+                            }
+                            _ => continue,
+                        },
+                        None if to == "pinned" => &mut sp.pinned,
+                        None => &mut sp.kept,
+                    };
+                    let c = cursor.entry(to).or_insert_with(|| start(list.iter().map(node_id).collect()));
+                    list.insert(*c, node);
+                    *c += 1;
+                }
+            }
+        }
+        moved
     }
 
     pub fn record_visit(&mut self, url: &str, title: &str) {
@@ -961,5 +1096,29 @@ mod tests {
         assert_eq!(s.order(0, false), vec![a]);
         s.delete_folder(f);
         assert_eq!(s.order(0, true), vec![a]);
+    }
+
+    #[test]
+    fn move_items_keeps_order_and_folders_carry_their_tabs() {
+        let mut s = state();
+        let [a, b, c, d] = ["a", "b", "c", "d"].map(|u| s.add_tab(0, &format!("https://{u}"), false));
+        let f = s.new_id();
+        s.spaces[0].kept.push(Node::Folder { id: f, name: "F".into(), open: true, children: vec![Node::Tab { id: d }] });
+        s.spaces[0].today.retain(|t| *t != d);
+        // c, the folder and d (inside it, so it stays there) go to the pinned list, in that order.
+        let moved = s.move_items(&[c, f, d], 0, None, Some("pinned"), false, None);
+        assert_eq!(moved.iter().map(|m| m.0).collect::<Vec<_>>(), vec![c, d]);
+        assert_eq!(s.spaces[0].pinned.iter().map(node_id).collect::<Vec<_>>(), vec![c, f]);
+        assert!(s.spaces[0].kept.is_empty() && s.section_of(d) == Some("pinned"));
+        // Dropped above a (index 0 of today): b and c land there, before a; a folder can't go to today.
+        s.move_items(&[f, b, c], 0, None, Some("today"), false, Some(0));
+        assert_eq!(s.spaces[0].today, vec![b, c, a]);
+        assert_eq!(s.spaces[0].pinned.iter().map(node_id).collect::<Vec<_>>(), vec![f]);
+        // Dropped just below b (index 1, which is c, itself moving): before a.
+        s.move_items(&[a, c], 0, None, Some("today"), false, Some(1));
+        assert_eq!(s.spaces[0].today, vec![b, a, c]);
+        // Into the folder, but not the folder into itself.
+        s.move_items(&[f, a], 0, Some(f), None, false, None);
+        assert_eq!(flat_ids(&s.spaces[0].pinned), vec![d, a]);
     }
 }
