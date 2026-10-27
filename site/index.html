@@ -149,6 +149,21 @@ button.tag { cursor: pointer; }
 .mbar { display: flex; justify-content: center; gap: 10px; }
 .mbar button { all: unset; cursor: pointer; padding: 9px 18px; border-radius: 99px; background: #2a2a33; font-size: 13.5px; font-weight: 600; }
 .mbar button.off, .mbar .leave { background: #dc2626; }
+/* pages the try-it buttons open: a map, a news site, a link from another app; and the reading-time plugin's tag */
+.map { height: 240px; margin-top: 26px; border-radius: 16px; display: grid; place-content: center; justify-items: center; text-align: center; gap: 2px;
+  background: linear-gradient(var(--rule) 1px, transparent 1px) 0 0 / 32px 32px, linear-gradient(90deg, var(--rule) 1px, transparent 1px) 0 0 / 32px 32px,
+  color-mix(in srgb, var(--accent) 10%, var(--page)); }
+.map .pin { font-size: 34px; } .map b { font-size: 22px; } .map small { color: var(--ink2); font: 12.5px ui-monospace, Menlo, monospace; }
+.ad { margin: 22px 0; padding: 26px 16px; max-height: 120px; overflow: hidden; border-radius: 10px; text-align: center; font-size: 13px; color: #6b5200;
+  background: repeating-linear-gradient(45deg, #fff4c2, #fff4c2 10px, #ffe98a 10px, #ffe98a 20px); transition: all .5s var(--ease); }
+.cookie { position: sticky; bottom: 14px; margin: 0 16px 14px; padding: 14px 16px; max-height: 200px; overflow: hidden; border-radius: 12px; display: flex; gap: 10px;
+  align-items: center; flex-wrap: wrap; font-size: 13.5px; background: var(--ink); color: var(--page); box-shadow: 0 10px 30px rgba(0,0,0,.25); transition: all .5s var(--ease); }
+.cookie span { flex: 1; min-width: 200px; }
+.cookie button { border: 0; padding: 7px 12px; border-radius: 8px; font-weight: 600; cursor: pointer; background: var(--page); color: var(--ink); }
+.cookie button.hit { outline: 3px solid var(--accent); }
+.ad.gone, .cookie.gone { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; margin-bottom: 0; }
+.rt { display: inline-block; margin-bottom: 14px; padding: 3px 10px; border-radius: 99px; font: 600 12px -apple-system, system-ui, sans-serif;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); animation: pgin .35s var(--ease); }
 
 /* ---------- the config file the AI edits ---------- */
 #yaml { position: absolute; right: 22px; bottom: 22px; width: 330px; z-index: 6; border-radius: 13px; overflow: hidden; background: #121118ee;
@@ -161,6 +176,18 @@ button.tag { cursor: pointer; }
 #yaml pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; max-height: 46vh; overflow-y: auto; }
 #yaml .add { display: block; margin: 0 -12px; padding: 0 12px; color: #6ee7a8; animation: flash .9s; } #yaml .cm { color: rgba(255,255,255,.4); }
 @keyframes flash { from { background: rgba(110,231,168,.3); } }
+#yaml .fn { color: #c4b5fd; } #yaml .code { color: rgba(232,231,239,.72); white-space: pre; }
+#yaml:has(.code) { width: 410px; } #yaml pre { overflow-x: auto; }
+/* what to do to see a change working */
+#try { padding: 10px 12px 12px; border-top: 1px solid rgba(255,255,255,.08); background: color-mix(in srgb, var(--accent) 16%, transparent);
+  font: 13px/1.5 -apple-system, system-ui, sans-serif; }
+#try[hidden] { display: none; }
+#try > b { display: block; color: var(--accent); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 3px; }
+#try p { margin: 0 0 8px; } #try p:last-child { margin: 0; }
+#try button { all: unset; cursor: pointer; display: table; margin-top: 6px; padding: 4px 11px; border-radius: 8px; background: var(--accent); color: #0d0c12; font-weight: 600; font-size: 12.5px; }
+#try button:hover { filter: brightness(1.12); }
+#try.pulse { animation: trypulse 1.6s var(--ease); } @keyframes trypulse { 0%, 35% { background: color-mix(in srgb, var(--accent) 48%, transparent); } }
+#toast kbd, #try kbd { border-color: rgba(255,255,255,.3); }
 
 /* ---------- a chat with an agent ---------- */
 #chat { position: absolute; top: 8px; right: 8px; bottom: 8px; width: 340px; z-index: 7; display: flex; flex-direction: column; border-radius: 14px;
@@ -200,7 +227,7 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
   .inner { padding: 36px 22px 60px; } .feats { grid-template-columns: 1fr; } .feat:nth-child(odd) { padding-right: 0; }
   .way { grid-template-columns: 1fr; gap: 8px; } .wx { grid-template-columns: repeat(3, 1fr); } .wx div:nth-child(n+4) { display: none; }
   body.top #url, body.top .drag { display: none; } #card2 { display: none; }
-  #chat, body.top #chat { left: 8px; right: 8px; top: auto; height: 60%; width: auto; } body.chatting #main { padding: 0 8px 8px; } #yaml { left: 12px; right: 12px; width: auto; }
+  #chat, body.top #chat { left: 8px; right: 8px; top: auto; height: 60%; width: auto; } body.chatting #main { padding: 0 8px 8px; } #yaml, #yaml:has(.code) { left: 12px; right: 12px; width: auto; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
@@ -339,10 +366,45 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
           <div class="wx"><div>Fri<b>23°</b>☀</div><div>Sat<b>21°</b>☂</div><div>Sun<b>19°</b>⛅</div><div>Mon<b>22°</b>☀</div><div>Tue<b>22°</b>☀</div></div>
         </div>
       </section>
+
+      <section class="pg" data-tab="map" data-title="Maps · Where am I?" data-url="maps.example.com/where-am-i" hidden>
+        <div class="inner">
+          <h2>Where am I?</h2>
+          <p class="sub">This site asked your browser where you are.</p>
+          <div class="map"><span class="pin">📍</span><b id="mapplace"></b><small id="mapcoords"></small></div>
+          <p class="fine">Answered by your new plugin, fake-location.</p>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="news" data-title="The Daily Tab" data-url="dailytab.news/today" hidden>
+        <div class="inner">
+          <h2>Local man has 400 tabs open, will read them “later”</h2>
+          <p class="sub">He has said this every day since 2019.</p>
+          <div class="ad" id="ad">Advertisement · 7 browser tricks tech companies hate</div>
+          <p>“Some of them are recipes,” he said, scrolling past a tab from March. “One is a fridge I might buy.” Experts say most people keep tabs open as a to-do list they never look at.</p>
+          <p>The tabs date back to a single afternoon in 2019, when he went looking for a good pair of running shoes. He found eleven candidates, four reviews of those candidates, a forum thread arguing about the reviews, and a video essay on the history of the running shoe. He has not gone running.</p>
+          <p>Friends describe the collection as “a museum.” There is a tab for a concert that has already happened, a tab for a flight that has already landed, and a tab for an article titled “Why You Should Close Your Tabs,” which he says he is saving for the right moment.</p>
+          <p>His laptop fan, reached for comment, was too loud to understand.</p>
+          <p>Researchers who study the habit say it is less about reading and more about hope. Each open tab is a small promise: that there will be a quiet Sunday, that the recipe will get cooked, that the fridge will be bought. Closing it means admitting the Sunday may never come.</p>
+          <p>“I tried bookmarks once,” he said. “But then I'd have to remember I have bookmarks.” He has since started a second window, for tabs about organizing his tabs.</p>
+          <p>His sister, who uses a phone and nothing else, says she has never seen the bottom of his tab bar. “It's tabs all the way down,” she said. “Some of them don't even have icons anymore. They're just little grey squares.”</p>
+          <p>Asked which tab he would save in a fire, he chose a page about how to put out fires, which he opened in 2021 and has not read.</p>
+          <p>Psychologists call this “tab debt.” Like any debt, it grows quietly. One tab becomes three, three becomes a window, and one day the browser asks whether you'd like to restore 412 tabs from your last session, and you click yes, because what else would you click.</p>
+          <p>There are ways out. Some people close everything on Fridays. Some let the browser tidy away tabs they haven't touched in a week. Some declare bankruptcy and start again. He has considered all three, in separate tabs.</p>
+          <p>For now, the fridge is still on sale. The running shoes have been discontinued. The concert has been over for three years. And somewhere near the end of the tab bar, past the little grey squares, a recipe for banana bread is waiting.</p>
+          <p>“Someday,” he said, and opened a new tab.</p>
+          <p>At press time, he had opened this article in a new tab to read later.</p>
+        </div>
+        <div class="cookie" id="cookie"><span><b>We value your privacy.</b> We and our 847 partners would like to set cookies.</span><button>Accept all</button><button id="reject">Reject all</button></div>
+      </section>
+
+      <section class="pg" data-tab="link" data-title="Link" hidden>
+        <div class="inner"><h2 id="linkh"></h2><p class="sub" id="linksub"></p></div>
+      </section>
     </div>
     <div class="card" id="card2"></div>
 
-    <div id="yaml" hidden><div class="hd">config.yaml <span id="st"></span><button id="yclose" aria-label="Close">✕</button></div><pre id="ypre"></pre></div>
+    <div id="yaml" hidden><div class="hd">config.yaml <span id="st"></span><button id="yclose" aria-label="Close">✕</button></div><pre id="ypre"></pre><div id="try" hidden><b>▶ Try it</b><div id="trylist"></div></div></div>
     <aside id="chat" hidden><div class="hd"><i>✦</i> Chat <span>· Claude Code</span><button id="cclose" aria-label="Close">✕</button></div><div id="msgs"></div></aside>
   </main>
 </div>
@@ -361,7 +423,7 @@ const SPACES = [
   { name: "Work", base: { accent: "#5fb3ff", bg: ["#0f1a28", "#132a3c"] }, tabs: ["tickets", "calendar", "launch"], tab: "tickets" },
   { name: "School", base: { accent: "#4fd6a0", bg: ["#0e1d19", "#17302a"] }, tabs: [...BASE_TABS], tab: "home" },
 ];
-const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉" };
+const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉", map: "⌖", news: "▤", link: "↗" };
 // Tabs an agent opens, and where you land when they close.
 const AGENT_TABS = { weather: "agents", meet: "calendar" };
 const page = (id) => document.querySelector(`.pg[data-tab="${id}"]`);
@@ -419,7 +481,12 @@ function go(space, dir) {
   const t = $("#tabs"); t.style.setProperty("--swap", (dir ?? space - M.space) > 0 ? "14px" : "-14px");
   M.space = space; M.split = null; t.classList.add("swap"); render(); requestAnimationFrame(() => requestAnimationFrame(() => t.classList.remove("swap")));
 }
-function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 1600); }
+// Text with [keys] in brackets, shown as keycaps.
+function rich(node, text) { node.replaceChildren(...text.split(/\[([^\]]+)\]/).map((p, i) => (i % 2 ? el("kbd", null, p) : p))); }
+function toast(text) {
+  const t = $("#toast"); rich(t, text); t.classList.add("on"); clearTimeout(toast.t);
+  toast.t = setTimeout(() => t.classList.remove("on"), Math.min(6000, Math.max(1600, text.length * 50)));
+}
 
 // ---------- change a setting by asking ----------
 // No AI here: a long list of things people might say, each mapped to the real setting Valerie's AI would write.
@@ -453,7 +520,7 @@ const A = {
   side(set, right, why) { M.top = false; M.right = right; set("layout.tab_bar", `layout: { tab_bar: side, sidebar_position: ${right ? "right" : "left"} }`, why); },
   minimal(set) { M.url = false; M.favs = false; M.spaceName = false; set("sidebar.min", "sidebar: { url_bar: false, favorites: false, space_name: false }", "just the tabs"); },
   still(set) { M.motion = false; set("layout.animation_ms", "layout: { animation_ms: 0 }", "no animations, everything instant"); },
-  plugin(set, name, why) { set("plugin:" + name, `# + plugins/${name}/style.css`, why || "no setting for that, so your AI writes a tiny plugin"); },
+  plugin(set, name, why, files) { set("plugin:" + name, `# + plugins/${name}/`, why || "no setting for that, so your AI writes a tiny plugin", files); },
 };
 const BRANDS = { spotify: [["#121212", "#1e1e1e"], "#1ed760"], netflix: [["#141414", "#2a0a0a"], "#e50914"], youtube: [["#181818", "#2a1212"], "#ff0033"],
   twitch: [["#18181b", "#26173f"], "#9146ff"], discord: [["#1e1f22", "#2b2d31"], "#5865f2"], facebook: [["#0b1a33", "#18305a"], "#1877f2"],
@@ -466,7 +533,41 @@ const ALIASES = { "coca cola": "ferrari", coke: "ferrari", gotham: "batman", "mc
 const SITES = { youtube: "youtube.com", github: "github.com", reddit: "reddit.com", canvas: "canvas.instructure.com", netflix: "netflix.com", figma: "figma.com",
   notion: "notion.so", slack: "slack.com", linear: "linear.app", twitter: "x.com", instagram: "instagram.com", gmail: "mail.google.com", docs: "docs.google.com", amazon: "amazon.com" };
 const has = (...words) => new RegExp(`\\b(${words.join("|")})\\b`);
+const VIM_TRY = "Press [Shift+J] / [Shift+K] to switch tabs, [j] / [k] to scroll, [g][g] / [Shift+G] to jump to the top or bottom.";
+const PLUGIN_WHY = "no setting for that, so your AI wrote a plugin";
+const ANY_SITE = "matches: []   # every site";
 const RULES = [
+  // plugins your AI writes; true means the rest of the sentence isn't read as other settings
+  [/\b(location|located|i'?m in|i am in)\b/, (s, m, t, note) => {
+    const pm = /\b(plugin|extension|browser|sites|websites|pretend|think|fake|spoof)\b/.test(t) && t.match(/\b(?:location|located|i'?m in|i am in)\s+(?:is\s+|to\s+|in\s+|at\s+|as\s+)?(?:be\s+)?([a-z][a-z .'-]{1,28}?)\s*[.!?]*$/);
+    if (!pm) return;
+    const [lat, lon] = CITIES[pm[1]] || fakeCoords(pm[1]);
+    here = { place: pm[1].replace(/\b[a-z]/g, (c) => c.toUpperCase()), lat, lon };
+    A.plugin(s, "fake-location", PLUGIN_WHY, [
+      ["plugin.yaml", `description: Tells every site you're in ${here.place}.\n${ANY_SITE}\nrun_at: start\nsettings:\n  latitude: ${lat}\n  longitude: ${lon}`],
+      ["script.js", 'const here = { timestamp: Date.now(),\n  coords: { ...settings, accuracy: 20 } };\nconst geo = navigator.geolocation;\ngeo.getCurrentPosition = (ok) => ok(here);\ngeo.watchPosition = (ok) => (ok(here), 0);']]);
+    note(`Every site that asks where you are now hears ${here.place}.`, ["Open a map site", openMap]);
+    return true;
+  }],
+  [/\b(replace|replaces|swap|swaps)\b.+\b(with|for)\b/, (s, m, t, note, raw) => {
+    const pm = raw.match(/\b(?:replace|swap)s?\s+(?:every\s+|all\s+|the\s+word\s+)?["“'‘]?(.+?)["”'’]?\s+(?:with|for)\s+["“'‘]?(.+?)["”'’]?[\s.!]*$/i);
+    if (!pm) return;
+    const [, find, put] = pm; unswap(); const n = swapWords(find, put);
+    A.plugin(s, "word-swap", PLUGIN_WHY, [
+      ["plugin.yaml", `description: Replaces “${find}” with “${put}”.\n${ANY_SITE}\nsettings: { find: "${find}", replace: "${put}" }`],
+      ["script.js", 'const { find, replace } = settings;\nconst re = new RegExp("\\\\b" + find + "\\\\b", "gi");\nconst walk = document.createTreeWalker(\n  document.body, NodeFilter.SHOW_TEXT);\nwhile (walk.nextNode()) {\n  const text = walk.currentNode;\n  text.data = text.data.replace(re, replace);\n}']]);
+    note(n ? `It swapped “${find}” for “${put}” ${n} times across your tabs. Read this page, then another.` : `No “${find}” on these pages yet; it swaps it on every site you visit.`, ["Open Features", () => show("features")]);
+    return true;
+  }],
+  [/\b(reading time|read time|time to read|minutes? to read|how long.*\bread|word count)\b/, (s, m, t, note) => {
+    readTime(true);
+    A.plugin(s, "reading-time", PLUGIN_WHY, [
+      ["plugin.yaml", `description: Shows how long each page takes to read.\n${ANY_SITE}`],
+      ["script.js", 'const text = document.body.innerText;\nconst words = text.split(/\\s+/).length;\nconst min = Math.max(1, Math.round(words / 230));\nconst tag = document.createElement("div");\ntag.className = "valerie-read-time";\ntag.textContent = `⏱ ${min} min read · ${words} words`;\ndocument.body.prepend(tag);'],
+      ["style.css", ".valerie-read-time {\n  display: inline-block; margin: 12px;\n  padding: 3px 10px; border-radius: 99px;\n  background: #8882; font: 600 12px system-ui;\n}"]]);
+    note("Every page now starts with how long it takes to read. Look above the headline.", ["Open Features", () => show("features")]);
+    return true;
+  }],
   // whole looks
   [has("dracula"), (s) => { A.theme(s, "Dracula", ["#282a36", "#343746"], "#bd93f9"); A.dark(s, true); }],
   [has("nord"), (s) => { A.theme(s, "Nord", ["#2e3440", "#3b4252"], "#88c0d0"); A.dark(s, true); }],
@@ -496,19 +597,26 @@ const RULES = [
   [has("corporate", "professional", "serious", "boring", "enterprise", "for work", "my boss"), (s) => { A.theme(s, "paper"); A.font(s, "helvetica"); A.radius(s, 4); }],
   [has("fun", "playful", "silly", "goofy", "whimsical", "for kids", "kid"), (s) => { A.accent(s, "#ff4fa3", "bubblegum"); A.font(s, "comic"); A.radius(s, 28); A.tabs(s, 46); }],
   [has("expensive", "luxury", "luxurious", "rich", "bougie", "premium", "billionaire"), (s) => { A.theme(s, "Luxury", ["#0b0b0b", "#1a1610"], "#d4af37"); A.font(s, "serif"); A.radius(s, 6); }],
-  [/\bcats?\b.*\b(keyboard|keys|laptop)\b/, (s) => { M.flip = true; M.party = true; A.font(s, "comic"); A.plugin(s, "cat-mode", "your cat's choices, kept as a plugin"); }],
+  [/\bcats?\b.*\b(keyboard|keys|laptop)\b/, (s) => { M.flip = true; M.party = true; A.font(s, "comic"); A.plugin(s, "cat-mode", "your cat's choices, kept as a plugin", [["plugin.yaml", `description: What the cat typed.\n${ANY_SITE}`],
+    ["style.css", 'html { transform: rotate(180deg);\n  font-family: "Comic Sans MS";\n  animation: party 3s linear infinite; }\n@keyframes party {\n  to { filter: hue-rotate(360deg); } }']]); }],
   [has("newspaper", "new york times", "nyt", "editorial", "magazine"), (s) => { A.tone(s, "sepia"); A.font(s, "times"); A.radius(s, 0); }],
   // layout
-  [has("chrome", "firefox", "edge", "brave", "safari", "top", "horizontal", "like every other browser", "normal browser"), (s, m) => A.top(s, ["chrome", "firefox", "edge", "brave", "safari"].includes(m[1]) ? `tabs along the top, like ${m[1][0].toUpperCase() + m[1].slice(1)}` : null)],
-  [has("arc", "vertical", "vertical tabs", "on the side", "left"), (s, m) => { A.side(s, false, m[1] === "arc" ? "a sidebar, like Arc" : null); if (m[1] === "arc") { M.favs = true; } }],
-  [has("right", "lefty", "left handed", "left-handed"), (s, m) => A.side(s, true, m[1] === "right" ? null : "sidebar on the right, for your mouse hand")],
-  [/\b(wide|wider|widen|bigger|larger|more room)\b.*\bsidebar\b|\bsidebar\b.*\b(wide|wider|bigger|larger)\b/, (s) => A.sidebarWidth(s, 320)],
-  [/\b(narrow|narrower|thin|thinner|smaller|slim|skinny)\b.*\bsidebar\b|\bsidebar\b.*\b(narrow|narrower|thinner|smaller|slim)\b/, (s) => A.sidebarWidth(s, 190)],
+  [has("chrome", "firefox", "edge", "brave", "safari", "top", "horizontal", "like every other browser", "normal browser"), (s, m, t, note) => {
+    A.top(s, ["chrome", "firefox", "edge", "brave", "safari"].includes(m[1]) ? `tabs along the top, like ${m[1][0].toUpperCase() + m[1].slice(1)}` : null);
+    note("Your tabs run along the top now. Click one, or press [Shift+J] / [Shift+K] to step through them."); }],
+  [/\b(arc|vertical|vertical tabs|on the side|left)\b(?![- ]?hand)/, (s, m, t, note) => {
+    A.side(s, false, m[1] === "arc" ? "a sidebar, like Arc" : null); if (m[1] === "arc") { M.favs = true; }
+    note("Your tabs are in the sidebar. Swipe sideways on it with two fingers, or press [⌃→], to change space."); }],
+  [has("right", "lefty", "left handed", "left-handed"), (s, m, t, note) => {
+    A.side(s, true, m[1] === "right" ? null : "sidebar on the right, for your mouse hand");
+    note("The sidebar is on the right now. Swipe sideways on it with two fingers, or press [⌃→], to change space."); }],
+  [/\b(wide|wider|widen|bigger|larger|more room)\b.*\bsidebar\b|\bsidebar\b.*\b(wide|wider|bigger|larger)\b/, (s, m, t, note) => { A.sidebarWidth(s, 320); note("The sidebar is 320 pixels wide, so long tab titles fit."); }],
+  [/\b(narrow|narrower|thin|thinner|smaller|slim|skinny)\b.*\bsidebar\b|\bsidebar\b.*\b(narrow|narrower|thinner|smaller|slim)\b/, (s, m, t, note) => { A.sidebarWidth(s, 190); note("The sidebar is 190 pixels wide, leaving more room for pages."); }],
   // text and tabs
-  [/\b(bigger|larger|huge|large|big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(bigger|larger|huge|big)\b|\bcan'?t (read|see)\b|\bmy eyes\b|\bgrandma|\bgrandpa|\bgranny|\bsquint|\bhard to read\b|\btoo small\b|\bold eyes\b|\bglasses\b|\bi'?m old\b/, (s) => A.zoom(s, 125)],
-  [/\b(smaller|tiny|small|less big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(smaller|tiny)\b|\bmore on screen\b/, (s) => A.zoom(s, 90)],
-  [/^(?!.*\b(text|font|letters|words|type|sidebar|read|eyes)\b).*\b(big|bigger|tall|taller|huge|large|roomy|roomier|chunky|fat)\b/, (s) => A.tabs(s, 50)],
-  [/\b(compact|dense|tiny tabs|small tabs|smaller tabs|thinner tabs|more tabs)\b/, (s) => A.tabs(s, 28)],
+  [/\b(bigger|larger|huge|large|big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(bigger|larger|huge|big)\b|\bcan'?t (read|see)\b|\bmy eyes\b|\bgrandma|\bgrandpa|\bgranny|\bsquint|\bhard to read\b|\btoo small\b|\bold eyes\b|\bglasses\b|\bi'?m old\b/, (s, m, t, note) => { A.zoom(s, 125); note("Every site opens at 125%, not just this page.", ["Open another tab", () => show("features")]); }],
+  [/\b(smaller|tiny|small|less big)\b.*\b(text|font|letters|words|type)\b|\b(text|font|letters|words|type)\b.*\b(smaller|tiny)\b|\bmore on screen\b/, (s, m, t, note) => { A.zoom(s, 90); note("Every site opens at 90%, so more fits on screen.", ["Open another tab", () => show("features")]); }],
+  [/^(?!.*\b(text|font|letters|words|type|sidebar|read|eyes)\b).*\b(big|bigger|tall|taller|huge|large|roomy|roomier|chunky|fat)\b/, (s, m, t, note) => { A.tabs(s, 50); note("Tabs are 50 pixels tall, easier to hit. Look at the sidebar."); }],
+  [/\b(compact|dense|tiny tabs|small tabs|smaller tabs|thinner tabs|more tabs)\b/, (s, m, t, note) => { A.tabs(s, 28); note("Tabs are 28 pixels tall, so more fit in the sidebar."); }],
   // fonts
   [has("comic sans", "comic"), (s) => A.font(s, "comic")],
   [has("handwritten", "handwriting", "cursive", "hand written", "script"), (s) => A.font(s, "hand")],
@@ -520,31 +628,36 @@ const RULES = [
   // corners, clutter, motion
   [has("square", "sharp", "boxy", "no rounded", "brutalist", "brutal"), (s) => A.radius(s, 0)],
   [has("rounder", "bubbly", "more rounded", "round", "pill"), (s) => A.radius(s, 28)],
-  [has("minimal", "minimalist", "zen", "focus", "declutter", "clean", "cleaner", "simpler", "distraction", "distractions", "less clutter"), (s) => A.minimal(s)],
-  [/\b(hide|no|remove|get rid of)\b.*\b(url|address bar|address)\b/, (s) => { M.url = false; s("sidebar.url_bar", "sidebar: { url_bar: false }"); }],
-  [/\b(hide|no|remove|get rid of)\b.*\b(favorites|favourites|pins|icons)\b/, (s) => { M.favs = false; s("sidebar.favorites", "sidebar: { favorites: false }"); }],
-  [/\b(no|stop|less|reduce|without)\b.*\b(animation|animations|motion|moving)\b|\bmotion sick|\binstant\b|\bsnappy\b|\bfaster\b/, (s, m, t, note) => { A.still(s); note("Animations are off: everything switches instantly."); }],
+  [has("minimal", "minimalist", "zen", "focus", "declutter", "clean", "cleaner", "simpler", "distraction", "distractions", "less clutter"), (s, m, t, note) => { A.minimal(s); note("The address bar, pinned sites and space name are hidden. [⌘K] still opens the address bar.", ["Press ⌘K", openBar]); }],
+  [/\b(hide|no|remove|get rid of)\b.*\b(url|address bar|address)\b/, (s, m, t, note) => { M.url = false; s("sidebar.url_bar", "sidebar: { url_bar: false }"); note("The address bar is hidden. [⌘K] opens it whenever you need it.", ["Press ⌘K", openBar]); }],
+  [/\b(hide|no|remove|get rid of)\b.*\b(favorites|favourites|pins|icons)\b/, (s, m, t, note) => { M.favs = false; s("sidebar.favorites", "sidebar: { favorites: false }"); note("The pinned sites above your tabs are hidden."); }],
+  [/\b(no|stop|less|reduce|without)\b.*\b(animation|animations|motion|moving)\b|\bmotion sick|\binstant\b|\bsnappy\b|\bfaster\b/, (s, m, t, note) => { A.still(s); note("Animations are off. Press [Shift+J] or [⌃→]: tabs and spaces switch instantly."); }],
   // pages
-  [/\b(dark|night|2 ?am|3 ?am|late|bedtime|night owl|vampire|too bright|blinding|burning|eyes hurt|my eyes are)\b/, (s, m) => A.dark(s, true, ["dark", "night"].includes(m[1]) ? null : "every site dark, your eyes will thank you")],
-  [has("light", "light mode", "daytime", "day mode", "too dark"), (s) => { A.dark(s, false); M.tone = null; }],
+  [/\b(dark|night|2 ?am|3 ?am|late|bedtime|night owl|vampire|too bright|blinding|burning|eyes hurt|my eyes are)\b/, (s, m, t, note) => {
+    A.dark(s, true, ["dark", "night"].includes(m[1]) ? null : "every site dark, your eyes will thank you");
+    note("Every site is dark now, not just Valerie's own pages.", ["Open a work site", () => show("tickets")]); }],
+  [has("light", "light mode", "daytime", "day mode", "too dark"), (s, m, t, note) => { A.dark(s, false); M.tone = null; note("Sites show in their own colors again."); }],
   [has("sepia", "warm", "warmer", "night shift", "easy on the eyes", "paper white", "kindle", "e-ink", "eink"), (s) => A.tone(s, "sepia")],
   [has("contrast", "high contrast", "accessible", "accessibility", "low vision"), (s) => A.tone(s, "contrast", "high-contrast pages")],
   // plugins for things with no setting
-  [has("upside down", "upside-down", "australia", "australian", "flip", "flipped", "backwards", "chaos", "prank"), (s) => { M.flip = true; A.plugin(s, "upside-down", "there's no setting for this… so your AI wrote a plugin"); }],
-  [has("party", "disco", "rainbow", "rave", "pride", "celebrate", "birthday", "bday", "lsd", "trippy", "🎉", "🌈"), (s) => { M.party = true; A.plugin(s, "party-mode", "no setting for a party, so your AI wrote a plugin"); }],
+  [has("upside down", "upside-down", "australia", "australian", "flip", "flipped", "backwards", "chaos", "prank"), (s) => { M.flip = true; A.plugin(s, "upside-down", "there's no setting for this… so your AI wrote a plugin", [
+    ["plugin.yaml", `description: Turns every site upside down.\n${ANY_SITE}`], ["style.css", "html { transform: rotate(180deg); }"]]); }],
+  [has("party", "disco", "rainbow", "rave", "pride", "celebrate", "birthday", "bday", "lsd", "trippy", "🎉", "🌈"), (s) => { M.party = true; A.plugin(s, "party-mode", "no setting for a party, so your AI wrote a plugin", [["plugin.yaml", `description: Every site cycles through the rainbow.\n${ANY_SITE}`],
+    ["style.css", "html { animation: party 3s linear infinite; }\n@keyframes party {\n  to { filter: hue-rotate(360deg); } }"]]); }],
   // things you can't see, which the real browser does
   [/\b(open|send|put|keep|route)\b.*?\b(youtube|github|reddit|canvas|netflix|figma|notion|slack|linear|twitter|instagram|gmail|docs|amazon|[a-z0-9-]+\.(?:com|edu|org|net|io|dev|app|gov|so))\b.*\b(in|to|on)\b.*\b(work|school|personal)\b/, (s, m, t, note) => {
     const site = SITES[m[2]] || m[2], space = m[4][0].toUpperCase() + m[4].slice(1);
-    s("route:" + site, `routes: [{ match: "${site}", space: ${space} }]`, "air traffic control"); note(`Links to ${site} now open in ${space}, from any app.`); }],
-  [/\b(edu|school sites|university|college|homework)\b.*\b(school)\b/, (s, m, t, note) => { s("route:*.edu", 'routes: [{ match: "*.edu", space: School }]', "air traffic control"); note("Every .edu link now opens in School."); }],
-  [has("cookie", "cookies", "cookie banners", "gdpr", "consent"), (s, m, t, note) => { s("privacy.cookie_banners", "privacy: { cookie_banners: reject }", "already on: Valerie clicks “Reject all”"); note("Cookie banners get rejected for you. (It was already on.)"); }],
-  [has("ads", "ad", "adblock", "ad blocker", "trackers", "tracking"), (s, m, t, note) => { s("content_blocking.enabled", "content_blocking: { enabled: true }", "ads and trackers blocked, already on"); note("Ads and trackers are already blocked."); }],
+    s("route:" + site, `routes: [{ match: "${site}", space: ${space} }]`, "air traffic control"); note(`Links to ${site} now open in ${space}, from any app.`, [`Click a ${site} link`, () => openLink(site, space)]); }],
+  [/\b(edu|school sites|university|college|homework)\b.*\b(school)\b/, (s, m, t, note) => { s("route:*.edu", 'routes: [{ match: "*.edu", space: School }]', "air traffic control"); note("Every .edu link now opens in School, from any app.", ["Click a .edu link", () => openLink("canvas.state.edu", "School")]); }],
+  [has("cookie", "cookies", "cookie banners", "gdpr", "consent"), (s, m, t, note) => { s("privacy.cookie_banners", "privacy: { cookie_banners: reject }", "already on: Valerie clicks “Reject all”"); note("Cookie popups get “Reject all” clicked for you. (It was already on.)", ["Visit a site with one", visitNews]); }],
+  [has("ads", "ad", "adblock", "ad blocker", "trackers", "tracking"), (s, m, t, note) => { s("content_blocking.enabled", "content_blocking: { enabled: true }", "ads and trackers blocked, already on"); note("Ads and trackers are already blocked.", ["Visit a site with ads", visitNews]); }],
   [/\b(\d+|an?|one|two|three|four|five|six|seven)\s*(hour|hours|day|days|week|weeks|month|months)\b/, (s, m, t, note) => {
     if (!/\b(tab|tabs|close|archive|clean)\b/.test(t)) return;
     const n = /\d/.test(m[1]) ? +m[1] : { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 }[m[1]];
-    const h = n * ({ hour: 1, day: 24, week: 168, month: 720 }[m[2].replace(/s$/, "")]); s("tabs.archive_after_hours", `tabs: { archive_after_hours: ${h} }`, "old tabs tidy themselves away"); note(`Tabs you haven't touched in ${m[1]} ${m[2]} now tidy themselves away.`); }],
+    const h = n * ({ hour: 1, day: 24, week: 168, month: 720 }[m[2].replace(/s$/, "")]); s("tabs.archive_after_hours", `tabs: { archive_after_hours: ${h} }`, "old tabs tidy themselves away");
+    const span = `${m[1]} ${m[2]}`, tidy = note(`Tabs you haven't touched in ${span} now tidy themselves away.`, [`⏩ Skip ahead ${span}`, () => skipAhead(span, tidy)]); }],
   [/\bnever\b.*\b(close|archive)\b|\bkeep (all )?my tabs\b|\btab hoarder\b/, (s, m, t, note) => { s("tabs.archive_after_hours", "tabs: { archive_after_hours: 0 }", "tabs stay forever"); note("Your tabs will never close themselves."); }],
-  [has("vim", "vi", "hjkl", "neovim", "nvim"), (s, m, t, note) => { s("vim.enabled", "vim: { enabled: true }", "j/k scroll, f for link hints"); note("Vim keys are on. Try j, k, J and K on this page."); }],
+  [has("vim", "vi", "hjkl", "neovim", "nvim"), (s, m, t, note) => { s("vim.enabled", "vim: { enabled: true }", "j/k scroll, f for link hints"); note("Vim keys are on. " + VIM_TRY, ["Open a long article", readNews]); }],
 ];
 const COLORWORD = document.createElement("canvas").getContext("2d");
 const EMOJI = { "🍊": "orange", "🍋": "gold", "🍓": "crimson", "🍇": "grape", "🌊": "ocean", "🔥": "ember", "🌲": "forest", "🌸": "hotpink", "💜": "mediumpurple",
@@ -562,15 +675,95 @@ function colorIn(raw, set) {
 }
 function toHex(c) { COLORWORD.fillStyle = "#000"; COLORWORD.fillStyle = c; return COLORWORD.fillStyle; }
 
-// Clickable examples, dealt three looks and three ways of working at a time.
+// ---------- trying a change: the box under config.yaml, and the pages its buttons open ----------
+function showTry(items) {
+  const box = $("#try"), list = $("#trylist"); list.replaceChildren();
+  for (const { text, act } of items) {
+    const p = el("p"); rich(p, text);
+    if (act) { const b = el("button", null, act[0]); b.onclick = act[1]; p.append(b); }
+    list.append(p);
+  }
+  box.hidden = !items.length; if (!items.length) return;
+  $("#yaml").hidden = false; box.classList.remove("pulse"); void box.offsetWidth; box.classList.add("pulse");
+}
+// Opens a demo tab in a space, moving it there if it's open somewhere else.
+function openIn(i, id) {
+  for (const s of SPACES) if (s !== SPACES[i] && s.tabs.includes(id)) { s.tabs = s.tabs.filter((t) => t !== id); if (s.tab === id) s.tab = s.tabs[0]; }
+  if (!SPACES[i].tabs.includes(id)) SPACES[i].tabs.push(id);
+  if (i !== M.space) go(i);
+  show(id);
+}
+function openLink(site, space) {
+  const p = page("link"), i = SPACES.findIndex((s) => s.name === space);
+  p.dataset.title = site; p.dataset.url = site;
+  $("#linkh").textContent = site; $("#linksub").textContent = `You clicked a ${site} link in another app, and your rule opened it here in ${space}.`;
+  openIn(i, "link"); toast(`Opened in ${space}, by your rule.`);
+}
+// A long page to scroll with j and k, already free of the popup and the ad, as it would be in Valerie.
+function readNews() { $("#ad").classList.add("gone"); $("#cookie").classList.add("gone"); openIn(M.space, "news"); }
+function visitNews() {
+  const ad = $("#ad"), ck = $("#cookie"), no = $("#reject");
+  ad.classList.remove("gone"); ck.classList.remove("gone"); no.classList.remove("hit");
+  openIn(M.space, "news"); clearTimeout(visitNews.t);
+  visitNews.t = setTimeout(() => {
+    ad.classList.add("gone"); no.classList.add("hit");
+    visitNews.t = setTimeout(() => { ck.classList.add("gone"); toast("Valerie hid the ad and clicked “Reject all” for you."); }, 700);
+  }, 1100);
+}
+const CITIES = { paris: [48.8566, 2.3522], tokyo: [35.6762, 139.6503], london: [51.5074, -0.1278], "new york": [40.7128, -74.006], lisbon: [38.7223, -9.1393],
+  berlin: [52.52, 13.405], sydney: [-33.8688, 151.2093], rome: [41.9028, 12.4964], "los angeles": [34.0522, -118.2437], "san francisco": [37.7749, -122.4194] };
+function fakeCoords(name) { let h = 7; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0; return [+((h % 13000) / 100 - 60).toFixed(4), +(((h >>> 8) % 36000) / 100 - 180).toFixed(4)]; }
+let here = null;
+function openMap() {
+  const { place, lat, lon } = here, deg = (v, pos, neg) => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? pos : neg}`;
+  $("#mapplace").textContent = place; $("#mapcoords").textContent = `${deg(lat, "N", "S")}, ${deg(lon, "E", "W")}`;
+  openIn(M.space, "map");
+}
+const swapped = [];
+function swapWords(find, put) {
+  const re = new RegExp(`\\b${find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"); let n = 0;
+  for (const p of document.querySelectorAll(".pg")) {
+    const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    while (walk.nextNode()) {
+      const node = walk.currentNode, was = node.data, now = was.replace(re, () => (n++, put));
+      if (now !== was) { swapped.push([node, was]); node.data = now; }
+    }
+  }
+  return n;
+}
+function unswap() { for (const [node, was] of swapped.reverse()) node.data = was; swapped.length = 0; }
+function readTime(on) {
+  for (const p of document.querySelectorAll(".pg")) {
+    p.querySelector(".rt")?.remove();
+    const inner = p.querySelector(".inner"); if (!on || !inner) continue;
+    const words = inner.textContent.trim().split(/\s+/).length;
+    inner.prepend(el("div", "rt", `⏱ ${Math.max(1, Math.round(words / 230))} min read · ${words} words`));
+  }
+}
+// "Close tabs after a week", fast-forwarded: every tab but the one you're on goes away until you bring them back.
+const archived = [];
+function skipAhead(span, tidy) {
+  const s = SPACES[M.space], old = s.tabs.filter((t) => t !== M.tab);
+  for (const id of old) archived.push([s, id]);
+  s.tabs = [M.tab]; M.split = null; render();
+  showTry([old.length
+    ? { text: `${span[0].toUpperCase() + span.slice(1)} later: the ${old.length} tabs you didn't touch were tidied away. Only the one you're reading is left.`,
+        act: ["Bring them back", () => { restoreArchived(); showTry([tidy]); }] }
+    : { text: "Nothing to tidy: this is your only tab here." }]);
+}
+function restoreArchived() { for (const [s, id] of archived) if (!s.tabs.includes(id)) s.tabs.push(id); archived.length = 0; render(); }
+
+// Clickable examples, dealt two looks, two ways of working and two plugins at a time.
 const LOOKS = ["My boss is walking by", "I'm a vampire", "It's my birthday!", "Make it look expensive", "My dad's computer in 1997",
   "Sunday morning with coffee", "My cat walked on the keyboard", "Barbie, but upside down", "Tokyo at night", "Hacker in a movie",
   "Newspaper on a train", "Make it IKEA", "Comic Sans, unironically", "Spooky season", "Under the sea 🌊", "Like Spotify", "Make it tomato"];
 const USES = ["I'm left-handed", "Grandma's visiting", "Fat tabs for my fat fingers", "Send Reddit to Work", "Close tabs I ignore for a week",
   "Tabs on top, like Chrome", "Less clutter, just my tabs", "More tabs on screen", "Wider sidebar, my tab titles are long", "I get motion sick",
   "Homework links go to School", "I use vim", "Never show me cookie popups", "Hide the address bar", "Text is too small on my laptop"];
-const EXAMPLES = [...LOOKS, ...USES];
-const IDEAS = ["tabs on top", "make it cozy", "like Netflix", "comic sans", "dracula", "hot pink", "I'm left-handed", "party mode", "square corners",
+const PLUGINS = ["Make me a plugin that sets my location to Tokyo", "Make a plugin that replaces “AI” with “intern”", "Make a plugin that shows reading time",
+  "Flip every site upside down", "Party mode"];
+const EXAMPLES = [...LOOKS, ...USES, ...PLUGINS];
+const IDEAS = ["tabs on top", "a plugin that says I'm in Paris", "make it cozy", "like Netflix", "comic sans", "dracula", "hot pink", "I'm left-handed", "party mode", "square corners",
   "close tabs after 3 days", "less clutter", "🌊", "cyberpunk", "like a newspaper", "sidebar on the right", "too bright"];
 let added = [], busy = false;
 function drawYaml(fresh = []) {
@@ -579,31 +772,38 @@ function drawYaml(fresh = []) {
     const isNew = fresh.includes(l), row = el("span", isNew ? "add" : null);
     row.style.display = "block";
     if (l.comment) row.append(el("span", "cm", "# " + l.comment + "\n"));
-    row.append(document.createTextNode((isNew && !l.line.startsWith("#") ? "+ " : "") + l.line)); pre.append(row);
+    row.append(document.createTextNode((isNew && !l.line.startsWith("#") ? "+ " : "") + l.line));
+    for (const [name, code] of l.files || []) row.append(el("span", "fn", "\n  " + name + "\n"), el("span", "code", code.replace(/^/gm, "    ")));
+    pre.append(row);
   }
   $("#yaml").hidden = !added.length;
 }
 function ask(text) {
   const raw = (text || "").trim(), t = raw.toLowerCase().replace(/[’‘]/g, "'"); if (!raw || busy) return;
   if (/\b(reset|undo|default|defaults|original|start over|go back)\b/.test(t)) {
-    Object.assign(M, DEFAULTS); for (const s of SPACES) { s.theme = null; s.accent = null; } added = []; render(); drawYaml(); toast("Back to how it started."); return;
+    Object.assign(M, DEFAULTS); for (const s of SPACES) { s.theme = null; s.accent = null; }
+    unswap(); readTime(false); restoreArchived(); for (const id of ["map", "news", "link"]) dropTab(id);
+    added = []; render(); drawYaml(); showTry([]); toast("Back to how it started."); return;
   }
-  const fresh = [], notes = [], set = (key, line, comment) => fresh.push({ key, line, comment });
-  for (const [re, run] of RULES) { const m = t.match(re); if (m) run(set, m, t, (n) => notes.push(n)); }
-  if (!fresh.some((f) => f.key.startsWith("theme:"))) colorIn(raw, set);
+  const fresh = [], notes = [], set = (key, line, comment, files) => fresh.push({ key, line, comment, files });
+  const note = (text, act) => { const n = { text, act }; notes.push(n); return n; };
+  let plugin = false;
+  for (const [re, run] of RULES) { const m = t.match(re); if (m && run(set, m, t, note, raw) === true) { plugin = true; break; } }
+  if (!plugin && !fresh.some((f) => f.key.startsWith("theme:"))) colorIn(raw, set);
+  for (const f of fresh) if (f.files) notes.unshift({ text: `✦ New plugin: ${f.key.slice(7)}. Your AI wrote it and turned it on; its files are above.` });
+  if (!fresh.length && /\b(plugin|extension)\b/.test(t)) { toast("In the real Valerie your AI writes any plugin you describe. Here, try “make a plugin that shows reading time”."); return; }
   if (!fresh.length) { toast(`That one needs the real Valerie, whose AI can change anything. Here, try “${IDEAS[Math.floor(Math.random() * IDEAS.length)]}”.`); return; }
   const st = $("#st"); busy = true; $("#yaml").hidden = false; st.textContent = "✦ editing…"; st.className = "";
   setTimeout(() => {
     const keys = new Set(fresh.map((f) => f.key)), last = new Map(fresh.map((f) => [f.key, f]));
     const newest = [...last.values()];
     added = added.filter((a) => !keys.has(a.key)).concat(newest);
-    render(); drawYaml(newest); st.textContent = "✓ applied"; st.className = "ok"; busy = false;
-    if (notes.length) toast(notes.join(" "));
+    render(); drawYaml(newest); showTry(notes); st.textContent = "✓ applied"; st.className = "ok"; busy = false;
   }, 550);
 }
 function dealChips() {
-  const few = (list) => [...list].sort(() => Math.random() - 0.5).slice(0, 3);
-  const pick = [...few(LOOKS), ...few(USES)].sort(() => Math.random() - 0.5), chips = $("#chips"); chips.replaceChildren();
+  const few = (list) => [...list].sort(() => Math.random() - 0.5).slice(0, 2);
+  const pick = [...few(LOOKS), ...few(USES), ...few(PLUGINS)].sort(() => Math.random() - 0.5), chips = $("#chips"); chips.replaceChildren();
   for (const s of [...pick, "Reset"]) { const c = el("button", "chip", s); c.onclick = () => { $("#ask").value = s; ask(s); }; chips.append(c); }
   const more = el("button", "chip", "↻ More ideas"); more.onclick = dealChips; chips.append(more);
 }
@@ -633,7 +833,7 @@ let muted = false;
 function drawMeet() { $("#mute").textContent = muted ? "Unmute" : "Mute"; $("#mute").classList.toggle("off", muted); $("#mic").textContent = muted ? "mic off" : "mic on"; $("#mic").className = "mic" + (muted ? " off" : ""); }
 function openTab(id) { const here = SPACES[M.space], sp = here.tabs.includes(AGENT_TABS[id]) ? here : SPACES.find((x) => x.tabs.includes(AGENT_TABS[id])); if (!sp.tabs.includes(id)) sp.tabs.push(id); show(id); }
 function dropTab(id) {
-  for (const sp of SPACES) if (sp.tabs.includes(id)) { sp.tabs = sp.tabs.filter((t) => t !== id); if (sp.tab === id) sp.tab = AGENT_TABS[id]; }
+  for (const sp of SPACES) if (sp.tabs.includes(id)) { sp.tabs = sp.tabs.filter((t) => t !== id); if (sp.tab === id) sp.tab = AGENT_TABS[id] || sp.tabs[0]; }
   if (M.split === id) M.split = null;
   render();
 }
@@ -701,10 +901,10 @@ function toggleSplit() {
   render();
 }
 const DEMOS = {
-  space: () => go((M.space + 1) % SPACES.length),
+  space: () => { go((M.space + 1) % SPACES.length); toast(`This is ${SPACES[M.space].name}: its own tabs, theme and logins. Press [⌃→] or swipe sideways on the sidebar for the next.`); },
   bar: () => openBar(),
-  split: () => { if (narrow.matches) return toast("Split view needs a wider window."); toggleSplit(); },
-  vim: () => toast("Press j or k to scroll, J or K to switch tabs."),
+  split: () => { if (narrow.matches) return toast("Split view needs a wider window."); toggleSplit(); if (M.split) toast("Two tabs side by side. Click a tab in the sidebar to change the left one."); },
+  vim: () => { readNews(); toast(VIM_TRY); },
 };
 for (const b of document.querySelectorAll("[data-demo]")) b.onclick = () => DEMOS[b.dataset.demo]();
 for (const b of document.querySelectorAll("[data-go]")) b.onclick = () => show(b.dataset.go);
@@ -756,7 +956,8 @@ $("#cq").addEventListener("keydown", (e) => {
 });
 $("#url").onclick = openBar; $("#scrim").onclick = closeBar;
 
-// ---------- keys: ⌘K/⌘D command bar, ⌘⇧C copy URL, vim j/k scroll, J/K switch tabs ----------
+// ---------- keys: ⌘K/⌘D command bar, ⌘⇧C copy URL, vim j/k scroll, J/K switch tabs, gg/G top and bottom ----------
+let lastG = 0;
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey, typing = e.target.closest("input");
   if (mod && !e.shiftKey && (e.key === "k" || e.key === "d")) { e.preventDefault(); openBar(); return; }
@@ -765,6 +966,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (document.body.classList.contains("bar")) closeBar(); else if (!$("#chat").hidden) closeChat(); return; }
   if (typing || mod || e.altKey || document.body.classList.contains("bar")) return;
   if (e.key === "j" || e.key === "k") $("#card1").scrollBy({ top: e.key === "j" ? 90 : -90 });
+  else if (e.key === "G") $("#card1").scrollTo({ top: 1e6 });
+  else if (e.key === "g") { if (e.timeStamp - lastG < 500) $("#card1").scrollTo({ top: 0 }); lastG = e.timeStamp; }
   else if (e.key === "J" || e.key === "K") { const i = M.tabs.indexOf(M.tab), n = M.tabs.length; show(M.tabs[(i + (e.key === "J" ? 1 : -1) + n) % n]); }
 });
 
