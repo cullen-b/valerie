@@ -163,6 +163,7 @@ struct Little {
     url: String,
     title: String,
     space: usize,
+    zoom: f64,
 }
 
 pub struct App {
@@ -2943,7 +2944,11 @@ impl App {
         if self.rules.is_some() {
             blocking::mac::apply(&view, self.rules.as_ref());
         }
-        self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space });
+        let zoom = self.default_zoom();
+        if zoom != 1.0 {
+            let _ = view.zoom(zoom);
+        }
+        self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom });
         self.focused_little = Some(id);
     }
 
@@ -4136,7 +4141,8 @@ impl App {
         if let Some(name) = serde_json::to_value(&cmd).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)) {
             crate::log::event("command", name);
         }
-        if self.peek.is_some() {
+        let little = self.focused_little.filter(|id| self.littles.contains_key(id));
+        if self.peek.is_some() && little.is_none() {
             match &cmd {
                 Command::MoveToMainWindow { .. } => {
                     let url = self.peek.as_ref().map(|p| p.url.clone()).unwrap_or_default();
@@ -4164,7 +4170,6 @@ impl App {
                 _ => self.close_peek(),
             }
         }
-        let little = self.focused_little.filter(|id| self.littles.contains_key(id));
         // Commands aimed at the focused little window.
         if let Some(id) = little {
             let l = &self.littles[&id];
@@ -4187,6 +4192,51 @@ impl App {
                 Command::Forward { tab: None } => return drop(l.view.go_forward()),
                 Command::Reload { tab: None } => return drop(l.view.reload()),
                 Command::DevTools => return l.view.open_devtools(),
+                Command::Stop => return drop(l.view.evaluate_script("window.stop()")),
+                Command::ToggleMute { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"mute\")")),
+                Command::ToggleMedia { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"toggle\")")),
+                Command::ReaderView => return drop(l.view.evaluate_script("window.__valerie && __valerie.reader()")),
+                Command::Print => return platform::print(&l.view),
+                Command::FindInPage { query } => {
+                    let _ = l.view.focus();
+                    let q = serde_json::to_string(query).unwrap_or("null".into());
+                    return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.find({q})")));
+                }
+                Command::CopyMarkdownLink => {
+                    let title = l.title.replace('[', "(").replace(']', ")");
+                    let url = self.clean(&l.url);
+                    let text = format!("[{}]({url})", if title.is_empty() { url.clone() } else { title });
+                    return self.copy(&text, "Copied Markdown link");
+                }
+                Command::TranslatePage if l.url.starts_with("http") => {
+                    let enc: String = url::form_urlencoded::byte_serialize(l.url.as_bytes()).collect();
+                    let target = self.config.translate.service.replace("%l", &self.config.translate.language).replace("%u", &enc);
+                    return drop(l.view.load_url(&target));
+                }
+                Command::ZoomIn | Command::ZoomOut | Command::ZoomReset => {
+                    let tc = &self.config.tabs;
+                    let (step, lo, hi) = (tc.zoom_step.max(1.0) / 100.0, tc.zoom_min.max(10.0) / 100.0, tc.zoom_max.max(tc.zoom_min) / 100.0);
+                    let z = match cmd {
+                        Command::ZoomIn => (l.zoom + step).min(hi),
+                        Command::ZoomOut => (l.zoom - step).max(lo),
+                        _ => self.default_zoom(),
+                    };
+                    let z = (z * 100.0).round() / 100.0;
+                    let _ = l.view.zoom(z);
+                    if let Some(l) = self.littles.get_mut(&id) {
+                        l.zoom = z;
+                    }
+                    return self.toast(&format!("Zoom {:.0}%", z * 100.0));
+                }
+                // These read or change the main window's tab; in a little window they'd hit a page you can't see.
+                Command::HideElement
+                | Command::SearchSelection
+                | Command::CopyLinkToHighlight
+                | Command::ToggleDarkPage
+                | Command::ShowHiddenElements
+                | Command::CapturePage
+                | Command::WatchPage { .. }
+                | Command::TranslatePage => return self.toast("Move this page to the main window to do that"),
                 _ => {}
             }
         }
