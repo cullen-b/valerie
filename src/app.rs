@@ -6785,7 +6785,12 @@ impl App {
     fn window_event(&mut self, id: WindowId, ev: WindowEvent, elwt: &EventLoopWindowTarget<UserEvent>) {
         let main = id == self.window.id();
         match ev {
-            WindowEvent::Focused(f) if main => self.window_focused = f,
+            WindowEvent::Focused(f) if main => {
+                self.window_focused = f;
+                if f {
+                    self.focused_little = None;
+                }
+            }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 if main {
                     self.layout();
@@ -6814,9 +6819,7 @@ impl App {
                     }
                 }
             }
-            WindowEvent::Focused(true) => {
-                self.focused_little = if main { None } else { Some(id) };
-            }
+            WindowEvent::Focused(true) => self.focused_little = Some(id),
             _ => {}
         }
     }
