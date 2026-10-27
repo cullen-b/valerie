@@ -40,7 +40,7 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌘L` | Edit the current URL |
 | `⌘⇧C` | Copy the current URL |
 | `⌘S` | Toggle the sidebar |
-| `⌘W` / `⌘⇧T` | Close tab (unloads pinned tabs) / reopen closed tab |
+| `⌘W` / `⌘⇧T` (or `⌘Z` when you're not typing) | Close tab (unloads pinned tabs) / reopen closed tab |
 | `⌘⌥↓` `⌘⌥↑` | Next / previous tab |
 | `⌃Tab` | Back to the tab you were just on |
 | `⌘⌥→` `⌘⌥←`, `⌃1…5`, two-finger swipe on sidebar | Switch space |
@@ -70,7 +70,8 @@ Each space has **pinned** tabs (icon tiles), **Kept** tabs (a list under them th
 **today** tabs (archived after 12 hours unused). Pinned, Kept and favorite tabs show **−** instead of ×: it closes
 the page but keeps the tab. Ones you haven't opened in 3 months get a gentle "keep these?" (Keep All, Remove All, or
 One by One; removed ones stay searchable in the archive; `tabs.ask_to_keep_unused_days`, or "Review Saved Tabs" any
-time). Folders work in pinned and Kept. Drag tabs anywhere in the sidebar:
+time). New tabs go at the bottom of the list (`tabs.new_tab_position`). Folders work in pinned and Kept. Shift-click or
+⌘-click to pick several tabs and folders, then drag them together or right-click → Delete. Drag tabs anywhere in the sidebar:
 onto the pinned tiles, into Kept or a folder, onto the favorites row, or onto a space icon. Drag the sidebar's edge to
 resize it: narrow it to show icon + domain, narrower still for icons only (`layout.sidebar_size`, double-click the
 edge to cycle). Hide the sidebar with `⌘S`, then touch the window edge to peek at it.
