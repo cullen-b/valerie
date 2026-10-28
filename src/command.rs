@@ -495,6 +495,8 @@ pub enum Command {
     CaptureFullPage,
     /// Put the `valerie` command on PATH so a terminal can use it.
     InstallCommandLineTool,
+    /// Add Valerie to the AI apps on this computer (Claude Code, Codex, Cursor, …) so their agents can use it.
+    ConnectAiApps,
     /// Open a file from the downloads list (the command bar shows them). Never available to pages or agents.
     OpenDownload {
         index: usize,
@@ -619,6 +621,8 @@ impl Command {
                 | Command::SharePlugin { .. }
                 // Only the person at the computer lets in what another machine sent, or handles the passphrase.
                 | Command::AllowFromOtherMachines
+                // Changes other apps' settings: the person's call.
+                | Command::ConnectAiApps
                 // It asks the person at the computer which tabs to remove.
                 | Command::ReviewSavedTabs
                 // Which builds this computer runs is the person's choice.
@@ -737,6 +741,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("capture_page", "Capture Page (screenshot)"),
     ("capture_full_page", "Capture Full Page (screenshot of the whole page)"),
     ("install_command_line_tool", "Install Command Line Tool (valerie in your terminal)"),
+    ("connect_ai_apps", "Connect AI Apps (let Claude Code, Codex, Cursor… use Valerie)"),
     ("downloads", "Downloads (every file you've downloaded: open, show in folder, clear)"),
     ("history", "History (every page you've visited, by day; search and forget)"),
     ("show_downloads", "Show Downloads Folder"),
