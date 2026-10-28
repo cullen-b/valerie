@@ -924,6 +924,9 @@ pub struct VimConfig {
 pub struct McpConfig {
     pub enabled: bool,
     pub port: u16,
+    pub web_tools: bool,
+    /// "ask" | "always" | "never"
+    pub connect_ai_apps: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

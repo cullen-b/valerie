@@ -6,7 +6,7 @@ use crate::{agents, blocking, import, passwords, platform, plugins, routing, syn
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
@@ -243,6 +243,8 @@ pub struct App {
     /// Tabs loaded early because the pointer rested on them in the sidebar, until they're clicked: when, and how the
     /// sidebar showed them then (a preload stays invisible, so they keep looking exactly like that).
     preloaded: HashMap<TabId, Preloaded>,
+    /// Hidden tabs agents' web_search and fetch_page read pages in: in no sidebar list and not in history.
+    web_tabs: HashSet<TabId>,
     /// Looking for or installing an update right now.
     update_busy: bool,
     /// A newer version installed while this one runs; it starts next time.
@@ -1198,6 +1200,7 @@ impl App {
             pending_reveal: None,
             reveal_when_chrome_ready: false,
             preloaded: HashMap::new(),
+            web_tabs: HashSet::new(),
             update_busy: false,
             update_ready: None,
             update_told: Default::default(),
@@ -3374,6 +3377,7 @@ impl App {
 
     /// Window, Dock and system-wide settings that apply to the app as a whole (window.*, app.*, global_keybindings).
     fn apply_app_settings(&mut self) {
+        crate::mcp::set_web_tools(self.config.mcp.web_tools);
         let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();
         if print == self.app_print {
             return;
@@ -4757,6 +4761,11 @@ impl App {
                     send(&p, UserEvent::Captured(r));
                 });
             }
+            Command::ConnectAiApps => {
+                self.open_welcome();
+                self.welcome_only = Some("connect".into());
+                self.welcome_send(&json!({ "type": "only", "step": "connect" }));
+            }
             Command::InstallCommandLineTool => match install_command_line_tool(false) {
                 Ok(link) => self.toast(&format!("Installed {}: try `valerie screenshot --full` in a terminal", link.display())),
                 Err(e) => self.toast(&format!("Couldn't install the valerie command: {e}")),
@@ -5901,7 +5910,7 @@ impl App {
                             visit = Some((t.url.clone(), t.title.clone()));
                         }
                     }
-                    if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id)) {
+                    if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id) && !self.web_tabs.contains(&id)) {
                         self.state.record_visit(&u, &t);
                         self.after_load(Target::Tab(id), &u, false);
                         self.fill_offers.remove(&Target::Tab(id));
@@ -6579,6 +6588,33 @@ impl App {
                 let id = self.open_tab(&url, space, args["activate"].as_bool().unwrap_or(false));
                 Ok(json!({ "tab": id, "url": url }))
             }
+            // web_search and fetch_page: a tab no one sees, with the active space's logins.
+            "web_open" if !self.config.mcp.web_tools => Err("web tools are off (the mcp.web_tools setting)".into()),
+            "web_open" => {
+                let url = match args["search"].as_str() {
+                    Some(q) => self.config.search_engine.replace("%s", &url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>()),
+                    None => routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine),
+                };
+                if !matches!(scheme_of(&url).as_str(), "http" | "https") {
+                    Err("only http(s) addresses".into())
+                } else {
+                    let url = self.rewrite(&url);
+                    let id = self.state.add_tab(self.state.active_space, &url, false);
+                    self.state.detach(id);
+                    self.web_tabs.insert(id);
+                    self.ensure_view(id);
+                    self.layout();
+                    Ok(json!({ "tab": id, "url": url }))
+                }
+            }
+            "web_close" => {
+                if let Some(t) = tab_arg.filter(|t| self.web_tabs.remove(t)) {
+                    self.unload(t);
+                    self.state.tabs.remove(&t);
+                    self.committed_url.remove(&t);
+                }
+                Ok(json!("ok"))
+            }
             "open_link" => {
                 let url = args["url"].as_str().unwrap_or("").to_string();
                 if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") {
@@ -6963,6 +6999,21 @@ impl App {
         }
         self.start_blocklist();
         std::thread::spawn(crate::llm_guide::install);
+        if self.config.mcp.connect_ai_apps == "always" {
+            std::thread::spawn(|| match crate::connect::exe() {
+                Ok(exe) if crate::connect::is_installed_copy(&exe) => {
+                    let (done, failed) = crate::connect::connect_all(&exe);
+                    if !done.is_empty() {
+                        crate::log::event("connect", format!("added Valerie to {}", done.join(", ")));
+                    }
+                    for f in failed {
+                        crate::log::line("connect", f);
+                    }
+                }
+                Ok(_) => crate::log::verbose("connect", "not the installed app; AI apps left as they are"),
+                Err(e) => crate::log::line("connect", format!("{e:#}")),
+            });
+        }
         self.check_tasks(true);
         let p = std::sync::Mutex::new(self.proxy.clone());
         platform::notifications_init(move |action| {
@@ -7028,6 +7079,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     let proxy = event_loop.create_proxy();
     let p = proxy.clone();
     muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| send(&p, UserEvent::Menu(e.id))));
+    crate::mcp::set_web_tools(config.mcp.web_tools);
     if config.mcp.enabled {
         crate::mcp::spawn(config.mcp.port, crate::mcp::load_or_create_token(), proxy.clone());
     }
@@ -8508,6 +8560,8 @@ impl App {
             // Unknown until the first sync has looked at the repo.
             "sync_key": if self.sync_checked { json!(self.passphrase_state()) } else { Value::Null },
             "suggestion": crate::crypt::suggest_passphrase(),
+            "ai_apps": crate::connect::exe().map(|e| crate::connect::list(&e)).unwrap_or_default(),
+            "connect_mode": self.config.mcp.connect_ai_apps,
         })
     }
 
@@ -8563,6 +8617,32 @@ impl App {
                         self.toast(&format!("Couldn't start {} setup: {e}", k.title));
                     }
                 }
+            }
+            "connect_apps" | "disconnect_app" => {
+                let ids: Vec<String> = match m["t"].as_str() {
+                    Some("connect_apps") => m["ids"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+                    _ => m["id"].as_str().map(|s| vec![s.to_string()]).unwrap_or_default(),
+                };
+                let undo = m["t"] == "disconnect_app";
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let exe = match crate::connect::exe() {
+                        Ok(e) => e,
+                        Err(e) => return send(&p, UserEvent::ToWelcome(json!({ "type": "ai_apps", "apps": [], "failed": [format!("{e:#}")] }))),
+                    };
+                    let mut failed = Vec::new();
+                    for a in ids.iter().filter_map(|id| crate::connect::app(id)) {
+                        let r = if undo { crate::connect::disconnect(a) } else { crate::connect::connect(a, &exe) };
+                        match r {
+                            Ok(_) => crate::log::event("connect", format!("{} {}", if undo { "took Valerie out of" } else { "added Valerie to" }, a.title)),
+                            Err(e) => {
+                                crate::log::line("connect", format!("{}: {e:#}", a.title));
+                                failed.push(format!("{}: {e:#}", a.title));
+                            }
+                        }
+                    }
+                    send(&p, UserEvent::ToWelcome(json!({ "type": "ai_apps", "apps": crate::connect::list(&exe), "failed": failed })));
+                });
             }
             "free_ai" => {
                 let p = self.proxy.clone();

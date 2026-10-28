@@ -3,6 +3,7 @@ mod app;
 mod blocking;
 mod command;
 mod config;
+mod connect;
 mod crypt;
 mod extensions;
 mod import;
@@ -29,7 +30,9 @@ const HELP: &str = "valerie: a fast, configurable, agent-native browser
 
 USAGE:
   valerie [URL...]        open the browser (URLs open like external links; forwarded if already running)
-  valerie mcp-config      print the command that connects Claude Code to the built-in MCP server
+  valerie connect [app…] [--list] [--undo]
+                          add Valerie's MCP server to the AI apps here (Claude Code, Codex, Cursor, Gemini CLI, …)
+  valerie mcp-config      print the settings any other MCP app needs to use Valerie
   valerie mcp-stdio       stdio <-> HTTP bridge for MCP clients that only speak stdio
   valerie sync-setup      create a private GitHub repo for tab sync (needs the gh CLI)
   valerie allow-from-sync list plugins and AI programs another machine sent that wait to be allowed here;
@@ -104,6 +107,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             }
             if !["auto", "always", "never"].contains(&c.chats.worktrees.as_str()) {
                 problems.push(format!("chats: worktrees is {:?}; use auto, always or never", c.chats.worktrees));
+            }
+            if !["ask", "always", "never"].contains(&c.mcp.connect_ai_apps.as_str()) {
+                problems.push(format!("mcp: connect_ai_apps is {:?}; use ask, always or never", c.mcp.connect_ai_apps));
             }
             if !["block", "bar", "underline"].contains(&c.terminal_panel.cursor.as_str()) {
                 problems.push(format!("terminal_panel: cursor is {:?}; use block, bar or underline", c.terminal_panel.cursor));
@@ -499,12 +505,15 @@ fn main() -> anyhow::Result<()> {
             }
             return Ok(());
         }
+        Some("connect") => return connect::cli(&args[1..]),
         Some("mcp-config") => {
             let token = mcp::load_or_create_token();
-            println!(
-                "claude mcp add --transport http valerie http://127.0.0.1:{}/mcp --header \"Authorization: Bearer {token}\"",
-                config.mcp.port
-            );
+            let exe = connect::exe()?;
+            let port = config.mcp.port;
+            println!("Most apps (stdio; no token needed):\n{}\n", serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": { "valerie": { "command": exe, "args": ["mcp-stdio"] } } }))?);
+            println!("Apps that take a URL (Streamable HTTP):\n  url: http://127.0.0.1:{port}/mcp\n  header: Authorization: Bearer {token}\n");
+            println!("Claude Code:\n  claude mcp add --scope user valerie -- \"{exe}\" mcp-stdio\n");
+            println!("Or let Valerie add itself to every AI app it finds: valerie connect");
             return Ok(());
         }
         Some("import-passwords") => {

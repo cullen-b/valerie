@@ -219,16 +219,22 @@ into `~/.config/valerie/boosts/` to restyle or script a site (CSS updates live).
 
 ## Agents (MCP)
 
-Valerie runs an MCP server inside the browser on `127.0.0.1:7777` (bearer-token protected). Connect Claude Code:
+Valerie runs an MCP server inside the browser on `127.0.0.1:7777` (bearer-token protected), so any agent can use it:
+Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, OpenCode, VS Code (Copilot), Copilot CLI, Windsurf, Cline, Kiro,
+LM Studio and Amp. The welcome guide offers to add Valerie to the ones on your computer (or skip); later, run
+**Connect AI Apps** from the command bar or:
 
 ```sh
-$(valerie mcp-config)            # prints and runs: claude mcp add --transport http valerie ... --header "Authorization: Bearer …"
+valerie connect                  # add Valerie to every AI app found here (--list shows them, --undo takes it out)
+valerie mcp-config               # the settings for any other MCP app (stdio command, or URL + token)
 ```
 
-For stdio-only clients, use `valerie mcp-stdio` as the command. Tools: `list_spaces`, `list_tabs`, `open_tab`,
-`open_link`, `navigate`, `activate_tab`, `close_tab`, `history`, `read_page`, `snapshot`, `screenshot`, `click`,
-`type`, `press_key`, `scroll`, `wait_for`, `eval_js`, and `run_command`, which runs any browser command the keyboard
-can (except reading passwords).
+`mcp.connect_ai_apps: always` also connects apps you install later. Agents get web tools that work like a scraping
+service, but run in a real browser with your logins: `web_search` (results from your search engine) and `fetch_page`
+(any page as clean Markdown, with its links if asked), in hidden tabs that stay out of your sidebar and history
+(`mcp.web_tools: false` turns them off). They can also drive your tabs: `list_tabs`, `open_tab`, `navigate`,
+`read_page`, `snapshot`, `click`, `type`, `press_key`, `scroll`, `wait_for`, `screenshot`, `eval_js`, and
+`run_command`, which runs any browser command the keyboard can (except reading passwords).
 
 ## Sync
 

@@ -347,6 +347,12 @@ replaces Valerie's own (their settings are `downloads.page` and `history.page`).
 `"{exe}" call <tool> '<json arguments>'` prints the result. Use it from plugin scripts or from your own shell to look
 at what the user has open (it talks to Valerie's built-in MCP server, which also works directly with MCP clients).
 
+Other AI apps (Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, OpenCode, VS Code, Copilot CLI, Windsurf, Cline,
+Kiro, LM Studio, Amp) get these tools once Valerie is added to them: `"{exe}" connect` (or `connect <app id>`,
+`--list`, `--undo`), the "Connect AI Apps" command, or `mcp.connect_ai_apps: always`. `"{exe}" mcp-config` prints the
+settings for any other MCP app. `web_search` and `fetch_page` (off with `mcp.web_tools: false`) search and read the web
+as Markdown in hidden tabs with the user's logins.
+
 Tools:
 "#,
         example = crate::plugins::EXAMPLE,
@@ -361,7 +367,9 @@ Tools:
 Examples:
 ```sh
 "{exe}" call list_tabs '{{}}'
-"{exe}" call read_page '{{"max_chars": 4000}}'
+"{exe}" call read_page '{{"max_chars": 4000, "format": "markdown"}}'
+"{exe}" call web_search '{{"query": "rust release notes"}}'
+"{exe}" call fetch_page '{{"url": "https://example.com", "links": true}}'
 "{exe}" call run_command '{{"command": {{"cmd": "switch_space", "name": "Work"}}}}'
 ```
 

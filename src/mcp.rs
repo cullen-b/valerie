@@ -15,6 +15,15 @@ pub struct McpRequest {
     pub reply: Sender<Result<Value, String>>,
 }
 
+/// mcp.web_tools: whether agents are offered web_search and fetch_page (kept in step with the settings by the app).
+static WEB_TOOLS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_web_tools(on: bool) {
+    WEB_TOOLS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+const WEB: &[&str] = &["web_search", "fetch_page"];
+
 pub fn token_path() -> PathBuf {
     crate::config::data_dir().join("mcp-token")
 }
@@ -128,6 +137,17 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
     }
 }
 
+const INSTRUCTIONS: &str = "Valerie is the user's own web browser; these tools drive it.\n\
+Reading the web: web_search finds pages (title, url and snippet from the user's search engine) and fetch_page reads any \
+URL as clean Markdown (or text/HTML, optionally with its links). They run in a hidden tab with the user's logins and a \
+real browser engine, so sign-in pages, JavaScript apps and bot-shy sites work, and they never touch the user's tabs or \
+history. Use them whenever you need to search or read something online.\n\
+Working in the user's tabs: list_tabs gives tab ids; page tools default to the active tab. read_page reads a tab \
+(format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref (snapshot again \
+after the page changes). wait_for waits for text or a selector, screenshot shows the page, eval_js runs JavaScript. Open \
+tabs with activate: false unless the user wants to watch. run_command does anything a keyboard shortcut can. When \
+something fails, read_logs says why.";
+
 /// Who's calling: the access level of the chat whose agent this is ("read" | "ask" | "full") and its id.
 struct Caller {
     access: String,
@@ -138,7 +158,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "read_console", "read_terminal",
+    "list_pages", "read_console", "read_terminal", "web_search", "fetch_page",
 ];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
@@ -164,15 +184,18 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
             "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": "valerie", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "You are controlling the user's Valerie browser. Tabs are identified by numeric ids from list_tabs. \
-                Page tools default to the active tab. Use snapshot to get element refs, then click/type by ref. \
-                Prefer opening new tabs in the background unless the user wants to watch."
+            "instructions": INSTRUCTIONS
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools() })),
+        // Some apps ask for these whatever the server offers; an empty list beats an error.
+        "resources/list" => Ok(json!({ "resources": [] })),
+        "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
+        "prompts/list" => Ok(json!({ "prompts": [] })),
+        // `approve` is only for Valerie's own chats (Claude Code's permission prompts); it'd only confuse other agents.
+        "tools/list" => Ok(json!({ "tools": tools().into_iter().filter(|t| !who.chat.is_empty() || t["name"] != "approve").collect::<Vec<_>>() })),
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or("");
-            let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            let args = loosen(name, params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or(json!({})));
             let started = Instant::now();
             let result = allowed(name, &args, who, proxy).and_then(|()| match name {
                 // Claude Code's permission questions (--permission-prompt-tool): the user answers in Valerie.
@@ -242,20 +265,84 @@ fn tab_prop() -> Value {
 }
 
 fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value {
-    json!({ "name": name, "description": description,
+    // Hints apps use to decide what needs the user's OK (MCP tool annotations).
+    let mut hints = json!({ "readOnlyHint": LOOKING.contains(&name) });
+    if ["close_tab", "delete_history", "clear_site_data"].contains(&name) {
+        hints["destructiveHint"] = json!(true);
+    }
+    if WEB.contains(&name) {
+        hints["openWorldHint"] = json!(true);
+    }
+    json!({ "name": name, "description": description, "annotations": hints,
             "inputSchema": { "type": "object", "properties": props, "required": required } })
+}
+
+/// Models don't all send the types a schema asks for (`"tab": "12"`, `"full_page": "true"`, a bare command name):
+/// take what they meant.
+fn loosen(name: &str, mut args: Value) -> Value {
+    if let Value::String(s) = &args {
+        args = serde_json::from_str(s).unwrap_or(json!({}));
+    }
+    let Some(obj) = args.as_object_mut() else { return json!({}) };
+    if name == "run_command" {
+        match obj.get("command").cloned() {
+            Some(Value::String(c)) => {
+                let c = serde_json::from_str::<Value>(&c).ok().filter(Value::is_object).unwrap_or(json!({ "cmd": c }));
+                obj.insert("command".into(), c);
+            }
+            None if obj.contains_key("cmd") => {
+                let c = Value::Object(std::mem::take(obj));
+                obj.insert("command".into(), c);
+            }
+            _ => {}
+        }
+    }
+    let Some(t) = tools().into_iter().find(|t| t["name"] == name) else { return args };
+    let props = &t["inputSchema"]["properties"];
+    for (k, v) in obj.iter_mut() {
+        let want = props[k.as_str()]["type"].as_str().unwrap_or("");
+        let fixed = match (want, &*v) {
+            ("integer", Value::String(s)) => s.trim().parse::<i64>().ok().map(Value::from),
+            ("integer", Value::Number(n)) if n.as_i64().is_none() => n.as_f64().map(|f| json!(f.round() as i64)),
+            ("boolean", Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "true" | "yes" | "1" => Some(json!(true)),
+                "false" | "no" | "0" => Some(json!(false)),
+                _ => None,
+            },
+            ("string", Value::Number(_) | Value::Bool(_)) => Some(json!(v.to_string())),
+            _ => None,
+        };
+        if let Some(f) = fixed {
+            *v = f;
+        }
+    }
+    args
 }
 
 pub fn tools() -> Vec<Value> {
     let commands: Vec<&str> = CATALOG.iter().map(|c| c.0).collect();
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
-    vec![
+    let web = WEB_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
+    let all = vec![
+        tool("web_search", "Search the web and get the results: title, url and snippet for each, from the user's search \
+             engine in a hidden tab (the user's tabs and history aren't touched). Read a result with fetch_page.", json!({
+            "query": { "type": "string", "description": "What to search for; operators like site:example.com work" },
+            "limit": { "type": "integer", "description": "Most results to return (default 10, up to 30)" } }), &["query"]),
+        tool("fetch_page", "Read a web page as clean Markdown (like a scraper, but in a real browser with the user's logins, so \
+             JavaScript apps and pages behind sign-in work). Loads in a hidden tab that closes afterwards; the user's tabs and \
+             history aren't touched. Use links: true to also get every link on the page (to find more pages to read).", json!({
+            "url": { "type": "string" },
+            "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Default markdown" },
+            "main_only": { "type": "boolean", "description": "Only the main content, without menus, headers and footers (default true)" },
+            "links": { "type": "boolean", "description": "Also list the page's links" },
+            "wait_for": { "type": "string", "description": "A CSS selector or text to wait for before reading (for slow pages)" },
+            "max_chars": { "type": "integer", "description": "Longest content to return (default 40000)" } }), &["url"]),
         tool("list_spaces", "List spaces (tab groups with their own profile and theme) and which is active.", json!({}), &[]),
         tool("list_chats", "List the user's chats with Valerie's agents (ids, titles, when they were last used).", json!({}), &[]),
         tool("read_chat", "Read a whole chat by id (the user may paste one as chat:<id> to share its context).",
              json!({ "id": { "type": "string" } }), &["id"]),
         tool("approve", "Ask the user to approve an action (used for permission prompts).",
-             json!({ "tool_name": { "type": "string" }, "input": { "type": "object" } }), &["tool_name"]),
+             json!({ "tool_name": { "type": "string" }, "input": { "type": "object", "additionalProperties": true } }), &["tool_name"]),
         tool("list_tabs", "List tabs: favorites, pinned and today tabs, with ids, urls, titles, space and state.",
              json!({ "space": { "type": "string", "description": "Only this space" } }), &[]),
         tool("open_tab", "Open a URL (or search terms) in a new tab.", json!({
@@ -268,8 +355,9 @@ pub fn tools() -> Vec<Value> {
         tool("close_tab", "Close a tab.", json!({ "tab": tab_prop() }), &["tab"]),
         tool("history", "Go back, forward or reload a tab.", json!({
             "action": { "type": "string", "enum": ["back", "forward", "reload"] }, "tab": tab_prop() }), &["action"]),
-        tool("read_page", "Read a page's URL, title and visible text (or HTML).", json!({
-            "tab": tab_prop(), "max_chars": { "type": "integer", "default": 20000 }, "html": { "type": "boolean" } }), &[]),
+        tool("read_page", "Read an open tab's URL, title and content: visible text (default), clean Markdown or HTML.", json!({
+            "tab": tab_prop(), "max_chars": { "type": "integer", "default": 20000 },
+            "format": { "type": "string", "enum": ["text", "markdown", "html"], "description": "Default text" } }), &[]),
         tool("snapshot", "List the page's interactive elements with refs for click/type. Refs reset on every snapshot.",
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
         tool("click", "Click an element by snapshot ref or CSS selector.", json!({
@@ -306,7 +394,8 @@ pub fn tools() -> Vec<Value> {
             "Run any browser command, exactly like a keybinding would. Pass {{\"cmd\": name, ...options}}. No-option commands: {}. \
              With options: {}.",
             commands.join(", "), with_args.join("; ")),
-             json!({ "command": { "type": "object" } }), &["command"]),
+             json!({ "command": { "type": "object", "properties": { "cmd": { "type": "string", "description": "The command's name" } },
+                                  "required": ["cmd"], "additionalProperties": true } }), &["command"]),
         tool("search_history", "Search the pages the user visited (title or address contains the words), most recent first.",
              json!({ "query": { "type": "string" }, "limit": { "type": "integer", "default": 50 } }), &[]),
         tool("delete_history", "Remove pages from history: those whose title or address contains `query`, exactly `url`, or visited in the last `since_minutes`.",
@@ -345,14 +434,15 @@ pub fn tools() -> Vec<Value> {
         tool("set_setting", "Change one setting (takes effect at once). Checked like `valerie check-config`: a wrong name or value \
              changes nothing and says why. The user can undo it with the undo_customization command.", json!({
             "key": { "type": "string", "description": "e.g. sidebar.tab_height (see get_settings)" },
-            "value": { "description": "The new value: a string, number, true/false, list or object" },
+            "value": { "type": "string", "description": "The new value as you'd write it in the YAML file: 32, true, bottom, [a, b] or { x: 1 }" },
             "this_computer": { "type": "boolean", "description": "Only on this computer (this-mac.yaml), not synced to the others" } }), &["key", "value"]),
         tool("screenshot_ui", "Capture Valerie's own interface as a PNG (to check a change to its look).",
              json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" },
                      "width": { "type": "integer" } }), &[]),
         tool("read_ui", "Read Valerie's own interface: its visible text and an outline of elements with their ids and classes \
              (the names to use in ui/*.css).", json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" } }), &[]),
-    ]
+    ];
+    all.into_iter().filter(|t| web || !WEB.contains(&t["name"].as_str().unwrap_or(""))).collect()
 }
 
 /// Every tool's name (what plugin `permissions` can list).
@@ -485,6 +575,194 @@ for (const e of document.querySelectorAll(sel)) {
 return { url: location.href, title: document.title, elements: out };
 "#;
 
+/// The page (or its main content with `A.main_only`) as Markdown, text or HTML; `A.links` adds every link on the page.
+const MARKDOWN_JS: &str = r#"
+const abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return ''; } };
+const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'OBJECT', 'EMBED', 'HEAD', 'BUTTON', 'SELECT', 'INPUT', 'TEXTAREA', 'DIALOG', 'VALERIE-UI']);
+const CHROME = new Set(['NAV', 'FOOTER', 'ASIDE', 'HEADER']);
+const CHROME_ROLES = /^(navigation|banner|contentinfo|complementary|search|menu|menubar|dialog|alertdialog)$/;
+const len = (e) => (e && e.innerText || '').trim().length;
+let root = document.body || document.documentElement;
+if (A.main_only !== false) {
+  const main = document.querySelector('main, [role=main]');
+  const articles = [...document.querySelectorAll('article')].sort((a, b) => len(b) - len(a));
+  if (main && len(main) > 200) root = main;
+  else if (articles[0] && len(articles[0]) > 200) root = articles[0];
+}
+const hidden = (e) => e.hidden || e.getAttribute('aria-hidden') === 'true' || (e.checkVisibility ? !e.checkVisibility() : getComputedStyle(e).display === 'none');
+const skip = (e) => SKIP.has(e.tagName) || hidden(e) || (A.main_only !== false && e !== root && (CHROME.has(e.tagName) && !e.closest('article') || CHROME_ROLES.test(e.getAttribute('role') || '')));
+const inline = (s) => s.replace(/\s*\n\s*/g, ' ').trim();
+function kids(e, ctx) { let out = ''; for (const c of e.childNodes) out += md(c, ctx); return out; }
+function list(e, ctx) {
+  let i = Number(e.getAttribute('start') || 1), out = '\n\n';
+  for (const li of e.children) {
+    if (li.tagName !== 'LI' || skip(li)) continue;
+    const mark = e.tagName === 'OL' ? (i++) + '. ' : '- ';
+    const body = kids(li, ctx).trim().replace(/\n{2,}/g, '\n').replace(/\n/g, '\n  ');
+    if (body) out += mark + body + '\n';
+  }
+  return out + '\n';
+}
+function table(e, ctx) {
+  const rows = [...e.rows].slice(0, 300).map((r) => [...r.cells].map((c) => inline(kids(c, ctx)).replace(/\|/g, '\\|')));
+  if (!rows.length) return '';
+  const n = Math.max(...rows.map((r) => r.length));
+  if (n < 2) return '\n\n' + rows.map((r) => r.join(' ')).join('\n') + '\n\n';
+  const line = (r) => '| ' + Array.from({ length: n }, (_, i) => r[i] || '').join(' | ') + ' |';
+  return '\n\n' + [line(rows[0]), '|' + ' --- |'.repeat(n), ...rows.slice(1).map(line)].join('\n') + '\n\n';
+}
+function md(n, ctx) {
+  if (n.nodeType === 3) return ctx.pre ? n.data : n.data.replace(/\s+/g, ' ');
+  if (n.nodeType !== 1 || skip(n)) return '';
+  const t = n.tagName;
+  switch (t) {
+    case 'H1': case 'H2': case 'H3': case 'H4': case 'H5': case 'H6': {
+      const s = inline(kids(n, ctx)); return s ? '\n\n' + '#'.repeat(+t[1]) + ' ' + s + '\n\n' : '';
+    }
+    case 'BR': return '\n';
+    case 'HR': return '\n\n---\n\n';
+    case 'A': {
+      const s = inline(kids(n, ctx)), h = n.getAttribute('href') || '';
+      if (!s) return '';
+      return /^(javascript:|#)/i.test(h) || !h ? s : '[' + s + '](' + abs(h) + ')';
+    }
+    case 'IMG': {
+      const src = abs(n.currentSrc || n.getAttribute('src') || '');
+      if (!src.startsWith('http') || (n.width && n.width < 24)) return '';
+      return '![' + (n.getAttribute('alt') || '').trim() + '](' + src + ')';
+    }
+    case 'STRONG': case 'B': { const s = kids(n, ctx); return s.trim() ? '**' + s.trim() + '** ' : s; }
+    case 'EM': case 'I': { const s = kids(n, ctx); return s.trim() ? '*' + s.trim() + '* ' : s; }
+    case 'S': case 'DEL': { const s = kids(n, ctx); return s.trim() ? '~~' + s.trim() + '~~' : s; }
+    case 'CODE': return ctx.pre ? n.textContent : '`' + n.textContent.trim() + '`';
+    case 'PRE': {
+      const lang = ((n.querySelector('code') || n).className.match(/language-([\w+-]+)/) || [])[1] || '';
+      return '\n\n```' + lang + '\n' + n.innerText.replace(/\n+$/, '') + '\n```\n\n';
+    }
+    case 'BLOCKQUOTE': return '\n\n' + kids(n, ctx).trim().split('\n').map((l) => '> ' + l).join('\n') + '\n\n';
+    case 'UL': case 'OL': return list(n, ctx);
+    case 'TABLE': return table(n, ctx);
+    case 'LI': return '\n- ' + kids(n, ctx).trim() + '\n';
+    case 'DT': return '\n\n**' + inline(kids(n, ctx)) + '**\n';
+    case 'P': case 'DIV': case 'SECTION': case 'ARTICLE': case 'MAIN': case 'HEADER': case 'FOOTER': case 'FIGURE': case 'FIGCAPTION':
+    case 'DL': case 'DD': case 'ADDRESS': case 'DETAILS': case 'SUMMARY': case 'FORM': case 'FIELDSET': case 'NAV': case 'ASIDE':
+      return '\n\n' + kids(n, ctx) + '\n\n';
+    default: return kids(n, ctx);
+  }
+}
+const max = A.max_chars || 40000;
+const fmt = A.format || 'markdown';
+let content = fmt === 'html' ? root.outerHTML : fmt === 'text' ? root.innerText
+  : md(root, { pre: false }).replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+(?![-\d>|])/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
+const out = { url: location.href, title: document.title, truncated: content.length > max, content: content.slice(0, max) };
+const desc = document.querySelector('meta[name=description], meta[property="og:description"]');
+if (desc && desc.content) out.description = desc.content.trim();
+if (A.links) {
+  const seen = new Set(); out.links = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const u = abs(a.getAttribute('href')).split('#')[0];
+    if (!/^https?:/.test(u) || seen.has(u)) continue;
+    seen.add(u); out.links.push({ text: inline(a.innerText || a.getAttribute('aria-label') || '').slice(0, 120), url: u });
+    if (out.links.length >= 1000) break;
+  }
+}
+return out;
+"#;
+
+/// Results on a search engine's page: links with a heading (Google, Bing, DuckDuckGo, Brave, Kagi and most others).
+const SEARCH_JS: &str = r#"
+const base = location.hostname.split('.').slice(-2).join('.');
+const unwrap = (h) => {
+  try {
+    const u = new URL(h, location.href);
+    if (u.pathname === '/url' && /google\./.test(u.hostname)) return u.searchParams.get('q') || u.searchParams.get('url') || '';
+    if (u.pathname === '/goto' && /google\./.test(u.hostname)) return u.href; // opaque: Valerie follows it afterwards
+    if (u.pathname.startsWith('/l/') && /duckduckgo\.com$/.test(u.hostname)) return u.searchParams.get('uddg') || '';
+    if (u.pathname.startsWith('/ck/') && /bing\.com$/.test(u.hostname)) {
+      const x = u.searchParams.get('u') || '';
+      return x.startsWith('a1') ? atob(x.slice(2).replace(/-/g, '+').replace(/_/g, '/')) : '';
+    }
+    return u.href;
+  } catch (e) { return ''; }
+};
+const own = (h) => { try { const n = new URL(h).hostname; return n === base || n.endsWith('.' + base); } catch (e) { return true; } };
+const anchors = [...document.querySelectorAll('a[href]')].filter((a) =>
+  a.querySelector('h1, h2, h3') || a.closest('h2, h3') || a.matches('a[data-testid=result-title-a], a.result__a, .snippet > a, a.__sri_title_link'));
+const seen = new Set(), results = [];
+for (const a of anchors) {
+  const url = unwrap(a.getAttribute('href'));
+  if (!/^https?:/.test(url) || (own(url) && !url.includes('/goto?')) || seen.has(url.split('#')[0])) continue;
+  const title = (a.querySelector('h1, h2, h3') || a).innerText.trim().replace(/\s+/g, ' ');
+  if (!title) continue;
+  seen.add(url.split('#')[0]);
+  let box = a;
+  while (box.parentElement && box.parentElement !== document.body && anchors.filter((x) => box.parentElement.contains(x)).length === 1) box = box.parentElement;
+  const snippet = (box.innerText || '').split('\n').map((l) => l.trim())
+    .filter((l) => l.length > 2 && l !== title && l !== 'Web results' && !l.includes(' › ') && !/^https?:\/\//.test(l) && !url.includes(l))
+    .join(' ').replace(/\s+/g, ' ').replace(/\s*Read more\b.*$|\s*Missing: .*$/, '').slice(0, 400);
+  results.push({ title, url, snippet });
+  if (results.length >= (A.limit || 10)) break;
+}
+return { engine: location.hostname, results, page_text: results.length ? undefined : (document.body ? document.body.innerText.slice(0, 1500) : '') };
+"#;
+
+/// Google hides where its results go behind /goto links; ask where each one redirects (in parallel, no cookies sent).
+fn resolve_redirects(results: &mut Value) {
+    let Some(list) = results.as_array_mut() else { return };
+    std::thread::scope(|s| {
+        for r in list.iter_mut().filter(|r| r["url"].as_str().is_some_and(|u| u.contains(".google.") && u.contains("/goto?"))) {
+            s.spawn(move || {
+                let url = r["url"].as_str().unwrap_or("").to_string();
+                let out = std::process::Command::new("curl")
+                    .args(["-s", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{redirect_url}", "--max-time", "6", "--proto", "=https", &url])
+                    .output();
+                let to = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+                if to.starts_with("http") && !to.contains(".google.") {
+                    r["url"] = json!(to);
+                }
+            });
+        }
+    });
+}
+
+/// Open a hidden tab (not in the sidebar or history), run `f` on it, and close it whatever happens.
+fn in_web_tab(proxy: &EventLoopProxy<UserEvent>, open: Value, f: impl FnOnce(Option<i64>) -> Result<Value, String>) -> Result<Value, String> {
+    let tab = call(proxy, "web_open", open)?["tab"].as_i64();
+    let out = f(tab);
+    let _ = call(proxy, "web_close", json!({ "tab": tab }));
+    out
+}
+
+/// Wait until `js` returns something `done` says is ready (or `secs` pass) and return its last answer.
+fn poll(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, js: &str, secs: u64, done: impl Fn(&Value) -> bool) -> Result<Value, String> {
+    let start = Instant::now();
+    loop {
+        let v = eval(proxy, tab, js)?;
+        if done(&v) || start.elapsed() > Duration::from_secs(secs) {
+            return Ok(v);
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// After the load event, give pages that draw themselves with JavaScript a moment: until their text stops growing.
+fn settle(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, wait_for: Option<&str>) -> Result<(), String> {
+    if let Some(w) = wait_for.filter(|w| !w.trim().is_empty()) {
+        let js = with_args(&json!({ "w": w }), "try { if (document.querySelector(A.w)) return true; } catch (e) {} \
+            return !!(document.body && document.body.innerText.includes(A.w));");
+        poll(proxy, tab, &js, 15, |v| v == &Value::Bool(true))?;
+    }
+    let last = std::cell::Cell::new(-1i64);
+    let steady = std::cell::Cell::new(0);
+    poll(proxy, tab, "return document.body ? document.body.innerText.length : 0", 6, |v| {
+        let n = v.as_i64().unwrap_or(0);
+        steady.set(if n > 0 && n == last.get() { steady.get() + 1 } else { 0 });
+        last.set(n);
+        steady.get() >= 2
+    })?;
+    Ok(())
+}
+
 fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let tab = a.get("tab").and_then(|t| t.as_i64());
     match name {
@@ -520,12 +798,24 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             if path.is_empty() {
                 return Err("give the setting's key, e.g. sidebar.tab_height".into());
             }
+            let here = a["this_computer"].as_bool().unwrap_or(false);
+            crate::app::snapshot_config(&format!("set {key}"));
             let value = match &a["value"] {
                 Value::Null => return Err("give a value".into()),
-                v => v.to_string(),
+                // Written as in the YAML file ("32", "true", "[a, b]"); if that doesn't fit, it's taken as plain text.
+                Value::String(s) => match crate::config::change_setting(&path, s, here) {
+                    Ok(()) => s.clone(),
+                    Err(_) => {
+                        let quoted = json!(s).to_string();
+                        crate::config::change_setting(&path, &quoted, here).map_err(|e| format!("{e:#}"))?;
+                        quoted
+                    }
+                },
+                v => {
+                    crate::config::change_setting(&path, &v.to_string(), here).map_err(|e| format!("{e:#}"))?;
+                    v.to_string()
+                }
             };
-            crate::app::snapshot_config(&format!("set {key}"));
-            crate::config::change_setting(&path, &value, a["this_computer"].as_bool().unwrap_or(false)).map_err(|e| format!("{e:#}"))?;
             crate::log::event("settings", format!("{key} changed by an agent"));
             Ok(json!(format!("{key} is now {value}. The user can undo it with undo_customization.")))
         }
@@ -538,10 +828,45 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             call(proxy, "run", json!({ "cmd": cmd, "tab": tab }))
         }
         "run_command" => call(proxy, "run", a["command"].clone()),
+        "web_search" => {
+            let query = a["query"].as_str().unwrap_or("").trim();
+            if query.is_empty() {
+                return Err("give a query".into());
+            }
+            let limit = a["limit"].as_u64().unwrap_or(10).clamp(1, 30);
+            in_web_tab(proxy, json!({ "search": query }), |tab| {
+                let tab = wait_ready(proxy, tab)?;
+                let mut r = poll(proxy, tab, &with_args(&json!({ "limit": limit }), SEARCH_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))?;
+                resolve_redirects(&mut r["results"]);
+                r["query"] = json!(query);
+                if r["results"].as_array().is_some_and(Vec::is_empty) {
+                    r["note"] = json!("No results could be read; page_text shows what the search page said (a consent or robot check?).");
+                }
+                Ok(r)
+            })
+        }
+        "fetch_page" => {
+            let url = a["url"].as_str().unwrap_or("").trim();
+            if url.is_empty() {
+                return Err("give a url".into());
+            }
+            in_web_tab(proxy, json!({ "url": url }), |tab| {
+                let tab = wait_ready(proxy, tab)?;
+                settle(proxy, tab, a["wait_for"].as_str())?;
+                eval(proxy, tab, &with_args(&a, MARKDOWN_JS))
+            })
+        }
         "read_page" => {
             let tab = wait_ready(proxy, tab)?;
-            let js = with_args(&a, "const max = A.max_chars || 20000; const body = A.html ? document.documentElement.outerHTML : (document.body ? document.body.innerText : ''); \
-                return { url: location.href, title: document.title, truncated: body.length > max, content: body.slice(0, max) };");
+            let format = a["format"].as_str().unwrap_or(if a["html"].as_bool() == Some(true) { "html" } else { "text" });
+            if format == "markdown" {
+                let mut o = a.clone();
+                o["max_chars"] = json!(a["max_chars"].as_u64().unwrap_or(20000));
+                return eval(proxy, tab, &with_args(&o, MARKDOWN_JS));
+            }
+            let js = with_args(&json!({ "max": a["max_chars"].as_u64().unwrap_or(20000), "html": format == "html" }),
+                "const body = A.html ? document.documentElement.outerHTML : (document.body ? document.body.innerText : ''); \
+                return { url: location.href, title: document.title, truncated: body.length > A.max, content: body.slice(0, A.max) };");
             eval(proxy, tab, &js)
         }
         "read_console" => {
@@ -616,7 +941,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let tab = wait_ready(proxy, tab)?;
             eval(proxy, tab, a["script"].as_str().unwrap_or(""))
         }
-        _ => Err(format!("unknown tool {name}")),
+        _ => Err(format!("unknown tool {name}; the tools are: {}", tool_names().join(", "))),
     }
 }
 
