@@ -701,8 +701,9 @@ rules: []
 mcp:
   enabled: true
   port: 7777
-  web_tools: true          # give agents web_search and fetch_page: search and read the web as clean Markdown through
-                           # Valerie, with your logins, in tabs you never see (not in the sidebar or history): true | false
+  web_tools: true          # give agents web_search, fetch_page and check_page: search and read the web as clean Markdown
+                           # (or just the parts about a question), and check pages they build at phone and desktop sizes,
+                           # with your logins, in tabs you never see (not in the sidebar or history): true | false
   connect_ai_apps: ask     # add Valerie to the AI apps found on this computer so their agents can use it. One of:
                            # ask (the welcome guide asks once; "Connect AI Apps" in the command bar any time) |
                            # always (at every start, including apps installed later) | never

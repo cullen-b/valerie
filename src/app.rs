@@ -6,7 +6,7 @@ use crate::{agents, blocking, import, passwords, platform, plugins, routing, syn
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
@@ -243,8 +243,6 @@ pub struct App {
     /// Tabs loaded early because the pointer rested on them in the sidebar, until they're clicked: when, and how the
     /// sidebar showed them then (a preload stays invisible, so they keep looking exactly like that).
     preloaded: HashMap<TabId, Preloaded>,
-    /// Hidden tabs agents' web_search and fetch_page read pages in: in no sidebar list and not in history.
-    web_tabs: HashSet<TabId>,
     /// Looking for or installing an update right now.
     update_busy: bool,
     /// A newer version installed while this one runs; it starts next time.
@@ -1200,7 +1198,6 @@ impl App {
             pending_reveal: None,
             reveal_when_chrome_ready: false,
             preloaded: HashMap::new(),
-            web_tabs: HashSet::new(),
             update_busy: false,
             update_ready: None,
             update_told: Default::default(),
@@ -5910,7 +5907,7 @@ impl App {
                             visit = Some((t.url.clone(), t.title.clone()));
                         }
                     }
-                    if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id) && !self.web_tabs.contains(&id)) {
+                    if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id) && !self.state.web_tabs.contains(&id)) {
                         self.state.record_visit(&u, &t);
                         self.after_load(Target::Tab(id), &u, false);
                         self.fill_offers.remove(&Target::Tab(id));
@@ -6591,24 +6588,38 @@ impl App {
             // web_search and fetch_page: a tab no one sees, with the active space's logins.
             "web_open" if !self.config.mcp.web_tools => Err("web tools are off (the mcp.web_tools setting)".into()),
             "web_open" => {
+                // `search` uses the user's search engine; the agent may pass a full address of its own instead.
                 let url = match args["search"].as_str() {
                     Some(q) => self.config.search_engine.replace("%s", &url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>()),
                     None => routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine),
                 };
-                if !matches!(scheme_of(&url).as_str(), "http" | "https") {
-                    Err("only http(s) addresses".into())
+                if !matches!(scheme_of(&url).as_str(), "http" | "https" | "file") {
+                    Err("only http(s) and file addresses".into())
                 } else {
                     let url = self.rewrite(&url);
                     let id = self.state.add_tab(self.state.active_space, &url, false);
                     self.state.detach(id);
-                    self.web_tabs.insert(id);
+                    self.state.web_tabs.insert(id);
                     self.ensure_view(id);
+                    if let (Some(w), Some(h), Some(v)) = (args["width"].as_f64(), args["height"].as_f64(), self.views.get(&id)) {
+                        let _ = v.set_bounds(rect(0.0, 0.0, w.clamp(200.0, 4000.0), h.clamp(200.0, 4000.0)));
+                    }
                     self.layout();
                     Ok(json!({ "tab": id, "url": url }))
                 }
             }
+            // check_page: the hidden tab at a phone, tablet or desktop size.
+            "web_size" => match tab_arg.filter(|t| self.state.web_tabs.contains(t)).and_then(|t| self.views.get(&t)) {
+                Some(v) => {
+                    let (w, h) = (args["width"].as_f64().unwrap_or(1280.0), args["height"].as_f64().unwrap_or(800.0));
+                    let _ = v.set_bounds(rect(0.0, 0.0, w.clamp(200.0, 4000.0), h.clamp(200.0, 4000.0)));
+                    Ok(json!("ok"))
+                }
+                None => Err("no such web tab".into()),
+            },
+            "search_engine" => Ok(json!(self.config.search_engine)),
             "web_close" => {
-                if let Some(t) = tab_arg.filter(|t| self.web_tabs.remove(t)) {
+                if let Some(t) = tab_arg.filter(|t| self.state.web_tabs.remove(t)) {
                     self.unload(t);
                     self.state.tabs.remove(&t);
                     self.committed_url.remove(&t);

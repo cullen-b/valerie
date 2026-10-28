@@ -140,6 +140,9 @@ pub struct HistoryEntry {
 pub struct State {
     #[serde(default)]
     pub next_id: TabId,
+    /// Hidden tabs agents' web_search, fetch_page and check_page read pages in: in no list, never saved.
+    #[serde(skip)]
+    pub web_tabs: std::collections::BTreeSet<TabId>,
     #[serde(default)]
     pub tabs: BTreeMap<TabId, Tab>,
     #[serde(default)]
@@ -366,6 +369,7 @@ impl State {
             .unwrap_or(0);
         // Drop tab records nothing refers to anymore.
         let mut live: Vec<TabId> = self.favorites.clone();
+        live.extend(&self.web_tabs);
         for s in &self.spaces {
             walk(&s.pinned, &mut live, false);
             walk(&s.kept, &mut live, false);

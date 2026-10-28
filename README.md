@@ -229,12 +229,20 @@ valerie connect                  # add Valerie to every AI app found here (--lis
 valerie mcp-config               # the settings for any other MCP app (stdio command, or URL + token)
 ```
 
-`mcp.connect_ai_apps: always` also connects apps you install later. Agents get web tools that work like a scraping
-service, but run in a real browser with your logins: `web_search` (results from your search engine) and `fetch_page`
-(any page as clean Markdown, with its links if asked), in hidden tabs that stay out of your sidebar and history
-(`mcp.web_tools: false` turns them off). They can also drive your tabs: `list_tabs`, `open_tab`, `navigate`,
-`read_page`, `snapshot`, `click`, `type`, `press_key`, `scroll`, `wait_for`, `screenshot`, `eval_js`, and
-`run_command`, which runs any browser command the keyboard can (except reading passwords).
+`mcp.connect_ai_apps: always` also connects apps you install later. Agents get web tools that do more than a scraping
+service, in a real browser with your logins and no rate limits, in hidden tabs that stay out of your sidebar and history
+(`mcp.web_tools: false` turns them off):
+
+- `web_search`: results from your search engine (DuckDuckGo if it blocks the search), by time (`recent: week`), news or
+  `sites`; `read: 3` also reads the top results.
+- `fetch_page`: any page (sign-in pages, JavaScript apps, local files) as clean Markdown; `focus: "your question"`
+  returns only the sections about it, word for word, plus the page's outline; `urls` reads ten at once.
+- `check_page`: a page you're building at phone, tablet and desktop sizes in one call: screenshots, console errors,
+  broken images and anything sticking out past the screen.
+
+They can also drive your tabs: `list_tabs`, `open_tab`, `navigate`, `read_page`, `snapshot`, `click`, `type`,
+`press_key`, `scroll`, `wait_for`, `screenshot` (`save_to` a file), `eval_js`, and `run_command`, which runs any
+browser command the keyboard can (except reading passwords).
 
 ## Sync
 

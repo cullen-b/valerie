@@ -22,7 +22,7 @@ pub fn set_web_tools(on: bool) {
     WEB_TOOLS.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-const WEB: &[&str] = &["web_search", "fetch_page"];
+const WEB: &[&str] = &["web_search", "fetch_page", "check_page"];
 
 pub fn token_path() -> PathBuf {
     crate::config::data_dir().join("mcp-token")
@@ -138,15 +138,17 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
 }
 
 const INSTRUCTIONS: &str = "Valerie is the user's own web browser; these tools drive it.\n\
-Reading the web: web_search finds pages (title, url and snippet from the user's search engine) and fetch_page reads any \
-URL as clean Markdown (or text/HTML, optionally with its links). They run in a hidden tab with the user's logins and a \
-real browser engine, so sign-in pages, JavaScript apps and bot-shy sites work, and they never touch the user's tabs or \
-history. Use them whenever you need to search or read something online.\n\
+Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
+user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
+top results). fetch_page reads pages as Markdown; give focus (your question) to get just the sections about it, word \
+for word, and urls to read several at once. Prefer these to your other web tools.\n\
+Building a site or app: check_page loads it (localhost or a file) at phone and desktop sizes and returns screenshots, \
+console errors, broken images and anything sticking out past the screen, in one call.\n\
 Working in the user's tabs: list_tabs gives tab ids; page tools default to the active tab. read_page reads a tab \
 (format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref (snapshot again \
-after the page changes). wait_for waits for text or a selector, screenshot shows the page, eval_js runs JavaScript. Open \
-tabs with activate: false unless the user wants to watch. run_command does anything a keyboard shortcut can. When \
-something fails, read_logs says why.";
+after the page changes). wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
+eval_js runs JavaScript. Open tabs with activate: false unless the user wants to watch. run_command does anything a \
+keyboard shortcut can. When something fails, read_logs says why.";
 
 /// Who's calling: the access level of the chat whose agent this is ("read" | "ask" | "full") and its id.
 struct Caller {
@@ -158,7 +160,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "read_console", "read_terminal", "web_search", "fetch_page",
+    "list_pages", "read_console", "read_terminal", "web_search", "fetch_page", "check_page",
 ];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
@@ -217,6 +219,7 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
             });
             log_call(name, &args, who, started.elapsed(), &result);
             Ok(match result {
+                Ok(v) if v.get("__content").is_some() => json!({ "content": v["__content"], "isError": false }),
                 Ok(v) if v.get("__image_png").is_some() => {
                     json!({ "content": [{ "type": "image", "data": v["__image_png"], "mimeType": "image/png" }], "isError": false })
                 }
@@ -324,19 +327,42 @@ pub fn tools() -> Vec<Value> {
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     let web = WEB_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
     let all = vec![
-        tool("web_search", "Search the web and get the results: title, url and snippet for each, from the user's search \
-             engine in a hidden tab (the user's tabs and history aren't touched). Read a result with fetch_page.", json!({
-            "query": { "type": "string", "description": "What to search for; operators like site:example.com work" },
-            "limit": { "type": "integer", "description": "Most results to return (default 10, up to 30)" } }), &["query"]),
-        tool("fetch_page", "Read a web page as clean Markdown (like a scraper, but in a real browser with the user's logins, so \
-             JavaScript apps and pages behind sign-in work). Loads in a hidden tab that closes afterwards; the user's tabs and \
-             history aren't touched. Use links: true to also get every link on the page (to find more pages to read).", json!({
-            "url": { "type": "string" },
+        tool("web_search", "Search the web and get the results: title, url and snippet each, from the user's search engine in \
+             a hidden tab (their tabs and history aren't touched; no rate limits). Filter by time (recent), to news or to \
+             sites. With read: N it also reads the top N results and returns the parts of each about your question (focus), \
+             so one call answers most research questions.", json!({
+            "query": { "type": "string", "description": "What to search for; operators like \"exact phrase\" and -word work" },
+            "limit": { "type": "integer", "description": "Most results to return (default 10, up to 30)" },
+            "recent": { "type": "string", "enum": ["day", "week", "month", "year"], "description": "Only pages from this long ago" },
+            "news": { "type": "boolean", "description": "News articles only" },
+            "sites": { "type": "array", "items": { "type": "string" }, "description": "Only these sites, e.g. [\"github.com\", \"docs.rs\"]" },
+            "read": { "type": "integer", "description": "Also read the top this many results (up to 5)" },
+            "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
+            "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
+        tool("fetch_page", "Read web pages as clean Markdown, like a scraper but in a real browser with the user's logins, so \
+             JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login) and local files work, with no rate limits. \
+             Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
+             under their headings, plus the page's outline: far smaller than the whole page. urls reads up to 10 at once. Runs \
+             in hidden tabs; the user's tabs and history aren't touched.", json!({
+            "url": { "type": "string", "description": "An address, or a file path like /Users/me/report.html" },
+            "urls": { "type": "array", "items": { "type": "string" }, "description": "Several pages at once (instead of url)" },
+            "focus": { "type": "string", "description": "Only the parts about this, e.g. \"rate limits for order writes\"" },
             "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Default markdown" },
             "main_only": { "type": "boolean", "description": "Only the main content, without menus, headers and footers (default true)" },
             "links": { "type": "boolean", "description": "Also list the page's links" },
             "wait_for": { "type": "string", "description": "A CSS selector or text to wait for before reading (for slow pages)" },
-            "max_chars": { "type": "integer", "description": "Longest content to return (default 40000)" } }), &["url"]),
+            "max_chars": { "type": "integer", "description": "Longest content to return (default 40000)" } }), &[]),
+        tool("check_page", "Check a page you're building (a dev server like http://localhost:3000, or a file) at phone, tablet and \
+             desktop sizes in one call: a screenshot at each size, console errors and warnings, failed files, broken images, \
+             elements sticking out past the screen's edge (sideways scrolling), load time. Runs in a hidden tab, so nothing \
+             on the user's screen moves.", json!({
+            "url": { "type": "string", "description": "e.g. http://localhost:5173/settings or /Users/me/site/index.html" },
+            "sizes": { "type": "array", "items": { "type": "string" }, "description": "phone, tablet, laptop, desktop or WIDTHxHEIGHT (default [phone, desktop])" },
+            "full_page": { "type": "boolean", "description": "Screenshot the whole page, not just the first screen" },
+            "screenshots": { "type": "boolean", "description": "false: just the checks, no pictures" },
+            "save_to": { "type": "string", "description": "Save the screenshots in this folder and return their paths instead of the images" },
+            "name": { "type": "string", "description": "With save_to: the files' name (name-phone.png …)" },
+            "wait_for": { "type": "string", "description": "A CSS selector or text to wait for first" } }), &["url"]),
         tool("list_spaces", "List spaces (tab groups with their own profile and theme) and which is active.", json!({}), &[]),
         tool("list_chats", "List the user's chats with Valerie's agents (ids, titles, when they were last used).", json!({}), &[]),
         tool("read_chat", "Read a whole chat by id (the user may paste one as chat:<id> to share its context).",
@@ -373,7 +399,8 @@ pub fn tools() -> Vec<Value> {
             "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
         tool("screenshot", "Capture what the tab looks like as a PNG image: the visible viewport, or with full_page the whole page top to bottom.",
              json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
-                     "full_page": { "type": "boolean", "description": "The whole page, not just what's on screen (it's scrolled through once first, so lazy images load)" } }), &[]),
+                     "full_page": { "type": "boolean", "description": "The whole page, not just what's on screen (it's scrolled through once first, so lazy images load)" },
+                     "save_to": { "type": "string", "description": "Save the PNG to this file (or folder) and return its path instead of the image" } }), &[]),
         tool("read_console", "Read what the page wrote to its console since it loaded, oldest first: console.log/info/warn/error/debug, \
              uncaught errors, failed promises and files that failed to load. Use it to check a page or app you're building.",
              json!({ "tab": tab_prop(), "level": { "type": "string", "enum": ["error", "warn", "info", "log", "debug"], "description": "Only this level (warn includes errors)" },
@@ -653,7 +680,7 @@ function md(n, ctx) {
 const max = A.max_chars || 40000;
 const fmt = A.format || 'markdown';
 let content = fmt === 'html' ? root.outerHTML : fmt === 'text' ? root.innerText
-  : md(root, { pre: false }).replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+(?![-\d>|])/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
+  : md(root, { pre: false }).replace(/[\u200b-\u200d\ufeff]/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+(?![-\d>|])/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
 const out = { url: location.href, title: document.title, truncated: content.length > max, content: content.slice(0, max) };
 const desc = document.querySelector('meta[name=description], meta[property="og:description"]');
 if (desc && desc.content) out.description = desc.content.trim();
@@ -702,6 +729,19 @@ for (const a of anchors) {
     .join(' ').replace(/\s+/g, ' ').replace(/\s*Read more\b.*$|\s*Missing: .*$/, '').slice(0, 400);
   results.push({ title, url, snippet });
   if (results.length >= (A.limit || 10)) break;
+}
+// News-style results: a link holding "source / headline / summary / age" as lines, with no heading element.
+if (!results.length) {
+  for (const a of document.querySelectorAll('#search a[href], #rso a[href], main a[href]')) {
+    const url = unwrap(a.getAttribute('href'));
+    const lines = (a.innerText || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!/^https?:/.test(url) || (own(url) && !url.includes('/goto?')) || seen.has(url) || lines.length < 2) continue;
+    const title = lines[0].length >= 25 ? lines[0] : lines[1];
+    if (title.length < 15) continue;
+    seen.add(url);
+    results.push({ title, url, snippet: lines.filter((l) => l !== title).join(' · ').slice(0, 400) });
+    if (results.length >= (A.limit || 10)) break;
+  }
 }
 return { engine: location.hostname, results, page_text: results.length ? undefined : (document.body ? document.body.innerText.slice(0, 1500) : '') };
 "#;
@@ -761,6 +801,331 @@ fn settle(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, wait_for: Option<
         steady.get() >= 2
     })?;
     Ok(())
+}
+
+/// A path or address the way a browser wants it: "/Users/me/r.html" and "~/r.html" become file:// addresses.
+fn as_address(u: &str) -> String {
+    let u = u.trim();
+    let home = || dirs::home_dir().unwrap_or_default().to_string_lossy().into_owned();
+    match u.strip_prefix("~/") {
+        Some(rest) => format!("file://{}/{rest}", home()),
+        None if u.starts_with('/') => format!("file://{u}"),
+        None => u.to_string(),
+    }
+}
+
+/// Write a screenshot's PNG to `path` (a folder gets a timestamped name) and return where it went.
+fn save_png(shot: &Value, path: &str) -> Result<String, String> {
+    let png = shot["__image_png"].as_str().and_then(unbase64).ok_or("no picture came back")?;
+    let mut p = PathBuf::from(path.strip_prefix("~/").map(|r| dirs::home_dir().unwrap_or_default().join(r)).unwrap_or_else(|| PathBuf::from(path)));
+    if p.is_dir() || path.ends_with('/') {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        p = p.join(format!("valerie-{stamp}.png"));
+    }
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, png).map_err(|e| format!("couldn't save {}: {e}", p.display()))?;
+    Ok(p.to_string_lossy().into_owned())
+}
+
+/// One page read in a hidden tab (fetch_page), narrowed to `focus` when it's given.
+fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<Value, String> {
+    if url.trim().is_empty() {
+        return Err("give a url (or urls)".into());
+    }
+    let focus_on = a["focus"].as_str().unwrap_or("").trim().to_string();
+    let max = a["max_chars"].as_u64().unwrap_or(40_000) as usize;
+    let mut args = a.clone();
+    if !focus_on.is_empty() {
+        // Read the whole page, then keep what's about the focus.
+        args["max_chars"] = json!(2_000_000);
+        args["format"] = json!("markdown");
+    }
+    let mut page = in_web_tab(proxy, json!({ "url": as_address(url) }), |tab| {
+        let tab = wait_ready(proxy, tab)?;
+        settle(proxy, tab, a["wait_for"].as_str())?;
+        eval(proxy, tab, &with_args(&args, MARKDOWN_JS))
+    })
+    .map_err(|e| if e.contains("timed out") { format!("{url} didn't load (no such site, or it's down)") } else { e })?;
+    if !focus_on.is_empty() {
+        let f = focus(page["content"].as_str().unwrap_or(""), &focus_on, max.min(40_000));
+        page["content"] = f["content"].clone();
+        page["truncated"] = f["truncated"].clone();
+        page["focus"] = json!({ "query": focus_on, "sections_matched": f["matched"], "outline": f["outline"] });
+    }
+    Ok(page)
+}
+
+const STOP: &[&str] = &[
+    "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was", "one", "our", "out", "has", "have", "how",
+    "what", "when", "where", "which", "who", "why", "with", "this", "that", "from", "they", "will", "would", "there", "their", "about",
+    "does", "into", "than", "then", "them", "these", "those", "your", "its", "also", "just", "quote", "exactly", "full", "section",
+    "text", "page", "tell", "find", "give", "list", "show", "every", "each", "some", "more", "most", "exact", "verbatim",
+];
+
+/// The parts of a Markdown page about `query`, word for word: sections (under their headings) scored by the query's
+/// words they hold, rarer words counting more and "quoted phrases" most, kept in page order up to `max` characters.
+pub fn focus(md: &str, query: &str, max: usize) -> Value {
+    let q = query.to_lowercase();
+    let phrases: Vec<&str> = q.split('"').skip(1).step_by(2).map(str::trim).filter(|p| !p.is_empty()).collect();
+    let mut words: Vec<String> = q
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| w.len() > 2 && !STOP.contains(w))
+        .map(|w| if w.len() > 4 && w.ends_with('s') && !w.ends_with("ss") { w[..w.len() - 1].to_string() } else { w.to_string() })
+        .collect();
+    words.sort();
+    words.dedup();
+    // Sections at headings, long ones cut at paragraphs into ~1500-character pieces that keep their heading path.
+    let (mut chunks, mut outline, mut path): (Vec<(String, String)>, Vec<String>, Vec<(usize, String)>) = (vec![], vec![], vec![]);
+    let mut body = String::new();
+    let flush = |chunks: &mut Vec<(String, String)>, path: &[(usize, String)], body: &mut String| {
+        if !body.trim().is_empty() {
+            chunks.push((path.iter().map(|(_, h)| h.as_str()).collect::<Vec<_>>().join(" › "), std::mem::take(body).trim().to_string()));
+        }
+        body.clear();
+    };
+    let mut fence = false;
+    for line in md.lines() {
+        if line.trim_start().starts_with("```") {
+            fence = !fence;
+        }
+        let level = line.chars().take_while(|c| *c == '#').count();
+        if !fence && (1..=6).contains(&level) && line[level..].starts_with(' ') {
+            flush(&mut chunks, &path, &mut body);
+            let title = line[level..].trim().to_string();
+            path.retain(|(l, _)| *l < level);
+            path.push((level, title.clone()));
+            if outline.len() < 120 {
+                outline.push(format!("{}{title}", "  ".repeat(level.saturating_sub(1))));
+            }
+            continue;
+        }
+        if !fence && line.trim().is_empty() && body.len() > 1500 {
+            flush(&mut chunks, &path, &mut body);
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    flush(&mut chunks, &path, &mut body);
+    let lower: Vec<String> = chunks.iter().map(|(h, b)| format!("{h}\n{b}").to_lowercase()).collect();
+    let n = chunks.len().max(1) as f64;
+    let df = |w: &str| lower.iter().filter(|c| c.contains(w)).count() as f64;
+    let idf: Vec<f64> = words.iter().map(|w| (1.0 + n / (1.0 + df(w))).ln()).collect();
+    let mut scored: Vec<(usize, f64)> = lower
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let head = chunks[i].0.to_lowercase();
+            let mut s: f64 = words.iter().zip(&idf).map(|(w, idf)| {
+                let tf = c.matches(w.as_str()).count() as f64;
+                if tf == 0.0 { 0.0 } else { (1.0 + tf.ln()) * idf * if head.contains(w.as_str()) { 2.0 } else { 1.0 } }
+            }).sum();
+            s += phrases.iter().filter(|p| c.contains(*p)).count() as f64 * 5.0;
+            (i, s / (1.0 + (c.len() as f64 / 3000.0)))
+        })
+        .filter(|(_, s)| *s > 0.0)
+        .collect();
+    let matched = scored.len();
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let (mut keep, mut used) = (Vec::new(), 0);
+    for (i, _) in scored {
+        let len = chunks[i].0.len() + chunks[i].1.len() + 8;
+        if used + len > max && !keep.is_empty() {
+            continue;
+        }
+        used += len;
+        keep.push(i);
+    }
+    keep.sort();
+    let content = if keep.is_empty() {
+        md.chars().take(max).collect::<String>()
+    } else {
+        keep.iter().map(|&i| if chunks[i].0.is_empty() { chunks[i].1.clone() } else { format!("## {}\n\n{}", chunks[i].0, chunks[i].1) }).collect::<Vec<_>>().join("\n\n…\n\n")
+    };
+    let truncated = content.chars().count() >= max || keep.len() < matched;
+    json!({ "content": content.chars().take(max).collect::<String>(), "matched": matched, "truncated": truncated, "outline": outline })
+}
+
+/// Search-page address for `engine` (a search URL with %s): recency and news where the engine has them.
+fn search_url(engine: &str, query: &str, recent: &str, news: bool) -> Option<String> {
+    let q: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let mut u = engine.replace("%s", &q);
+    let d = match recent { "day" | "d" | "24h" => "d", "week" | "w" => "w", "month" | "m" => "m", "year" | "y" => "y", _ => "" };
+    if engine.contains("google.") {
+        if !d.is_empty() {
+            u.push_str(&format!("&tbs=qdr:{d}"));
+        }
+        if news {
+            u.push_str("&tbm=nws");
+        }
+    } else if engine.contains("duckduckgo.") {
+        if !d.is_empty() {
+            u.push_str(&format!("&df={d}"));
+        }
+        if news {
+            return None;
+        }
+    } else if !d.is_empty() || news {
+        return None; // this engine's filters aren't known: Google does it
+    }
+    Some(u)
+}
+
+const GOOGLE: &str = "https://www.google.com/search?q=%s";
+const DUCKDUCKGO: &str = "https://html.duckduckgo.com/html/?q=%s";
+
+/// web_search: the user's engine (Google when it can't filter as asked), DuckDuckGo when that one blocks the search,
+/// and with `read` the top results fetched too (narrowed to `focus`, or the query).
+fn web_search(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, String> {
+    let query = a["query"].as_str().unwrap_or("").trim();
+    if query.is_empty() {
+        return Err("give a query".into());
+    }
+    let limit = a["limit"].as_u64().unwrap_or(10).clamp(1, 30);
+    let sites: Vec<String> = match &a["sites"] {
+        Value::Array(s) => s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+        Value::String(s) => s.split([',', ' ']).filter(|x| !x.is_empty()).map(str::to_string).collect(),
+        _ => vec![],
+    };
+    let full = match sites.len() {
+        0 => query.to_string(),
+        1 => format!("{query} site:{}", sites[0]),
+        _ => format!("{query} ({})", sites.iter().map(|s| format!("site:{s}")).collect::<Vec<_>>().join(" OR ")),
+    };
+    let (recent, news) = (a["recent"].as_str().unwrap_or(""), a["news"].as_bool() == Some(true));
+    let mine = call(proxy, "search_engine", json!({}))?.as_str().unwrap_or(GOOGLE).to_string();
+    let first = search_url(&mine, &full, recent, news).or_else(|| search_url(GOOGLE, &full, recent, news)).unwrap_or_default();
+    let run = |url: &str| {
+        in_web_tab(proxy, json!({ "url": url }), |tab| {
+            let tab = wait_ready(proxy, tab)?;
+            poll(proxy, tab, &with_args(&json!({ "limit": limit }), SEARCH_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))
+        })
+    };
+    let empty = |r: &Value| r["results"].as_array().is_none_or(Vec::is_empty);
+    let mut r = run(&first)?;
+    if empty(&r) && !news {
+        if let Some(u) = search_url(DUCKDUCKGO, &full, recent, false) {
+            let blocked = r["page_text"].clone();
+            r = run(&u)?;
+            if empty(&r) {
+                r["page_text"] = blocked;
+            }
+        }
+    }
+    resolve_redirects(&mut r["results"]);
+    r["query"] = json!(full);
+    if empty(&r) {
+        r["note"] = json!("No results could be read; page_text shows what the search page said (a consent or robot check?).");
+        return Ok(r);
+    }
+    let read = a["read"].as_u64().unwrap_or(0).min(5) as usize;
+    if read > 0 {
+        let focus_on = a["focus"].as_str().filter(|f| !f.trim().is_empty()).unwrap_or(query).to_string();
+        let opts = json!({ "focus": focus_on, "max_chars": a["max_chars"].as_u64().unwrap_or(6000) });
+        let urls: Vec<String> = r["results"].as_array().into_iter().flatten().take(read).filter_map(|x| x["url"].as_str().map(str::to_string)).collect();
+        let pages: Vec<Value> = std::thread::scope(|s| {
+            let opts = &opts;
+            let jobs: Vec<_> = urls.iter().map(|u| s.spawn(move || fetch_one(proxy, u, opts))).collect();
+            jobs.into_iter().map(|j| j.join().unwrap_or(Err("failed".into()))).collect::<Vec<_>>()
+        })
+        .into_iter()
+        .map(|p| p.unwrap_or_else(|e| json!({ "error": e })))
+        .collect();
+        if let Some(list) = r["results"].as_array_mut() {
+            for (res, page) in list.iter_mut().zip(pages) {
+                res["content"] = page.get("content").cloned().unwrap_or_else(|| page["error"].clone());
+            }
+        }
+    }
+    Ok(r)
+}
+
+/// What a developer checks on a page they're building, at each size: problems in its console, images that didn't load,
+/// things sticking out past the screen's edge, and how long it took to load.
+const CHECK_JS: &str = r#"
+const W = document.documentElement.clientWidth;
+const name = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].slice(0, 2).map((c) => '.' + c).join('');
+const out = [];
+if (document.documentElement.scrollWidth > W + 1 && document.body) {
+  for (const e of document.body.querySelectorAll('*')) {
+    const r = e.getBoundingClientRect();
+    if (!r.width || r.right <= W + 1 || out.some((o) => o.el.contains(e))) continue;
+    let p = e.parentElement, clipped = false;
+    while (p && p !== document.body) { if (getComputedStyle(p).overflowX !== 'visible') { clipped = true; break; } p = p.parentElement; }
+    if (!clipped) out.push({ el: e, text: name(e) + ' (' + Math.round(r.right - W) + 'px past the right edge)' });
+    if (out.length >= 10) break;
+  }
+}
+const lines = window.__valerie && window.__valerie.consoleLines ? window.__valerie.consoleLines() : [];
+const nav = performance.getEntriesByType('navigation')[0];
+return {
+  viewport: innerWidth + 'x' + innerHeight,
+  scrolls_sideways: document.documentElement.scrollWidth > W + 1,
+  sticking_out: out.map((o) => o.text),
+  console: lines.filter((l) => l.level === 'error' || l.level === 'warn').slice(-30).map((l) => l.level + ': ' + String(l.text).slice(0, 300)),
+  broken_images: [...document.images].filter((i) => i.complete && i.naturalWidth === 0 && i.src).map((i) => i.src).slice(0, 10),
+  load_ms: nav && nav.loadEventEnd ? Math.round(nav.loadEventEnd) : null,
+  page_height: document.documentElement.scrollHeight,
+};
+"#;
+
+fn size_of(s: &str) -> Option<(f64, f64)> {
+    match s {
+        "phone" | "mobile" => Some((390.0, 844.0)),
+        "tablet" => Some((820.0, 1180.0)),
+        "laptop" => Some((1280.0, 800.0)),
+        "desktop" => Some((1440.0, 900.0)),
+        _ => s.split_once(['x', 'X', '×']).and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?))),
+    }
+}
+
+/// check_page: load a page (a dev server, a file) in a hidden tab and look at it at each size.
+fn check_page(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, String> {
+    let url = as_address(a["url"].as_str().unwrap_or(""));
+    if url.is_empty() {
+        return Err("give a url (http://localhost:3000, a file path…)".into());
+    }
+    let names: Vec<String> = match &a["sizes"] {
+        Value::Array(s) => s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+        Value::String(s) => s.split([',', ' ']).filter(|x| !x.is_empty()).map(str::to_string).collect(),
+        _ => vec!["phone".into(), "desktop".into()],
+    };
+    let sizes: Vec<(String, (f64, f64))> = names.iter().take(6).map(|n| size_of(n).map(|s| (n.clone(), s)).ok_or(format!("{n:?} isn't a size: phone, tablet, laptop, desktop or WIDTHxHEIGHT"))).collect::<Result<_, _>>()?;
+    let save = a["save_to"].as_str().filter(|p| !p.trim().is_empty());
+    let pictures = a["screenshots"].as_bool() != Some(false);
+    let (w0, h0) = sizes.first().map(|s| s.1).unwrap_or((1440.0, 900.0));
+    in_web_tab(proxy, json!({ "url": url, "width": w0, "height": h0 }), |tab| {
+        let tab = wait_ready(proxy, tab)?;
+        settle(proxy, tab, a["wait_for"].as_str())?;
+        let (mut report, mut images) = (Vec::new(), Vec::new());
+        for (i, (name, (w, h))) in sizes.iter().enumerate() {
+            if i > 0 {
+                call(proxy, "web_size", json!({ "tab": tab, "width": w, "height": h }))?;
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            let mut r = eval(proxy, tab, CHECK_JS)?;
+            r["size"] = json!(name);
+            if pictures {
+                let shot = if a["full_page"].as_bool() == Some(true) {
+                    full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }))
+                } else {
+                    call(proxy, "screenshot", json!({ "tab": tab, "width": w.min(if save.is_some() { 1280.0 } else { 800.0 }) }))
+                };
+                match (shot, save) {
+                    (Ok(s), Some(dir)) => r["screenshot"] = json!(save_png(&s, &format!("{}/{}-{name}.png", dir.trim_end_matches('/'), a["name"].as_str().unwrap_or("check")))?),
+                    (Ok(s), None) => images.push(json!({ "type": "image", "data": s["__image_png"], "mimeType": "image/png" })),
+                    (Err(e), _) => r["screenshot_error"] = json!(e),
+                }
+            }
+            report.push(r);
+        }
+        let head = eval(proxy, tab, "return { url: location.href, title: document.title }")?;
+        let text = json!({ "url": head["url"], "title": head["title"], "sizes": report });
+        let mut content = vec![json!({ "type": "text", "text": serde_json::to_string_pretty(&text).unwrap_or_default() })];
+        content.extend(images);
+        Ok(json!({ "__content": content }))
+    })
 }
 
 fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
@@ -828,34 +1193,21 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             call(proxy, "run", json!({ "cmd": cmd, "tab": tab }))
         }
         "run_command" => call(proxy, "run", a["command"].clone()),
-        "web_search" => {
-            let query = a["query"].as_str().unwrap_or("").trim();
-            if query.is_empty() {
-                return Err("give a query".into());
+        "web_search" => web_search(proxy, &a),
+        "fetch_page" => match a["urls"].as_array().filter(|u| !u.is_empty()) {
+            // Several pages at once, side by side in their own hidden tabs.
+            Some(urls) => {
+                let urls: Vec<String> = urls.iter().filter_map(|u| u.as_str().map(str::to_string)).take(10).collect();
+                let out: Vec<Value> = std::thread::scope(|s| {
+                    let a = &a;
+                    let jobs: Vec<_> = urls.iter().map(|u| s.spawn(move || fetch_one(proxy, u, a).unwrap_or_else(|e| json!({ "url": u, "error": e })))).collect();
+                    jobs.into_iter().map(|j| j.join().unwrap_or(Value::Null)).collect()
+                });
+                Ok(json!(out))
             }
-            let limit = a["limit"].as_u64().unwrap_or(10).clamp(1, 30);
-            in_web_tab(proxy, json!({ "search": query }), |tab| {
-                let tab = wait_ready(proxy, tab)?;
-                let mut r = poll(proxy, tab, &with_args(&json!({ "limit": limit }), SEARCH_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))?;
-                resolve_redirects(&mut r["results"]);
-                r["query"] = json!(query);
-                if r["results"].as_array().is_some_and(Vec::is_empty) {
-                    r["note"] = json!("No results could be read; page_text shows what the search page said (a consent or robot check?).");
-                }
-                Ok(r)
-            })
-        }
-        "fetch_page" => {
-            let url = a["url"].as_str().unwrap_or("").trim();
-            if url.is_empty() {
-                return Err("give a url".into());
-            }
-            in_web_tab(proxy, json!({ "url": url }), |tab| {
-                let tab = wait_ready(proxy, tab)?;
-                settle(proxy, tab, a["wait_for"].as_str())?;
-                eval(proxy, tab, &with_args(&a, MARKDOWN_JS))
-            })
-        }
+            None => fetch_one(proxy, a["url"].as_str().unwrap_or(""), &a),
+        },
+        "check_page" => check_page(proxy, &a),
         "read_page" => {
             let tab = wait_ready(proxy, tab)?;
             let format = a["format"].as_str().unwrap_or(if a["html"].as_bool() == Some(true) { "html" } else { "text" });
@@ -932,10 +1284,15 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         }
         "screenshot" => {
             let tab = wait_ready(proxy, tab)?;
-            if a["full_page"].as_bool() == Some(true) {
-                return full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }));
+            let shot = if a["full_page"].as_bool() == Some(true) {
+                full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }))?
+            } else {
+                call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width") }))?
+            };
+            match a["save_to"].as_str().filter(|p| !p.trim().is_empty()) {
+                Some(path) => save_png(&shot, path).map(|p| json!({ "saved": p })),
+                None => Ok(shot),
             }
-            call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width") }))
         }
         "eval_js" => {
             let tab = wait_ready(proxy, tab)?;
@@ -991,6 +1348,31 @@ mod tests {
         for s in [&b""[..], b"f", b"fo", b"foo", b"foobar", &[0, 255, 7, 128, 64]] {
             assert_eq!(super::unbase64(&super::base64(s)).as_deref(), Some(s));
         }
+    }
+
+    #[test]
+    fn focus_keeps_the_sections_about_the_question_in_page_order() {
+        let md = "# API\n\nIntro text.\n\n## Rate limits\n\nWrite budget: 10 orders per second per shard.\n\n## Fees\n\nMakers pay nothing.\n\n## Errors\n\n429 means the rate limit was hit.";
+        let f = super::focus(md, "What are the rate limits for order writes?", 10_000);
+        let c = f["content"].as_str().unwrap();
+        assert!(c.contains("10 orders per second") && c.contains("429"), "{c}");
+        assert!(!c.contains("Makers pay nothing"), "{c}");
+        assert!(c.find("Write budget").unwrap() < c.find("429").unwrap());
+        assert!(c.contains("## API › Rate limits"));
+        assert_eq!(f["outline"][1], "  Rate limits");
+        // Nothing matches: the start of the page instead.
+        assert!(super::focus(md, "zebra", 20)["content"].as_str().unwrap().starts_with("# API"));
+    }
+
+    #[test]
+    fn search_urls_filter_where_the_engine_can() {
+        let g = super::search_url(super::GOOGLE, "nfl injuries", "week", true).unwrap();
+        assert!(g.ends_with("q=nfl+injuries&tbs=qdr:w&tbm=nws"), "{g}");
+        assert!(super::search_url("https://kagi.com/search?q=%s", "x", "day", false).is_none());
+        assert!(super::search_url("https://kagi.com/search?q=%s", "x", "", false).is_some());
+        assert_eq!(super::size_of("phone"), Some((390.0, 844.0)));
+        assert_eq!(super::size_of("1024x768"), Some((1024.0, 768.0)));
+        assert!(super::as_address("/tmp/a.html").starts_with("file:///tmp"));
     }
 
     #[test]
