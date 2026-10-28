@@ -235,7 +235,7 @@ service, in a real browser with your logins and no rate limits, in hidden tabs t
 
 - `web_search`: results from your search engine (DuckDuckGo if it blocks the search), by time (`recent: week`), news or
   `sites`; `read: 3` also reads the top results.
-- `fetch_page`: any page (sign-in pages, JavaScript apps, local files) as clean Markdown; `focus: "your question"`
+- `fetch_page`: any page or PDF (sign-in pages, JavaScript apps, local files) as clean Markdown, PDFs marked by page; `focus: "your question"`
   returns only the sections about it, word for word, plus the page's outline; `urls` reads ten at once.
 - `check_page`: a page you're building at phone, tablet and desktop sizes in one call: screenshots, console errors,
   broken images and anything sticking out past the screen.
