@@ -88,8 +88,25 @@ async function start() {
   } catch (e) {
     // Leave the PDF as macOS shows it.
     console.warn("valerie pdf viewer:", e);
+    window.__valeriePdfFailed = String(e && e.message || e);
     return;
   }
+  // Agents' fetch_page reads the PDF's text through this: "## Page N" then that page's lines, up to `max` characters.
+  window.__valeriePdfText = async (max) => {
+    let out = "";
+    for (let n = 1; n <= doc.numPages && out.length < max; n++) {
+      const items = (await (await doc.getPage(n)).getTextContent()).items;
+      let text = "", lastY = null;
+      for (const it of items) {
+        const y = it.transform ? it.transform[5] : null, h = it.height || 10;
+        if (lastY !== null && y !== null && Math.abs(lastY - y) > h * 1.8 && !text.endsWith("\n\n")) text += text.endsWith("\n") ? "\n" : "\n\n";
+        text += it.str + (it.hasEOL ? "\n" : "");
+        if (y !== null) lastY = y;
+      }
+      out += `## Page ${n}\n\n${text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()}\n\n`;
+    }
+    return { pages: doc.numPages, text: out };
+  };
 
   // ---------- the page ----------
   const head = el("head"), body = document.createElement("body"), style = el("style");

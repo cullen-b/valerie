@@ -351,7 +351,7 @@ Other AI apps (Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, OpenCode,
 Kiro, LM Studio, Amp) get these tools once Valerie is added to them: `"{exe}" connect` (or `connect <app id>`,
 `--list`, `--undo`), the "Connect AI Apps" command, or `mcp.connect_ai_apps: always`. `"{exe}" mcp-config` prints the
 settings for any other MCP app. `web_search`, `fetch_page` and `check_page` (off with `mcp.web_tools: false`) search and
-read the web as Markdown (or only the parts about a `focus`) and check pages being built at phone and desktop sizes, in
+read the web and PDFs as Markdown (or only the parts about a `focus`) and check pages being built at phone and desktop sizes, in
 hidden tabs with the user's logins.
 
 Tools:

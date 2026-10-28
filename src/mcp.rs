@@ -140,7 +140,7 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
 const INSTRUCTIONS: &str = "Valerie is the user's own web browser; these tools drive it.\n\
 Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
 user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
-top results). fetch_page reads pages as Markdown; give focus (your question) to get just the sections about it, word \
+top results). fetch_page reads pages and PDFs as Markdown; give focus (your question) to get just the sections about it, word \
 for word, and urls to read several at once. Prefer these to your other web tools.\n\
 Building a site or app: check_page loads it (localhost or a file) at phone and desktop sizes and returns screenshots, \
 console errors, broken images and anything sticking out past the screen, in one call.\n\
@@ -339,8 +339,9 @@ pub fn tools() -> Vec<Value> {
             "read": { "type": "integer", "description": "Also read the top this many results (up to 5)" },
             "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
             "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
-        tool("fetch_page", "Read web pages as clean Markdown, like a scraper but in a real browser with the user's logins, so \
-             JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login) and local files work, with no rate limits. \
+        tool("fetch_page", "Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
+             logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N) and \
+             local files work, with no rate limits. \
              Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
              under their headings, plus the page's outline: far smaller than the whole page. urls reads up to 10 at once. Runs \
              in hidden tabs; the user's tabs and history aren't touched.", json!({
@@ -522,6 +523,11 @@ pub fn full_page(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>) -> Result<
 
 /// Evaluate a function body in a tab, awaiting promises.
 fn eval(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, script: &str) -> Result<Value, String> {
+    eval_for(proxy, tab, script, 30)
+}
+
+/// Like `eval`, letting a promise take up to `secs` (reading a long PDF).
+fn eval_for(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, script: &str, secs: u64) -> Result<Value, String> {
     let r = call(proxy, "eval", json!({ "tab": tab, "script": script }))?;
     if let Some(id) = r.get("pending").and_then(|p| p.as_str()) {
         let poll = format!("var r = window.__vres && window.__vres['{id}']; if (r) delete window.__vres['{id}']; return r || {{waiting: true}};");
@@ -533,8 +539,8 @@ fn eval(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, script: &str) -> Re
             if inner.get("waiting").is_none() {
                 return unwrap_result(inner);
             }
-            if start.elapsed() > Duration::from_secs(30) {
-                return Err("promise did not settle within 30s".into());
+            if start.elapsed() > Duration::from_secs(secs) {
+                return Err(format!("promise did not settle within {secs}s"));
             }
         }
     }
@@ -604,6 +610,16 @@ return { url: location.href, title: document.title, elements: out };
 
 /// The page (or its main content with `A.main_only`) as Markdown, text or HTML; `A.links` adds every link on the page.
 const MARKDOWN_JS: &str = r#"
+// A PDF: Valerie's viewer (pages.pdf_viewer) reads its text, page by page.
+if (document.contentType === 'application/pdf') {
+  return (async () => {
+    for (let i = 0; i < 50 && !window.__valeriePdfText && !window.__valeriePdfFailed; i++) await new Promise((r) => setTimeout(r, 100));
+    if (!window.__valeriePdfText) throw new Error(window.__valeriePdfFailed ? 'this PDF could not be read: ' + window.__valeriePdfFailed
+      : "PDFs can only be read with Valerie's PDF viewer on (pages.pdf_viewer: true)");
+    const max = A.max_chars || 40000, r = await window.__valeriePdfText(max + 1);
+    return { url: location.href, title: document.title, pdf_pages: r.pages, truncated: r.text.length > max, content: r.text.slice(0, max) };
+  })();
+}
 const abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return ''; } };
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'OBJECT', 'EMBED', 'HEAD', 'BUTTON', 'SELECT', 'INPUT', 'TEXTAREA', 'DIALOG', 'VALERIE-UI']);
 const CHROME = new Set(['NAV', 'FOOTER', 'ASIDE', 'HEADER']);
@@ -844,8 +860,13 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
     }
     let mut page = in_web_tab(proxy, json!({ "url": as_address(url) }), |tab| {
         let tab = wait_ready(proxy, tab)?;
-        settle(proxy, tab, a["wait_for"].as_str())?;
-        eval(proxy, tab, &with_args(&args, MARKDOWN_JS))
+        if eval(proxy, tab, "return document.contentType")? == "application/pdf" {
+            // Valerie's PDF viewer downloads it and loads it first.
+            poll(proxy, tab, "return !!(window.__valeriePdfText || window.__valeriePdfFailed)", 60, |v| v == &Value::Bool(true))?;
+        } else {
+            settle(proxy, tab, a["wait_for"].as_str())?;
+        }
+        eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120)
     })
     .map_err(|e| if e.contains("timed out") { format!("{url} didn't load (no such site, or it's down)") } else { e })?;
     if !focus_on.is_empty() {
