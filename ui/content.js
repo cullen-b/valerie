@@ -23,6 +23,76 @@ const consoleKept = [];
   addEventListener("unhandledrejection", (e) => keep("error", ["Unhandled promise rejection:", e.reason]));
 })();
 
+// ---------- the page's requests, kept for an agent debugging it (read_network) ----------
+// Recording bodies, once an agent asks, lasts through reloads in that tab.
+const netKept = [], net = { bodies: (() => { try { return sessionStorage.getItem("valerie-net-bodies") === "1"; } catch (_) { return false; } })() };
+if (CFG.network_log) (() => {
+  const add = (e) => { netKept.push(e); if (netKept.length > 500) netKept.shift(); return e; };
+  const clip = (v, n) => (typeof v === "string" ? v.slice(0, n) : undefined);
+  const textual = (ct) => /json|text|xml|javascript|graphql|form-urlencoded/.test(ct || "");
+  const abs = (u) => { try { return new URL(String(u), location.href).href; } catch (_) { return String(u); } };
+  const failed = "failed (offline, blocked, cross-site refused or cancelled)";
+  const origFetch = window.fetch;
+  if (typeof origFetch === "function") {
+    window.fetch = function (input, init) {
+      const req = input instanceof Request ? input : null;
+      const e = add({ kind: "fetch", method: String((init && init.method) || (req && req.method) || "GET").toUpperCase(), url: abs(req ? req.url : input), at: Date.now(), status: null });
+      if (net.bodies && init && typeof init.body === "string") e.request_body = clip(init.body, 2000);
+      const p = origFetch.apply(this, arguments);
+      p.then((r) => {
+        e.ms = Date.now() - e.at; e.status = r.status; e.type = r.headers.get("content-type") || "";
+        if (net.bodies && textual(e.type)) r.clone().text().then((t) => { e.response_body = clip(t, 4000); }, () => {});
+      }, (err) => { e.ms = Date.now() - e.at; e.error = err && err.name === "AbortError" ? "cancelled" : failed; });
+      return p;
+    };
+  }
+  const xhrs = new WeakMap(), XO = XMLHttpRequest.prototype.open, XS = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function (method, url) { xhrs.set(this, { kind: "xhr", method: String(method).toUpperCase(), url: abs(url) }); return XO.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function (body) {
+    const e = xhrs.get(this);
+    if (e) {
+      add(e); e.at = Date.now(); e.status = null;
+      if (net.bodies && typeof body === "string") e.request_body = clip(body, 2000);
+      this.addEventListener("loadend", () => {
+        e.ms = Date.now() - e.at; e.status = this.status || null; if (!this.status) e.error = failed;
+        e.type = this.getResponseHeader("content-type") || "";
+        if (net.bodies && textual(e.type) && (this.responseType === "" || this.responseType === "text")) e.response_body = clip(this.responseText, 4000);
+      });
+    }
+    return XS.apply(this, arguments);
+  };
+  // Scripts, styles, images and the like (fetch and XHR are covered above, with their status).
+  try {
+    const t0 = performance.timeOrigin || Date.now();
+    new PerformanceObserver((list) => {
+      for (const r of list.getEntries()) {
+        if (r.initiatorType === "fetch" || r.initiatorType === "xmlhttprequest") continue;
+        const broke = netKept.find((e) => e.url === r.name && e.error && e.ms == null);
+        if (broke) { broke.ms = Math.round(r.duration); continue; }
+        add({ kind: r.initiatorType || "other", method: "GET", url: r.name, at: Math.round(t0 + r.startTime), ms: Math.round(r.duration),
+              status: r.responseStatus || null, size: r.transferSize || undefined });
+      }
+    }).observe({ type: "resource", buffered: true });
+  } catch (_) {}
+  // WebKit gives files no status, so ones that didn't load are marked from their error event.
+  addEventListener("error", (ev) => {
+    const t = ev.target, u = t && t !== window && (t.currentSrc || t.src || t.href);
+    if (!u) return;
+    const e = netKept.find((x) => x.url === u && !x.error && x.kind !== "fetch" && x.kind !== "xhr");
+    if (e) e.error = "didn't load"; else add({ kind: (t.tagName || "other").toLowerCase(), method: "GET", url: abs(u), at: Date.now(), status: null, error: "didn't load" });
+  }, true);
+})();
+function networkRows(o) {
+  o = o || {};
+  if (o.bodies && !net.bodies) { net.bodies = true; try { sessionStorage.setItem("valerie-net-bodies", "1"); } catch (_) {} }
+  const kinds = o.kinds && o.kinds.length ? o.kinds : null, now = Date.now();
+  return netKept.filter((e) => (!o.filter || e.url.includes(o.filter) || (e.response_body || "").includes(o.filter)) &&
+      (!o.failed || e.error || e.status >= 400) && (!kinds || kinds.includes(e.kind)))
+    .slice(-(o.limit || 100))
+    .map((e) => ({ kind: e.kind, method: e.method, url: e.url.slice(0, 500), status: e.status, ms: e.ms, size: e.size, type: e.type || undefined,
+                   error: e.error, seconds_ago: Math.round((now - e.at) / 1000), request_body: e.request_body, response_body: e.response_body }));
+}
+
 // ---------- notifications from websites: shown by the computer, once you've allowed the site ----------
 // WebKit gives apps like Valerie no working Notification, so pages get this one; Valerie decides per site.
 const notifyHooks = { permission() {}, clicked() {} };
@@ -212,6 +282,10 @@ function ui() {
     .save p { font-size: 13px; font-weight: 500; line-height: 1.35; margin: 0 0 10px; }
     .save button { all: unset; padding: 6px 11px; margin-right: 6px; border-radius: 7px; background: rgba(255,255,255,.1); color: #fff; font-size: 12px; }
     .save button.primary { background: ${cfg.accent || "#9d8cff"}; }
+    .save.help { top: auto; bottom: 16px; width: 340px; }
+    .save.help .who { font-size: 11.5px; font-weight: 600; color: ${cfg.accent || "#9d8cff"}; margin-bottom: 4px; }
+    .save.help textarea { all: unset; box-sizing: border-box; display: block; width: 100%; margin: 0 0 10px; padding: 7px 9px; border-radius: 8px;
+                          background: rgba(255,255,255,.08); color: #fff; font: 12.5px/1.35 -apple-system, system-ui, sans-serif; white-space: pre-wrap; }
     .find { position: fixed; top: 12px; right: 16px; display: flex; gap: 6px; align-items: center; padding: 6px 10px 6px 8px; border-radius: 10px;
             background: rgba(24,24,32,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); pointer-events: auto; }
     .find.with-map { right: 78px; }
@@ -1425,6 +1499,28 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && t instanceof HTMLInputElement && t.type === "password" && t.value) captureCredential(t.form || document);
 }, true);
 let offered = null;
+// An agent handed the user this page ("ask_user"): its note, a box to answer, and Done to give the page back.
+let helpBox = null;
+function helpBar(who, note, nonce) {
+  helpBarClose();
+  const box = document.createElement("div"); box.className = "save help";
+  const h = document.createElement("p"); h.textContent = tr(who + " needs you"); h.className = "who";
+  const p = document.createElement("p"); p.textContent = note;
+  const input = document.createElement("textarea"); input.placeholder = tr("Anything to tell it? (optional)"); input.rows = 2;
+  const row = document.createElement("div");
+  const send = (gave_up) => { box.remove(); helpBox = null; post({ t: "help_done", nonce, note: input.value, gave_up }); };
+  const button = (label, cls, gave_up) => {
+    const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
+    b.addEventListener("click", (e) => { if (e.isTrusted) send(gave_up); }); row.append(b);
+  };
+  button("Done", "primary", false);
+  button("I can't", "", true);
+  input.addEventListener("keydown", (e) => { if (e.isTrusted && e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(false); e.stopPropagation(); });
+  box.append(h, p, input, row);
+  helpBox = box; ui().appendChild(box);
+}
+function helpBarClose() { if (helpBox) helpBox.remove(); helpBox = null; }
+
 function offerSave(host, username, nonce, vaults) {
   if (offered === nonce) return;
   offered = nonce;
@@ -1501,6 +1597,8 @@ Object.defineProperty(window, "__valerie", {
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
     consoleLines: () => consoleKept.slice(),
+    network: (o) => { const had = net.bodies; return { on: !!CFG.network_log, had_bodies: had, requests: networkRows(o) }; },
+    helpBar, helpBarClose,
     markdownUpdate: (text) => mdUpdate(String(text)),
     markdownText: () => mdEditorText(),
     markdownSaved: (err) => mdEditorSaved(err),

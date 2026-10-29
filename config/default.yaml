@@ -707,6 +707,13 @@ mcp:
   connect_ai_apps: ask     # add Valerie to the AI apps found on this computer so their agents can use it. One of:
                            # ask (the welcome guide asks once; "Connect AI Apps" in the command bar any time) |
                            # always (at every start, including apps installed later) | never
+  hidden_tabs_close_after: 30 # agents can open tabs only they see (open_tab with hidden: true); close one unused this
+                           # many minutes (0 = only when the agent closes it or Valerie quits)
+  hidden_tabs_max: 10      # most hidden tabs agents keep at once; opening one more closes the one unused longest
+  ask_user: true           # let agents hand you a page when they're stuck (a CAPTCHA, a sign-in, a step they can't
+                           # find): it opens in your sidebar with their note and a Done button. true | false
+  network_log: true        # keep a list of each page's requests (address, status, time) for agents debugging a page
+                           # (read_network). Stays in the page; nothing is saved. true | false
 
 # Headless agents run on your own Claude Code / Codex / OpenCode login. Type "> task" in the command bar, or
 # schedule jobs here.
