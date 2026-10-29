@@ -50,6 +50,8 @@ pub enum UserEvent {
     Title { target: Target, title: String },
     NewWindow { target: Target, url: String },
     ExternalScheme(String),
+    /// Time to make the hidden little window that waits for the next link (`little_window.keep_one_ready`).
+    PrepareLittle,
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
@@ -267,6 +269,8 @@ pub struct App {
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
+    /// A little window made ahead and kept hidden, so a link appears in one at once (`little_window.keep_one_ready`).
+    ready_little: Option<Little>,
     focused_little: Option<WindowId>,
     /// The main window was closed while a little window stayed open (`little_window.keep_open_when_main_closes`).
     main_hidden: bool,
@@ -1233,6 +1237,7 @@ impl App {
             notify_times: HashMap::new(),
             sync_gen: 0,
             littles: HashMap::new(),
+            ready_little: None,
             focused_little: None,
             main_hidden: false,
             config,
@@ -2475,10 +2480,14 @@ impl App {
         self.state.active_space = i;
         if changed {
             self.queue_event("space_switched", self.state.active_tab(), None);
+            self.prepare_little_later();
         }
         let settings_changed = self.apply_space_settings();
-        for p in self.panes() {
-            self.ensure_view(p);
+        // Not while a link that started Valerie has the screen to itself (show_main loads them).
+        if !self.parked() {
+            for p in self.panes() {
+                self.ensure_view(p);
+            }
         }
         self.layout();
         if changed && self.anim_secs() > 0.0 {
@@ -3112,48 +3121,117 @@ impl App {
 
     /// A small window of its own for one page (`size` overrides little_window's width and height).
     fn open_window(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        trace("little window asked for");
         let url = &self.rewrite(url);
-        let lw = self.config.little_window.clone();
-        let (lw_width, lw_height) = size.unwrap_or((lw.width, lw.height));
+        let l = match self.take_ready_little(url, space, size) {
+            Some(l) => {
+                let _ = l.view.load_url(url);
+                l.window.set_visible(true);
+                l
+            }
+            None => match self.build_little(url, space, size, true, elwt) {
+                Some(l) => l,
+                None => return,
+            },
+        };
+        self.apply_rules_to(&l.view);
+        let zoom = self.default_zoom();
+        if zoom != 1.0 {
+            let _ = l.view.zoom(zoom);
+        }
+        // A new empty one types into its address box; otherwise the page has the keyboard.
+        let _ = if url == LITTLE_BLANK { l.bar.focus() } else { l.view.focus() };
+        l.window.set_focus();
+        let id = l.window.id();
+        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, ..l });
+        self.focused_little = Some(id);
+        self.render_little(id);
+        self.prepare_little_later();
+        trace("little window built");
+    }
+
+    /// The window and its two views; the page's view first, so the page starts loading as early as it can.
+    fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
+        let lw = &self.config.little_window;
+        let (w, h) = size.unwrap_or((lw.width, lw.height));
         let window = match mac_window(WindowBuilder::new())
             .with_title("Valerie")
-            .with_inner_size(LogicalSize::new(lw_width, lw_height))
+            .with_visible(visible)
+            .with_inner_size(LogicalSize::new(w, h))
             .with_min_inner_size(LogicalSize::new(360.0, 240.0))
             .build(elwt)
         {
             Ok(w) => w,
-            Err(e) => return crate::log::line("little-window", e),
+            Err(e) => {
+                crate::log::line("little-window", e);
+                return None;
+            }
         };
         let id = window.id();
+        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
+        let view = self.with_profile(&profile, |app, base| {
+            app.page_builder(base, Target::Little(id), url).with_visible(true).with_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR)).build_as_child(&window)
+        });
         let p = self.proxy.clone();
         let bar = WebViewBuilder::new()
             .with_html(ui_page("little.html", &self.config))
-            .with_bounds(rect(0.0, 0.0, lw_width, LITTLE_BAR))
+            .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
             .build_as_child(&window);
-        let (lw_w, lw_h) = (lw_width, lw_height);
-        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
-        let view = self.with_profile(&profile, |app, base| {
-            app.page_builder(base, Target::Little(id), url)
-                .with_visible(true)
-                .with_bounds(rect(0.0, LITTLE_BAR, lw_w, lw_h - LITTLE_BAR))
-                .build_as_child(&window)
-        });
-        let (Ok(bar), Ok(view)) = (bar, view) else { return crate::log::line("little-window", "little window webviews failed") };
-        // A new empty one types into its address box; otherwise the page has the keyboard.
-        let _ = if url == LITTLE_BLANK { bar.focus() } else { view.focus() };
-        window.set_focus();
+        let (Ok(bar), Ok(view)) = (bar, view) else {
+            crate::log::line("little-window", "little window webviews failed");
+            return None;
+        };
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0 })
+    }
+
+    /// Content blocking for a little window's page (the blocklist can arrive after a ready one was made).
+    fn apply_rules_to(&self, view: &WebView) {
         #[cfg(target_os = "macos")]
         if self.rules.is_some() {
-            blocking::mac::apply(&view, self.rules.as_ref());
+            blocking::mac::apply(view, self.rules.as_ref());
         }
-        let zoom = self.default_zoom();
-        if zoom != 1.0 {
-            let _ = view.zoom(zoom);
+        #[cfg(not(target_os = "macos"))]
+        let _ = view;
+    }
+
+    /// The hidden little window, if it suits this link: same space and profile, no site user agent or headers to set
+    /// as it's made, and the usual size.
+    fn take_ready_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>) -> Option<Little> {
+        let r = self.ready_little.as_ref()?;
+        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
+        let fits = size.is_none() && r.space == space && profile == self.profile_for(r.space) && self.header_map(url).is_empty() && self.agent_for_url(url) == self.agent_for_url("about:blank");
+        if fits {
+            self.ready_little.take()
+        } else {
+            None
         }
-        self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom });
-        self.focused_little = Some(id);
+    }
+
+    /// Make the hidden little window for the next link in a moment (once the page just opened has the machine).
+    fn prepare_little_later(&self) {
+        if !self.config.little_window.enabled || !self.config.little_window.keep_one_ready {
+            return;
+        }
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            send(&p, UserEvent::PrepareLittle);
+        });
+    }
+
+    fn prepare_little(&mut self, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let lw = &self.config.little_window;
+        let space = self.state.active_space;
+        if !lw.enabled || !lw.keep_one_ready {
+            self.ready_little = None;
+            return;
+        }
+        if self.ready_little.as_ref().is_some_and(|r| r.space == space) {
+            return;
+        }
+        self.ready_little = self.build_little("about:blank", space, None, false, elwt);
     }
 
     fn little_to_main(&mut self, id: WindowId, space: Option<String>) {
@@ -3241,6 +3319,17 @@ impl App {
                 }
             }
         }
+        if self.parked() {
+            for p in self.panes() {
+                self.unload(p);
+            }
+        }
+    }
+
+    /// A link started Valerie and opened alone: the hidden main window's pages wait until it's shown, so they don't
+    /// slow the little window down.
+    fn parked(&self) -> bool {
+        self.main_hidden && !self.revealed
     }
 
     // ---------------------------------------------------------------- config, menu, sync
@@ -5789,7 +5878,10 @@ impl App {
             (Source::Chrome, "drag") => {
                 let _ = self.window.drag_window();
             }
-            (Source::LittleBar(id), "ready") => self.render_little(id),
+            (Source::LittleBar(id), "ready") => {
+                trace("little bar ready");
+                self.render_little(id)
+            }
             (Source::LittleBar(id), "go") => {
                 let Some(text) = m["text"].as_str().map(str::trim).filter(|t| !t.is_empty()) else { return };
                 let url = self.rewrite(&routing::resolve_input(text, &self.config.search_engine));
@@ -5833,6 +5925,13 @@ impl App {
             }
             (Source::Page(target), "meta") => {
                 let Target::Tab(id) = target else {
+                    if matches!(target, Target::Little(l) if self.littles.contains_key(&l)) {
+                        trace("little page drawn");
+                        // Started by a link that opened alone: the rest of launch can begin once its page is drawn.
+                        if self.parked() {
+                            self.pending_reveal = Some("little page drawn");
+                        }
+                    }
                     return;
                 };
                 self.ready_views.insert(id);
@@ -6132,6 +6231,9 @@ impl App {
                     self.render();
                 }
                 Target::Little(id) => {
+                    if self.littles.contains_key(&id) {
+                        trace(if finished { "little page finished" } else { "little page started" });
+                    }
                     if let Some(l) = self.littles.get_mut(&id) {
                         l.url = url.clone();
                     }
@@ -6232,6 +6334,9 @@ impl App {
                 }
             }
             UserEvent::ConfigChanged => {
+                // The ready little window was made with the old settings (scripts, theme, plugins).
+                self.ready_little = None;
+                self.prepare_little_later();
                 self.reload_config();
                 self.schedule_sync();
             }
@@ -6635,6 +6740,7 @@ impl App {
                 }
             }
             UserEvent::RevealTimeout => self.reveal("timeout"),
+            UserEvent::PrepareLittle => self.prepare_little(elwt),
             UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
                 self.found_models.insert(cli, models);
@@ -7230,6 +7336,10 @@ impl App {
     /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
     fn show_main(&mut self) {
         if std::mem::take(&mut self.main_hidden) {
+            for p in self.panes() {
+                self.ensure_view(p);
+            }
+            self.layout();
             self.window.set_visible(true);
             self.focused_little = None;
             self.window.set_focus();
@@ -7297,6 +7407,7 @@ impl App {
         if self.config.welcome && !self.state.welcome_done && !test_instance {
             self.open_welcome();
         }
+        self.prepare_little_later();
         // Asking each CLI for its models starts node processes: let the first page have the machine first.
         let p = self.proxy.clone();
         std::thread::spawn(move || {
@@ -7380,7 +7491,10 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                 app.drain_events(elwt);
             }
             Event::Reopen { .. } => app.show_main(),
-            Event::Opened { urls } => app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt),
+            Event::Opened { urls } => {
+                trace("link from another app");
+                app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt);
+            }
             Event::LoopDestroyed => app.save(),
             _ => {}
         }

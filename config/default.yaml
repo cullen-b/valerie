@@ -448,6 +448,8 @@ little_window:
   open_links_alone: true   # when the main window is closed or Valerie isn't running, a link from another app opens
                            # only a little window (links routed to a space too). true | false (false = the main
                            # window opens as well)
+  keep_one_ready: true     # a hidden little window waits ready, so a link opens in it at once (costs a little
+                           # memory). true | false (false = each little window is made when a link arrives)
   width: 960
   height: 700
 
