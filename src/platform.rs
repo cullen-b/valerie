@@ -1422,14 +1422,124 @@ fn safari_version() -> Option<String> {
     None
 }
 
+/// Screenshots on Windows, through WebView2's DevTools protocol (`Page.captureScreenshot`).
+#[cfg(target_os = "windows")]
+mod win {
+    use serde_json::{json, Value};
+    use std::{cell::RefCell, rc::Rc};
+    use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, Microsoft::Web::WebView2::Win32::ICoreWebView2};
+    use windows::core::HSTRING;
+    use wry::{WebView, WebViewExtWindows};
+
+    type Done = Box<dyn FnOnce(Result<Vec<u8>, String>)>;
+
+    /// Run one DevTools method; `done` gets its JSON result (also when the call can't start).
+    fn cdp(wv: &ICoreWebView2, method: &str, params: Value, done: impl FnOnce(Result<Value, String>) + 'static) {
+        let done = Rc::new(RefCell::new(Some(done)));
+        let d = done.clone();
+        let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |hr, json| {
+            if let Some(done) = d.borrow_mut().take() {
+                done(hr.map_err(|e| e.message()).and_then(|_| serde_json::from_str(&json).map_err(|e| e.to_string())));
+            }
+            Ok(())
+        }));
+        let r = unsafe { wv.CallDevToolsProtocolMethod(&HSTRING::from(method), &HSTRING::from(params.to_string()), &handler) };
+        if let Err(e) = r {
+            if let Some(done) = done.borrow_mut().take() {
+                done(Err(e.message()));
+            }
+        }
+    }
+
+    /// Measure the page, then capture the region `clip` picks from the layout metrics.
+    fn capture(wv: &WebView, done: Done, clip: impl FnOnce(&Value) -> Value + 'static) {
+        let w = wv.webview();
+        let w2 = w.clone();
+        cdp(&w, "Page.getLayoutMetrics", json!({}), move |m| {
+            let m = match m {
+                Ok(m) => m,
+                Err(e) => return done(Err(format!("the page could not be measured: {e}"))),
+            };
+            cdp(&w2, "Page.captureScreenshot", clip(&m), move |r| {
+                let png = r.and_then(|r| {
+                    let b64 = r["data"].as_str().ok_or("no picture came back")?.to_string();
+                    crate::mcp::unbase64(&b64).ok_or_else(|| "the picture came back damaged".to_string())
+                });
+                done(png.map_err(|e| format!("the page could not be captured: {e}")))
+            });
+        });
+    }
+
+    pub fn snapshot(wv: &WebView, width: f64, done: Done) {
+        capture(wv, done, move |m| {
+            let v = &m["cssVisualViewport"];
+            let vw = v["clientWidth"].as_f64().unwrap_or(1.0).max(1.0);
+            json!({ "format": "png", "clip": { "x": v["pageX"].as_f64().unwrap_or(0.0), "y": v["pageY"].as_f64().unwrap_or(0.0),
+                "width": vw, "height": v["clientHeight"].as_f64().unwrap_or(1.0), "scale": (width / vw).clamp(0.1, 4.0) } })
+        });
+    }
+
+    /// Drawn at up to 2 pixels a CSS pixel, fewer for very long pages, to stay near 30 million pixels (like macOS).
+    pub fn snapshot_full(wv: &WebView, done: Done) {
+        capture(wv, done, |m| {
+            let c = &m["cssContentSize"];
+            let (w, h) = (c["width"].as_f64().unwrap_or(1.0).max(1.0), c["height"].as_f64().unwrap_or(1.0).max(1.0));
+            // contentSize is in device pixels, so this is the screen's scale; the capture multiplies by it.
+            let dpr = (m["contentSize"]["width"].as_f64().unwrap_or(w) / w).max(1.0);
+            let scale = (30_000_000.0 / (w * h)).sqrt().clamp(0.25, 2.0) / dpr;
+            json!({ "format": "png", "captureBeyondViewport": true,
+                "clip": { "x": 0, "y": 0, "width": w, "height": h, "scale": scale } })
+        });
+    }
+}
+
+/// Screenshots on Linux, through WebKitGTK's snapshot.
+#[cfg(target_os = "linux")]
+mod gtk_shot {
+    use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt};
+    use wry::{WebView, WebViewExtUnix};
+
+    /// PNG of `region`, scaled down to `width` pixels wide when it's wider.
+    pub fn snapshot(wv: &WebView, region: SnapshotRegion, width: Option<f64>, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
+        wv.webview().snapshot(region, SnapshotOptions::NONE, None::<&webkit2gtk::gio::Cancellable>, move |r| {
+            done(r.map_err(|e| format!("the page could not be captured: {e}")).and_then(|s| png(s, width)))
+        });
+    }
+
+    fn png(s: cairo::Surface, width: Option<f64>) -> Result<Vec<u8>, String> {
+        let img = cairo::ImageSurface::try_from(s).map_err(|_| "the picture came back in an unexpected format".to_string())?;
+        let mut out = Vec::new();
+        match width {
+            Some(want) if want >= 1.0 && (want as i32) < img.width() => {
+                let k = want / img.width() as f64;
+                let h = (img.height() as f64 * k).round().max(1.0) as i32;
+                let small = cairo::ImageSurface::create(cairo::Format::ARgb32, want.round() as i32, h).map_err(|e| e.to_string())?;
+                let cr = cairo::Context::new(&small).map_err(|e| e.to_string())?;
+                cr.scale(k, k);
+                cr.set_source_surface(&img, 0.0, 0.0).map_err(|e| e.to_string())?;
+                cr.paint().map_err(|e| e.to_string())?;
+                drop(cr);
+                small.write_to_png(&mut out)
+            }
+            _ => img.write_to_png(&mut out),
+        }
+        .map_err(|e| format!("PNG encoding failed: {e}"))?;
+        Ok(out)
+    }
+}
+
 /// PNG of the visible page, `width` points wide. Calls `done` later on the main thread.
 pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
     #[cfg(target_os = "macos")]
     mac::snapshot(wv, width, done);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    win::snapshot(wv, width, Box::new(done));
+    #[cfg(target_os = "linux")]
+    gtk_shot::snapshot(wv, webkit2gtk::SnapshotRegion::Visible, Some(width), done);
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (wv, width);
-        done(Err("screenshots are only implemented on macOS so far".into()));
+        done(Err("screenshots aren't supported on this system".into()));
     }
 }
 
@@ -1437,10 +1547,14 @@ pub fn snapshot(wv: &WebView, width: f64, done: impl FnOnce(Result<Vec<u8>, Stri
 pub fn snapshot_full(wv: &WebView, done: impl FnOnce(Result<Vec<u8>, String>) + 'static) {
     #[cfg(target_os = "macos")]
     mac::snapshot_full(wv, done);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    win::snapshot_full(wv, Box::new(done));
+    #[cfg(target_os = "linux")]
+    gtk_shot::snapshot(wv, webkit2gtk::SnapshotRegion::FullDocument, None, done);
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = wv;
-        done(Err("full-page screenshots are only implemented on macOS so far".into()));
+        done(Err("full-page screenshots aren't supported on this system".into()));
     }
 }
 
@@ -1523,8 +1637,16 @@ pub fn copy_png(png: &[u8]) -> bool {
     return mac::copy_png(png);
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = png;
-        false
+        let Ok(img) = image::load_from_memory_with_format(png, image::ImageFormat::Png) else { return false };
+        let img = img.to_rgba8();
+        let data = arboard::ImageData { width: img.width() as usize, height: img.height() as usize, bytes: img.into_raw().into() };
+        match arboard::Clipboard::new().and_then(|mut c| c.set_image(data)) {
+            Ok(()) => true,
+            Err(e) => {
+                crate::log::line("capture", format!("copying the picture failed: {e}"));
+                false
+            }
+        }
     }
 }
 

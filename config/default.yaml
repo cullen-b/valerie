@@ -418,7 +418,7 @@ translate:
   language: en             # language to translate pages into (a code like en, es, fr, de, ja)
   service: "https://translate.google.com/translate?sl=auto&tl=%l&u=%u"   # %l = language, %u = the page's address
 
-# Capture (capture_page command, ⌘⇧2): a screenshot of the visible page.
+# Capture (capture_page ⌘⇧2: the visible page; capture_full_page ⌘⌥⇧2: the whole page): screenshots on macOS, Windows and Linux.
 capture:
   copy_to_clipboard: true  # put the image on the clipboard
   save_to_downloads: true  # also save it as a PNG in your Downloads folder
