@@ -1073,6 +1073,8 @@ function media(action) {
     const m = lastMedia && lastMedia.isConnected ? lastMedia : all.find((x) => !x.paused);
     if (m && m.paused) m.play().catch(() => {});
     else if (m) { pausedByUs = m; m.pause(); }
+  } else if (action === "pause") {
+    for (const m of all) if (!m.paused) { pausedByUs = m; m.pause(); }
   }
   report();
 }
