@@ -128,6 +128,16 @@ button.feat { cursor: pointer; } button.feat b::after { content: " →"; color: 
 .wx { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 26px; }
 .wx div { padding: 16px 8px; border-radius: 12px; background: var(--rule); text-align: center; font-size: 13px; color: var(--ink2); }
 .wx b { display: block; font-size: 24px; margin: 4px 0; color: var(--ink); }
+.feat code, .way code.t { font: 12px ui-monospace, Menlo, monospace; padding: 1px 5px; border-radius: 5px; background: var(--rule); color: var(--ink); }
+.feat code { margin-right: 4px; }
+.log { margin-top: 28px; padding: 16px 18px; border-radius: 14px; background: #1c1a25; color: #ecebf5; font: 12.5px/1.6 ui-monospace, Menlo, monospace; min-height: 236px; }
+.log .ln { display: flex; gap: 10px; padding: 3px 0; animation: pgin .3s var(--ease); }
+.log .ln > b { flex: none; width: 92px; color: var(--accent); font-weight: 600; }
+.log .ln > span { min-width: 0; overflow-wrap: anywhere; } .log .ln i { font-style: normal; color: rgba(236,235,245,.5); }
+.log .say { font: 14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; padding: 6px 0; } .log .say > b { font-weight: 600; color: rgba(236,235,245,.5); }
+.log .done i { color: #8fe3b0; }
+.loghd { display: flex; align-items: baseline; margin-top: 28px; } .loghd + .log { margin-top: 8px; }
+.loghd span { color: var(--ink2); font-size: 13.5px; } .loghd button { all: unset; margin-left: auto; font-size: 13px; color: var(--ink2); cursor: pointer; } .loghd button:hover { color: var(--ink); }
 
 /* ---------- work pages: tickets, calendar, a meeting, a channel ---------- */
 .list { margin-top: 26px; border-top: 1px solid var(--rule); }
@@ -225,7 +235,7 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
 
 @media (max-width: 760px) {
   .inner { padding: 36px 22px 60px; } .feats { grid-template-columns: 1fr; } .feat:nth-child(odd) { padding-right: 0; }
-  .way { grid-template-columns: 1fr; gap: 8px; } .wx { grid-template-columns: repeat(3, 1fr); } .wx div:nth-child(n+4) { display: none; }
+  .way { grid-template-columns: 1fr; gap: 8px; } .log .ln > b { width: auto; } .log .ln { flex-wrap: wrap; gap: 0 10px; } .wx { grid-template-columns: repeat(3, 1fr); } .wx div:nth-child(n+4) { display: none; }
   body.top #url, body.top .drag { display: none; } #card2 { display: none; }
   #chat, body.top #chat { left: 8px; right: 8px; top: auto; height: 60%; width: auto; } body.chatting #main { padding: 0 8px 8px; } #yaml, #yaml:has(.code) { left: 12px; right: 12px; width: auto; }
 }
@@ -277,6 +287,30 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
             <button class="btn" data-run="catchup">▶ Catch me up on #launch</button>
           </div>
           <p class="fine">Claude Code, Codex, Cursor, or a free AI Valerie sets up for you.</p>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="tools" data-title="AI tools" hidden>
+        <div class="inner">
+          <h2>Give your AI <em>a real browser.</em></h2>
+          <p class="sub">Valerie is an MCP server. Any AI app can search, read and click through it, with your logins, in tabs you never see.</p>
+          <div class="loghd"><span>A coding agent fixing a page, using Valerie</span><button id="replay">Replay</button></div>
+          <div class="log" id="log" aria-live="polite"></div>
+          <div class="feats">
+            <div class="feat"><b>Reads the web like you do</b><span><code>web_search</code><code>fetch_page</code> Sign-in pages, JavaScript apps and PDFs, as clean Markdown. No API keys, no rate limits.</span></div>
+            <div class="feat"><b>A whole docs site in one call</b><span><code>map_site</code> Finds a site's pages and reads one folder of it, or all of it.</span></div>
+            <div class="feat"><b>Out of your way</b><span>Agents work in hidden tabs of their own, kept out of your sidebar and history.</span></div>
+            <div class="feat"><b>Hands you the hard parts</b><span><code>ask_user</code> A CAPTCHA or a two-factor code? The tab comes to you with a note. Press Done and the agent carries on.</span></div>
+            <div class="feat"><b>Sees what you're building</b><span><code>check_page</code><code>read_network</code> Phone, tablet and desktop in one call, with console errors and failed requests.</span></div>
+            <div class="feat"><b>Drives your tabs</b><span><code>click</code><code>type</code><code>screenshot</code> And any command your keyboard can run, except reading passwords.</span></div>
+          </div>
+          <div class="ways">
+            <div class="way"><span>Every AI app</span><div class="cmd"><code>valerie connect</code><button>Copy</button></div></div>
+            <div class="way"><span>Any other</span><div class="cmd"><code>valerie mcp-config</code><button>Copy</button></div></div>
+            <div class="way"><span>A script</span><div class="cmd"><code>valerie call fetch_page '{"url":"https://example.com","focus":"pricing"}'</code><button>Copy</button></div></div>
+          </div>
+          <p class="fine">Works with Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, OpenCode, VS Code, Windsurf, Cline, Kiro, LM Studio and Amp. In Valerie, run Connect AI Apps from the command bar.</p>
+          <p class="fine">It runs on your Mac at 127.0.0.1, behind a token. Each tool can be turned off in config.yaml.</p>
         </div>
       </section>
 
@@ -417,13 +451,13 @@ const $ = (s) => document.querySelector(s);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const BASE_TABS = ["home", "agents", "features", "install"];
+const BASE_TABS = ["home", "agents", "tools", "features", "install"];
 const SPACES = [
   { name: "Personal", base: { accent: "#9d8cff", bg: ["#171a2b", "#2a1f3d"] }, tabs: [...BASE_TABS], tab: "home" },
   { name: "Work", base: { accent: "#5fb3ff", bg: ["#0f1a28", "#132a3c"] }, tabs: ["tickets", "calendar", "launch"], tab: "tickets" },
   { name: "School", base: { accent: "#4fd6a0", bg: ["#0e1d19", "#17302a"] }, tabs: [...BASE_TABS], tab: "home" },
 ];
-const ICONS = { home: "img", agents: "✦", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉", map: "⌖", news: "▤", link: "↗" };
+const ICONS = { home: "img", agents: "✦", tools: "⌁", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉", map: "⌖", news: "▤", link: "↗" };
 // Tabs an agent opens, and where you land when they close.
 const AGENT_TABS = { weather: "agents", meet: "calendar" };
 const page = (id) => document.querySelector(`.pg[data-tab="${id}"]`);
@@ -468,6 +502,7 @@ function render() {
   const [host, ...path] = (page(M.tab).dataset.url || (location.host || "valerie") + (M.tab === "home" ? "" : "/" + M.tab)).split("/");
   $("#url").replaceChildren(el("b", null, host), el("span", "path", path.length ? "/" + path.join("/") : ""), el("kbd", null, "⌘K"));
   tabs.querySelector(".on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if ((M.tab === "tools" || M.split === "tools") && !logRun) playLog();
   if (BASE_TABS.includes(M.tab)) history.replaceState(null, "", M.tab === "home" ? location.pathname : "#" + M.tab);
 }
 function show(id) {
@@ -1001,8 +1036,31 @@ $("#sidebar").addEventListener("wheel", (e) => {
   swipe.timer = setTimeout(() => { swipe.acc = 0; follow(0); }, 140);
 }, { passive: false });
 
+// ---------- AI tools: one agent session, played the first time the tab shows ----------
+const LOG = [
+  ["say", "You", "Checkout looks broken on phones. Fix it."],
+  ["check_page", "localhost:3000/checkout", "phone: Pay button 48px past the screen, 1 console error"],
+  ["read_network", "localhost:3000/checkout", "POST /api/cart 500, 212 ms"],
+  ["fetch_page", "developer.mozilla.org/…/clamp  focus: \"min width\"", "2 sections, word for word"],
+  ["check_page", "localhost:3000/checkout", "phone, tablet, desktop: all clear", "done"],
+  ["ask_user", "\"Staging wants your two-factor code to deploy.\"", "you pressed Done"],
+  ["say", "Agent", "Fixed the layout and the cart error, and deployed to staging."],
+];
+let logRun = 0;
+async function playLog() {
+  const run = ++logRun, box = $("#log"); box.replaceChildren();
+  for (const [tool, arg, res, cls] of LOG) {
+    await wait(tool === "say" ? 350 : 650); if (run !== logRun) return;
+    const ln = el("div", "ln" + (tool === "say" ? " say" : "") + (cls ? " " + cls : ""));
+    if (tool === "say") ln.append(el("b", null, arg), el("span", null, res));
+    else { const s = el("span", null, arg + "  "); s.append(el("i", null, "→ " + res)); ln.append(el("b", null, tool), s); }
+    box.append(ln);
+  }
+}
+$("#replay").onclick = playLog;
+
 narrow.addEventListener("change", () => { if (narrow.matches) M.split = null; render(); });
-const fromHash = () => ({ try: "home", agents: "agents", features: "features", install: "install" })[location.hash.slice(1)];
+const fromHash = () => ({ try: "home", agents: "agents", tools: "tools", mcp: "tools", features: "features", install: "install" })[location.hash.slice(1)];
 addEventListener("hashchange", () => fromHash() && show(fromHash()));
 if (fromHash()) M.tab = fromHash();
 fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) => (r.ok ? r.json() : null)).then((r) => {
