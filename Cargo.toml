@@ -30,6 +30,18 @@ objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 block2 = "0.6"
 
+# Screenshots and image copying off macOS (the same versions wry and arboard already use).
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.39"
+windows = "0.62"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0", features = ["v2_38"] }
+cairo-rs = { version = "0.18", features = ["png"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 4
