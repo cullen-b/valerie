@@ -22,7 +22,13 @@ pub fn set_web_tools(on: bool) {
     WEB_TOOLS.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-const WEB: &[&str] = &["web_search", "fetch_page", "check_page"];
+static ASK_USER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_ask_user(on: bool) {
+    ASK_USER.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+const WEB: &[&str] = &["web_search", "fetch_page", "check_page", "map_site"];
 
 pub fn token_path() -> PathBuf {
     crate::config::data_dir().join("mcp-token")
@@ -143,7 +149,12 @@ user's tabs and history aren't touched): web_search finds pages (recent, news an
 top results). fetch_page reads pages and PDFs as Markdown; give focus (your question) to get just the sections about it, word \
 for word, and urls to read several at once. Prefer these to your other web tools.\n\
 Building a site or app: check_page loads it (localhost or a file) at phone and desktop sizes and returns screenshots, \
-console errors, broken images and anything sticking out past the screen, in one call.\n\
+console errors, broken images and anything sticking out past the screen, in one call. read_network lists a page's \
+requests (status, time; bodies: true for API responses).\n\
+Working out of sight: open_tab with hidden: true gives you a tab only you see, with the user's logins; use the page tools \
+on it by its tab id, close_tab when done. map_site lists a site's pages (sitemap and links; read: N reads them).\n\
+Stuck (a CAPTCHA, a sign-in, a two-factor code, a step you can't find)? ask_user hands the user the tab with your note \
+and waits until they press Done. fetch_page and web_search return blocked with a tab when a page wants a person.\n\
 Working in the user's tabs: list_tabs gives tab ids; page tools default to the active tab. read_page reads a tab \
 (format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref (snapshot again \
 after the page changes). wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
@@ -160,7 +171,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "read_console", "read_terminal", "web_search", "fetch_page", "check_page",
+    "list_pages", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
 ];
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
@@ -208,6 +219,12 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
                     } else {
                         json!({ "behavior": "deny", "message": "The user said no." }).to_string()
                     }))
+                }
+                // Valerie's own chats are named in the note the user sees.
+                "ask_user" => {
+                    let mut a = args.clone();
+                    a["chat"] = json!(who.chat);
+                    call_tool(name, a, proxy)
                 }
                 // The terminal tools default to the calling chat's own shell.
                 "read_terminal" | "run_in_terminal" => {
@@ -353,6 +370,16 @@ pub fn tools() -> Vec<Value> {
             "links": { "type": "boolean", "description": "Also list the page's links" },
             "wait_for": { "type": "string", "description": "A CSS selector or text to wait for before reading (for slow pages)" },
             "max_chars": { "type": "integer", "description": "Longest content to return (default 40000)" } }), &[]),
+        tool("map_site", "List a site's pages: from its sitemap and its links, under the address's folder (docs.rs/tokio/latest/ \
+             lists just that part; under: \"/\" for the whole site). search keeps the ones about it; read: N reads the top N \
+             (up to 20) like fetch_page with focus, so one call can read a docs section. Hidden tabs with the user's logins.", json!({
+            "url": { "type": "string", "description": "Where to start, e.g. https://docs.example.com/api/" },
+            "under": { "type": "string", "description": "Only addresses whose path starts with this (default: the url's folder)" },
+            "search": { "type": "string", "description": "Only pages whose address or link text mentions these words, best first" },
+            "limit": { "type": "integer", "description": "Most addresses to return (default 100, up to 1000)" },
+            "read": { "type": "integer", "description": "Also read the first this many (up to 20)" },
+            "focus": { "type": "string", "description": "With read: what to pull out of each page (default: search)" },
+            "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["url"]),
         tool("check_page", "Check a page you're building (a dev server like http://localhost:3000, or a file) at phone, tablet and \
              desktop sizes in one call: a screenshot at each size, console errors and warnings, failed files, broken images, \
              elements sticking out past the screen's edge (sideways scrolling), load time. Runs in a hidden tab, so nothing \
@@ -374,12 +401,23 @@ pub fn tools() -> Vec<Value> {
              json!({ "space": { "type": "string", "description": "Only this space" } }), &[]),
         tool("open_tab", "Open a URL (or search terms) in a new tab.", json!({
             "url": { "type": "string" }, "space": { "type": "string", "description": "Space name; defaults to the active space" },
-            "activate": { "type": "boolean", "description": "Switch to the tab (default false: open in background)" } }), &["url"]),
+            "activate": { "type": "boolean", "description": "Switch to the tab (default false: open in background)" },
+            "hidden": { "type": "boolean", "description": "A tab only you see (not in the user's sidebar or history; their logins work). \
+                Work in it with its tab id; close_tab when done (it closes itself when unused for a while); activate_tab gives it to the user" } }), &["url"]),
         tool("open_link", "Open a URL the way an external link would: Air Traffic Control rules, then a little window. valerie://little opens an empty little window that asks where to go.",
              json!({ "url": { "type": "string" } }), &["url"]),
         tool("navigate", "Load a URL in an existing tab.", json!({ "url": { "type": "string" }, "tab": tab_prop() }), &["url"]),
         tool("activate_tab", "Switch to a tab (also switches space).", json!({ "tab": tab_prop() }), &["tab"]),
         tool("close_tab", "Close a tab.", json!({ "tab": tab_prop() }), &["tab"]),
+        tool("ask_user", "Hand the user a page when you're stuck: a CAPTCHA, a sign-in, a two-factor code, a cookie wall, or a \
+             step you can't work out. The tab comes to the front (a hidden one into their sidebar) with your note, a box to \
+             answer and a Done button; this waits until they press it and returns what they wrote. A hidden tab goes back to \
+             you afterwards, past whatever they did.", json!({
+            "tab": tab_prop(),
+            "note": { "type": "string", "description": "What you need, in a sentence, e.g. \"Please sign in to GitHub, then press Done\"" },
+            "who": { "type": "string", "description": "Your name as the user knows you, e.g. Claude Code" },
+            "wait_seconds": { "type": "integer", "description": "Longest to wait (default 300, up to 600). If your tool calls time out sooner \
+                (Codex: 60), pass less; it returns still_with_user and you call again with the same tab to keep waiting" } }), &["note"]),
         tool("history", "Go back, forward or reload a tab.", json!({
             "action": { "type": "string", "enum": ["back", "forward", "reload"] }, "tab": tab_prop() }), &["action"]),
         tool("read_page", "Read an open tab's URL, title and content: visible text (default), clean Markdown or HTML.", json!({
@@ -402,6 +440,15 @@ pub fn tools() -> Vec<Value> {
              json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
                      "full_page": { "type": "boolean", "description": "The whole page, not just what's on screen (it's scrolled through once first, so lazy images load)" },
                      "save_to": { "type": "string", "description": "Save the PNG to this file (or folder) and return its path instead of the image" } }), &[]),
+        tool("read_network", "List the page's requests since it loaded, oldest first: API calls (fetch, XHR) with method and \
+             status, and scripts, styles and images with timing. failed_only shows what broke (status 400+ or no answer). \
+             Reload the tab (history reload) to see its loading from the start.", json!({
+            "tab": tab_prop(),
+            "filter": { "type": "string", "description": "Only addresses (or response bodies) containing this, e.g. /api/" },
+            "failed_only": { "type": "boolean" },
+            "kinds": { "type": "array", "items": { "type": "string" }, "description": "e.g. [\"fetch\", \"xhr\"]; others: script, css, img, link, other" },
+            "bodies": { "type": "boolean", "description": "Record API response and request bodies (first 4000 characters) from now on" },
+            "limit": { "type": "integer", "description": "Latest this many (default 100)" } }), &[]),
         tool("read_console", "Read what the page wrote to its console since it loaded, oldest first: console.log/info/warn/error/debug, \
              uncaught errors, failed promises and files that failed to load. Use it to check a page or app you're building.",
              json!({ "tab": tab_prop(), "level": { "type": "string", "enum": ["error", "warn", "info", "log", "debug"], "description": "Only this level (warn includes errors)" },
@@ -470,7 +517,8 @@ pub fn tools() -> Vec<Value> {
         tool("read_ui", "Read Valerie's own interface: its visible text and an outline of elements with their ids and classes \
              (the names to use in ui/*.css).", json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" } }), &[]),
     ];
-    all.into_iter().filter(|t| web || !WEB.contains(&t["name"].as_str().unwrap_or(""))).collect()
+    let ask = ASK_USER.load(std::sync::atomic::Ordering::Relaxed);
+    all.into_iter().filter(|t| (web || !WEB.contains(&t["name"].as_str().unwrap_or(""))) && (ask || t["name"] != "ask_user")).collect()
 }
 
 /// Every tool's name (what plugin `permissions` can list).
@@ -784,10 +832,31 @@ fn resolve_redirects(results: &mut Value) {
 /// Open a hidden tab (not in the sidebar or history), run `f` on it, and close it whatever happens.
 fn in_web_tab(proxy: &EventLoopProxy<UserEvent>, open: Value, f: impl FnOnce(Option<i64>) -> Result<Value, String>) -> Result<Value, String> {
     let tab = call(proxy, "web_open", open)?["tab"].as_i64();
-    let out = f(tab);
+    let mut out = f(tab);
+    // A page that wants a person stays open, for ask_user.
+    if let Ok(v) = &mut out {
+        if v["blocked"].is_string() && ASK_USER.load(std::sync::atomic::Ordering::Relaxed) && call(proxy, "web_keep", json!({ "tab": tab })).is_ok() {
+            v["tab"] = json!(tab);
+            v["next"] = json!(format!("This page wants a person ({}). Call ask_user with tab {} and a short note, e.g. \"Please sign in, \
+                then press Done\"; then read it with read_page (format: markdown) on that tab, and close_tab when finished.",
+                v["blocked"].as_str().unwrap_or(""), tab.unwrap_or(0)));
+            return out;
+        }
+    }
     let _ = call(proxy, "web_close", json!({ "tab": tab }));
     out
 }
+
+/// Whether the page is a wall only a person gets past: "captcha" (robot checks), "sign_in", or "".
+const BLOCKED_JS: &str = r#"
+const body = document.body ? document.body.innerText : "", words = body.split(/\s+/).filter(Boolean).length;
+const title = (document.title || "").toLowerCase(), text = (title + " " + body.slice(0, 3000)).toLowerCase();
+if (document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], #challenge-form, #challenge-running, .cf-turnstile, .g-recaptcha, .h-captcha, #px-captcha')
+    || (words < 600 && /just a moment|verify (that )?you are (a )?human|are you a robot|unusual traffic|press (&|and) hold|security check|checking your browser|captcha/.test(text))) return "captcha";
+const pw = [...document.querySelectorAll('input[type="password"]')].some((i) => i.offsetParent !== null);
+if (words < 400 && (pw || /^(sign in|log in|login)\b|\bsign in to\b|\blog in to\b/.test(title))) return "sign_in";
+return "";
+"#;
 
 /// Wait until `js` returns something `done` says is ready (or `secs` pass) and return its last answer.
 fn poll(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, js: &str, secs: u64, done: impl Fn(&Value) -> bool) -> Result<Value, String> {
@@ -863,10 +932,14 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
         if eval(proxy, tab, "return document.contentType")? == "application/pdf" {
             // Valerie's PDF viewer downloads it and loads it first.
             poll(proxy, tab, "return !!(window.__valeriePdfText || window.__valeriePdfFailed)", 60, |v| v == &Value::Bool(true))?;
-        } else {
-            settle(proxy, tab, a["wait_for"].as_str())?;
+            return eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120);
         }
-        eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120)
+        settle(proxy, tab, a["wait_for"].as_str())?;
+        let mut page = eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120)?;
+        if let Some(b) = eval(proxy, tab, BLOCKED_JS)?.as_str().filter(|b| !b.is_empty()) {
+            page["blocked"] = json!(b);
+        }
+        Ok(page)
     })
     .map_err(|e| if e.contains("timed out") { format!("{url} didn't load (no such site, or it's down)") } else { e })?;
     if !focus_on.is_empty() {
@@ -1020,24 +1093,35 @@ fn web_search(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, Str
     let run = |url: &str| {
         in_web_tab(proxy, json!({ "url": url }), |tab| {
             let tab = wait_ready(proxy, tab)?;
-            poll(proxy, tab, &with_args(&json!({ "limit": limit }), SEARCH_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))
+            let mut r = poll(proxy, tab, &with_args(&json!({ "limit": limit }), SEARCH_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))?;
+            if r["results"].as_array().is_none_or(Vec::is_empty) {
+                if let Some(b) = eval(proxy, tab, BLOCKED_JS)?.as_str().filter(|b| !b.is_empty()) {
+                    r["blocked"] = json!(b);
+                }
+            }
+            Ok(r)
         })
     };
     let empty = |r: &Value| r["results"].as_array().is_none_or(Vec::is_empty);
     let mut r = run(&first)?;
     if empty(&r) && !news {
         if let Some(u) = search_url(DUCKDUCKGO, &full, recent, false) {
-            let blocked = r["page_text"].clone();
-            r = run(&u)?;
-            if empty(&r) {
-                r["page_text"] = blocked;
+            let other = run(&u)?;
+            if empty(&other) {
+                let _ = call(proxy, "web_close", json!({ "tab": other["tab"] }));
+            } else {
+                // DuckDuckGo answered: the search page that wanted a person isn't needed.
+                let _ = call(proxy, "web_close", json!({ "tab": r["tab"] }));
+                r = other;
             }
         }
     }
     resolve_redirects(&mut r["results"]);
     r["query"] = json!(full);
     if empty(&r) {
-        r["note"] = json!("No results could be read; page_text shows what the search page said (a consent or robot check?).");
+        if r["blocked"].is_null() {
+            r["note"] = json!("No results could be read; page_text shows what the search page said (a consent or robot check?).");
+        }
         return Ok(r);
     }
     let read = a["read"].as_u64().unwrap_or(0).min(5) as usize;
@@ -1149,6 +1233,130 @@ fn check_page(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, Str
     })
 }
 
+/// The site's own list of pages (robots.txt → sitemaps, gzipped or nested) and the page's links, same site only.
+const MAP_JS: &str = r#"
+return (async () => {
+  const origin = location.origin, found = new Map();
+  const add = (u, title) => {
+    try {
+      const x = new URL(String(u).trim(), location.href); x.hash = "";
+      if (x.origin !== origin || !/^https?:$/.test(x.protocol)) return;
+      const t = (title || "").replace(/\s+/g, " ").trim().slice(0, 120);
+      if (!found.has(x.href) || (!found.get(x.href) && t)) found.set(x.href, t);
+    } catch (_) {}
+  };
+  const get = async (u) => {
+    try {
+      const r = await fetch(u, { credentials: "include" });
+      if (!r.ok) return "";
+      if (/\.gz($|\?)/.test(u) && typeof DecompressionStream === "function") return await new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).text();
+      return await r.text();
+    } catch (_) { return ""; }
+  };
+  const from = [], maps = [], seen = new Set();
+  for (const m of (await get(origin + "/robots.txt")).matchAll(/^\s*sitemap:\s*(\S+)/gim)) maps.push(m[1]);
+  // Docs sites often keep theirs in their own folder (/docs/sitemap.xml).
+  const top = "/" + (location.pathname.split("/")[1] || "");
+  maps.push(origin + A.under.replace(/\/?$/, "/") + "sitemap.xml", origin + top.replace(/\/?$/, "/") + "sitemap.xml", origin + "/sitemap.xml", origin + "/sitemap_index.xml");
+  for (let n = 0; maps.length && n < 15 && found.size < 20000; ) {
+    maps.sort((a, b) => b.includes(A.under) - a.includes(A.under));
+    const u = maps.shift();
+    if (seen.has(u)) continue;
+    seen.add(u); n++;
+    const xml = await get(u);
+    if (!xml.includes("<loc")) continue;
+    const doc = new DOMParser().parseFromString(xml, "application/xml"), index = doc.getElementsByTagName("sitemapindex").length > 0;
+    for (const loc of doc.getElementsByTagName("loc")) index ? maps.push(loc.textContent.trim()) : add(loc.textContent, "");
+    if (!index && !from.includes("sitemap")) from.push("sitemap");
+  }
+  for (const a of document.querySelectorAll("a[href]")) add(a.href, a.href.split("\x23")[0] === location.href.split("\x23")[0] ? "" : a.textContent);
+  from.push("links");
+  return { from, urls: [...found].map(([url, title]) => [url, title]) };
+})();
+"#;
+
+/// map_site: a site's pages under a folder, optionally narrowed to `search` and read.
+fn map_site(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, String> {
+    let start = url::Url::parse(a["url"].as_str().unwrap_or("").trim()).map_err(|_| "give a full address, like https://docs.example.com/guide/")?;
+    if !matches!(start.scheme(), "http" | "https") {
+        return Err("map_site works on http(s) sites".into());
+    }
+    let under = match a["under"].as_str().map(str::trim).filter(|u| !u.is_empty()) {
+        Some(u) => if u.starts_with('/') { u.to_string() } else { format!("/{u}") },
+        // "/docs/intro.html" → "/docs/"; "/docs/api" → "/docs/api".
+        None => {
+            let p = start.path();
+            let last = p.rsplit('/').next().unwrap_or("");
+            if last.contains('.') { p[..p.len() - last.len()].to_string() } else { p.to_string() }
+        }
+    };
+    let inside = |u: &str| url::Url::parse(u).is_ok_and(|x| x.path().starts_with(&under) || format!("{}/", x.path()) == under);
+    let links = |url: &str| in_web_tab(proxy, json!({ "url": url }), |tab| {
+        let tab = wait_ready(proxy, tab)?;
+        settle(proxy, tab, None)?;
+        eval_for(proxy, tab, &with_args(&json!({ "under": under }), MAP_JS), 60)
+    });
+    let first = links(start.as_str())?;
+    let mut from: Vec<Value> = first["from"].as_array().cloned().unwrap_or_default();
+    let mut found: Vec<(String, String)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut take = |list: &Value, found: &mut Vec<(String, String)>| {
+        for p in list.as_array().into_iter().flatten() {
+            let (u, t) = (p[0].as_str().unwrap_or(""), p[1].as_str().unwrap_or(""));
+            if inside(u) && seen.insert(u.to_string()) {
+                found.push((u.to_string(), t.to_string()));
+            }
+        }
+    };
+    take(&first["urls"], &mut found);
+    // No sitemap for this part: follow the links one step further.
+    if found.len() < 30 && !from.iter().any(|f| f == "sitemap") {
+        let next: Vec<String> = found.iter().map(|(u, _)| u.clone()).filter(|u| u.trim_end_matches('/') != start.as_str().trim_end_matches('/')).take(8).collect();
+        let more: Vec<Value> = std::thread::scope(|s| {
+            let jobs: Vec<_> = next.iter().map(|u| s.spawn(|| links(u).unwrap_or(Value::Null))).collect();
+            jobs.into_iter().map(|j| j.join().unwrap_or(Value::Null)).collect()
+        });
+        for m in &more {
+            take(&m["urls"], &mut found);
+        }
+        if !more.is_empty() {
+            from.push(json!("links two steps in"));
+        }
+    }
+    let total = found.len();
+    let words: Vec<String> = a["search"].as_str().unwrap_or("").to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 1).map(str::to_string).collect();
+    if words.is_empty() {
+        found.sort();
+    } else {
+        let score = |(u, t): &(String, String)| { let h = format!("{} {}", u.to_lowercase(), t.to_lowercase()); words.iter().filter(|w| h.contains(w.as_str())).count() };
+        found.retain(|p| score(p) > 0);
+        found.sort_by_key(|p| std::cmp::Reverse(score(p)));
+    }
+    let matched = found.len();
+    found.truncate(a["limit"].as_u64().unwrap_or(100).clamp(1, 1000) as usize);
+    let mut out = json!({ "site": start.origin().ascii_serialization(), "under": under, "found": total, "from": from,
+        "urls": found.iter().map(|(u, t)| if t.is_empty() { json!({ "url": u }) } else { json!({ "url": u, "title": t }) }).collect::<Vec<_>>() });
+    if !words.is_empty() {
+        out["matching_search"] = json!(matched);
+    }
+    let read = a["read"].as_u64().unwrap_or(0).min(20) as usize;
+    if read > 0 {
+        let focus_on = a["focus"].as_str().or(a["search"].as_str()).unwrap_or("").to_string();
+        let opts = json!({ "focus": focus_on, "max_chars": a["max_chars"].as_u64().unwrap_or(6000) });
+        let urls: Vec<String> = found.iter().take(read).map(|(u, _)| u.clone()).collect();
+        let mut pages = Vec::new();
+        for chunk in urls.chunks(5) {
+            pages.extend(std::thread::scope(|s| {
+                let opts = &opts;
+                let jobs: Vec<_> = chunk.iter().map(|u| s.spawn(move || fetch_one(proxy, u, opts).unwrap_or_else(|e| json!({ "url": u, "error": e })))).collect();
+                jobs.into_iter().map(|j| j.join().unwrap_or(Value::Null)).collect::<Vec<_>>()
+            }));
+        }
+        out["pages"] = json!(pages);
+    }
+    Ok(out)
+}
+
 fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let tab = a.get("tab").and_then(|t| t.as_i64());
     match name {
@@ -1229,6 +1437,33 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             None => fetch_one(proxy, a["url"].as_str().unwrap_or(""), &a),
         },
         "check_page" => check_page(proxy, &a),
+        "map_site" => map_site(proxy, &a),
+        "ask_user" => {
+            let wait = a["wait_seconds"].as_u64().unwrap_or(300).clamp(5, 600);
+            match call_wait(proxy, "ask_user", a, wait) {
+                Err(e) if e.starts_with("timed out") => Ok(json!({ "done": false, "still_with_user": true,
+                    "next": "The user hasn't pressed Done yet. Call ask_user again with the same tab (no note needed) to keep waiting." })),
+                r => r,
+            }
+        }
+        "read_network" => {
+            let mut o = a.clone();
+            o["failed"] = a["failed_only"].clone();
+            let v = eval(proxy, tab, &with_args(&o, "return window.__valerie && __valerie.network ? __valerie.network(A) : null;"))?;
+            if v.is_null() {
+                return Err("this page keeps no network log (one of Valerie's own pages, or still loading)".into());
+            }
+            if v["on"] != Value::Bool(true) {
+                return Err("the network log is off (the mcp.network_log setting); turn it on and reload the tab".into());
+            }
+            let rows = v["requests"].as_array().cloned().unwrap_or_default();
+            let failed = rows.iter().filter(|r| r["error"].is_string() || r["status"].as_u64().is_some_and(|s| s >= 400)).count();
+            let mut out = json!({ "requests": rows, "shown": rows.len(), "failed": failed });
+            if a["bodies"].as_bool() == Some(true) && v["had_bodies"] != Value::Bool(true) {
+                out["note"] = json!("Bodies are recorded from now on: repeat the action (or reload the tab) and read again.");
+            }
+            Ok(out)
+        }
         "read_page" => {
             let tab = wait_ready(proxy, tab)?;
             let format = a["format"].as_str().unwrap_or(if a["html"].as_bool() == Some(true) { "html" } else { "text" });

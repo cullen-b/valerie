@@ -239,6 +239,17 @@ service, in a real browser with your logins and no rate limits, in hidden tabs t
   returns only the sections about it, word for word, plus the page's outline; `urls` reads ten at once.
 - `check_page`: a page you're building at phone, tablet and desktop sizes in one call: screenshots, console errors,
   broken images and anything sticking out past the screen.
+- `map_site`: a site's pages from its sitemap and links, just one folder of it (`docs.rs/tokio/latest/`) or the whole
+  site; `search` narrows them and `read: 5` reads them, so one call can read a docs section.
+- `read_network`: what a page asked the server for (API calls with method, status and timing; `bodies: true` for the
+  responses), to debug the app you're building.
+
+Agents can work out of your sight in **hidden tabs** of their own (`open_tab` with `hidden: true`): every page tool
+works on them, pop-ups they open stay hidden, and unused ones close after `mcp.hidden_tabs_close_after` minutes. When an
+agent gets stuck (a CAPTCHA, a sign-in, a two-factor code, a button it can't find) it calls `ask_user`: the tab comes to
+the front of your sidebar with its note, a box to answer and a **Done** button, and goes back to the agent when you press
+it. `fetch_page` and `web_search` say when a page wants a person, so agents know to ask (`mcp.ask_user: false` turns
+this off).
 
 They can also drive your tabs: `list_tabs`, `open_tab`, `navigate`, `read_page`, `snapshot`, `click`, `type`,
 `press_key`, `scroll`, `wait_for`, `screenshot` (`save_to` a file), `eval_js`, and `run_command`, which runs any

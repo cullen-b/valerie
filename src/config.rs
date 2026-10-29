@@ -834,6 +834,7 @@ pub struct LittleWindowConfig {
     pub copy_button: bool,
     pub keep_open_when_main_closes: bool,
     pub open_links_alone: bool,
+    pub keep_one_ready: bool,
     pub width: f64,
     pub height: f64,
 }
@@ -927,6 +928,11 @@ pub struct McpConfig {
     pub web_tools: bool,
     /// "ask" | "always" | "never"
     pub connect_ai_apps: String,
+    /// Minutes before an unused hidden agent tab closes (0 = never).
+    pub hidden_tabs_close_after: u64,
+    pub hidden_tabs_max: usize,
+    pub ask_user: bool,
+    pub network_log: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -50,6 +50,8 @@ pub enum UserEvent {
     Title { target: Target, title: String },
     NewWindow { target: Target, url: String },
     ExternalScheme(String),
+    /// Time to make the hidden little window that waits for the next link (`little_window.keep_one_ready`).
+    PrepareLittle,
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
@@ -219,6 +221,10 @@ pub struct App {
     chat_started: HashMap<String, u64>,
     /// Ask-first chats' questions about an action, waiting for the user, by id.
     chat_asks: HashMap<String, ChatAsk>,
+    agent_tabs: HashMap<TabId, AgentTab>,
+    helping: HashMap<TabId, Help>,
+    /// The user's answers to ask_user that the agent stopped waiting for, handed over when it asks again.
+    help_answers: HashMap<TabId, Value>,
     /// What's uncommitted in each coding chat's project folder, by folder.
     chat_changes: HashMap<String, Value>,
     /// Chats that were closed, for the Closed list in the Chats sidebar.
@@ -263,6 +269,8 @@ pub struct App {
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
+    /// A little window made ahead and kept hidden, so a link appears in one at once (`little_window.keep_one_ready`).
+    ready_little: Option<Little>,
     focused_little: Option<WindowId>,
     /// The main window was closed while a little window stayed open (`little_window.keep_open_when_main_closes`).
     main_hidden: bool,
@@ -605,6 +613,23 @@ fn legacy_device_name() -> String {
 /// Chats live on this machine; with chats.sync they also travel, encrypted, through the sync repo.
 fn chats_dir(_config: &Config) -> PathBuf {
     config::data_dir().join("chats")
+}
+
+/// A hidden tab an agent opened to work in (open_tab with hidden): when it last used it, and the tab whose pop-up it is.
+struct AgentTab {
+    used: std::time::Instant,
+    from: Option<TabId>,
+}
+
+/// A tab an agent handed the user (ask_user), shown with its note until they press Done.
+struct Help {
+    nonce: String,
+    who: String,
+    note: String,
+    /// A hidden tab that goes back to the agent afterwards, and the tab the user was on before.
+    hidden: bool,
+    back_to: Option<TabId>,
+    reply: Option<std::sync::mpsc::Sender<Result<Value, String>>>,
 }
 
 /// An Ask-first chat's question about one action, answered in the chat.
@@ -1184,6 +1209,9 @@ impl App {
             chat_running: Default::default(),
             chat_started: HashMap::new(),
             chat_asks: HashMap::new(),
+            agent_tabs: HashMap::new(),
+            helping: HashMap::new(),
+            help_answers: HashMap::new(),
             chat_changes: HashMap::new(),
             closed_chats: crate::ai::load_closed(&chats_dir(&config)),
             found_models: Default::default(),
@@ -1209,6 +1237,7 @@ impl App {
             notify_times: HashMap::new(),
             sync_gen: 0,
             littles: HashMap::new(),
+            ready_little: None,
             focused_little: None,
             main_hidden: false,
             config,
@@ -1344,6 +1373,7 @@ impl App {
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
+            "network_log": self.config.mcp.enabled && self.config.mcp.network_log,
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
             "sites": self.config.sites, "mouse": self.config.mouse, "plugin_contexts": self.plugin_contexts(),
             "redirects": self.config.rules.iter().filter(|r| !r.redirect.is_empty() && !r.to.is_empty()).map(|r| json!({ "from": r.redirect, "to": r.to, "site": r.site })).collect::<Vec<_>>(),
@@ -2395,6 +2425,12 @@ impl App {
     }
 
     fn close(&mut self, tab: TabId) {
+        if let Some(h) = self.helping.remove(&tab) {
+            self.answer_help(tab, h.reply, Err("The user closed the tab instead of finishing. Ask them what they'd like, or try another way.".into()));
+        }
+        if self.state.web_tabs.remove(&tab) {
+            self.agent_tabs.remove(&tab);
+        }
         let pinned_or_fav = self.state.is_pinned(tab) || self.state.favorites.contains(&tab);
         if pinned_or_fav {
             // Like Arc: closing a pinned tab unloads it but keeps it in the sidebar.
@@ -2444,10 +2480,14 @@ impl App {
         self.state.active_space = i;
         if changed {
             self.queue_event("space_switched", self.state.active_tab(), None);
+            self.prepare_little_later();
         }
         let settings_changed = self.apply_space_settings();
-        for p in self.panes() {
-            self.ensure_view(p);
+        // Not while a link that started Valerie has the screen to itself (show_main loads them).
+        if !self.parked() {
+            for p in self.panes() {
+                self.ensure_view(p);
+            }
         }
         self.layout();
         if changed && self.anim_secs() > 0.0 {
@@ -2470,6 +2510,179 @@ impl App {
         let mut v = self.state.favorites.clone();
         v.extend(self.state.order(self.state.active_space, true));
         v
+    }
+
+    /// A tab no one sees (not in the sidebar or history) with the active space's logins; `agent`'s stay until closed.
+    fn open_web_tab(&mut self, url: &str, agent: bool, size: Option<(f64, f64)>) -> TabId {
+        if agent {
+            self.make_room_for_agent_tab();
+        }
+        let id = self.state.add_tab(self.state.active_space, url, false);
+        self.state.detach(id);
+        self.state.web_tabs.insert(id);
+        if agent {
+            self.agent_tabs.insert(id, AgentTab { used: std::time::Instant::now(), from: None });
+        }
+        self.ensure_view(id);
+        if let (Some((w, h)), Some(v)) = (size, self.views.get(&id)) {
+            let _ = v.set_bounds(rect(0.0, 0.0, w.clamp(200.0, 4000.0), h.clamp(200.0, 4000.0)));
+        }
+        self.layout();
+        id
+    }
+
+    fn close_web_tab(&mut self, t: TabId) {
+        if !self.state.web_tabs.contains(&t) {
+            return;
+        }
+        if let Some(h) = self.helping.remove(&t) {
+            self.answer_help(t, h.reply, Err("The tab was closed before the user finished.".into()));
+            if self.state.active_tab() == Some(t) {
+                self.state.detach(t);
+                if let Some(b) = h.back_to.filter(|b| self.state.tabs.contains_key(b)) {
+                    self.activate(b);
+                }
+            }
+        }
+        self.state.detach(t);
+        self.state.web_tabs.remove(&t);
+        self.agent_tabs.remove(&t);
+        self.help_answers.remove(&t);
+        self.unload(t);
+        self.state.tabs.remove(&t);
+        self.committed_url.remove(&t);
+        self.render();
+    }
+
+    /// Keep agents' hidden tabs under mcp.hidden_tabs_max by closing the ones unused longest.
+    fn make_room_for_agent_tab(&mut self) {
+        let max = self.config.mcp.hidden_tabs_max.max(1);
+        while self.agent_tabs.len() >= max {
+            let Some(oldest) = self.agent_tabs.iter().filter(|(t, _)| !self.helping.contains_key(t)).min_by_key(|(_, a)| a.used).map(|(t, _)| *t) else { break };
+            crate::log::line("mcp", format!("closed hidden tab {oldest}: agents have mcp.hidden_tabs_max open"));
+            self.close_web_tab(oldest);
+        }
+    }
+
+    /// Close agents' hidden tabs no one has used for mcp.hidden_tabs_close_after minutes.
+    fn close_idle_agent_tabs(&mut self) {
+        let mins = self.config.mcp.hidden_tabs_close_after;
+        if mins == 0 {
+            return;
+        }
+        let idle: Vec<TabId> = self.agent_tabs.iter()
+            .filter(|(t, a)| !self.helping.contains_key(t) && a.used.elapsed() > std::time::Duration::from_secs(mins * 60))
+            .map(|(t, _)| *t).collect();
+        for t in idle {
+            crate::log::line("mcp", format!("closed hidden tab {t}, unused for {mins} minutes"));
+            self.close_web_tab(t);
+        }
+    }
+
+    /// A hidden tab becomes one of the user's own (in the active space, in front), recorded in history from now on.
+    fn give_to_user(&mut self, t: TabId) {
+        if let Some(h) = self.helping.remove(&t) {
+            self.answer_help(t, h.reply, Ok(json!({ "done": true, "kept_by_user": true })));
+        }
+        self.state.detach(t);
+        self.state.web_tabs.remove(&t);
+        self.agent_tabs.remove(&t);
+        let space = self.state.active_space;
+        self.state.spaces[space].today.insert(0, t);
+        self.activate(t);
+        self.show_main();
+        self.render();
+    }
+
+    /// ask_user: show the user the tab (a hidden one comes into their sidebar, in front) with the agent's note and a
+    /// Done button; the answer goes back when they press it.
+    fn ask_user(&mut self, args: &Value, reply: std::sync::mpsc::Sender<Result<Value, String>>) {
+        if !self.config.mcp.ask_user {
+            let _ = reply.send(Err("asking the user is off (the mcp.ask_user setting)".into()));
+            return;
+        }
+        let Some(t) = self.target_tab(args["tab"].as_u64()).filter(|t| self.state.tabs.contains_key(t)) else {
+            let _ = reply.send(Err("no tab (give the tab you need help with)".into()));
+            return;
+        };
+        if let Some(answer) = self.help_answers.remove(&t) {
+            let _ = reply.send(Ok(answer));
+            return;
+        }
+        // Still with the user: the agent waits on.
+        if let Some(h) = self.helping.get_mut(&t) {
+            h.reply = Some(reply);
+            return;
+        }
+        let note: String = args["note"].as_str().unwrap_or("").trim().chars().take(600).collect();
+        if note.is_empty() {
+            let _ = reply.send(Err("say what you need the user to do (note), e.g. \"Sign in to GitHub, then press Done\"".into()));
+            return;
+        }
+        let chat = args["chat"].as_str().and_then(|id| self.chats.iter().find(|c| c.id == id)).map(|c| c.title.clone());
+        let who = chat.or_else(|| args["who"].as_str().map(|w| w.trim().chars().take(40).collect::<String>()).filter(|w| !w.is_empty())).unwrap_or_else(|| "An agent".into());
+        let hidden = self.state.web_tabs.contains(&t);
+        let back_to = self.state.active_tab().filter(|b| *b != t);
+        if hidden {
+            let space = self.state.active_space;
+            self.state.spaces[space].today.insert(0, t);
+        }
+        crate::log::event("mcp", format!("{who} asked the user for help on tab {t}"));
+        self.helping.insert(t, Help { nonce: crate::mcp::random_hex(), who: who.clone(), note: note.clone(), hidden, back_to, reply: Some(reply) });
+        self.activate(t);
+        self.show_main();
+        self.render();
+        self.show_help_bar(t);
+        if !self.window_focused {
+            self.notify_valerie(&format!("{who} needs you"), &note, None);
+        }
+    }
+
+    fn show_help_bar(&self, t: TabId) {
+        if let (Some(h), Some(v)) = (self.helping.get(&t), self.views.get(&t)) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.helpBar({}, {}, {})", json!(h.who), json!(h.note), json!(h.nonce)));
+        }
+    }
+
+    /// The user pressed Done (or "I can't") on an agent's note.
+    fn help_done(&mut self, t: TabId, m: &Value) {
+        if self.helping.get(&t).is_none_or(|h| m["nonce"].as_str() != Some(h.nonce.as_str())) {
+            return;
+        }
+        let Some(h) = self.helping.remove(&t) else { return };
+        let note: String = m["note"].as_str().unwrap_or("").trim().chars().take(2000).collect();
+        let gave_up = m["gave_up"].as_bool() == Some(true);
+        let (url, title) = self.state.tabs.get(&t).map(|x| (x.url.clone(), x.display_title().to_string())).unwrap_or_default();
+        if h.hidden && self.state.web_tabs.contains(&t) {
+            let was_active = self.state.active_tab() == Some(t);
+            self.state.detach(t);
+            if was_active {
+                if let Some(b) = h.back_to.filter(|b| self.state.tabs.contains_key(b)) {
+                    self.activate(b);
+                }
+            }
+            self.layout();
+            self.render();
+        }
+        crate::log::event("mcp", format!("the user {} on tab {t}", if gave_up { "couldn't help" } else { "finished helping" }));
+        let next = match (gave_up, h.hidden) {
+            (true, _) => "The user couldn't do it. Read their note, then try another way or ask them what to do.",
+            (false, true) => "The page is back in your hidden tab: carry on there (read_page, snapshot).",
+            (false, false) => "Carry on in this tab.",
+        };
+        let answer = json!({ "done": !gave_up, "user_note": if note.is_empty() { Value::Null } else { json!(note) }, "tab": t, "url": url, "title": title, "next": next });
+        self.answer_help(t, h.reply, Ok(answer));
+    }
+
+    /// Hand an answer to the waiting agent, or keep it for when it asks again (its call may have timed out).
+    fn answer_help(&mut self, t: TabId, reply: Option<std::sync::mpsc::Sender<Result<Value, String>>>, answer: Result<Value, String>) {
+        let unsent = match reply {
+            Some(r) => r.send(answer).err().map(|e| e.0),
+            None => Some(answer),
+        };
+        if let Some(Ok(v)) = unsent {
+            self.help_answers.insert(t, v);
+        }
     }
 
     fn target_tab(&self, tab: Option<TabId>) -> Option<TabId> {
@@ -2908,48 +3121,117 @@ impl App {
 
     /// A small window of its own for one page (`size` overrides little_window's width and height).
     fn open_window(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        trace("little window asked for");
         let url = &self.rewrite(url);
-        let lw = self.config.little_window.clone();
-        let (lw_width, lw_height) = size.unwrap_or((lw.width, lw.height));
+        let l = match self.take_ready_little(url, space, size) {
+            Some(l) => {
+                let _ = l.view.load_url(url);
+                l.window.set_visible(true);
+                l
+            }
+            None => match self.build_little(url, space, size, true, elwt) {
+                Some(l) => l,
+                None => return,
+            },
+        };
+        self.apply_rules_to(&l.view);
+        let zoom = self.default_zoom();
+        if zoom != 1.0 {
+            let _ = l.view.zoom(zoom);
+        }
+        // A new empty one types into its address box; otherwise the page has the keyboard.
+        let _ = if url == LITTLE_BLANK { l.bar.focus() } else { l.view.focus() };
+        l.window.set_focus();
+        let id = l.window.id();
+        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, ..l });
+        self.focused_little = Some(id);
+        self.render_little(id);
+        self.prepare_little_later();
+        trace("little window built");
+    }
+
+    /// The window and its two views; the page's view first, so the page starts loading as early as it can.
+    fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
+        let lw = &self.config.little_window;
+        let (w, h) = size.unwrap_or((lw.width, lw.height));
         let window = match mac_window(WindowBuilder::new())
             .with_title("Valerie")
-            .with_inner_size(LogicalSize::new(lw_width, lw_height))
+            .with_visible(visible)
+            .with_inner_size(LogicalSize::new(w, h))
             .with_min_inner_size(LogicalSize::new(360.0, 240.0))
             .build(elwt)
         {
             Ok(w) => w,
-            Err(e) => return crate::log::line("little-window", e),
+            Err(e) => {
+                crate::log::line("little-window", e);
+                return None;
+            }
         };
         let id = window.id();
+        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
+        let view = self.with_profile(&profile, |app, base| {
+            app.page_builder(base, Target::Little(id), url).with_visible(true).with_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR)).build_as_child(&window)
+        });
         let p = self.proxy.clone();
         let bar = WebViewBuilder::new()
             .with_html(ui_page("little.html", &self.config))
-            .with_bounds(rect(0.0, 0.0, lw_width, LITTLE_BAR))
+            .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
             .build_as_child(&window);
-        let (lw_w, lw_h) = (lw_width, lw_height);
-        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
-        let view = self.with_profile(&profile, |app, base| {
-            app.page_builder(base, Target::Little(id), url)
-                .with_visible(true)
-                .with_bounds(rect(0.0, LITTLE_BAR, lw_w, lw_h - LITTLE_BAR))
-                .build_as_child(&window)
-        });
-        let (Ok(bar), Ok(view)) = (bar, view) else { return crate::log::line("little-window", "little window webviews failed") };
-        // A new empty one types into its address box; otherwise the page has the keyboard.
-        let _ = if url == LITTLE_BLANK { bar.focus() } else { view.focus() };
-        window.set_focus();
+        let (Ok(bar), Ok(view)) = (bar, view) else {
+            crate::log::line("little-window", "little window webviews failed");
+            return None;
+        };
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0 })
+    }
+
+    /// Content blocking for a little window's page (the blocklist can arrive after a ready one was made).
+    fn apply_rules_to(&self, view: &WebView) {
         #[cfg(target_os = "macos")]
         if self.rules.is_some() {
-            blocking::mac::apply(&view, self.rules.as_ref());
+            blocking::mac::apply(view, self.rules.as_ref());
         }
-        let zoom = self.default_zoom();
-        if zoom != 1.0 {
-            let _ = view.zoom(zoom);
+        #[cfg(not(target_os = "macos"))]
+        let _ = view;
+    }
+
+    /// The hidden little window, if it suits this link: same space and profile, no site user agent or headers to set
+    /// as it's made, and the usual size.
+    fn take_ready_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>) -> Option<Little> {
+        let r = self.ready_little.as_ref()?;
+        let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
+        let fits = size.is_none() && r.space == space && profile == self.profile_for(r.space) && self.header_map(url).is_empty() && self.agent_for_url(url) == self.agent_for_url("about:blank");
+        if fits {
+            self.ready_little.take()
+        } else {
+            None
         }
-        self.littles.insert(id, Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom });
-        self.focused_little = Some(id);
+    }
+
+    /// Make the hidden little window for the next link in a moment (once the page just opened has the machine).
+    fn prepare_little_later(&self) {
+        if !self.config.little_window.enabled || !self.config.little_window.keep_one_ready {
+            return;
+        }
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            send(&p, UserEvent::PrepareLittle);
+        });
+    }
+
+    fn prepare_little(&mut self, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let lw = &self.config.little_window;
+        let space = self.state.active_space;
+        if !lw.enabled || !lw.keep_one_ready {
+            self.ready_little = None;
+            return;
+        }
+        if self.ready_little.as_ref().is_some_and(|r| r.space == space) {
+            return;
+        }
+        self.ready_little = self.build_little("about:blank", space, None, false, elwt);
     }
 
     fn little_to_main(&mut self, id: WindowId, space: Option<String>) {
@@ -3037,6 +3319,17 @@ impl App {
                 }
             }
         }
+        if self.parked() {
+            for p in self.panes() {
+                self.unload(p);
+            }
+        }
+    }
+
+    /// A link started Valerie and opened alone: the hidden main window's pages wait until it's shown, so they don't
+    /// slow the little window down.
+    fn parked(&self) -> bool {
+        self.main_hidden && !self.revealed
     }
 
     // ---------------------------------------------------------------- config, menu, sync
@@ -3375,6 +3668,7 @@ impl App {
     /// Window, Dock and system-wide settings that apply to the app as a whole (window.*, app.*, global_keybindings).
     fn apply_app_settings(&mut self) {
         crate::mcp::set_web_tools(self.config.mcp.web_tools);
+        crate::mcp::set_ask_user(self.config.mcp.ask_user);
         let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();
         if print == self.app_print {
             return;
@@ -4066,6 +4360,7 @@ impl App {
     }
 
     fn tick(&mut self) {
+        self.close_idle_agent_tabs();
         let shown: Vec<(Target, PathBuf)> = self.md_watch.lock().map(|w| w.iter().map(|(t, f)| (*t, f.clone())).collect()).unwrap_or_default();
         let gone: Vec<Target> = shown.into_iter().filter(|(t, f)| self.markdown_file(*t).as_ref() != Some(f)).map(|(t, _)| t).collect();
         if let Ok(mut w) = self.md_watch.lock() {
@@ -5583,7 +5878,10 @@ impl App {
             (Source::Chrome, "drag") => {
                 let _ = self.window.drag_window();
             }
-            (Source::LittleBar(id), "ready") => self.render_little(id),
+            (Source::LittleBar(id), "ready") => {
+                trace("little bar ready");
+                self.render_little(id)
+            }
             (Source::LittleBar(id), "go") => {
                 let Some(text) = m["text"].as_str().map(str::trim).filter(|t| !t.is_empty()) else { return };
                 let url = self.rewrite(&routing::resolve_input(text, &self.config.search_engine));
@@ -5627,6 +5925,13 @@ impl App {
             }
             (Source::Page(target), "meta") => {
                 let Target::Tab(id) = target else {
+                    if matches!(target, Target::Little(l) if self.littles.contains_key(&l)) {
+                        trace("little page drawn");
+                        // Started by a link that opened alone: the rest of launch can begin once its page is drawn.
+                        if self.parked() {
+                            self.pending_reveal = Some("little page drawn");
+                        }
+                    }
                     return;
                 };
                 self.ready_views.insert(id);
@@ -5778,6 +6083,7 @@ impl App {
                 }
             }
             (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
+            (Source::Page(Target::Tab(id)), "help_done") => self.help_done(id, &m),
             (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
             (Source::Page(Target::Tab(id)), "notify") => self.site_notification(id, &m),
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
@@ -5891,6 +6197,9 @@ impl App {
                         // The query and fragment can carry sign-in codes, so they stay out of the log.
                         crate::log::verbose("page", format!("tab {id} loaded {}", url.split(['?', '#']).next().unwrap_or("")));
                     }
+                    if finished && self.helping.contains_key(&id) {
+                        self.show_help_bar(id);
+                    }
                     if finished && !self.revealed && self.state.active_tab() == Some(id) {
                         self.pending_reveal = Some("active page loaded");
                     }
@@ -5922,6 +6231,9 @@ impl App {
                     self.render();
                 }
                 Target::Little(id) => {
+                    if self.littles.contains_key(&id) {
+                        trace(if finished { "little page finished" } else { "little page started" });
+                    }
                     if let Some(l) = self.littles.get_mut(&id) {
                         l.url = url.clone();
                     }
@@ -5956,6 +6268,15 @@ impl App {
                 }
                 Target::Peek => {}
             },
+            UserEvent::NewWindow { target: Target::Tab(from), url } if self.state.web_tabs.contains(&from) && !self.helping.contains_key(&from) => {
+                // A hidden tab's pop-ups stay hidden: the agent's opens beside it, a page being read has none.
+                if self.agent_tabs.contains_key(&from) {
+                    let id = self.open_web_tab(&self.clean(&url), true, None);
+                    if let Some(a) = self.agent_tabs.get_mut(&id) {
+                        a.from = Some(from);
+                    }
+                }
+            }
             UserEvent::NewWindow { target, url } => {
                 let url = self.clean(&url);
                 let space = match target {
@@ -6013,6 +6334,9 @@ impl App {
                 }
             }
             UserEvent::ConfigChanged => {
+                // The ready little window was made with the old settings (scripts, theme, plugins).
+                self.ready_little = None;
+                self.prepare_little_later();
                 self.reload_config();
                 self.schedule_sync();
             }
@@ -6416,6 +6740,7 @@ impl App {
                 }
             }
             UserEvent::RevealTimeout => self.reveal("timeout"),
+            UserEvent::PrepareLittle => self.prepare_little(elwt),
             UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
                 self.found_models.insert(cli, models);
@@ -6540,6 +6865,12 @@ impl App {
         if op == "confirm" {
             return self.confirm_action(&args, reply);
         }
+        if op == "ask_user" {
+            return self.ask_user(&args, reply);
+        }
+        if let Some(a) = tab_arg.and_then(|t| self.agent_tabs.get_mut(&t)) {
+            a.used = std::time::Instant::now();
+        }
         let result: Result<Value, String> = match op.as_str() {
             "list_chats" => Ok(json!(self.chats.iter().map(|c| json!({ "id": c.id, "title": c.title, "agent": c.agent, "updated": c.updated, "messages": c.messages.len() })).collect::<Vec<_>>())),
             "read_chat" => {
@@ -6577,7 +6908,26 @@ impl App {
                         out.extend(row(&id, Some(i), section));
                     }
                 }
+                if filter.is_none() {
+                    let mut hidden: Vec<_> = self.agent_tabs.iter().collect();
+                    hidden.sort_by_key(|(id, _)| **id);
+                    for (id, a) in hidden {
+                        if let (Some(t), false) = (self.state.tabs.get(id), self.helping.contains_key(id)) {
+                            out.push(json!({ "tab": t.id, "title": t.display_title(), "url": t.url, "section": "hidden",
+                                "opened_from": a.from, "idle_minutes": a.used.elapsed().as_secs() / 60 }));
+                        }
+                    }
+                }
                 Ok(json!(out))
+            }
+            "open_tab" if args["hidden"].as_bool() == Some(true) => {
+                let url = self.rewrite(&routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine));
+                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") {
+                    let id = self.open_web_tab(&url, true, None);
+                    Ok(json!({ "tab": id, "url": url, "hidden": true }))
+                } else {
+                    Err("hidden tabs open http(s) and file addresses".into())
+                }
             }
             "open_tab" => {
                 let url = routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine);
@@ -6597,14 +6947,8 @@ impl App {
                     Err("only http(s) and file addresses".into())
                 } else {
                     let url = self.rewrite(&url);
-                    let id = self.state.add_tab(self.state.active_space, &url, false);
-                    self.state.detach(id);
-                    self.state.web_tabs.insert(id);
-                    self.ensure_view(id);
-                    if let (Some(w), Some(h), Some(v)) = (args["width"].as_f64(), args["height"].as_f64(), self.views.get(&id)) {
-                        let _ = v.set_bounds(rect(0.0, 0.0, w.clamp(200.0, 4000.0), h.clamp(200.0, 4000.0)));
-                    }
-                    self.layout();
+                    let size = args["width"].as_f64().zip(args["height"].as_f64());
+                    let id = self.open_web_tab(&url, false, size);
                     Ok(json!({ "tab": id, "url": url }))
                 }
             }
@@ -6619,13 +6963,20 @@ impl App {
             },
             "search_engine" => Ok(json!(self.config.search_engine)),
             "web_close" => {
-                if let Some(t) = tab_arg.filter(|t| self.state.web_tabs.remove(t)) {
-                    self.unload(t);
-                    self.state.tabs.remove(&t);
-                    self.committed_url.remove(&t);
+                if let Some(t) = tab_arg {
+                    self.close_web_tab(t);
                 }
                 Ok(json!("ok"))
             }
+            // A page fetch_page or web_search couldn't get past (a CAPTCHA, a sign-in) stays open for the agent.
+            "web_keep" => match tab_arg.filter(|t| self.state.web_tabs.contains(t)) {
+                Some(t) => {
+                    self.make_room_for_agent_tab();
+                    self.agent_tabs.insert(t, AgentTab { used: std::time::Instant::now(), from: None });
+                    Ok(json!({ "tab": t }))
+                }
+                None => Err("no such web tab".into()),
+            },
             "open_link" => {
                 let url = args["url"].as_str().unwrap_or("").to_string();
                 if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") {
@@ -6643,6 +6994,16 @@ impl App {
                 }
                 None => Err("no tab".into()),
             },
+            "close_tab" if tab_arg.is_some_and(|t| self.state.web_tabs.contains(&t)) => {
+                self.close_web_tab(tab_arg.unwrap_or_default());
+                Ok(json!("closed the hidden tab"))
+            }
+            // Activating a hidden tab hands it to the user for good: into the sidebar, in front.
+            "activate_tab" if tab_arg.is_some_and(|t| self.state.web_tabs.contains(&t)) => {
+                let t = tab_arg.unwrap_or_default();
+                self.give_to_user(t);
+                Ok(json!("the tab is the user's now, in their sidebar"))
+            }
             "activate_tab" | "close_tab" => match tab_arg.filter(|t| self.state.tabs.contains_key(t)) {
                 Some(t) => {
                     if op == "activate_tab" {
@@ -6975,6 +7336,10 @@ impl App {
     /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
     fn show_main(&mut self) {
         if std::mem::take(&mut self.main_hidden) {
+            for p in self.panes() {
+                self.ensure_view(p);
+            }
+            self.layout();
             self.window.set_visible(true);
             self.focused_little = None;
             self.window.set_focus();
@@ -7042,6 +7407,7 @@ impl App {
         if self.config.welcome && !self.state.welcome_done && !test_instance {
             self.open_welcome();
         }
+        self.prepare_little_later();
         // Asking each CLI for its models starts node processes: let the first page have the machine first.
         let p = self.proxy.clone();
         std::thread::spawn(move || {
@@ -7091,6 +7457,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     let p = proxy.clone();
     muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| send(&p, UserEvent::Menu(e.id))));
     crate::mcp::set_web_tools(config.mcp.web_tools);
+    crate::mcp::set_ask_user(config.mcp.ask_user);
     if config.mcp.enabled {
         crate::mcp::spawn(config.mcp.port, crate::mcp::load_or_create_token(), proxy.clone());
     }
@@ -7124,7 +7491,10 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                 app.drain_events(elwt);
             }
             Event::Reopen { .. } => app.show_main(),
-            Event::Opened { urls } => app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt),
+            Event::Opened { urls } => {
+                trace("link from another app");
+                app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt);
+            }
             Event::LoopDestroyed => app.save(),
             _ => {}
         }

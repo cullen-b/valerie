@@ -352,7 +352,10 @@ Kiro, LM Studio, Amp) get these tools once Valerie is added to them: `"{exe}" co
 `--list`, `--undo`), the "Connect AI Apps" command, or `mcp.connect_ai_apps: always`. `"{exe}" mcp-config` prints the
 settings for any other MCP app. `web_search`, `fetch_page` and `check_page` (off with `mcp.web_tools: false`) search and
 read the web and PDFs as Markdown (or only the parts about a `focus`) and check pages being built at phone and desktop sizes, in
-hidden tabs with the user's logins.
+hidden tabs with the user's logins; `map_site` lists (and reads) a site's pages. Agents can work in hidden tabs of their own
+(`open_tab` with `hidden: true`; `mcp.hidden_tabs_close_after` minutes unused closes one, `mcp.hidden_tabs_max` caps them),
+hand the user a page when they're stuck (`ask_user`: a note and a Done button; off with `mcp.ask_user: false`), and read
+a page's requests (`read_network`; off with `mcp.network_log: false`).
 
 Tools:
 "#,
@@ -371,6 +374,7 @@ Examples:
 "{exe}" call read_page '{{"max_chars": 4000, "format": "markdown"}}'
 "{exe}" call web_search '{{"query": "rust release notes"}}'
 "{exe}" call fetch_page '{{"url": "https://docs.example.com/limits", "focus": "rate limits for writes"}}'
+"{exe}" call map_site '{{"url": "https://docs.example.com/api/", "search": "webhooks", "read": 3}}'
 "{exe}" call check_page '{{"url": "http://localhost:3000", "sizes": ["phone", "desktop"], "save_to": "/tmp/shots"}}'
 "{exe}" call run_command '{{"command": {{"cmd": "switch_space", "name": "Work"}}}}'
 ```
