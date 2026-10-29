@@ -4473,7 +4473,7 @@ impl App {
                 Command::CloseTab { tab: None } => {
                     self.littles.remove(&id);
                     self.focused_little = None;
-                    if self.main_hidden && self.littles.is_empty() {
+                    if self.main_hidden && self.littles.is_empty() && !self.config.app.keep_running_when_closed {
                         self.dispatch(Command::Quit, elwt);
                     }
                     return;
@@ -4538,7 +4538,7 @@ impl App {
         }
         match cmd {
             Command::OpenCommandBar { mode } => {
-                if little.is_some() {
+                if little.is_some() || self.main_hidden {
                     self.show_main();
                     self.focused_little = None;
                 }
@@ -5587,6 +5587,10 @@ impl App {
                 self.open_little(&url, self.state.active_space, elwt)
             }
             Command::NewLittleWindow => self.open_little(LITTLE_BLANK, self.state.active_space, elwt),
+            Command::CloseWindow => {
+                let id = self.focused_little.unwrap_or(self.window.id());
+                self.window_event(id, WindowEvent::CloseRequested, elwt);
+            }
             Command::MoveToMainWindow { .. } | Command::ClosePeek => {}
             Command::Peek { url } => {
                 let url = routing::resolve_input(&url, &self.config.search_engine);
@@ -7259,7 +7263,12 @@ impl App {
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),
             WindowEvent::CloseRequested => {
-                if main && self.config.little_window.keep_open_when_main_closes && !self.littles.is_empty() {
+                let keep_running = self.config.app.keep_running_when_closed;
+                if main && (keep_running || self.config.little_window.keep_open_when_main_closes && !self.littles.is_empty()) {
+                    // Nothing keeps playing behind a closed window.
+                    for v in self.views.values() {
+                        let _ = v.evaluate_script("window.__valerie && __valerie.media(\"pause\")");
+                    }
                     self.remember_frame();
                     self.save();
                     self.window.set_visible(false);
@@ -7272,7 +7281,7 @@ impl App {
                         self.focused_little = None;
                     }
                     // The main window was closed earlier: closing the last little window quits, as closing it would have.
-                    if self.main_hidden && self.littles.is_empty() {
+                    if self.main_hidden && self.littles.is_empty() && !keep_running {
                         self.dispatch(Command::Quit, elwt);
                     }
                 }

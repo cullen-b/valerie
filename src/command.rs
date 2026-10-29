@@ -189,6 +189,8 @@ pub enum Command {
     OpenLittleWindow {
         url: String,
     },
+    /// Close the window you're in, as its close button does (with app.keep_running_when_closed, Valerie stays running).
+    CloseWindow,
     /// An empty little window asking where to go (bind it under global_keybindings to open one from any app).
     NewLittleWindow,
     /// Move a little window (or a Peek) into the main window, optionally into a named space.
@@ -639,6 +641,7 @@ impl Command {
             OpenCommandBar { .. }
                 | NewTab { url: None, space: None, .. }
                 | CloseTab { tab: None }
+                | CloseWindow
                 | ReopenClosedTab
                 | NextTab
                 | PrevTab
@@ -703,6 +706,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("zoom_reset", "Actual Size"),
     ("dev_tools", "Developer Tools"),
     ("new_little_window", "New Little Window"),
+    ("close_window", "Close Window"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
     ("last_tab", "Switch to Last Tab"),

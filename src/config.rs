@@ -130,6 +130,7 @@ pub struct AppConfig {
     pub menu_bar_icon: String,
     pub menu_bar_menu: Vec<Binding>,
     pub command_line_tool: bool,
+    pub keep_running_when_closed: bool,
 }
 
 /// A network rule: block, redirect, hide or add a header. Exactly one of block / redirect / hide / header.
