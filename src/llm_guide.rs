@@ -98,6 +98,7 @@ changed in plain words. Some translations:
 | "Dark sites in my Work space only" / "different search engine at school" | that space's `settings:` under `spaces`, e.g. `settings: {{ pages: {{ dark_mode: always }} }}` |
 | "Ask me where to save downloads" / "PDFs into Documents" | `downloads.ask: true`, `downloads.rules: [{{ match: "*.pdf", folder: "~/Documents" }}]` |
 | "Mouse back button" / "middle-click shouldn't close tabs" | `mouse.back_button: back`, `mouse.middle_click_tab: null` |
+| "Swiping skips two spaces" / "swipes feel too touchy" | `sidebar.swipe_settle_ms: 900` (longer wait before a hard swipe can switch again), `sidebar.swipe_distance: 140` |
 | "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
@@ -318,8 +319,8 @@ People share plugins in a public marketplace ("Plugins" in the command bar; repo
 - **Before you make a plugin, look there first:** `"{exe}" plugins search <a few words about what it does>`. If one
   already does it (or nearly), tell the user and offer to install it instead: `"{exe}" plugins install <name>`.
   Better to install or improve an existing one than to make a near-duplicate.
-- **After you make one, encourage the user to share it.** Say it's a cool plugin others could use, and ask if they'd
-  like to put it in the marketplace. Only if they say yes, run `"{exe}" plugins share <name>`: it opens a pull request
+- **After you make one, encourage the user to share it.** Once it works, say it's a cool plugin others could use, and
+  always ask if they'd like to put it in the marketplace, before you finish. Only if they say yes, run `"{exe}" plugins share <name>`: it opens a pull request
   from their GitHub account (the marketplace's maintainers review it before it goes live) and prints its address.
   Never share without asking. If you can't ask (a one-shot change), mention in your summary that they can share it;
   Valerie also offers to share new plugins by itself.
@@ -385,7 +386,9 @@ Examples:
 
 Unpacked web extensions (a folder with a manifest.json, as for Safari or Chrome "load unpacked") go in `extensions/`
 (macOS 15.4 or later). Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
-and opens their popups and options pages. `extensions.enabled: false` turns them all off.
+and opens their popups and options pages. `extensions.enabled: false` turns them all off. To change how a site
+behaves, make a plugin with a `script.js` instead: it works on every platform, needs no restart, and can be shared in
+the plugin marketplace (extensions can't).
 
 ## Limits
 

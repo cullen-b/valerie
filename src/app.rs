@@ -8084,7 +8084,7 @@ impl App {
             None => {
                 let mut p = match chat_workdir(&c).filter(|_| folder.is_some()) {
                     Some(w) => crate::ai::coding_preamble(&def, &w),
-                    None => crate::ai::browser_preamble(&def, &context),
+                    None => crate::ai::browser_preamble(&def, &context, self.config.plugin_marketplace.offer_to_share),
                 };
                 if !c.worktree.is_empty() {
                     p.push_str(&format!(

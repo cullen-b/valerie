@@ -110,6 +110,7 @@ sidebar:
   pinned_tile_height: 46   # height of each pinned icon tile, pixels
   swipe_between_spaces: true   # two-finger swipe sideways on the sidebar switches spaces
   swipe_distance: 90       # how far your fingers move sideways to switch, pixels (smaller = quicker swipes count)
+  swipe_settle_ms: 600     # after a swipe switches space, how long the same hard swipe can't switch again, milliseconds (bigger = harder to skip two spaces at once; 0 = off). Pausing or swiping back still counts at once
   preload_on_hover: true   # start loading a tab when the pointer rests on it in the sidebar, so clicking it is instant
   preload_delay_ms: 90     # how long the pointer rests before that, milliseconds
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
@@ -829,7 +830,7 @@ logs:
 plugin_marketplace:
   index: "https://raw.githubusercontent.com/cullen-b/valerie-plugins/main/index.json"   # where the list of plugins comes from
   repo: cullen-b/valerie-plugins   # where "Share Plugin" sends yours (as a pull request the maintainers review)
-  offer_to_share: true     # when your AI makes a new plugin, offer to share it in the marketplace. true | false
+  offer_to_share: true     # when your AI makes a new plugin, Valerie and the AI offer to share it in the marketplace. true | false
 
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}
