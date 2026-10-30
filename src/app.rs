@@ -3047,6 +3047,7 @@ impl App {
         } else {
             e.push(item("Open in Split View", json!({ "cmd": "split_view", "tab": tab })));
         }
+        e.push(item("Move to Little Window", json!({ "cmd": "move_to_little_window", "tab": tab })));
         e.push(item("Rename…", json!({ "cmd": "prompt", "label": "Rename tab", "value": t.display_title(), "then": { "cmd": "rename_tab", "tab": tab }, "field": "title" })));
         e.push(item("Copy Link", json!({ "cmd": "copy_url", "tab": tab })));
         let others: Vec<String> = self.state.spaces.iter().enumerate().filter(|(i, _)| *i != self.state.active_space).map(|(_, s)| s.name.clone()).collect();
@@ -4589,6 +4590,7 @@ impl App {
                     return;
                 }
                 Command::MoveToMainWindow { space } => return self.little_to_main(id, space.clone()),
+                Command::MoveToLittleWindow { tab: None } => return,
                 Command::CopyUrl { tab: None } => {
                     let url = l.url.clone();
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
@@ -5670,6 +5672,13 @@ impl App {
             Command::CloseWindow => {
                 let id = self.focused_little.unwrap_or(self.window.id());
                 self.window_event(id, WindowEvent::CloseRequested, elwt);
+            }
+            Command::MoveToLittleWindow { tab } => {
+                let Some(t) = self.target_tab(tab) else { return };
+                let Some(url) = self.state.tabs.get(&t).map(|x| x.url.clone()) else { return };
+                let space = self.state.space_of(t).unwrap_or(self.state.active_space);
+                self.close(t);
+                self.open_little(&url, space, elwt)
             }
             Command::MoveToMainWindow { .. } | Command::ClosePeek => {}
             Command::Peek { url } => {

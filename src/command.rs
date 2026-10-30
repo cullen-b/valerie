@@ -200,6 +200,11 @@ pub enum Command {
     CloseWindow,
     /// An empty little window asking where to go (bind it under global_keybindings to open one from any app).
     NewLittleWindow,
+    /// Move a tab (default: the one you're on) out of the sidebar into a little window.
+    MoveToLittleWindow {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
     /// Move a little window (or a Peek) into the main window, optionally into a named space.
     MoveToMainWindow {
         #[serde(default)]
@@ -709,6 +714,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("dev_tools", "Developer Tools"),
     ("new_little_window", "New Little Window"),
     ("close_window", "Close Window"),
+    ("move_to_little_window", "Move Tab to Little Window"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
     ("last_tab", "Switch to Last Tab"),
@@ -799,6 +805,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("unsplit", "{ tab? }"),
     ("focus_pane", "{ direction: left | right }  (outside split view: back / forward)"),
     ("open_little_window", "{ url }"),
+    ("move_to_little_window", "{ tab? }"),
     ("move_to_main_window", "{ space? }"),
     ("peek", "{ url }"),
     ("import", "{ source: arc | chrome | brave | edge | vivaldi | chromium | safari | firefox }"),
