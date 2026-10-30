@@ -179,6 +179,30 @@ mod mac {
         }
     }
 
+    pub fn follow_window(wv: &WebView, follow: super::Follow) {
+        use super::Follow;
+        let v = ptr(wv);
+        unsafe {
+            let sup: *mut AnyObject = msg_send![v, superview];
+            if sup.is_null() {
+                return;
+            }
+            // Which margins and sizes stretch: (left, width, right, top, height, bottom).
+            let (l, w, r, t, h, b) = match follow {
+                Follow::Fill => (false, true, false, false, true, false),
+                Follow::Pane { first, last } => (!first, true, !last, false, true, false),
+                Follow::Top => (false, true, false, false, false, true),
+                Follow::Bottom => (false, true, false, true, false, false),
+                Follow::TopRight => (true, false, false, false, false, true),
+            };
+            let flipped: bool = msg_send![sup, isFlipped];
+            let (min_y, max_y) = if flipped { (t, b) } else { (b, t) };
+            // NSViewMinXMargin=1, WidthSizable=2, MaxXMargin=4, MinYMargin=8, HeightSizable=16, MaxYMargin=32.
+            let mask = [l, w, r, min_y, h, max_y].iter().enumerate().fold(0usize, |m, (i, on)| if *on { m | 1 << i } else { m });
+            let _: () = msg_send![v, setAutoresizingMask: mask];
+        }
+    }
+
     /// Run `f` inside an NSAnimationContext group so `animator` property changes ease over `secs`.
     unsafe fn animate(secs: f64, f: impl FnOnce()) {
         use objc2::class;
@@ -1393,6 +1417,24 @@ pub fn round_corners(wv: &WebView, radius: f64, corners: Corners) {
     mac::round_corners(wv, radius, corners);
     #[cfg(not(target_os = "macos"))]
     let _ = (wv, radius, corners);
+}
+
+/// How a view stretches while the window is live-resized, in the same frame, before `layout` sets its exact bounds.
+#[derive(Clone, Copy)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum Follow {
+    Fill,
+    Pane { first: bool, last: bool },
+    Top,
+    Bottom,
+    TopRight,
+}
+
+pub fn follow_window(wv: &WebView, follow: Follow) {
+    #[cfg(target_os = "macos")]
+    mac::follow_window(wv, follow);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, follow);
 }
 
 pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
