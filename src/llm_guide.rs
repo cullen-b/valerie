@@ -331,6 +331,20 @@ results mark extensions `[extension]`.
 - Shared ones need a folder name of lowercase words with hyphens, readable text files only, and a one-line
   description: `description` in `plugin.yaml`, or `name` and `description` in an extension's `manifest.json`. Valerie
   fills in `author` with their GitHub name.
+- **Plugin or extension?** Make a plugin unless the user asks for an extension or already has one: plugins work on
+  every platform, start without a "Load this extension?" question, and can use Valerie's commands and settings.
+  Extensions need macOS 15.4 or later.
+- **What reviewers accept:** one clear job; readable source (no minified or obfuscated code, no binaries); text files
+  under 200 KB, up to 30 per folder; no tracking or sending people's data anywhere they didn't ask. Plugins that run
+  programs (`run:`) and extensions that reach every site or ask for permissions like `cookies` or `webRequest` get a
+  closer look, and Valerie shows those programs before installing.
+- **Updates:** `"{exe}" plugins share <name>` again sends a new version of the user's own one (the "Share update"
+  button does the same). Someone else's name is refused: rename yours. Installed ones get an "Update" button in
+  "Plugins" when the marketplace has a newer version; `"{exe}" plugins install <name>` again updates it too.
+- **Installed from the marketplace** means the folder has a `.marketplace.json`; those can't be shared back. To change
+  one, edit it here (an update would replace it), or copy it to a new folder name and share that as the user's own.
+- `"{exe}" plugins` lists everything in the marketplace and marks what's installed. Settings live under
+  `plugin_marketplace` (`index`, `repo`, `offer_to_share`).
 
 ## Pages: features that are just a page
 

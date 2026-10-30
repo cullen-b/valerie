@@ -40,11 +40,13 @@ pub struct Finished {
 }
 
 fn preamble(space: &str, task: &str, extra: &str) -> String {
+    let guide = crate::config::config_dir().join("AGENTS.md").display().to_string();
     format!(
         "You are a headless agent working inside the user's Valerie browser through the `valerie` MCP tools. \
          Open the tabs you need in the space named \"{space}\" (open_tab with space=\"{space}\"), work in the background, \
          and do not close or change the user's other tabs unless the task asks for it. Do not submit purchases, \
-         payments or irreversible forms; stop and report instead. Finish with a short plain-text summary of what you found or did.{extra}\n\n\
+         payments or irreversible forms; stop and report instead. To change Valerie itself (settings, plugins, the plugin \
+         marketplace), read the guide at {guide} first. Finish with a short plain-text summary of what you found or did.{extra}\n\n\
          Task: {task}"
     )
 }
