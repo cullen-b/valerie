@@ -844,6 +844,9 @@ app:
   unload_when_closed_minutes: 5   # minutes after you close the window (Valerie still running) before every tab, chat and
                            # idle panel is put to sleep so Valerie takes almost no memory; they reload when you open it
                            # again. 0 = keep them loaded
+  reload_when_reopened: true   # when you open the window after that, the page you were on loads first, then every other
+                           # page that was open loads again in the background, most recently used first. true | false
+                           # (false = they load when you click them)
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.

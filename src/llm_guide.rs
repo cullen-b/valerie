@@ -102,7 +102,7 @@ changed in plain words. Some translations:
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
 | "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits) |
-| "Use less memory when the window is closed" | `app.unload_when_closed_minutes: 1` (sooner) / `0` (keep pages loaded) |
+| "Use less memory when the window is closed" | `app.unload_when_closed_minutes: 1` (sooner) / `0` (keep pages loaded); `app.reload_when_reopened: false` (pages load only when clicked after reopening) |
 | "An icon in the menu bar" / "things in the Dock menu" / "a different Dock icon" | `app.menu_bar_icon: "✦"`, `app.dock_menu: [new_tab, new_window]`, `app.icon: "~/Pictures/icon.png"` |
 | "Answer me in French" / "always be brief" (the AI) | `agents.instructions: "Answer in French."` (or `agents.instructions_for.chat`) |
 | "⌘K then ⌘S" style shortcuts | a key sequence in `keybindings`: `"CmdOrCtrl+K CmdOrCtrl+S": sync` |
