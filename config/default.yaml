@@ -398,8 +398,10 @@ permissions:
 
 # How web pages look
 pages:
-  dark_mode: off           # make light websites dark. one of: off | system (when your computer is in dark mode) | always
-                           # (sites that are already dark are left alone; toggle_dark_page flips it for one site)
+  dark_mode: off           # dark websites. one of: off (sites follow your computer) | system (the same, plus dark_fallback
+                           # when your computer is dark) | always (every site that has a dark look of its own uses it)
+  dark_fallback: none      # sites with no dark look of their own, when dark_mode is on. one of: none (left as they are)
+                           # | invert (flip their colours: rough on busy pages). toggle_dark_page inverts one site
   loading_bar: true        # a thin line across the top of a page while it loads
   markdown: true           # show Markdown files (.md, on this computer or the web) as formatted documents: headings,
                            # tables, highlighted code, task lists, GitHub-style notes. false = the plain text

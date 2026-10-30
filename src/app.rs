@@ -1729,6 +1729,7 @@ impl App {
         match built {
             Ok(v) => {
                 platform::allow_magnification(&v, self.config.gestures.pinch_to_zoom);
+                platform::prefer_dark(&v, self.config.pages.dark_mode == "always");
                 self.zoom_applied.remove(&tab);
                 let z = self.zoom_for(tab);
                 if z != 1.0 {
@@ -3396,6 +3397,7 @@ impl App {
                 }
                 for v in self.views.values() {
                     platform::allow_magnification(v, self.config.gestures.pinch_to_zoom);
+                    platform::prefer_dark(v, self.config.pages.dark_mode == "always");
                 }
                 self.state.reconcile_spaces(&self.config);
                 self.build_menu();

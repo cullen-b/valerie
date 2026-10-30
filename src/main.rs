@@ -129,6 +129,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
                 problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));
             }
+            if !["none", "invert"].contains(&c.pages.dark_fallback.as_str()) {
+                problems.push(format!("pages: dark_fallback is {:?}; use none or invert", c.pages.dark_fallback));
+            }
             for (name, v) in [("camera", &c.permissions.camera), ("microphone", &c.permissions.microphone)] {
                 if !["ask", "allow", "deny"].contains(&v.as_str()) {
                     problems.push(format!("permissions: {name} is {v:?}; use ask, allow or deny"));
