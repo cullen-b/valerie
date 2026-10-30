@@ -57,7 +57,7 @@ fn customize_preamble(task: &str, extra: &str) -> String {
          Then run the check-config command from AGENTS.md and fix any errors until it passes. If the change needs a new \
          plugin, first search the plugin marketplace as AGENTS.md explains; if a plugin already does it, install that \
          instead and say so. Finish with a short summary of what you changed and how to turn it off; if you made a new \
-         plugin, end by saying it's something others might like and that they can share it in the plugin marketplace. \
+         plugin or browser extension, end by saying it's something others might like and that they can share it in the marketplace. \
          If the user asks to undo or put back an earlier change, run `valerie call run_command '{{\"command\": {{\"cmd\": \"undo_customization\"}}}}'`.{extra}\n\nThe user's request: {task}"
     )
 }

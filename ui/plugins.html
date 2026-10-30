@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <!-- The plugin marketplace: Valerie's own view over the window (not a web page, so no site can install or share).
-     Browse and install plugins people shared, manage your own, and share yours. Built with createElement/textContent. -->
+     Browse and install plugins and browser extensions people shared, manage your own, and share yours.
+     Built with createElement/textContent. -->
 <style>
 :root { --accent: #9d8cff; --bg: #0b0a10; --card: rgba(255,255,255,.045); --card2: rgba(255,255,255,.075); --line: rgba(255,255,255,.09);
   --fg: #efeef7; --dim: rgba(239,238,247,.58); --faint: rgba(239,238,247,.36); --ok: #6ee7a8; --warn: #f5c56b; --bad: #ff8f8f; }
@@ -39,6 +40,7 @@ main { position: absolute; inset: 186px 0 0; overflow-y: auto; }
 .chip { font-size: 11.5px; padding: 2px 8px; border-radius: 99px; background: var(--card2); color: var(--dim); }
 .chip.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .chip.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.chip.kind { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .foot .grow { flex: 1; }
 button.b { all: unset; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; font-size: 13.5px; font-weight: 650; background: var(--card2); }
@@ -64,8 +66,8 @@ button.b[disabled] { opacity: .5; pointer-events: none; }
 <div id="drag"></div>
 <header>
   <div class="top"><h1>Plugins</h1><button class="x" id="close" title="Close">×</button></div>
-  <div class="sub">Little add-ons people made for Valerie. Install one with a click, or ask your AI to make you one.</div>
-  <div class="bar"><div class="tabs" id="tabs"></div><input id="q" placeholder="Search plugins…" autocomplete="off"></div>
+  <div class="sub">Plugins and browser extensions people made for Valerie. Install one with a click, or ask your AI to make you one.</div>
+  <div class="bar"><div class="tabs" id="tabs"></div><input id="q" placeholder="Search plugins and extensions…" autocomplete="off"></div>
 </header>
 <main id="main"><div class="wrap" id="list"></div></main>
 <script>
@@ -76,53 +78,65 @@ function btn(text, cls, on) { const b = el("button", "b " + (cls || ""), text); 
 const S = { tab: "browse", index: null, indexError: "", local: [], busy: {}, notes: {}, repo: "" };
 const pretty = (n) => n.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const versionOf = (e) => (e.files || []).map((f) => (f.sha256 || "").slice(0, 8)).join("");
+// A plugin and an extension can share a name, so busy states and notes go by both.
+const isExt = (x) => x.kind === "extension";
+const key = (x) => (isExt(x) ? "extension:" : "plugin:") + x.name;
+const same = (a, b) => a.name === b.name && isExt(a) === isExt(b);
+const msg = (t, x) => ({ t, name: x.name, kind: isExt(x) ? "extension" : "plugin" });
 
 function words(q) { return q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1); }
 function hits(text, q) { const w = words(q); return !w.length || w.every((x) => text.toLowerCase().includes(x)); }
 
 function browseCard(e) {
-  const c = el("div", "card"), local = S.local.find((p) => p.name === e.name), busy = S.busy[e.name];
+  const c = el("div", "card"), local = S.local.find((p) => same(p, e)), busy = S.busy[key(e)];
   const head = el("div", "head"), title = el("div", "title");
   title.append(el("b", null, pretty(e.name)), el("small", null, e.author ? "by " + e.author : ""));
   head.append(el("div", "ico", pretty(e.name)[0]), title);
   c.append(head, el("div", "desc", e.description));
   const chips = el("div", "chips");
+  if (isExt(e)) { const k = el("span", "chip kind", "extension"); k.title = "A browser extension: needs macOS 15.4 or later"; chips.append(k); }
   (e.matches.length ? e.matches.slice(0, 3) : ["every site"]).forEach((m) => chips.append(el("span", "chip" + (e.matches.length ? "" : " warn"), m)));
   if (e.programs && e.programs.length) chips.append(el("span", "chip warn", "runs programs"));
   if (e.commands && e.commands.length) chips.append(el("span", "chip", e.commands.length + " command" + (e.commands.length > 1 ? "s" : "")));
   c.append(chips);
   const foot = el("div", "foot");
-  if (S.notes[e.name]) foot.append(el("span", S.notes[e.name].ok === false ? "err" : "chip ok", S.notes[e.name].text));
+  const note = S.notes[key(e)];
+  if (note) foot.append(el("span", note.ok === false ? "err" : "chip ok", note.text));
   foot.append(el("span", "grow"));
   if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
-  else if (!local) foot.append(btn("Install", "primary", () => { S.busy[e.name] = "Installing"; draw(); send({ t: "install", name: e.name }); }));
-  else if (local.market_version && local.market_version !== versionOf(e)) foot.append(btn("Update", "primary", () => { S.busy[e.name] = "Updating"; draw(); send({ t: "install", name: e.name }); }));
+  else if (!local) foot.append(btn("Install", "primary", () => { S.busy[key(e)] = "Installing"; draw(); send(msg("install", e)); }));
+  else if (local.market_version && local.market_version !== versionOf(e)) foot.append(btn("Update", "primary", () => { S.busy[key(e)] = "Updating"; draw(); send(msg("install", e)); }));
   else foot.append(el("span", "chip ok", "✓ Installed"));
   c.append(foot);
   return c;
 }
 
 function mineCard(p) {
-  const c = el("div", "card"), inIndex = (S.index || []).find((e) => e.name === p.name), busy = S.busy[p.name];
+  const c = el("div", "card"), inIndex = (S.index || []).find((e) => same(e, p)), busy = S.busy[key(p)];
   const head = el("div", "head"), title = el("div", "title");
-  title.append(el("b", null, pretty(p.name)), el("small", null, p.builtin ? "comes with Valerie" : p.market_version ? "from the marketplace" : "yours"));
-  const sw = el("button", "switch" + (p.enabled ? " on" : "")); sw.title = p.enabled ? "On" : "Off";
-  sw.onclick = () => send({ t: "toggle", name: p.name, enabled: !p.enabled });
-  head.append(el("div", "ico", pretty(p.name)[0]), title, sw);
+  const from = p.builtin ? "comes with Valerie" : p.market_version ? "from the marketplace" : "yours";
+  title.append(el("b", null, isExt(p) ? p.title || pretty(p.name) : pretty(p.name)), el("small", null, isExt(p) ? `extension · ${from}${p.running ? " · running" : ""}` : from));
+  head.append(el("div", "ico", pretty(p.name)[0]), title);
+  // Plugins switch on and off here; extensions are allowed (or not) when Valerie asks to load them.
+  if (!isExt(p)) {
+    const sw = el("button", "switch" + (p.enabled ? " on" : "")); sw.title = p.enabled ? "On" : "Off";
+    sw.onclick = () => send({ t: "toggle", name: p.name, enabled: !p.enabled });
+    head.append(sw);
+  }
   c.append(head, el("div", "desc", p.description || "(no description)"));
   const foot = el("div", "foot");
-  if (S.notes[p.name]) {
-    const n = S.notes[p.name];
+  if (S.notes[key(p)]) {
+    const n = S.notes[key(p)];
     if (n.url) { const a = el("a", "chip ok", "✓ Shared: see the pull request"); a.href = n.url; a.style.textDecoration = "none"; foot.append(a); }
     else foot.append(el("span", n.ok === false ? "err" : "chip ok", n.text));
   }
   foot.append(el("span", "grow"));
   if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
   else {
-    if (p.market_version && inIndex && versionOf(inIndex) !== p.market_version) foot.append(btn("Update", "primary", () => { S.busy[p.name] = "Updating"; draw(); send({ t: "install", name: p.name }); }));
-    const shared = S.notes[p.name] && S.notes[p.name].url;
-    if (!p.market_version && !p.builtin && !shared) foot.append(btn(inIndex ? "Share update" : "Share", "primary", () => { S.busy[p.name] = "Sharing"; draw(); send({ t: "share", name: p.name }); }));
-    foot.append(btn("Remove", "ghost", () => send({ t: "remove", name: p.name })));
+    if (p.market_version && inIndex && versionOf(inIndex) !== p.market_version) foot.append(btn("Update", "primary", () => { S.busy[key(p)] = "Updating"; draw(); send(msg("install", p)); }));
+    const shared = S.notes[key(p)] && S.notes[key(p)].url;
+    if (!p.market_version && !p.builtin && !shared) foot.append(btn(inIndex ? "Share update" : "Share", "primary", () => { S.busy[key(p)] = "Sharing"; draw(); send(msg("share", p)); }));
+    foot.append(btn("Remove", "ghost", () => send(msg("remove", p))));
   }
   c.append(foot);
   return c;
@@ -131,18 +145,18 @@ function mineCard(p) {
 function draw() {
   const q = $("#q").value, list = $("#list"); list.replaceChildren();
   const tabs = $("#tabs"); tabs.replaceChildren();
-  [["browse", "Browse", S.index ? S.index.length : null], ["mine", "Your plugins", S.local.length]].forEach(([id, label, n]) => {
+  [["browse", "Browse", S.index ? S.index.length : null], ["mine", "Yours", S.local.length]].forEach(([id, label, n]) => {
     const b = el("button", S.tab === id ? "on" : "", label); if (n != null) b.append(el("span", "n", String(n)));
     b.onclick = () => { S.tab = id; draw(); }; tabs.append(b);
   });
   if (S.tab === "browse") {
     if (S.index === null) { list.append(el("div", "empty", S.indexError ? "Couldn't reach the marketplace: " + S.indexError : "Loading the marketplace…")); if (S.indexError) list.append(Object.assign(btn("Try again", "", () => { S.indexError = ""; draw(); send({ t: "refresh" }); }), { style: "display:block;margin:0 auto" })); return; }
-    const shown = S.index.filter((e) => hits(`${e.name} ${e.description} ${(e.matches || []).join(" ")} ${(e.commands || []).join(" ")}`, q));
+    const shown = S.index.filter((e) => hits(`${e.name} ${e.description} ${(e.matches || []).join(" ")} ${(e.commands || []).join(" ")} ${e.kind || ""}`, q));
     if (!shown.length) { const em = el("div", "empty"); em.append(el("b", null, "Nothing like that yet"), "Ask your AI to make it: type ! and describe it in the command bar. Then share it here for everyone."); list.append(em); }
     else { const g = el("div", "grid"); shown.forEach((e) => g.append(browseCard(e))); list.append(g); }
   } else {
-    const shown = S.local.filter((p) => hits(`${p.name} ${p.description}`, q));
-    if (!S.local.length) { const em = el("div", "empty"); em.append(el("b", null, "No plugins yet"), "Install one from Browse, or ask your AI to make one: type ! and describe it in the command bar."); list.append(em); }
+    const shown = S.local.filter((p) => hits(`${p.name} ${p.title || ""} ${p.description} ${p.kind || ""}`, q));
+    if (!S.local.length) { const em = el("div", "empty"); em.append(el("b", null, "No plugins or extensions yet"), "Install one from Browse, or ask your AI to make one: type ! and describe it in the command bar."); list.append(em); }
     else { const g = el("div", "grid"); shown.forEach((p) => g.append(mineCard(p))); list.append(g); }
     const own = S.local.filter((p) => !p.market_version && !p.builtin);
     if (own.length) {
@@ -171,10 +185,10 @@ window.market = {
     else if (ev.type === "index_error") { S.index = null; S.indexError = ev.detail || "unknown error"; }
     else if (ev.type === "local") S.local = ev.plugins || [];
     else if (ev.type === "tab") S.tab = ev.tab;
-    else if (ev.type === "sharing") S.busy[ev.name] = "Sharing";
-    else if (ev.type === "installed") { delete S.busy[ev.name]; S.notes[ev.name] = ev.ok ? { text: "✓ Installed" } : { ok: false, text: ev.detail || "Couldn't install" }; }
-    else if (ev.type === "removed") { if (ev.name) delete S.notes[ev.name]; }
-    else if (ev.type === "shared") { delete S.busy[ev.name]; S.notes[ev.name] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
+    else if (ev.type === "sharing") S.busy[key(ev)] = "Sharing";
+    else if (ev.type === "installed") { delete S.busy[key(ev)]; S.notes[key(ev)] = ev.ok ? { text: isExt(ev) ? "✓ Installed: Valerie asks before loading it" : "✓ Installed" } : { ok: false, text: ev.detail || "Couldn't install" }; }
+    else if (ev.type === "removed") { if (ev.name) delete S.notes[key(ev)]; }
+    else if (ev.type === "shared") { delete S.busy[key(ev)]; S.notes[key(ev)] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
     draw();
   },
 };

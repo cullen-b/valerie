@@ -1,6 +1,7 @@
-//! The plugin marketplace: a public repo of plugins people shared (github.com/cullen-b/valerie-plugins by default).
-//! Its CI publishes `index.json` (every plugin, its files and their checksums, pinned to a commit). Valerie installs
-//! from that list, and shares a plugin back by opening a pull request with the user's GitHub sign-in.
+//! The plugin marketplace: a public repo of plugins and browser extensions people shared
+//! (github.com/cullen-b/valerie-plugins by default, `plugins/` and `extensions/`). Its CI publishes `index.json` (each
+//! one, its files and their checksums, pinned to a commit). Valerie installs from that list, and shares one back by
+//! opening a pull request with the user's GitHub sign-in.
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,6 +14,8 @@ pub const STAMP: &str = ".marketplace.json";
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entry {
+    /// "plugin" or "extension" (index.json lists them under `plugins` and `extensions`).
+    pub kind: String,
     pub name: String,
     pub description: String,
     pub author: String,
@@ -22,6 +25,8 @@ pub struct Entry {
     pub commands: Vec<String>,
     /// The shell commands it can run on the user's computer (command `run` and `on_page_load`), shown before installing.
     pub programs: Vec<String>,
+    /// An extension's permissions (like `tabs`, `storage`), shown before installing.
+    pub permissions: Vec<String>,
     pub files: Vec<File>,
     pub updated: String,
 }
@@ -35,19 +40,79 @@ pub struct File {
 }
 
 impl Entry {
+    pub fn is_extension(&self) -> bool {
+        self.kind == EXTENSION
+    }
+
+    /// "plugin" or "extension", for messages.
+    pub fn noun(&self) -> &'static str {
+        if self.is_extension() {
+            "extension"
+        } else {
+            "plugin"
+        }
+    }
+
     /// A fingerprint of its files, to tell whether an installed copy is the current one.
     pub fn version(&self) -> String {
         self.files.iter().map(|f| f.sha256.get(..8).unwrap_or("")).collect::<Vec<_>>().join("")
     }
 }
 
+pub const EXTENSION: &str = "extension";
+
+/// Every plugin and extension in the marketplace, plugins first.
 pub fn fetch(index: &str) -> Result<Vec<Entry>> {
     let out = Command::new("curl").args(["-fsSL", "--max-time", "20", "--proto", "=https,file", index]).output().context("couldn't run curl")?;
     if !out.status.success() {
         bail!("couldn't reach the plugin marketplace: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
     let v: Value = serde_json::from_slice(&out.stdout).context("the marketplace list isn't valid")?;
-    Ok(serde_json::from_value(v.get("plugins").cloned().unwrap_or(v))?)
+    let mut all: Vec<Entry> = serde_json::from_value(v.get("plugins").cloned().unwrap_or(v.clone()))?;
+    for e in &mut all {
+        e.kind = "plugin".into();
+    }
+    let mut ext: Vec<Entry> = serde_json::from_value(v.get("extensions").cloned().unwrap_or(json!([])))?;
+    for e in &mut ext {
+        e.kind = EXTENSION.into();
+    }
+    all.extend(ext);
+    Ok(all)
+}
+
+/// The marketplace entry called `name`, preferring a plugin when a plugin and an extension share it.
+pub fn find<'a>(entries: &'a [Entry], name: &str, kind: Option<&str>) -> Option<&'a Entry> {
+    let of = |want: &str| entries.iter().find(|e| e.name == name && (e.kind == want || (want == "plugin" && !e.is_extension())));
+    match kind {
+        Some(k) => of(k),
+        None => of("plugin").or_else(|| of(EXTENSION)),
+    }
+}
+
+/// Your own folder called `name`: a plugin in `plugins_dir`, else an extension in `ext_dir`. Returns it and its kind.
+pub fn local(name: &str, kind: Option<&str>, plugins_dir: &Path, ext_dir: &Path) -> Option<(PathBuf, &'static str)> {
+    let plugin = plugins_dir.join(name);
+    let ext = ext_dir.join(name);
+    let p = || plugin.join("plugin.yaml").exists().then(|| (plugin.clone(), "plugin"));
+    let e = || ext.join("manifest.json").exists().then(|| (ext.clone(), EXTENSION));
+    match kind {
+        Some(EXTENSION) => e(),
+        Some(_) => p(),
+        None => p().or_else(e),
+    }
+}
+
+/// Check an extension's manifest.json: it parses, and has a name and a description.
+pub fn check_extension(dir: &Path) -> Result<Value> {
+    let text = std::fs::read_to_string(dir.join("manifest.json")).context("no manifest.json")?;
+    let m: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).context("manifest.json isn't valid JSON")?;
+    if !m.is_object() || m["manifest_version"].as_u64().is_none() {
+        bail!("manifest.json needs a manifest_version");
+    }
+    if m["name"].as_str().unwrap_or("").trim().is_empty() || m["description"].as_str().unwrap_or("").trim().is_empty() {
+        bail!("manifest.json needs a name and a one-line description");
+    }
+    Ok(m)
 }
 
 /// Plugins whose name or description share words with `query`, best first.
@@ -56,7 +121,7 @@ pub fn search<'a>(entries: &'a [Entry], query: &str) -> Vec<&'a Entry> {
     let mut scored: Vec<(usize, &Entry)> = entries
         .iter()
         .map(|e| {
-            let hay = format!("{} {} {} {}", e.name.replace('-', " "), e.description, e.matches.join(" "), e.commands.join(" ")).to_lowercase();
+            let hay = format!("{} {} {} {} {}", e.name.replace('-', " "), e.description, e.matches.join(" "), e.commands.join(" "), e.kind).to_lowercase();
             (words.iter().filter(|w| hay.contains(w.as_str())).count(), e)
         })
         .filter(|(n, _)| *n > 0 || words.is_empty())
@@ -78,14 +143,18 @@ fn sha256(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string())
 }
 
-/// Download a plugin into `plugins_dir/<name>`, checking every file's checksum; replaces an older copy.
-pub fn install(e: &Entry, plugins_dir: &Path) -> Result<PathBuf> {
+/// Download a plugin into `plugins_dir/<name>` (an extension into `ext_dir/<name>`), checking every file's checksum;
+/// replaces an older copy.
+pub fn install(e: &Entry, plugins_dir: &Path, ext_dir: &Path) -> Result<PathBuf> {
     if !safe_name(&e.name) {
-        bail!("{:?} isn't a valid plugin name", e.name);
+        bail!("{:?} isn't a valid {} name", e.name, e.noun());
     }
-    if !e.files.iter().any(|f| f.path == "plugin.yaml") {
-        bail!("{} has no plugin.yaml", e.name);
+    let (root, main) = if e.is_extension() { (ext_dir, "manifest.json") } else { (plugins_dir, "plugin.yaml") };
+    if !e.files.iter().any(|f| f.path == main) {
+        bail!("{} has no {main}", e.name);
     }
+    std::fs::create_dir_all(root)?;
+    let plugins_dir = root;
     let dest = plugins_dir.join(&e.name);
     let tmp = plugins_dir.join(format!(".{}.installing", e.name));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -105,7 +174,11 @@ pub fn install(e: &Entry, plugins_dir: &Path) -> Result<PathBuf> {
             }
         }
         std::fs::write(tmp.join(STAMP), serde_json::to_string_pretty(&json!({ "name": e.name, "version": e.version(), "author": e.author }))?)?;
-        crate::plugins::check_dir(&tmp).with_context(|| format!("{} doesn't load", e.name))?;
+        if e.is_extension() {
+            check_extension(&tmp).with_context(|| format!("{} doesn't load", e.name))?;
+        } else {
+            crate::plugins::check_dir(&tmp).with_context(|| format!("{} doesn't load", e.name))?;
+        }
         let _ = std::fs::remove_dir_all(&dest);
         std::fs::rename(&tmp, &dest)?;
         Ok(dest.clone())
@@ -132,7 +205,7 @@ fn b64(data: &[u8]) -> String {
     out
 }
 
-/// The files of a plugin folder that get shared: text files, nothing hidden, nothing huge.
+/// The files of a plugin or extension folder that get shared: text files, nothing hidden, nothing huge.
 fn shareable(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -155,29 +228,38 @@ fn shareable(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
         }
     }
     if out.len() > 30 {
-        bail!("that's a lot of files ({}); the marketplace takes up to 30 per plugin", out.len());
+        bail!("that's a lot of files ({}); the marketplace takes up to 30 per plugin or extension", out.len());
     }
     out.sort();
     Ok(out)
 }
 
-/// Share the plugin in `dir` as a pull request to `repo` ("owner/name"). Returns the pull request's address.
-/// A plugin of the same name by someone else is refused (rename yours); your own is updated.
+/// Share the plugin (a folder with a plugin.yaml) or extension (a folder with a manifest.json) in `dir` as a pull
+/// request to `repo` ("owner/name"). Returns the pull request's address.
+/// One of the same name by someone else is refused (rename yours); your own is updated.
 pub fn share(dir: &Path, repo: &str, index: &[Entry], token: &str) -> Result<String> {
     use crate::github::api;
     let name = dir.file_name().and_then(|n| n.to_str()).context("no plugin name")?.to_string();
+    let extension = !dir.join("plugin.yaml").exists() && dir.join("manifest.json").exists();
+    let (noun, folder, main) = if extension { ("extension", "extensions", "manifest.json") } else { ("plugin", "plugins", "plugin.yaml") };
     if !safe_name(&name) {
-        bail!("rename the plugin's folder to lowercase words with hyphens (like {}) before sharing", name.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
+        bail!("rename the {noun}'s folder to lowercase words with hyphens (like {}) before sharing", name.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
     }
-    crate::plugins::check_dir(dir).context("fix the plugin first")?;
-    if dir.join(STAMP).exists() || crate::plugins::is_bundled(&name) {
-        bail!("{name} came with Valerie or from the marketplace; share your own plugins");
+    let manifest: Value = if extension {
+        check_extension(dir).context("fix the extension first")?
+    } else {
+        crate::plugins::check_dir(dir).context("fix the plugin first")?;
+        serde_yaml::from_str(&std::fs::read_to_string(dir.join(main)).unwrap_or_default()).unwrap_or(Value::Null)
+    };
+    if dir.join(STAMP).exists() || (!extension && crate::plugins::is_bundled(&name)) {
+        bail!("{name} came with Valerie or from the marketplace; share your own {noun}s");
     }
     let files = shareable(dir)?;
     let (code, me) = api(token, "GET", "/user", None)?;
     let login = me["login"].as_str().filter(|_| code == 200).context("GitHub sign-in didn't work; sign in again")?.to_string();
-    if let Some(e) = index.iter().find(|e| e.name == name).filter(|e| !e.author.eq_ignore_ascii_case(&login)) {
-        bail!("a plugin called {name} by {} is already in the marketplace: rename yours, or install theirs", e.author);
+    let listed = index.iter().find(|e| e.name == name && e.is_extension() == extension);
+    if let Some(e) = listed.filter(|e| !e.author.eq_ignore_ascii_case(&login)) {
+        bail!("{} {noun} called {name} by {} is already in the marketplace: rename yours, or install theirs", if extension { "an" } else { "a" }, e.author);
     }
     let (owner, _) = repo.split_once('/').context("plugin_marketplace.repo should look like owner/name")?;
     // Your own repo: a branch there. Anyone else's: a branch in your fork of it.
@@ -206,10 +288,12 @@ pub fn share(dir: &Path, repo: &str, index: &[Entry], token: &str) -> Result<Str
         bail!("couldn't make a branch for it: {}", r["message"].as_str().unwrap_or("GitHub said no"));
     }
     for (rel, data) in &files {
-        let path = format!("plugins/{name}/{rel}");
-        // The marketplace credits (and lets update) whoever plugin.yaml names; fill that in if it's missing.
+        let path = format!("{folder}/{name}/{rel}");
+        // The marketplace credits (and lets update) whoever the manifest names; fill that in if it's missing.
         let data = if rel == "plugin.yaml" && !String::from_utf8_lossy(data).lines().any(|l| l.starts_with("author:")) {
             format!("author: {login}\n{}", String::from_utf8_lossy(data)).into_bytes()
+        } else if rel == "manifest.json" && manifest.get("author").is_none() {
+            with_author(data, &login)
         } else {
             data.clone()
         };
@@ -224,17 +308,28 @@ pub fn share(dir: &Path, repo: &str, index: &[Entry], token: &str) -> Result<Str
             bail!("couldn't upload {rel}: {}", r["message"].as_str().unwrap_or("GitHub said no"));
         }
     }
-    let manifest: Value = serde_yaml::from_str(&String::from_utf8_lossy(&files.iter().find(|(p, _)| p == "plugin.yaml").map(|(_, d)| d.clone()).unwrap_or_default())).unwrap_or(Value::Null);
-    let updating = index.iter().any(|e| e.name == name);
+    let updating = listed.is_some();
     let head = if target == repo { branch.clone() } else { format!("{login}:{branch}") };
     let body = format!(
         "{}\n\n{}\n\nShared from Valerie by @{login}.",
         manifest["description"].as_str().unwrap_or("(no description)"),
         files.iter().map(|(p, _)| format!("- `{p}`")).collect::<Vec<_>>().join("\n")
     );
-    let title = format!("{} plugin: {name}", if updating { "Update" } else { "Add" });
+    let title = format!("{} {noun}: {name}", if updating { "Update" } else { "Add" });
     let (code, pr) = api(token, "POST", &format!("/repos/{repo}/pulls"), Some(&json!({ "title": title, "head": head, "base": "main", "body": body })))?;
     pr["html_url"].as_str().filter(|_| (200..300).contains(&code)).map(str::to_string).with_context(|| format!("couldn't open the pull request: {}", pr["message"].as_str().unwrap_or("GitHub said no")))
+}
+
+/// manifest.json with `"author": login` added as its first key, keeping the rest of the file as it was.
+fn with_author(data: &[u8], login: &str) -> Vec<u8> {
+    let text = String::from_utf8_lossy(data);
+    let Some(at) = text.find('{') else { return data.to_vec() };
+    let out = format!("{}{{\n  \"author\": {},{}", &text[..at], json!(login), &text[at + 1..]);
+    if serde_json::from_str::<Value>(out.trim_start_matches('\u{feff}')).is_ok() {
+        out.into_bytes()
+    } else {
+        data.to_vec()
+    }
 }
 
 #[cfg(test)]
@@ -252,6 +347,23 @@ mod tests {
         assert_eq!(hits, ["youtube-speed"]);
         assert_eq!(search(&all, "").len(), 3);
         assert!(search(&all, "zzz nothing").is_empty());
+    }
+
+    #[test]
+    fn adds_the_author_to_an_extension_manifest() {
+        let out = String::from_utf8(with_author(b"{\n  \"name\": \"x\"\n}\n", "cullen-b")).unwrap();
+        assert_eq!(out, "{\n  \"author\": \"cullen-b\",\n  \"name\": \"x\"\n}\n");
+        assert_eq!(with_author(b"{}", "a"), b"{}".to_vec());
+    }
+
+    #[test]
+    fn finds_plugins_before_extensions() {
+        let mut ext = entry("dark", "an extension");
+        ext.kind = EXTENSION.into();
+        let all = vec![ext, entry("dark", "a plugin"), entry("speed", "")];
+        assert_eq!(find(&all, "dark", None).unwrap().description, "a plugin");
+        assert_eq!(find(&all, "dark", Some(EXTENSION)).unwrap().description, "an extension");
+        assert!(find(&all, "speed", Some(EXTENSION)).is_none());
     }
 
     #[test]

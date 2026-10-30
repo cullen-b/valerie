@@ -175,6 +175,20 @@ button.tag { cursor: pointer; }
 .rt { display: inline-block; margin-bottom: 14px; padding: 3px 10px; border-radius: 99px; font: 600 12px -apple-system, system-ui, sans-serif;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); animation: pgin .35s var(--ease); }
 
+/* ---------- real examples: a transcript from a real chat ---------- */
+.ex { margin-top: 30px; border-top: 1px solid var(--rule); padding-top: 22px; }
+.ex h3 { margin: 0 0 4px; font-size: 18px; } .ex > p { margin: 0 0 18px; color: var(--ink2); font-size: 14px; }
+.tx { display: flex; flex-direction: column; gap: 10px; }
+.tx .me, .tx .ai { max-width: 86%; padding: 10px 14px; border-radius: 14px; font-size: 14.5px; line-height: 1.55; }
+.tx .me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 22%, var(--page)); }
+.tx .ai { align-self: flex-start; background: var(--rule); } .tx .ai p { margin: 0 0 8px; } .tx .ai p:last-child { margin: 0; }
+.tx .st { align-self: flex-start; font: 12px ui-monospace, Menlo, monospace; color: var(--ink2); padding: 3px 9px; border-radius: 7px; border: 1px solid var(--rule); }
+.tx .st i { font-style: normal; color: #dc2626; }
+.tx .th { align-self: flex-start; max-width: 86%; padding-left: 12px; border-left: 2px solid var(--accent); color: var(--ink2); font-size: 13.5px; font-style: italic; }
+.tx code { font: 12.5px ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+.liked { margin-top: 22px; padding: 14px 16px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, var(--page)); font-size: 14px; }
+.liked b { display: block; margin-bottom: 4px; } .liked ul { margin: 0; padding-left: 18px; color: var(--ink2); }
+
 /* ---------- the config file the AI edits ---------- */
 #yaml { position: absolute; right: 22px; bottom: 22px; width: 330px; z-index: 6; border-radius: 13px; overflow: hidden; background: #121118ee;
   backdrop-filter: blur(14px); color: #e8e7ef; box-shadow: 0 20px 60px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.08); font: 12px/1.6 ui-monospace, Menlo, monospace;
@@ -311,6 +325,37 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
           </div>
           <p class="fine">Works with Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, OpenCode, VS Code, Windsurf, Cline, Kiro, LM Studio and Amp. In Valerie, run Connect AI Apps from the command bar.</p>
           <p class="fine">It runs on your Mac at 127.0.0.1, behind a token. Each tool can be turned off in config.yaml.</p>
+        </div>
+      </section>
+
+      <section class="pg" data-tab="examples" data-title="Real examples" hidden>
+        <div class="inner">
+          <h2>Real requests, <em>real transcripts.</em></h2>
+          <p class="sub">Real chats with the AI built into Valerie. Trimmed for length, never reworded.</p>
+          <div class="ex">
+            <h3>YouTube in theater mode, every time</h3>
+            <p>No setting did it, so the AI built one. About five minutes and 90 steps, typos included.</p>
+            <div class="tx">
+              <div class="me">can you make sure youtube always iopens in theater mode on this broiwser</div>
+              <div class="st">Used the browser 23 times · 52s</div>
+              <div class="ai"><p>I clicked “Theater mode” on one watch page, then loaded a different video in the same tab. The new page loaded in the default layout, so the setting did not carry over.</p><p>Valerie has no theater-mode option. The only way I see to get this is a small browser extension with a script that clicks the theater button on youtube.com/watch pages. Do you want me to build it? I'd create the files only after you say yes.</p></div>
+              <div class="me">yeah create it</div>
+              <div class="st">Edited 2 files, ran 4 commands, used the browser 19 times · 1m 41s · <i>2 failed</i></div>
+              <div class="th">The toast names a folder that doesn't exist. Checking which path the Valerie config actually points to.</div>
+              <div class="th">I put the extension in the wrong place. I'll move my own extension folder to the right path.</div>
+              <div class="th">I keep sending the wrong parameter shape. Loading the tool's schema to get it right.</div>
+              <div class="th">The button exists with the expected label and wasn't clicked, which points at the script's timing. I'll make it wait for the button instead of giving up.</div>
+              <div class="st">Used the browser 12 times · 21s</div>
+              <div class="ai"><p>The extension is installed in the folder Valerie reads, but I have not confirmed that it works.</p><p>Restarting Valerie would load it fresh. That would close your open windows, so I'd like your go-ahead first. Or open a watch page in a visible tab and tell me whether theater mode turns on by itself.</p></div>
+              <div class="me">it worked1</div>
+              <div class="ai"><p>The extension is at <code>~/.config/valerie/extensions/youtube-theater/</code>. It turns on theater mode on YouTube watch pages, including when you move between videos inside YouTube.</p></div>
+            </div>
+            <div class="liked"><b>What it got right</b><ul>
+              <li>Asked before creating files, and before restarting the browser.</li>
+              <li>Caught its own mistake (the wrong folder) and fixed it.</li>
+              <li>Said plainly what it hadn't checked yet.</li>
+            </ul></div>
+          </div>
         </div>
       </section>
 
@@ -451,13 +496,13 @@ const $ = (s) => document.querySelector(s);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const BASE_TABS = ["home", "agents", "tools", "features", "install"];
+const BASE_TABS = ["home", "agents", "tools", "examples", "features", "install"];
 const SPACES = [
   { name: "Personal", base: { accent: "#9d8cff", bg: ["#171a2b", "#2a1f3d"] }, tabs: [...BASE_TABS], tab: "home" },
   { name: "Work", base: { accent: "#5fb3ff", bg: ["#0f1a28", "#132a3c"] }, tabs: ["tickets", "calendar", "launch"], tab: "tickets" },
   { name: "School", base: { accent: "#4fd6a0", bg: ["#0e1d19", "#17302a"] }, tabs: [...BASE_TABS], tab: "home" },
 ];
-const ICONS = { home: "img", agents: "✦", tools: "⌁", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉", map: "⌖", news: "▤", link: "↗" };
+const ICONS = { home: "img", agents: "✦", tools: "⌁", examples: "❝", features: "◆", install: "↓", weather: "☀", tickets: "◎", calendar: "▦", launch: "#", meet: "◉", map: "⌖", news: "▤", link: "↗" };
 // Tabs an agent opens, and where you land when they close.
 const AGENT_TABS = { weather: "agents", meet: "calendar" };
 const page = (id) => document.querySelector(`.pg[data-tab="${id}"]`);

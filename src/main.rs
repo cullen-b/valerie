@@ -541,35 +541,41 @@ fn main() -> anyhow::Result<()> {
             return call(config.mcp.port, tool, args.get(2).map(String::as_str).unwrap_or("{}"));
         }
         // Which AI apps answer right now (installed, signed in, plan active).
-        // The plugin marketplace from the command line (for people and their AI assistants).
+        // The plugin marketplace from the command line (for people and their AI assistants); it has extensions too.
         Some("plugins") => {
             use anyhow::Context;
             let index = || market::fetch(&config.plugin_marketplace.index);
+            let ext_dir = extensions::dir(&config.extensions);
+            let tag = |e: &market::Entry| if e.is_extension() { "  [extension]" } else { "" };
             match args.get(1).map(String::as_str) {
                 Some("search") => {
                     let q = args[2..].join(" ");
                     let all = index()?;
                     let hits = market::search(&all, &q);
                     if hits.is_empty() {
-                        println!("No plugin like that in the marketplace yet.");
+                        println!("No plugin or extension like that in the marketplace yet.");
                     }
                     for e in hits.iter().take(10) {
-                        println!("{:<24} {}{}", e.name, e.description, if e.programs.is_empty() { "" } else { "  [runs programs]" });
+                        println!("{:<24} {}{}{}", e.name, e.description, tag(e), if e.programs.is_empty() { "" } else { "  [runs programs]" });
                     }
                 }
                 Some("install") => {
-                    let name = args.get(2).context("usage: valerie plugins install <name>")?;
+                    let name = args.get(2).context("usage: valerie plugins install <name> [--extension]")?;
+                    let kind = args.iter().any(|a| a == "--extension").then_some(market::EXTENSION);
                     let all = index()?;
-                    let e = all.iter().find(|e| &e.name == name).with_context(|| format!("no plugin called {name} in the marketplace"))?;
+                    let e = market::find(&all, name, kind).with_context(|| format!("nothing called {name} in the marketplace"))?;
                     if !e.programs.is_empty() {
                         println!("{name} runs these on your computer:\n{}", e.programs.join("\n---\n"));
                     }
-                    let dir = market::install(e, &plugins::plugins_dir())?;
-                    println!("Installed {name} in {} (Valerie picks it up by itself).", dir.display());
+                    let dir = market::install(e, &plugins::plugins_dir(), &ext_dir)?;
+                    let next = if e.is_extension() { "Valerie asks once before loading it; needs macOS 15.4 or later" } else { "Valerie picks it up by itself" };
+                    println!("Installed the {} {name} in {} ({next}).", e.noun(), dir.display());
                 }
                 Some("share") => {
-                    let name = args.get(2).context("usage: valerie plugins share <name>")?;
-                    let dir = plugins::plugins_dir().join(name);
+                    let name = args.get(2).context("usage: valerie plugins share <name> [--extension]")?;
+                    let kind = args.iter().any(|a| a == "--extension").then_some(market::EXTENSION);
+                    let (dir, _) = market::local(name, kind, &plugins::plugins_dir(), &ext_dir)
+                        .with_context(|| format!("no plugin or extension called {name} in {} or {}", plugins::plugins_dir().display(), ext_dir.display()))?;
                     let token = github::token().context("sign in to GitHub first: run Set Up Sync in Valerie, or `gh auth login`")?;
                     let all = index().unwrap_or_default();
                     println!("Shared: {}", market::share(&dir, &config.plugin_marketplace.repo, &all, &token)?);
@@ -577,10 +583,12 @@ fn main() -> anyhow::Result<()> {
                 _ => {
                     let all = index()?;
                     let mine: Vec<String> = plugins::load_all().0.into_iter().map(|p| p.name).collect();
+                    let exts: Vec<String> = extensions::find(&ext_dir).into_iter().map(|f| f.name).collect();
                     for e in &all {
-                        println!("{:<24} {}{}", e.name, e.description, if mine.contains(&e.name) { "  (installed)" } else { "" });
+                        let have = if e.is_extension() { exts.contains(&e.name) } else { mine.contains(&e.name) };
+                        println!("{:<24} {}{}{}", e.name, e.description, tag(e), if have { "  (installed)" } else { "" });
                     }
-                    println!("\nvalerie plugins search <words> | install <name> | share <name>");
+                    println!("\nvalerie plugins search <words> | install <name> | share <name>  (add --extension when a plugin has the same name)");
                 }
             }
             return Ok(());

@@ -98,6 +98,7 @@ changed in plain words. Some translations:
 | "Dark sites in my Work space only" / "different search engine at school" | that space's `settings:` under `spaces`, e.g. `settings: {{ pages: {{ dark_mode: always }} }}` |
 | "Ask me where to save downloads" / "PDFs into Documents" | `downloads.ask: true`, `downloads.rules: [{{ match: "*.pdf", folder: "~/Documents" }}]` |
 | "Mouse back button" / "middle-click shouldn't close tabs" | `mouse.back_button: back`, `mouse.middle_click_tab: null` |
+| "Swiping skips two spaces" / "swipes feel too touchy" | `sidebar.swipe_settle_ms: 900` (longer wait before a hard swipe can switch again), `sidebar.swipe_distance: 140` |
 | "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
@@ -313,18 +314,23 @@ edit them, disable them with `enabled: false`, or delete them.
 
 ### The plugin marketplace
 
-People share plugins in a public marketplace ("Plugins" in the command bar; repo `cullen-b/valerie-plugins`).
+People share plugins and browser extensions in a public marketplace ("Plugins" in the command bar; repo
+`cullen-b/valerie-plugins`, folders `plugins/` and `extensions/`). The `plugins` commands below cover both; search
+results mark extensions `[extension]`.
 
-- **Before you make a plugin, look there first:** `"{exe}" plugins search <a few words about what it does>`. If one
-  already does it (or nearly), tell the user and offer to install it instead: `"{exe}" plugins install <name>`.
+- **Before you make a plugin or extension, look there first:** `"{exe}" plugins search <a few words about what it
+  does>`. If one already does it (or nearly), tell the user and offer to install it instead: `"{exe}" plugins install
+  <name>` (it goes into `plugins/` or `extensions/` by itself; add `--extension` when a plugin has the same name).
   Better to install or improve an existing one than to make a near-duplicate.
-- **After you make one, encourage the user to share it.** Say it's a cool plugin others could use, and ask if they'd
-  like to put it in the marketplace. Only if they say yes, run `"{exe}" plugins share <name>`: it opens a pull request
-  from their GitHub account (the marketplace's maintainers review it before it goes live) and prints its address.
-  Never share without asking. If you can't ask (a one-shot change), mention in your summary that they can share it;
-  Valerie also offers to share new plugins by itself.
-- Shared plugins need a folder name of lowercase words with hyphens, a one-line `description` in `plugin.yaml`, and
-  readable text files only. Valerie fills in `author` with their GitHub name.
+- **After you make one, encourage the user to share it.** Once it works, say it's a cool plugin (or extension) others
+  could use, and always ask if they'd like to put it in the marketplace, before you finish. Only if they say yes, run
+  `"{exe}" plugins share <name>` (a folder in `plugins/`, else in `extensions/`): it opens a pull request from their
+  GitHub account (the marketplace's maintainers review it before it goes live) and prints its address. Never share
+  without asking. If you can't ask (a one-shot change), mention in your summary that they can share it; Valerie also
+  offers to share new plugins and extensions by itself.
+- Shared ones need a folder name of lowercase words with hyphens, readable text files only, and a one-line
+  description: `description` in `plugin.yaml`, or `name` and `description` in an extension's `manifest.json`. Valerie
+  fills in `author` with their GitHub name.
 
 ## Pages: features that are just a page
 
@@ -385,7 +391,9 @@ Examples:
 
 Unpacked web extensions (a folder with a manifest.json, as for Safari or Chrome "load unpacked") go in `extensions/`
 (macOS 15.4 or later). Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
-and opens their popups and options pages. `extensions.enabled: false` turns them all off.
+and opens their popups and options pages. `extensions.enabled: false` turns them all off. A new folder is picked up
+without a restart. To change how a site behaves, prefer a plugin with a `script.js`: it works on every platform and
+can use Valerie's commands and settings. Both can be shared in the marketplace.
 
 ## Limits
 

@@ -557,14 +557,24 @@ pub fn control_note(def: &AgentDef) -> String {
 }
 
 /// The prompt preamble for an agent with browser control.
-pub fn browser_preamble(def: &AgentDef, context: &str) -> String {
+pub fn browser_preamble(def: &AgentDef, context: &str, offer_share: bool) -> String {
     let how = control_note(def);
+    let guide = crate::config::config_dir().join("AGENTS.md");
+    let share = if offer_share {
+        " Once you've made a plugin or browser extension and it works, ask the user whether they'd like to share it in \
+         the public marketplace so others can use it; only if they say yes, share it as the guide explains."
+    } else {
+        ""
+    };
     format!(
         "You are the assistant built into the user's Valerie web browser. You can see and control their browser. {how} \
          Open any tabs you need in the background and don't close or change the user's tabs unless they ask. Never submit \
          purchases, payments or other irreversible forms without the user saying so in this conversation; stop and ask \
          instead. When something in Valerie didn't work, read its log with read_logs; to change one of Valerie's settings, \
-         use get_settings and set_setting. Answer in plain, short Markdown.\n\n{context}"
+         use get_settings and set_setting. To add something no setting covers (like changing how a site behaves), make a \
+         Valerie plugin (it works on every platform; a browser extension only on macOS 15.4+): read the guide at {} \
+         first, and search the marketplace before making a new one.{share} Answer in plain, short Markdown.\n\n{context}",
+        guide.display()
     )
 }
 
