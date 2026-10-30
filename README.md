@@ -101,7 +101,7 @@ command bar (type the file name).
 Enter copies). Hovering a link shows where it goes. Tracking junk (`utm_*`, `fbclid`…) is stripped from links you
 open or copy. Cookie pop-ups get "Reject all" clicked for you. "Hide an Element" removes anything annoying from a site
 for good (it's saved as a line in `boosts/<site>.css`). Plus Translate Page, Copy Link to Highlighted Text, Search
-Selected Text, Close Duplicate Tabs, and dark mode for light websites (`pages.dark_mode`, or per site).
+Selected Text, Close Duplicate Tabs, and dark mode: sites show their own dark look (`pages.dark_mode`); ones without one can be inverted (`pages.dark_fallback`, or per site).
 
 **Pages behave:** `alert` / `confirm` / `prompt` show as proper sheets on the window, "Sign in with Google"-style
 pop-ups open as small linked windows so sign-ins complete (`links.popups`), sites ask before using the camera or

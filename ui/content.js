@@ -1198,6 +1198,8 @@ function darkWanted() {
   if (cfg.site_dark) return cfg.site_dark === "always" ? "forced" : false;
   const d = cfg.dark || {}, site = location.hostname.replace(/^www\./, "").toLowerCase();
   if (d.sites && site in d.sites) return d.sites[site] ? "forced" : false;
+  // Sites with a dark look of their own get it from the webview (pages.dark_mode); the rest are inverted only if asked.
+  if ((cfg.pages || {}).dark_fallback !== "invert") return false;
   return d.mode === "always" || (d.mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches) ? "auto" : false;
 }
 function pageLooksDark() {

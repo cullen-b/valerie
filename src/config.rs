@@ -807,6 +807,7 @@ pub struct PermissionsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PagesConfig {
     pub dark_mode: String,
+    pub dark_fallback: String,
     pub loading_bar: bool,
     pub markdown: bool,
     pub markdown_theme: String,

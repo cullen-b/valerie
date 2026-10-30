@@ -984,6 +984,19 @@ mod mac {
         }
     }
 
+    /// The view's appearance decides `prefers-color-scheme`: dark asks sites for their dark look; none follows the Mac.
+    pub fn prefer_dark(wv: &WebView, dark: bool) {
+        unsafe {
+            let look: *mut AnyObject = if dark {
+                let name = objc2_foundation::NSString::from_str("NSAppearanceNameDarkAqua");
+                msg_send![objc2::class!(NSAppearance), appearanceNamed: &*name]
+            } else {
+                std::ptr::null_mut()
+            };
+            let _: () = msg_send![ptr(wv), setAppearance: look];
+        }
+    }
+
     pub fn set_window_opacity(window: &tao::window::Window, alpha: f64) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -1220,6 +1233,19 @@ pub fn allow_magnification(wv: &WebView, on: bool) {
     mac::allow_magnification(wv, on);
     #[cfg(not(target_os = "macos"))]
     let _ = (wv, on);
+}
+
+/// Ask sites for their own dark look (pages.dark_mode: always), or let them follow the computer.
+pub fn prefer_dark(wv: &WebView, dark: bool) {
+    #[cfg(target_os = "macos")]
+    mac::prefer_dark(wv, dark);
+    #[cfg(target_os = "windows")]
+    {
+        use wry::WebViewExtWindows;
+        let _ = wv.set_theme(if dark { wry::Theme::Dark } else { wry::Theme::Auto });
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = (wv, dark);
 }
 
 /// How solid the whole window is (window.opacity).
