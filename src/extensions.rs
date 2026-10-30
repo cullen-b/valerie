@@ -10,6 +10,7 @@ pub struct Found {
     pub name: String,
     pub dir: PathBuf,
     pub title: String,
+    pub description: String,
     pub version: String,
     /// Sites and permissions it asks for, for the "Load this extension?" question.
     pub wants: Vec<String>,
@@ -55,7 +56,8 @@ pub fn find(root: &Path) -> Vec<Found> {
             wants.dedup();
             let button = ["action", "browser_action", "page_action"].iter().any(|k| m.get(*k).is_some());
             let options = m.get("options_page").is_some() || m.get("options_ui").is_some();
-            Some(Found { name, dir, title, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options })
+            let description = m["description"].as_str().filter(|t| !t.starts_with("__MSG_")).unwrap_or("").to_string();
+            Some(Found { name, dir, title, description, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));

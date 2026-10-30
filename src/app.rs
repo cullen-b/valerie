@@ -218,6 +218,7 @@ pub struct App {
     market_open: bool,
     market_index: Vec<crate::market::Entry>,
     /// Plugins already here (or already offered for sharing): only new ones get the "share it?" offer.
+    /// Plugins (by name) and extensions (by `ext_key`) seen so far, so only new ones get the offer to share.
     known_plugins: std::collections::HashSet<String>,
     /// Chats whose agent is answering right now.
     chat_running: std::collections::HashSet<String>,
@@ -5260,7 +5261,7 @@ impl App {
             Command::SharePlugin { name } => {
                 self.close_bar();
                 match name.filter(|n| !n.trim().is_empty()) {
-                    Some(n) => self.share_plugin(n),
+                    Some(n) => self.share_plugin(n, None),
                     None => {
                         self.open_market();
                         self.market_send(&json!({ "type": "tab", "tab": "mine" }));
@@ -6445,6 +6446,10 @@ impl App {
                 self.prepare_little_later();
                 self.reload_config();
                 self.schedule_sync();
+                // A new extension folder (installed, or made by an agent) is asked about and loaded without a restart.
+                if self.revealed && self.ext_loading == 0 {
+                    self.load_extensions(true);
+                }
             }
             UserEvent::SyncDue(g) => {
                 if g == self.sync_gen {
@@ -7399,6 +7404,7 @@ impl App {
     /// everything else happens after that, in `after_reveal`.
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
         self.known_plugins = self.plugins.iter().map(|p| p.name.clone()).collect();
+        self.known_plugins.extend(crate::extensions::find(&crate::extensions::dir(&self.config.extensions)).iter().map(|e| ext_key(&e.name)));
         // The active space's own settings apply from the start.
         if let Ok(base) = Config::merged(&std::fs::read_to_string(config::config_path()).unwrap_or_default()) {
             self.base_config = base;
@@ -8881,18 +8887,26 @@ impl App {
         std::thread::spawn(move || send(&p, UserEvent::MarketIndex(crate::market::fetch(&url).map_err(|e| format!("{e:#}")))));
     }
 
-    /// Plugins in the config folder, with where they came from (the marketplace's version, if from there).
+    /// Plugins and extensions in the config folder, with where they came from (the marketplace's version, if from there).
     fn market_installed(&self) -> Vec<Value> {
-        self.plugins
+        let mut out: Vec<Value> = self
+            .plugins
             .iter()
             .filter(|p| !p.name.starts_with('_'))
-            .map(|p| json!({ "name": p.name, "description": p.manifest.description, "enabled": p.manifest.enabled, "builtin": plugins::is_bundled(&p.name),
+            .map(|p| json!({ "kind": "plugin", "name": p.name, "description": p.manifest.description, "enabled": p.manifest.enabled, "builtin": plugins::is_bundled(&p.name),
                              "market_version": crate::market::installed_version(&p.dir), "matches": p.manifest.matches }))
-            .collect()
+            .collect();
+        let loaded = crate::extensions::loaded();
+        out.extend(crate::extensions::find(&crate::extensions::dir(&self.config.extensions)).into_iter().map(|e| {
+            json!({ "kind": crate::market::EXTENSION, "name": e.name, "title": e.title, "description": e.description, "running": loaded.contains(&e.name),
+                    "market_version": crate::market::installed_version(&e.dir), "matches": e.wants })
+        }));
+        out
     }
 
     fn market_message(&mut self, m: &Value, elwt: &EventLoopWindowTarget<UserEvent>) {
         let name = m["name"].as_str().unwrap_or("").to_string();
+        let kind = m["kind"].as_str().filter(|k| *k == crate::market::EXTENSION);
         match m["t"].as_str().unwrap_or("") {
             "ready" => {
                 let accent = self.theme_for(self.state.active_space).accent;
@@ -8903,19 +8917,19 @@ impl App {
                 self.fetch_market();
             }
             "refresh" => self.fetch_market(),
-            // Plugins that run programs, or touch every site, say so and ask first.
+            // Plugins that run programs, or touch every site, say so and ask first. Extensions are asked about when they load.
             "install" => {
-                let Some(e) = self.market_index.iter().find(|e| e.name == name).cloned() else { return };
-                let (p, dir) = (self.proxy.clone(), plugins::plugins_dir());
+                let Some(e) = crate::market::find(&self.market_index, &name, kind.or(Some("plugin"))).cloned() else { return };
+                let (p, dir, ext_dir) = (self.proxy.clone(), plugins::plugins_dir(), crate::extensions::dir(&self.config.extensions));
                 let go = move || {
                     std::thread::spawn(move || {
-                        let r = crate::market::install(&e, &dir);
-                        let ev = json!({ "type": "installed", "name": e.name, "ok": r.is_ok(), "detail": r.err().map(|x| format!("{x:#}")) });
+                        let r = crate::market::install(&e, &dir, &ext_dir);
+                        let ev = json!({ "type": "installed", "kind": e.kind, "name": e.name, "ok": r.is_ok(), "detail": r.err().map(|x| format!("{x:#}")) });
                         send(&p, UserEvent::ToMarket(ev));
                     });
                 };
-                let entry = self.market_index.iter().find(|e| e.name == name);
-                let risky = entry.is_some_and(|e| !e.programs.is_empty() || e.matches.is_empty());
+                let entry = crate::market::find(&self.market_index, &name, kind.or(Some("plugin")));
+                let risky = entry.is_some_and(|e| !e.is_extension() && (!e.programs.is_empty() || e.matches.is_empty()));
                 match (entry, self.market_view.as_ref()) {
                     (Some(e), Some(v)) if risky => {
                         let mut body = String::new();
@@ -8938,13 +8952,18 @@ impl App {
                 }
             }
             "remove" => {
-                let Some(p) = self.plugins.iter().find(|p| p.name == name) else { return };
-                let (dir, px) = (p.dir.clone(), self.proxy.clone());
+                let Some((dir, kind)) = crate::market::local(&name, kind.or(Some("plugin")), &plugins::plugins_dir(), &crate::extensions::dir(&self.config.extensions)) else { return };
+                let px = self.proxy.clone();
                 let Some(v) = self.market_view.as_ref() else { return };
-                platform::ask(v, &format!("Remove {name}?"), "Its folder is deleted from your plugins.", "Remove", "Cancel", move |yes| {
+                let body = if kind == crate::market::EXTENSION {
+                    "Its folder is deleted from your extensions. It stops running when Valerie restarts."
+                } else {
+                    "Its folder is deleted from your plugins."
+                };
+                platform::ask(v, &format!("Remove {name}?"), body, "Remove", "Cancel", move |yes| {
                     if yes {
                         let r = std::fs::remove_dir_all(&dir);
-                        send(&px, UserEvent::ToMarket(json!({ "type": "removed", "name": dir.file_name().map(|n| n.to_string_lossy().to_string()), "ok": r.is_ok() })));
+                        send(&px, UserEvent::ToMarket(json!({ "type": "removed", "kind": kind, "name": dir.file_name().map(|n| n.to_string_lossy().to_string()), "ok": r.is_ok() })));
                     }
                 });
             }
@@ -8964,7 +8983,7 @@ impl App {
                     self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
                 }
             }
-            "share" => self.share_plugin(name),
+            "share" => self.share_plugin(name, kind.or(Some("plugin"))),
             "open" => {
                 if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("https://")) {
                     self.close_market();
@@ -8987,14 +9006,14 @@ impl App {
         self.focus_active();
     }
 
-    /// Share a plugin as a pull request to the marketplace, signing in to GitHub first if needed.
-    fn share_plugin(&mut self, name: String) {
-        let dir = plugins::plugins_dir().join(&name);
-        if !dir.join("plugin.yaml").exists() {
-            return self.toast(&format!("There's no plugin called {name}"));
-        }
+    /// Share a plugin or extension (`kind`: None = a plugin, else an extension of that name) as a pull request to the
+    /// marketplace, signing in to GitHub first if needed.
+    fn share_plugin(&mut self, name: String, kind: Option<&str>) {
+        let Some((dir, kind)) = crate::market::local(&name, kind, &plugins::plugins_dir(), &crate::extensions::dir(&self.config.extensions)) else {
+            return self.toast(&format!("There's no plugin or extension called {name}"));
+        };
         self.toast(&format!("Sharing {name}…"));
-        self.market_send(&json!({ "type": "sharing", "name": name }));
+        self.market_send(&json!({ "type": "sharing", "kind": kind, "name": name }));
         let (p, repo, index, client_id) = (self.proxy.clone(), self.config.plugin_marketplace.repo.clone(), self.config.plugin_marketplace.index.clone(), self.config.sync.github_client_id.clone());
         std::thread::spawn(move || {
             let notify = |s: crate::github::Step| {
@@ -9009,29 +9028,32 @@ impl App {
                 crate::market::share(&dir, &repo, &all, &token)
             });
             let ev = match result {
-                Ok(url) => json!({ "type": "shared", "name": name, "url": url }),
-                Err(e) => json!({ "type": "shared", "name": name, "detail": format!("{e:#}") }),
+                Ok(url) => json!({ "type": "shared", "kind": kind, "name": name, "url": url }),
+                Err(e) => json!({ "type": "shared", "kind": kind, "name": name, "detail": format!("{e:#}") }),
             };
             send(&p, UserEvent::ToMarket(ev));
         });
     }
 
-    /// After an agent run: a plugin of the user's own that wasn't here before gets one offer to share it.
+    /// After an agent run: a plugin or extension of the user's own that wasn't here before gets one offer to share it.
     fn offer_to_share(&mut self) {
         let (plugins, _) = plugins::load_all();
-        let new: Vec<String> = plugins
+        let exts = crate::extensions::find(&crate::extensions::dir(&self.config.extensions));
+        let mut new: Vec<(String, &str)> = plugins
             .iter()
             .filter(|p| !self.known_plugins.contains(&p.name) && !p.name.starts_with('_') && !plugins::is_bundled(&p.name) && !p.dir.join(crate::market::STAMP).exists())
-            .map(|p| p.name.clone())
+            .map(|p| (p.name.clone(), "plugin"))
             .collect();
+        new.extend(exts.iter().filter(|e| !self.known_plugins.contains(&ext_key(&e.name)) && !e.dir.join(crate::market::STAMP).exists()).map(|e| (e.name.clone(), crate::market::EXTENSION)));
         self.known_plugins.extend(plugins.iter().map(|p| p.name.clone()));
-        let Some(name) = new.into_iter().next().filter(|_| self.config.plugin_marketplace.offer_to_share) else { return };
-        trace(&format!("offering to share the new plugin {name}"));
+        self.known_plugins.extend(exts.iter().map(|e| ext_key(&e.name)));
+        let Some((name, kind)) = new.into_iter().next().filter(|_| self.config.plugin_marketplace.offer_to_share) else { return };
+        trace(&format!("offering to share the new {kind} {name}"));
         let p = self.proxy.clone();
-        let body = "Nice work! Share it in the plugin marketplace so other people can use it too? Valerie opens a pull request from your GitHub account, and it goes live once it's reviewed.";
-        platform::ask(&self.chrome, &format!("You made a plugin: {name}"), body, "Share It", "Not Now", move |yes| {
+        let body = "Nice work! Share it in the marketplace so other people can use it too? Valerie opens a pull request from your GitHub account, and it goes live once it's reviewed.";
+        platform::ask(&self.chrome, &format!("You made {}: {name}", if kind == "plugin" { "a plugin" } else { "an extension" }), body, "Share It", "Not Now", move |yes| {
             if yes {
-                send(&p, UserEvent::Ipc { from: Source::Market, msg: json!({ "t": "share", "name": name }).to_string() });
+                send(&p, UserEvent::Ipc { from: Source::Market, msg: json!({ "t": "share", "kind": kind, "name": name }).to_string() });
             }
         });
     }
@@ -11136,4 +11158,9 @@ mod tests {
         assert_eq!(super::cookie_base("github.com"), "github.com");
         assert_eq!(super::cookie_base("localhost"), "localhost");
     }
+}
+
+/// How `known_plugins` holds an extension, apart from a plugin of the same name.
+fn ext_key(name: &str) -> String {
+    format!("extension:{name}")
 }

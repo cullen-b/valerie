@@ -464,9 +464,9 @@ pub enum Command {
     CheckForUpdates,
     /// The welcome guide: AI, sync, describing your browser in your own words, and a tour of what Valerie does.
     Welcome,
-    /// The plugin marketplace: browse, install and remove plugins people shared, and share yours.
+    /// The plugin marketplace: browse, install and remove plugins and extensions people shared, and share yours.
     PluginMarketplace,
-    /// Share one of your plugins in the marketplace (opens a pull request from your GitHub account).
+    /// Share one of your plugins or extensions in the marketplace (opens a pull request from your GitHub account).
     SharePlugin {
         #[serde(default)]
         name: Option<String>,
@@ -744,8 +744,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("restart", "Restart Valerie (use a newly installed version)"),
     ("check_for_updates", "Check for Updates"),
     ("welcome", "Welcome Tour (set up AI and sync, make Valerie yours, see what it does)"),
-    ("plugin_marketplace", "Plugins (marketplace: browse, install and share plugins)"),
-    ("share_plugin", "Share Plugin (put one of yours in the marketplace)"),
+    ("plugin_marketplace", "Plugins (marketplace: browse, install and share plugins and extensions)"),
+    ("share_plugin", "Share Plugin (put one of your plugins or extensions in the marketplace)"),
     ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
@@ -777,7 +777,7 @@ pub const CATALOG: &[(&str, &str)] = &[
 
 /// Commands that take options, with their shapes (shared by the MCP tool description and the LLM guide).
 pub const WITH_ARGS: &[(&str, &str)] = &[
-    ("share_plugin", "{ name? }  (a folder in plugins/; without one, the marketplace opens on your plugins)"),
+    ("share_plugin", "{ name? }  (a folder in plugins/, else in extensions/; without one, the marketplace opens on yours)"),
     ("open_command_bar", "{ mode: new_tab | current }"),
     ("new_tab", "{ url?, space?, background? }"),
     ("go", "{ input, new_tab? }  (URL or search terms, like typing in the command bar)"),
