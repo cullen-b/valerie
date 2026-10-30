@@ -155,7 +155,7 @@ function draw() {
 
 $("#q").addEventListener("input", draw);
 $("#close").onclick = () => send({ t: "close" });
-$("#drag").addEventListener("mousedown", (e) => { if (e.button === 0) send({ t: "drag" }); });
+$("#drag").addEventListener("mousedown", (e) => { if (e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") send({ t: "close" }); if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("#q").focus(); } });
 document.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[href]"); if (a) { e.preventDefault(); send({ t: "open", url: a.href }); } });
 

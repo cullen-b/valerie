@@ -51,7 +51,7 @@ addr.onkeydown = (e) => {
   if (e.key === "Enter" && addr.value.trim()) send({ t: "go", text: addr.value });
   else if (e.key === "Escape") cmd({ cmd: "close_tab" });
 };
-document.body.onmousedown = (e) => { if (e.target === document.body || e.target.id === "title") send({ t: "drag" }); };
+document.body.onmousedown = (e) => { if ((e.target === document.body || e.target.id === "title") && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 window.little = {
   render(s) {
     const r = document.documentElement;

@@ -116,6 +116,9 @@ sidebar:
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false
+  drop_to_split: true      # drop a tab on the middle of another to open the two side by side in split view. true | false
+  split_rows: true         # tabs in split view show as one row (one wide tile among pinned icons) that you drag, pin
+                           # and keep as one. false = separate rows, marked with a bar. true | false
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank | plugin:<name> (that plugin's
                            # start.html, which can open sites and run the plugin's commands)
@@ -404,6 +407,8 @@ pages:
   dark_fallback: none      # sites with no dark look of their own, when dark_mode is on. one of: none (left as they are)
                            # | invert (flip their colours: rough on busy pages). toggle_dark_page inverts one site
   loading_bar: true        # a thin line across the top of a page while it loads
+  wait_for_first_draw: true # a tab that's loading from scratch (new, or asleep) stays hidden until it has drawn, up to a
+                           # second, then fades in, so it never flashes white. false = show it straight away
   markdown: true           # show Markdown files (.md, on this computer or the web) as formatted documents: headings,
                            # tables, highlighted code, task lists, GitHub-style notes. false = the plain text
   markdown_theme: auto     # their look. one of: auto (dark when your computer or dark_mode is) | light | dark

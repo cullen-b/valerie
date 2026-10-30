@@ -542,7 +542,7 @@ function draw() {
   }
 }
 
-document.getElementById("drag").addEventListener("mousedown", (e) => { if (e.button === 0) send({ t: "drag" }); });
+document.getElementById("drag").addEventListener("mousedown", (e) => { if (e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); });
 document.addEventListener("keydown", (e) => {
   if ($("#modal")) { if (e.key === "Escape") $("#modal").remove(); return; }
   if (e.target.matches("input, textarea")) return;

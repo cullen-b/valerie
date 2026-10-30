@@ -85,6 +85,21 @@ body.pointer .tile:hover .x.minus { display: grid; } body.pointer .tile .x.minus
 .row .audio { font-size: calc(var(--tab-font) * .85); color: var(--accent); }
 .row.picked, .tile.picked, body.pointer .row.picked:hover, body.pointer .tile.picked:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 .row.split::after { content: ""; position: absolute; left: 2px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
+/* a split-view group (sidebar.split_rows): one row, or one wide pinned tile, with a side per page */
+.splitrow { gap: 0; padding-left: 3px; }
+.splitrow .half { flex: 1; min-width: 0; height: calc(100% - 8px); display: flex; align-items: center; gap: 8px; padding: 0 7px;
+  border-radius: calc(var(--tab-h) * .2); transition: background .12s; }
+.splitrow .sep { flex: none; width: 1px; height: 40%; background: var(--line); }
+.splitrow.active .half.focused { background: var(--hover); }
+body.pointer .splitrow .half:hover { background: var(--hover); }
+.half.unloaded .title { color: var(--fg-dim); }
+.splittile { display: flex; padding: 3px; gap: 3px; }
+.splittile .half { flex: 1; display: grid; place-items: center; border-radius: 8px; transition: background .12s; }
+.splittile.active .half.focused { background: var(--hover); }
+body.pointer .splittile .half:hover { background: var(--hover); }
+.tile .half.unloaded img, .tile .half.unloaded .letter { filter: grayscale(.35); opacity: .7; }
+/* drop one tab on the middle of another to put them in split view (sidebar.drop_to_split) */
+.drop-split { background: color-mix(in srgb, var(--accent) 18%, transparent) !important; box-shadow: inset 0 0 0 1.5px var(--accent) !important; }
 img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .letter { display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--accent); color: #fff; }
 .loading img.ico, .loading .letter, .tile.loading img { animation: pulse 1s ease-in-out infinite; }
@@ -134,6 +149,9 @@ body.size-compact .empty-pinned { display: none; }
 body.size-compact .grid { grid-template-columns: 1fr; gap: 6px; }
 body.size-compact .tile { height: 40px; }
 body.size-compact .row { justify-content: center; padding: 0; gap: 0; }
+body.size-compact .splitrow .half { justify-content: center; padding: 0; }
+body.size-compact .splitrow .sep { display: none; }
+body.size-compact .splittile { grid-column: auto !important; }
 body.size-compact .row img.ico, body.size-compact .row .letter { width: calc(var(--tab-icon) + 2px); height: calc(var(--tab-icon) + 2px); }
 body.size-compact .folder .kids { padding-left: 0; }
 body.size-compact .folder.open > .kids { border-left: 2px solid var(--line); margin-left: 4px; }
@@ -322,11 +340,12 @@ const click = (fn) => (e) => { if (!suppressClick) fn(e); };
 // another kind of list shows a line or highlight instead. Resting on a space's icon switches to it, so a tab can go
 // anywhere in another space.
 let drag = null;
-function source(node, id, list, index) {
+// A split-view group's row passes its tabs (`ids`) and how many places of the list it covers (`span`).
+function source(node, id, list, index, ids = null, span = 1) {
   node.dataset.tab = id;
   node.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || e.target.closest(".x, .audio")) return;
-    drag = { id, list, index, node, space: S.active_space, x: e.clientX, y: e.clientY, active: false, group: pickGroup("t" + id) };
+    drag = { id, list, index, ids, span, node, space: S.active_space, x: e.clientX, y: e.clientY, active: false, group: pickGroup("t" + id) };
   });
 }
 // Picked tabs and folders (sidebar.multi_select) drag together, in the order they're shown.
@@ -338,16 +357,20 @@ function dragsOwn(d, t) {
 }
 function markGroup(d) { document.querySelectorAll("[data-pick]:not(.ghost)").forEach((n) => n.classList.toggle("dragging-src", d.group.includes(n.dataset.pick))); }
 function zone(node, z) { node.dataset.drop = "1"; node._drop = z; }
-function clearIndicators() { document.querySelectorAll(".drop-before,.drop-after,.drop-into").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-into")); }
+function clearIndicators() { document.querySelectorAll(".drop-before,.drop-after,.drop-into,.drop-split").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-into", "drop-split")); }
 function locate(x, y) {
   const hit = document.elementFromPoint(x, y);
   const node = hit && hit.closest("[data-drop]");
   if (!node) return null;
   const z = node._drop, r = node.getBoundingClientRect();
   if (z.kind === "into") return { node, cls: "drop-into", payload: z.payload, list: null };
-  const after = z.kind === "tile" ? x > r.left + r.width / 2 : y > r.top + r.height / 2;
+  const across = z.kind === "tile" ? (x - r.left) / r.width : (y - r.top) / r.height;
   if (z.kind === "area") return { node, cls: "drop-into", payload: { ...z.payload }, list: z.list, index: z.index };
-  return { node, cls: after ? "drop-after" : "drop-before", after, kind: z.kind, payload: { ...z.payload }, list: z.list, index: z.index + (after ? 1 : 0) };
+  // sidebar.drop_to_split: one tab dropped on the middle of another opens the two side by side.
+  const splits = S.sidebar.drop_to_split !== false && drag && !drag.group && !drag.ids && z.payload.tab != null;
+  if (splits && across > 0.3 && across < 0.7) return { node, cls: "drop-split", split: true, payload: { ...z.payload } };
+  const after = across > 0.5;
+  return { node, cls: after ? "drop-after" : "drop-before", after, kind: z.kind, payload: { ...z.payload }, list: z.list, index: z.index + (after ? z.span || 1 : 0) };
 }
 // Slide every row and tile from where it was to where it is now (after the dragged one moved in the DOM).
 function flip(change) {
@@ -437,7 +460,17 @@ function endDrag(drop) {
     setTimeout(settle, 140);
   } else settle();
   if (!t || dragsOwn(d, t)) { if (!drop || !t) S && render(S); return; }
+  if (t.split) return cmd({ cmd: "split_view", tab: d.id, with: t.payload.tab });
   const { tab: _target, ...p } = t.payload;
+  if (d.ids) {
+    // A split-view group; positions count it where it is now, so dropping it within itself moves nothing.
+    if (t.index != null) {
+      if (t.list === d.list && d.space === S.active_space && t.index >= d.index && t.index <= d.index + d.span) return S && render(S);
+      p.index = t.index;
+    }
+    if (p.space == null && !p.favorite) p.space = S.spaces[S.active_space].name;
+    return cmd({ cmd: "move_items", ids: d.ids, ...p });
+  }
   if (d.group) {
     if (t.index != null) p.index = t.index;
     if (p.space == null && !p.favorite) p.space = S.spaces[S.active_space].name;
@@ -532,11 +565,10 @@ function tile(t, list, index) {
 function tabRow(t, list, index) {
   const r = el("div", "row");
   r.classList.toggle("active", isActive(t));
-  r.classList.toggle("split", S.split.length > 1 && S.split.includes(t.id));
+  r.classList.toggle("split", (S.splits || []).some((g) => g.includes(t.id)));
   r.classList.toggle("unloaded", !t.loaded);
   r.classList.toggle("loading", !!t.loading);
-  const medium = S.layout.sidebar_size === "medium";
-  r.append(icon(t), el("div", "title", medium ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab"));
+  r.append(icon(t), el("div", "title", tabTitle(t)));
   if (t.playing) r.append(audio(t));
   // Pinned and kept tabs get − (close the page, keep the tab); there's nothing to close once it's closed.
   const minus = t.pinned && S.sidebar.minus_for_saved_tabs !== false;
@@ -553,6 +585,66 @@ function tabRow(t, list, index) {
   preloadOnHover(r, t);
   return r;
 }
+const tabTitle = (t) => S.layout.sidebar_size === "medium" ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab";
+// One side of a split-view group's row or tile: clicking it shows the split with that page focused.
+function splitHalf(t, key, label) {
+  const h = el("div", "half" + (t.id === S.active ? " focused" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));
+  h.append(icon(t));
+  if (label) h.append(el("div", "title", tabTitle(t)));
+  if (t.playing) h.append(audio(t));
+  h.title = t.title || t.url;
+  h.onclick = click((e) => { if (!pickClick(e, key)) cmd({ cmd: "activate_tab", tab: t.id }); });
+  h.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
+  h.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); if (!pickMenu(e, key)) tabMenu(e, t); };
+  preloadOnHover(h, t);
+  return h;
+}
+// A split-view group (sidebar.split_rows) as one row: it drags, pins and keeps as one; × closes its pages.
+function splitRow(tabs, list, index, span) {
+  const key = "t" + tabs[0].id, r = el("div", "row splitrow");
+  r.classList.toggle("active", tabs.some(isActive));
+  tabs.forEach((t, k) => { if (k) r.append(el("div", "sep")); r.append(splitHalf(t, key, true)); });
+  const pinned = tabs[0].pinned, minus = pinned && S.sidebar.minus_for_saved_tabs !== false;
+  const x = el("div", "x" + (minus ? " minus" : ""), minus ? "−" : "×");
+  x.title = pinned ? "Close (keeps them in the sidebar)" : "Close both";
+  x.onclick = (e) => { e.stopPropagation(); tabs.forEach((t) => cmd({ cmd: "close_tab", tab: t.id })); };
+  if (!(minus && !tabs.some((t) => t.loaded))) r.append(x);
+  pickable(r, key);
+  source(r, tabs[0].id, list, index, tabs.map((t) => t.id), span);
+  return r;
+}
+// The same among the pinned icons: one wide tile with a side per page.
+function splitTile(tabs, list, index, span) {
+  const key = "t" + tabs[0].id, f = el("div", "tile splittile" + (tabs.some(isActive) ? " active" : ""));
+  f.style.gridColumn = "span " + Math.min(2, Math.max(1, +S.sidebar.pinned_columns || 4));
+  tabs.forEach((t) => f.append(splitHalf(t, key, false)));
+  pickable(f, key);
+  source(f, tabs[0].id, list, index, tabs.map((t) => t.id), span);
+  return f;
+}
+// Calls fn once per entry of a list: a folder ({folder, i}), a lone tab ({t, i}), or with sidebar.split_rows a split
+// group whose tabs are in this list ({tabs, i, span}), where its first tab is.
+function eachRun(nodes, fn) {
+  const groups = new Map(S.sidebar.split_rows === false ? [] : (S.splits || []).flatMap((g) => g.map((id) => [id, g])));
+  const done = new Set();
+  nodes.forEach((n, i) => {
+    if (n.type === "folder") return fn({ folder: n, i });
+    if (done.has(n.id)) return;
+    const g = groups.get(n.id);
+    const mates = g ? nodes.map((t, j) => ({ t, j })).filter((m) => m.t.type !== "folder" && g.includes(m.t.id)) : [];
+    if (mates.length < 2) return fn({ t: n, i });
+    mates.forEach((m) => done.add(m.t.id));
+    const last = Math.max(...mates.map((m) => m.j));
+    fn({ tabs: mates.sort((a, b) => g.indexOf(a.t.id) - g.indexOf(b.t.id)).map((m) => m.t), i, span: last - i + 1 });
+  });
+}
+// A lone tab's row or a split group's row, as a drop zone in `list`.
+function runRow(r, list, payload) {
+  const first = r.tabs ? r.tabs[0] : r.t;
+  const row = r.tabs ? splitRow(r.tabs, list, r.i, r.span) : tabRow(r.t, list, r.i);
+  zone(row, { kind: "row", list, index: r.i, span: r.span, payload: { ...payload, tab: first.id } });
+  return row;
+}
 function folderEl(n, section = "pinned") {
   const f = el("div", "folder" + (n.open ? " open" : ""));
   const r = el("div", "row");
@@ -568,10 +660,7 @@ function folderEl(n, section = "pinned") {
   r.classList.add("folder-row");
   zone(r, { kind: "into", payload: { section, folder: n.id } });
   const kids = el("div", "kids"), list = "folder:" + n.id;
-  n.children.forEach((c, i) => {
-    if (c.type === "folder") return kids.append(folderEl(c, section));
-    const row = tabRow(c, list, i); zone(row, { kind: "row", list, index: i, payload: { section, folder: n.id, tab: c.id } }); kids.append(row);
-  });
+  eachRun(n.children, (r) => kids.append(r.folder ? folderEl(r.folder, section) : runRow(r, list, { section, folder: n.id })));
   f.append(r, kids);
   return f;
 }
@@ -843,13 +932,16 @@ function render(state) {
     const grid = el("div", "grid");
     zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { section: "pinned" } });
     strayFavs.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); grid.append(f); });
-    pinnedTabs.forEach(([n, i]) => { const f = tile(n, "pinned", i); zone(f, { kind: "tile", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); grid.append(f); });
+    eachRun(S.pinned, (r) => {
+      if (r.folder) return;
+      const first = r.tabs ? r.tabs[0] : r.t, f = r.tabs ? splitTile(r.tabs, "pinned", r.i, r.span) : tile(r.t, "pinned", r.i);
+      zone(f, { kind: "tile", list: "pinned", index: r.i, span: r.span, payload: { section: "pinned", tab: first.id } }); grid.append(f);
+    });
     pins.append(grid);
   }
-  S.pinned.forEach((n, i) => {
-    if (n.type === "folder") return pins.append(folderEl(n, "pinned"));
-    if (icons) return;
-    const r = tabRow(n, "pinned", i); zone(r, { kind: "row", list: "pinned", index: i, payload: { section: "pinned", tab: n.id } }); pins.append(r);
+  eachRun(S.pinned, (r) => {
+    if (r.folder) return pins.append(folderEl(r.folder, "pinned"));
+    if (!icons) pins.append(runRow(r, "pinned", { section: "pinned" }));
   });
   if (!S.pinned.length && O.pinned_hint) {
     const e = el("div", "empty-pinned", "Drag here to pin");
@@ -864,10 +956,7 @@ function render(state) {
   if (O.kept_section !== false) {
     const kept = el("div", "kept" + (S.kept.length ? "" : " empty"));
     zone(kept, { kind: "area", list: "kept", index: S.kept.length, payload: { section: "kept" } });
-    S.kept.forEach((n, i) => {
-      if (n.type === "folder") return kept.append(folderEl(n, "kept"));
-      const r = tabRow(n, "kept", i); zone(r, { kind: "row", list: "kept", index: i, payload: { section: "kept", tab: n.id } }); kept.append(r);
-    });
+    eachRun(S.kept, (r) => kept.append(r.folder ? folderEl(r.folder, "kept") : runRow(r, "kept", { section: "kept" })));
     if (!S.kept.length) kept.append(el("div", "kept-hint", "Drag here to keep"));
     into("kept").append(kept);
   }
@@ -883,7 +972,7 @@ function render(state) {
     nt.onclick = () => cmd({ cmd: "new_tab" }); into("today").append(nt);
     zone(nt, { kind: "area", list: "today", index: 0, payload: { section: "today" } });
   }
-  S.today.forEach((t, i) => { const r = tabRow(t, "today", i); zone(r, { kind: "row", list: "today", index: i, payload: { section: "today", tab: t.id } }); into("today").append(r); });
+  eachRun(S.today, (r) => into("today").append(runRow(r, "today", { section: "today" })));
   for (const part of order.filter((p) => SCROLLING.includes(p))) if (parts[part]) sc.append(parts[part]);
   const tail = el("div"); tail.style.minHeight = "60px"; tail.style.flex = "1";
   zone(tail, { kind: "area", list: "today", index: S.today.length, payload: { section: "today" } }); sc.append(tail);
@@ -994,7 +1083,7 @@ function renderTop() {
   });
   const plus = el("div", "chip", "+"); plus.onclick = () => cmd({ cmd: "new_tab" });
   tb.append(sp, tabs, plus);
-  tb.onmousedown = (e) => { if (e.target === tb) send({ t: "drag" }); };
+  tb.onmousedown = (e) => { if (e.target === tb && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 }
 const flat = (nodes) => nodes.flatMap((n) => (n.type === "folder" ? flat(n.children) : [n]));
 
@@ -1023,7 +1112,7 @@ $("#fwd").onclick = () => cmd({ cmd: "forward" });
 $("#reload").onclick = () => cmd({ cmd: "reload" });
 $("#url").onclick = () => cmd({ cmd: "open_command_bar", mode: "current" });
 $("#sidebar").addEventListener("mouseleave", () => { if (S && S.peek) send({ t: "unpeek" }); });
-$("#drag").onmousedown = (e) => { if (e.target.id === "drag") send({ t: "drag" }); };
+$("#drag").onmousedown = (e) => { if (e.target.id === "drag" && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 $("#empty").onclick = (e) => { if (!$("#empty").classList.contains("plugin-start")) cmd({ cmd: "new_tab" }); };
 
 // ---------- two-finger swipe between spaces: the list follows your fingers, then commits or springs back ----------

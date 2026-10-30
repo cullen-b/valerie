@@ -150,7 +150,7 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
   `left`/`right`, `top` (tabs on top) and `size-full` / `size-medium` / `size-compact`. Parts: `#sidebar`, `.drag`
   (title bar), `.navbtn`, `#url`, `#favorites`, `.grid`, `.tile` (pinned icons), `#widgets`, `.widget`, `#scroll`,
   `.space-title`, `.row` (a tab; `.active`, `.unloaded`, `.loading`, `.split`), `.row .title`, `.row .x` (close),
-  `.folder`, `.kids`, `.kept`, `.divider`, `.newtab`, `#nowplaying`, `#bottom`, `.sp` (space icons; `.active`),
+  `.splitrow` / `.splittile` (a split-view group; `.half` per page, `.focused`), `.folder`, `.kids`, `.kept`, `.divider`, `.newtab`, `#nowplaying`, `#bottom`, `.sp` (space icons; `.active`),
   `#topbar`, `.chip`, `#empty` (start page), `#toast`, `.pinfolder`, `#pinfly`, Chats: `.row.chat`, `.chat-label`.
 - `ui/palette.css`: the command bar. Variables `--accent`, `--bg`, `--fg`, `--dim`, `--sel`, `--line`, `--width`,
   `--top`, `--input-size`. Parts: `#backdrop`, `#card`, `#inputrow`, `#q` (the text box), `#list`, `.item` (`.sel`),
