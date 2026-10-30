@@ -2300,7 +2300,7 @@ impl App {
                 "list": self.chats.iter().filter(|_| self.chats_open).map(|c| json!({
                     "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "pinned": c.pinned,
                     "running": self.chat_running.contains(&c.id), "started": self.chat_started.get(&c.id), "updated": c.updated,
-                    "agent": c.agent, "settled": c.settled, "snoozed": c.snoozed_until > now(), "unread": c.unread,
+                    "agent": c.agent, "snoozed": c.snoozed_until > now(), "unread": c.unread,
                     "project": c.folder, "asking": self.chat_asks.values().any(|a| a.chat == c.id),
                 })).collect::<Vec<_>>(),
                 "group_by_project": self.config.chats.group_by_project,
@@ -5378,32 +5378,7 @@ impl App {
             }
             Command::CloseChat { chat } => {
                 let Some(id) = chat.or_else(|| self.active_chat.clone()) else { return };
-                crate::ai::stop(&id);
-                if let Some(c) = self.chats.iter().find(|c| c.id == id && !c.worktree.is_empty()) {
-                    let (folder, wt, branch, p) = (PathBuf::from(&c.folder), PathBuf::from(&c.worktree), c.branch.clone(), self.proxy.clone());
-                    std::thread::spawn(move || {
-                        if let Err(e) = remove_worktree(&folder, &wt, &branch) {
-                            crate::log::line("chats", format!("kept worktree {}: {e}", wt.display()));
-                            if wt.is_dir() {
-                                send(&p, UserEvent::Toast(format!("Kept the chat's worktree: it has changes that aren't committed ({})", wt.display())));
-                            }
-                        }
-                    });
-                }
-                self.terminals.retain(|t| t.chat.as_deref() != Some(id.as_str()));
-                let dir = chats_dir(&self.config);
-                if let Some(pos) = self.chats.iter().position(|c| c.id == id) {
-                    let mut c = self.chats.remove(pos);
-                    c.closed_at = now();
-                    crate::ai::save_chat(&dir, &c);
-                }
-                crate::ai::close_chat(&dir, &id);
-                self.closed_chats = crate::ai::load_closed(&dir);
-                if self.active_chat.as_deref() == Some(id.as_str()) {
-                    self.active_chat = self.chats.first().map(|c| c.id.clone());
-                }
-                self.render();
-                self.render_chat();
+                self.close_chat(id);
             }
             Command::TogglePinChat { chat } => {
                 let id = chat.or_else(|| self.active_chat.clone());
@@ -5458,21 +5433,11 @@ impl App {
                 self.render();
                 self.render_chat();
             }
-            Command::ToggleSettleChat { chat } => {
-                let id = chat.or_else(|| self.active_chat.clone());
-                if let Some(c) = self.chats.iter_mut().find(|c| Some(&c.id) == id.as_ref()) {
-                    c.settled = !c.settled;
-                    c.snoozed_until = 0;
-                    crate::ai::save_chat(&chats_dir(&self.config), c);
-                }
-                self.render();
-            }
             Command::SnoozeChat { chat, until } => {
                 let id = chat.or_else(|| self.active_chat.clone());
                 let wake = snooze_until(&until);
                 if let Some(c) = self.chats.iter_mut().find(|c| Some(&c.id) == id.as_ref()) {
                     c.snoozed_until = wake;
-                    c.settled = false;
                     crate::ai::save_chat(&chats_dir(&self.config), c);
                     if wake > 0 {
                         self.toast(&format!("Snoozed until {}", platform::local_time_of(wake)));
@@ -7694,7 +7659,6 @@ impl App {
         let snooze = |label: &str, until: &str| Some((label.to_string(), json!({ "cmd": "snooze_chat", "chat": id, "until": until })));
         let mut e = vec![
             Some((if c.pinned { "Unpin" } else { "Pin" }.to_string(), json!({ "cmd": "toggle_pin_chat", "chat": id }))),
-            Some((if c.settled { "Un-settle" } else { "Settle" }.to_string(), json!({ "cmd": "toggle_settle_chat", "chat": id }))),
             None,
         ];
         if c.snoozed_until > 0 {
@@ -7896,7 +7860,6 @@ impl App {
         if !c.model.is_empty() && name == c.agent {
             def.model = c.model.clone();
         }
-        c.settled = false;
         c.snoozed_until = 0;
         c.unread = false;
         let opts = crate::ai::Opts {
@@ -9414,13 +9377,45 @@ impl App {
         }
     }
 
-    /// Wake snoozed chats whose time has come, and settle chats left alone for chats.auto_settle_days.
+    /// Close a chat: it stops, its worktree goes, and it moves to the Closed list.
+    fn close_chat(&mut self, id: String) {
+        crate::ai::stop(&id);
+        if let Some(c) = self.chats.iter().find(|c| c.id == id && !c.worktree.is_empty()) {
+            let (folder, wt, branch, p) = (PathBuf::from(&c.folder), PathBuf::from(&c.worktree), c.branch.clone(), self.proxy.clone());
+            std::thread::spawn(move || {
+                if let Err(e) = remove_worktree(&folder, &wt, &branch) {
+                    crate::log::line("chats", format!("kept worktree {}: {e}", wt.display()));
+                    if wt.is_dir() {
+                        send(&p, UserEvent::Toast(format!("Kept the chat's worktree: it has changes that aren't committed ({})", wt.display())));
+                    }
+                }
+            });
+        }
+        self.terminals.retain(|t| t.chat.as_deref() != Some(id.as_str()));
+        let dir = chats_dir(&self.config);
+        if let Some(pos) = self.chats.iter().position(|c| c.id == id) {
+            let mut c = self.chats.remove(pos);
+            c.closed_at = now();
+            crate::ai::save_chat(&dir, &c);
+        }
+        crate::ai::close_chat(&dir, &id);
+        self.closed_chats = crate::ai::load_closed(&dir);
+        if self.active_chat.as_deref() == Some(id.as_str()) {
+            self.active_chat = self.chats.first().map(|c| c.id.clone());
+        }
+        self.render();
+        self.render_chat();
+    }
+
+    /// Wake snoozed chats whose time has come, and close chats left alone for chats.auto_close_days.
     fn tend_chats(&mut self) {
         let t = now();
-        let settle_after = (self.config.chats.auto_settle_days * 86400.0) as u64;
+        let close_after = (self.config.chats.auto_close_days * 86400.0) as u64;
         let dir = chats_dir(&self.config);
         let mut changed = false;
         let mut woke = Vec::new();
+        let mut to_close = Vec::new();
+        let shown = if self.chats_open || self.chat_float { self.active_chat.clone() } else { None };
         for c in self.chats.iter_mut() {
             if c.snoozed_until > 0 && t >= c.snoozed_until {
                 c.snoozed_until = 0;
@@ -9428,13 +9423,15 @@ impl App {
                 woke.push(c.title.clone());
                 crate::ai::save_chat(&dir, c);
                 changed = true;
-            } else if settle_after > 0 && !c.settled && !c.pinned && c.snoozed_until == 0 && !c.messages.is_empty()
-                && !self.chat_running.contains(&c.id) && t.saturating_sub(c.updated) > settle_after
+            } else if !self.chat_running.contains(&c.id) && shown.as_ref() != Some(&c.id) && c.worktree.is_empty() // closing removes the worktree
+                && (c.settled // Settled was folded into Closed
+                    || close_after > 0 && !c.pinned && c.snoozed_until == 0 && !c.messages.is_empty() && t.saturating_sub(c.updated) > close_after)
             {
-                c.settled = true;
-                crate::ai::save_chat(&dir, c);
-                changed = true;
+                to_close.push(c.id.clone());
             }
+        }
+        for id in to_close {
+            self.close_chat(id);
         }
         for title in woke {
             self.toast(&format!("⏰ {title} is back"));

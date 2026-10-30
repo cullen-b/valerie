@@ -271,7 +271,7 @@ chats:
                            # the browser, and Claude's own tools) | full (no questions). Change it per chat in the composer.
   effort: ""               # reasoning effort for new chats. one of: "" (the CLI's default) | low | medium | high | max
   own_tools: true          # chat agents keep your own MCP servers, plugins and skills from that CLI, alongside Valerie's
-  auto_settle_days: 3      # chats untouched this many days move to Settled (still there, out of the way); 0 = never
+  auto_close_days: 3       # chats untouched this many days move to Closed (click one there to bring it back); 0 = never
   closed_list: true        # a "Closed" fold at the bottom of the Chats sidebar with the chats you've closed; click one
                            # to bring it back. true | false
   from_space: float        # a chat started from a space (the command bar, an AI action, ⌘N). one of: float (it opens in
