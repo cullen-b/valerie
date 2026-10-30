@@ -4585,6 +4585,8 @@ impl App {
             Command::CloseTab { tab } => {
                 if let Some(t) = self.target_tab(tab) {
                     self.close(t);
+                } else if tab.is_none() && self.config.tabs.close_window_when_empty {
+                    self.dispatch(Command::CloseWindow, elwt);
                 }
             }
             Command::ToggleTestBuilds => {

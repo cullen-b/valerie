@@ -326,6 +326,7 @@ pub struct TabsConfig {
     pub autoplay_in_background: bool,
     pub picture_in_picture_on_leave: bool,
     pub undo_close: bool,
+    pub close_window_when_empty: bool,
     pub zoom: String,
     pub default_zoom: f64,
     pub zoom_step: f64,
