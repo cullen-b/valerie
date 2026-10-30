@@ -153,8 +153,12 @@ console errors, broken images and anything sticking out past the screen, in one 
 requests (status, time; bodies: true for API responses).\n\
 Working out of sight: open_tab with hidden: true gives you a tab only you see, with the user's logins; use the page tools \
 on it by its tab id, close_tab when done. map_site lists a site's pages (sitemap and links; read: N reads them).\n\
-Stuck (a CAPTCHA, a sign-in, a two-factor code, a step you can't find)? ask_user hands the user the tab with your note \
-and waits until they press Done. fetch_page and web_search return blocked with a tab when a page wants a person.\n\
+Need a person? Don't stop and tell the user to do something in their own time: ask_user hands them a page with your \
+note and waits for them, then you carry on. Use it for anything only a person can or should do: make an account, sign \
+in, a CAPTCHA or two-factor code, verify an email, accept terms, pay or pick a plan, create an API key, grant access, \
+or choose between options (choices gives them buttons). Pass url to open the page for them, or tab for one you have \
+open. Never ask them to type a password or key into the note box: they put it into the page. fetch_page and \
+web_search return blocked with a tab when a page wants a person.\n\
 Working in the user's tabs: list_tabs gives tab ids; page tools default to the active tab. read_page reads a tab \
 (format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref (snapshot again \
 after the page changes). wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
@@ -409,12 +413,16 @@ pub fn tools() -> Vec<Value> {
         tool("navigate", "Load a URL in an existing tab.", json!({ "url": { "type": "string" }, "tab": tab_prop() }), &["url"]),
         tool("activate_tab", "Switch to a tab (also switches space).", json!({ "tab": tab_prop() }), &["tab"]),
         tool("close_tab", "Close a tab.", json!({ "tab": tab_prop() }), &["tab"]),
-        tool("ask_user", "Hand the user a page when you're stuck: a CAPTCHA, a sign-in, a two-factor code, a cookie wall, or a \
-             step you can't work out. The tab comes to the front (a hidden one into their sidebar) with your note, a box to \
-             answer and a Done button; this waits until they press it and returns what they wrote. A hidden tab goes back to \
-             you afterwards, past whatever they did.", json!({
+        tool("ask_user", "Hand the user a page for anything only a person can do, then carry on: make an account, sign in, a \
+             CAPTCHA or two-factor code, verify an email, accept terms, pay or pick a plan, create an API key, grant access, \
+             a decision, or a step you can't work out. The page comes to the front (url opens it; a hidden tab comes into \
+             their sidebar) with your note, a box to answer and a Done button (or your choices); this waits until they press \
+             one and returns what they wrote and chose. A hidden tab goes back to you afterwards, past whatever they did. \
+             Several steps? Ask once per step.", json!({
             "tab": tab_prop(),
-            "note": { "type": "string", "description": "What you need, in a sentence, e.g. \"Please sign in to GitHub, then press Done\"" },
+            "url": { "type": "string", "description": "A page to open for the user instead of a tab you have, e.g. a sign-up or API keys page" },
+            "note": { "type": "string", "description": "What you need, in a sentence, e.g. \"Please make a Resend account and create an API key, then press Done\"" },
+            "choices": { "type": "array", "items": { "type": "string" }, "description": "Up to 6 short buttons in place of Done, e.g. [\"Free plan\", \"Pro plan\"]; the one pressed comes back as choice" },
             "who": { "type": "string", "description": "Your name as the user knows you, e.g. Claude Code" },
             "wait_seconds": { "type": "integer", "description": "Longest to wait (default 300, up to 600). If your tool calls time out sooner \
                 (Codex: 60), pass less; it returns still_with_user and you call again with the same tab to keep waiting" } }), &["note"]),
@@ -1439,10 +1447,22 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         "check_page" => check_page(proxy, &a),
         "map_site" => map_site(proxy, &a),
         "ask_user" => {
+            let mut a = a;
+            // A page that isn't open yet (a sign-up page, a billing page) opens as the user's own tab.
+            if let Some(url) = a["url"].as_str().filter(|u| !u.trim().is_empty() && a["tab"].is_null()) {
+                if !ASK_USER.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("asking the user is off (the mcp.ask_user setting)".into());
+                }
+                if a["note"].as_str().is_none_or(|n| n.trim().is_empty()) {
+                    return Err("say what you need the user to do (note), e.g. \"Make an account, then press Done\"".into());
+                }
+                a["tab"] = call(proxy, "open_tab", json!({ "url": url }))?["tab"].clone();
+            }
+            let tab = a["tab"].clone();
             let wait = a["wait_seconds"].as_u64().unwrap_or(300).clamp(5, 600);
             match call_wait(proxy, "ask_user", a, wait) {
-                Err(e) if e.starts_with("timed out") => Ok(json!({ "done": false, "still_with_user": true,
-                    "next": "The user hasn't pressed Done yet. Call ask_user again with the same tab (no note needed) to keep waiting." })),
+                Err(e) if e.starts_with("timed out") => Ok(json!({ "done": false, "still_with_user": true, "tab": tab,
+                    "next": "The user hasn't pressed Done yet. Call ask_user again with this tab (no note or url) to keep waiting." })),
                 r => r,
             }
         }

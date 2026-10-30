@@ -376,7 +376,9 @@ settings for any other MCP app. `web_search`, `fetch_page` and `check_page` (off
 read the web and PDFs as Markdown (or only the parts about a `focus`) and check pages being built at phone and desktop sizes, in
 hidden tabs with the user's logins; `map_site` lists (and reads) a site's pages. Agents can work in hidden tabs of their own
 (`open_tab` with `hidden: true`; `mcp.hidden_tabs_close_after` minutes unused closes one, `mcp.hidden_tabs_max` caps them),
-hand the user a page when they're stuck (`ask_user`: a note and a Done button; off with `mcp.ask_user: false`), and read
+hand the user a page for anything only a person can do, such as making an account, signing in, paying, creating an API key
+or picking an option (`ask_user` with a `url` or `tab`, a note, and a Done button or `choices`; off with
+`mcp.ask_user: false`), and read
 a page's requests (`read_network`; off with `mcp.network_log: false`).
 
 Tools:

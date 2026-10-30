@@ -1505,19 +1505,21 @@ document.addEventListener("keydown", (e) => {
 let offered = null;
 // An agent handed the user this page ("ask_user"): its note, a box to answer, and Done to give the page back.
 let helpBox = null;
-function helpBar(who, note, nonce) {
+function helpBar(who, note, nonce, choices) {
   helpBarClose();
   const box = document.createElement("div"); box.className = "save help";
   const h = document.createElement("p"); h.textContent = tr(who + " needs you"); h.className = "who";
   const p = document.createElement("p"); p.textContent = note;
   const input = document.createElement("textarea"); input.placeholder = tr("Anything to tell it? (optional)"); input.rows = 2;
   const row = document.createElement("div");
-  const send = (gave_up) => { box.remove(); helpBox = null; post({ t: "help_done", nonce, note: input.value, gave_up }); };
-  const button = (label, cls, gave_up) => {
-    const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
-    b.addEventListener("click", (e) => { if (e.isTrusted) send(gave_up); }); row.append(b);
+  const send = (gave_up, choice) => { box.remove(); helpBox = null; post({ t: "help_done", nonce, note: input.value, gave_up, choice }); };
+  const button = (label, cls, gave_up, choice) => {
+    const b = document.createElement("button"); b.textContent = choice || tr(label); if (cls) b.className = cls;
+    b.addEventListener("click", (e) => { if (e.isTrusted) send(gave_up, choice); }); row.append(b);
   };
-  button("Done", "primary", false);
+  // The agent's own choices take Done's place; the first is the main one.
+  if (choices && choices.length) for (let i = 0; i < choices.length; i++) button("", i ? "" : "primary", false, String(choices[i]));
+  else button("Done", "primary", false);
   button("I can't", "", true);
   input.addEventListener("keydown", (e) => { if (e.isTrusted && e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(false); e.stopPropagation(); });
   box.append(h, p, input, row);

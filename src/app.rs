@@ -640,6 +640,8 @@ struct Help {
     nonce: String,
     who: String,
     note: String,
+    /// Buttons the agent offered in place of Done; the one pressed goes back as `choice`.
+    choices: Vec<String>,
     /// A hidden tab that goes back to the agent afterwards, and the tab the user was on before.
     hidden: bool,
     back_to: Option<TabId>,
@@ -2649,7 +2651,7 @@ impl App {
             return;
         }
         let Some(t) = self.target_tab(args["tab"].as_u64()).filter(|t| self.state.tabs.contains_key(t)) else {
-            let _ = reply.send(Err("no tab (give the tab you need help with)".into()));
+            let _ = reply.send(Err("no tab (give the tab you need help with, or a url to open for the user)".into()));
             return;
         };
         if let Some(answer) = self.help_answers.remove(&t) {
@@ -2674,8 +2676,11 @@ impl App {
             let space = self.state.active_space;
             self.state.spaces[space].today.insert(0, t);
         }
+        let choices: Vec<String> = args["choices"].as_array().map(|a| {
+            a.iter().filter_map(|c| c.as_str()).map(|c| c.trim().chars().take(60).collect::<String>()).filter(|c| !c.is_empty()).take(6).collect()
+        }).unwrap_or_default();
         crate::log::event("mcp", format!("{who} asked the user for help on tab {t}"));
-        self.helping.insert(t, Help { nonce: crate::mcp::random_hex(), who: who.clone(), note: note.clone(), hidden, back_to, reply: Some(reply) });
+        self.helping.insert(t, Help { nonce: crate::mcp::random_hex(), who: who.clone(), note: note.clone(), choices, hidden, back_to, reply: Some(reply) });
         self.activate(t);
         self.show_main();
         self.render();
@@ -2687,7 +2692,7 @@ impl App {
 
     fn show_help_bar(&self, t: TabId) {
         if let (Some(h), Some(v)) = (self.helping.get(&t), self.views.get(&t)) {
-            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.helpBar({}, {}, {})", json!(h.who), json!(h.note), json!(h.nonce)));
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.helpBar({}, {}, {}, {})", json!(h.who), json!(h.note), json!(h.nonce), json!(h.choices)));
         }
     }
 
@@ -2699,6 +2704,7 @@ impl App {
         let Some(h) = self.helping.remove(&t) else { return };
         let note: String = m["note"].as_str().unwrap_or("").trim().chars().take(2000).collect();
         let gave_up = m["gave_up"].as_bool() == Some(true);
+        let choice = m["choice"].as_str().filter(|c| !gave_up && h.choices.iter().any(|x| x == c)).map(str::to_string);
         let (url, title) = self.state.tabs.get(&t).map(|x| (x.url.clone(), x.display_title().to_string())).unwrap_or_default();
         if h.hidden && self.state.web_tabs.contains(&t) {
             let was_active = self.state.active_tab() == Some(t);
@@ -2717,7 +2723,7 @@ impl App {
             (false, true) => "The page is back in your hidden tab: carry on there (read_page, snapshot).",
             (false, false) => "Carry on in this tab.",
         };
-        let answer = json!({ "done": !gave_up, "user_note": if note.is_empty() { Value::Null } else { json!(note) }, "tab": t, "url": url, "title": title, "next": next });
+        let answer = json!({ "done": !gave_up, "choice": choice, "user_note": if note.is_empty() { Value::Null } else { json!(note) }, "tab": t, "url": url, "title": title, "next": next });
         self.answer_help(t, h.reply, Ok(answer));
     }
 
