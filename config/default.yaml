@@ -217,6 +217,7 @@ tabs:
   picture_in_picture_on_leave: true  # a video that's playing pops out into a floating window when you switch away from its tab
   undo_close: true         # ⌘Z (Ctrl+Z elsewhere) brings back the last closed tab when you're not typing in a box and
                            # the page doesn't use ⌘Z itself. true | false (false = ⌘Z only undoes typing; ⌘⇧T still works)
+  close_window_when_empty: true  # ⌘W (Ctrl+W elsewhere) with no tab open closes the window. true | false
   zoom: site               # what ⌘+ / ⌘- zoom applies to. one of: site (every tab of that site, remembered) | tab (just this tab)
   default_zoom: 100        # zoom for every page you haven't zoomed yourself, percent (e.g. 125 for bigger text everywhere)
   zoom_step: 10            # how much each ⌘+ / ⌘- changes the zoom, percent
