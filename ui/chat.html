@@ -140,14 +140,28 @@ select { appearance: none; background: var(--faint); color: var(--fg); border: 1
 #hint { flex: 1; font-size: 11.5px; color: var(--dim); text-align: right; white-space: nowrap; overflow: hidden; }
 .ctl { appearance: none; background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 8px; padding: 3px 8px; font: 12px inherit; min-width: 0; }
 .ctl:hover { background: var(--faint); color: var(--fg); }
+.ctl:focus { outline: none; } .ctl:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 select.ctl { padding-right: 20px; background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
   background-position: calc(100% - 10px) 52%, calc(100% - 6px) 52%; background-size: 4px 4px; background-repeat: no-repeat; }
 select.ctl:disabled { background-image: none; padding-right: 8px; opacity: 1; }
 #model { max-width: 190px; } #folder { max-width: 170px; font-family: var(--mono); font-size: 11.5px; }
-option, optgroup { background: #111; color: #eee; }
 #access.full { color: var(--dim); } #access.ask { color: var(--warn); } #access.read { color: #6fc7a0; }
 #plan.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .sep { width: 1px; height: 14px; background: var(--line); flex: none; }
+/* The composer's menus: drawn here so they match the chat, not the system's popup. */
+#menu { position: fixed; z-index: 50; min-width: 150px; max-height: 50vh; overflow-y: auto; padding: 4px; border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 92%, var(--fg)); border: 1px solid var(--line); font-size: 12.5px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.35), 0 2px 6px rgba(0,0,0,.2); opacity: 0; transform: translateY(4px);
+  transition: opacity .12s ease-out, transform .12s ease-out; }
+:root.light #menu { background: #fff; box-shadow: 0 12px 32px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06); }
+#menu.on { opacity: 1; transform: none; }
+#menu.up { transform: translateY(-4px); } #menu.up.on { transform: none; }
+#menu .it { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 8px; border-radius: 8px; color: var(--fg); cursor: default; white-space: nowrap; }
+#menu .it::before { content: ""; width: 12px; flex: none; color: var(--accent); font-size: 11px; }
+#menu .it.cur::before { content: "✓"; }
+#menu .it.hi { background: var(--faint); }
+#menu .grp { padding: 7px 10px 3px 28px; font-size: 10.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--dim); }
+#menu::-webkit-scrollbar { width: 6px; } #menu::-webkit-scrollbar-thumb { background: var(--faint); border-radius: 6px; }
 #queue { max-width: 800px; margin: 0 auto 6px; pointer-events: auto; display: none; }
 #queue div { font-size: 12px; color: var(--dim); padding: 4px 12px; border: 1px dashed var(--line); border-radius: 10px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #working { font-size: 11.5px; color: var(--accent); flex: none; font-variant-numeric: tabular-nums; }
@@ -787,6 +801,56 @@ $("#input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
 });
 $("#send").onclick = () => (D.running && !$("#input").value.trim() ? cmd({ cmd: "stop_chat", chat: D.chat && D.chat.id }) : submit());
+// The composer's selects open a menu drawn in the page (the system popup can't be styled); the select keeps the value.
+let menu = null;
+function closeMenu() { if (menu) { menu.el.remove(); menu = null; } }
+function openMenu(sel) {
+  closeMenu();
+  const box = el("div"), items = [];
+  box.id = "menu";
+  const add = (o) => {
+    const it = el("div", "it" + (o.value === sel.value ? " cur" : ""), o.textContent);
+    if (o.title) it.title = o.title;
+    it.onmouseenter = () => hilite(items.indexOf(it));
+    it.onmousedown = (e) => e.preventDefault();
+    it.onclick = () => pick(o.value);
+    items.push(it); box.append(it);
+  };
+  for (const c of sel.children) {
+    if (c.tagName === "OPTGROUP") { box.append(el("div", "grp", c.label)); [...c.children].forEach(add); } else add(c);
+  }
+  const pick = (v) => { closeMenu(); sel.focus(); if (v !== sel.value) { sel.value = v; sel.dispatchEvent(new Event("change")); } };
+  const hilite = (i) => { items.forEach((x, j) => x.classList.toggle("hi", j === i)); menu.hi = i; if (items[i]) items[i].scrollIntoView({ block: "nearest" }); };
+  document.body.append(box);
+  menu = { el: box, sel, items, pick, hilite, hi: -1 };
+  // Above the control when there's more room there (the composer sits at the bottom), else below.
+  const r = sel.getBoundingClientRect(), up = r.top > innerHeight - r.bottom;
+  box.style.maxHeight = Math.min(innerHeight * 0.5, (up ? r.top : innerHeight - r.bottom) - 12) + "px";
+  box.style.left = Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8)) + "px";
+  box.style.top = (up ? r.top - box.offsetHeight - 6 : r.bottom + 6) + "px";
+  box.classList.toggle("up", !up);
+  hilite(Math.max(0, items.findIndex((x) => x.classList.contains("cur"))));
+  requestAnimationFrame(() => box.classList.add("on"));
+}
+document.querySelectorAll("select.ctl").forEach((sel) => {
+  sel.addEventListener("mousedown", (e) => { e.preventDefault(); if (sel.disabled) return; menu && menu.sel === sel ? closeMenu() : (sel.focus(), openMenu(sel)); });
+  sel.addEventListener("keydown", (e) => {
+    if (!menu && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); openMenu(sel); }
+  });
+});
+// While a menu is open it gets the keys first (so Esc closes it, not the floating chat).
+addEventListener("keydown", (e) => {
+  if (!menu) return;
+  const n = menu.items.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") menu.hilite((menu.hi + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+  else if (e.key === "Enter" || e.key === " ") { const o = [...menu.sel.options][menu.hi]; if (o) menu.pick(o.value); }
+  else if (e.key === "Escape" || e.key === "Tab") { closeMenu(); if (e.key === "Tab") return; }
+  else return;
+  e.preventDefault(); e.stopImmediatePropagation();
+}, true);
+addEventListener("mousedown", (e) => { if (menu && !menu.el.contains(e.target) && e.target !== menu.sel) closeMenu(); });
+addEventListener("blur", closeMenu);
+addEventListener("resize", closeMenu);
 $("#agent").onchange = () => { $("#agentBadge").textContent = $("#agent").value; setOpt("agent", $("#agent").value); fillModels(""); };
 $("#model").onchange = () => { setOpt("model", $("#model").value); fillEfforts(); };
 $("#effort").onchange = () => setOpt("effort", $("#effort").value);

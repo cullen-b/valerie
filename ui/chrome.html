@@ -177,6 +177,7 @@ body.pointer .chat-label.fold:hover { color: var(--fg); }
   background: linear-gradient(color-mix(in srgb, var(--bg2) 92%, transparent), var(--bg2)); backdrop-filter: blur(8px); }
 body.pointer .row.chat:hover .when { display: none; }
 .sp.chats-sp { color: var(--accent); }
+.closed-list { max-height: 40vh; overflow-y: auto; }
 .row.closed-chat .title, .row.closed-chat .chat-ic { opacity: .6; }
 .row.closed-chat:hover .title { opacity: 1; }
 .row.closed-chat .when.proj { max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; }
@@ -663,8 +664,8 @@ function chatRow(c) {
   r.oncontextmenu = (e) => { e.preventDefault(); send({ t: "chat_menu", chat: c.id, x: e.clientX, y: e.clientY }); };
   return r;
 }
-// Pinned, then your chats; Snoozed and Settled fold away; chats whose agent is working sit on a shelf at the bottom.
-const chatFolds = { snoozed: true, settled: true, closed: true };
+// Pinned, then your chats; Snoozed, Working and Closed sit on a shelf at the bottom.
+const chatFolds = { snoozed: true, closed: true };
 // A chat you closed: click it to bring it back.
 function closedRow(c) {
   const r = el("div", "row chat closed-chat");
@@ -675,15 +676,20 @@ function closedRow(c) {
   r.onclick = () => cmd({ cmd: "reopen_chat", chat: c.id });
   return r;
 }
+function closedList(closed) {
+  const box = el("div", "closed-list");
+  closed.forEach((c) => box.append(closedRow(c)));
+  return box;
+}
 function renderChatList(sc) {
   const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New chat"));
   nt.title = "New chat (⌘N starts one on the open chat's project)";
   nt.onclick = () => cmd({ cmd: "new_chat" }); sc.append(nt);
   const list = S.chats.list || [];
   const working = list.filter((c) => c.running), rest = list.filter((c) => !c.running);
-  const pinned = rest.filter((c) => c.pinned && !c.settled && !c.snoozed);
-  const active = rest.filter((c) => !c.pinned && !c.settled && !c.snoozed);
-  const snoozed = rest.filter((c) => c.snoozed), settled = rest.filter((c) => c.settled && !c.snoozed);
+  const pinned = rest.filter((c) => c.pinned && !c.snoozed);
+  const active = rest.filter((c) => !c.pinned && !c.snoozed);
+  const snoozed = rest.filter((c) => c.snoozed);
   if (pinned.length) { sc.append(el("div", "chat-label", "Pinned")); pinned.forEach((c) => sc.append(chatRow(c))); }
   // Chats with a project folder sit under the project's name, newest project first; a + starts another chat there.
   const byProject = new Map(), plain = [];
@@ -704,21 +710,20 @@ function renderChatList(sc) {
     into.append(h);
     if (!chatFolds[key]) items.forEach((c) => into.append(chatRow(c)));
   };
-  fold(sc, "settled", "Settled", settled);
-  const closed = S.chats.closed || [];
-  if (closed.length) {
-    const h = el("div", "chat-label fold" + (chatFolds.closed ? " closed" : ""), `Closed · ${closed.length}`);
-    h.title = "Chats you've closed: open one to pick it up again";
-    h.onclick = () => { chatFolds.closed = !chatFolds.closed; render(S); };
-    sc.append(h);
-    if (!chatFolds.closed) closed.forEach((c) => sc.append(closedRow(c)));
-  }
   if (!list.length) sc.append(el("div", "kept-hint", "Ask anything: your agent can see and use your browser"));
-  // Snoozed and Working live at the bottom of the sidebar.
-  if (working.length || snoozed.length) {
+  // Snoozed, Working and Closed live at the bottom of the sidebar.
+  const closed = S.chats.closed || [];
+  if (working.length || snoozed.length || closed.length) {
     const shelf = el("div", "working-shelf");
     fold(shelf, "snoozed", "Snoozed", snoozed);
     if (working.length) { shelf.append(el("div", "chat-label", "Working")); working.forEach((c) => shelf.append(chatRow(c))); }
+    if (closed.length) {
+      const h = el("div", "chat-label fold" + (chatFolds.closed ? " closed" : ""), `Closed · ${closed.length}`);
+      h.title = "Chats you've closed: open one to pick it up again";
+      h.onclick = () => { chatFolds.closed = !chatFolds.closed; render(S); };
+      shelf.append(h);
+      if (!chatFolds.closed) shelf.append(closedList(closed));
+    }
     sc.append(shelf);
   }
 }

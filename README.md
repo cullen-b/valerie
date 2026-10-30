@@ -118,8 +118,8 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   - The composer picks the agent, the model (each CLI's own list), the reasoning effort, and access: **Read only**
     (it can look but not act), **Ask first** (you approve each action in a sheet), or **Full access**.
   - Send while it's working and your message waits in a queue. A timer shows how long it's been at it.
-  - Pin, **snooze** (an hour, this evening, tomorrow, next week…) or **settle** chats; untouched chats settle after
-    3 days (`chats.auto_settle_days`). Working and snoozed chats sit at the bottom of the sidebar; unread answers
+  - Pin or **snooze** chats (an hour, this evening, tomorrow, next week…); untouched chats close after 3 days
+    (`chats.auto_close_days`). Working, snoozed and closed chats sit at the bottom of the sidebar; unread answers
     get a dot.
   - A chat started from a space (the command bar, an AI action, `⌘N`) **floats** over the middle of the window: `Esc`
     sends it on to Chats so you keep working, `Shift+Esc` goes with it (`chats.from_space`). Closed chats sit in a

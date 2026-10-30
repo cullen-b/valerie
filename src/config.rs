@@ -566,7 +566,7 @@ pub struct ChatsConfig {
     pub access: String,
     pub effort: String,
     pub own_tools: bool,
-    pub auto_settle_days: f64,
+    pub auto_close_days: f64,
     pub plan_button: bool,
     pub composer_hint: bool,
     pub sync: bool,

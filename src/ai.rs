@@ -1032,8 +1032,8 @@ pub struct Chat {
     /// Plan first: the agent proposes, the user says go.
     #[serde(default)]
     pub plan: bool,
-    /// Set aside (still searchable); a new message brings it back.
-    #[serde(default)]
+    /// Old "Settled" mark: such chats are now moved to Closed.
+    #[serde(default, skip_serializing)]
     pub settled: bool,
     /// Hidden until this time (seconds), then it comes back marked unread.
     #[serde(default)]
@@ -1154,7 +1154,7 @@ pub fn reopen_chat(dir: &Path, id: &str) -> Option<Chat> {
     let mut c: Chat = serde_json::from_str(&std::fs::read_to_string(&from).ok()?).ok()?;
     c.closed_at = 0;
     c.settled = false;
-    // Back at the top, and not settled again straight away by chats.auto_settle_days.
+    // Back at the top, and not closed again straight away by chats.auto_close_days.
     c.updated = crate::state::now();
     save_chat(dir, &c);
     let _ = std::fs::remove_file(from);

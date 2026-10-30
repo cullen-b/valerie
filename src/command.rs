@@ -400,11 +400,6 @@ pub enum Command {
         #[serde(default)]
         plan: Option<bool>,
     },
-    /// Settle a chat (set it aside) or bring it back.
-    ToggleSettleChat {
-        #[serde(default)]
-        chat: Option<String>,
-    },
     /// Snooze a chat: "hour" | "three_hours" | "evening" | "tomorrow" | "next_week" | "wake".
     SnoozeChat {
         #[serde(default)]
@@ -731,7 +726,6 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("stop_chat", "Stop the Agent in This Chat"),
     ("close_chat", "Close Chat"),
     ("toggle_pin_chat", "Pin / Unpin Chat"),
-    ("toggle_settle_chat", "Settle / Un-settle Chat"),
     ("copy_chat_id", "Copy Chat ID (share its context with another chat)"),
     ("watch_page", "Watch This Page… (an agent tells you when something changes)"),
     ("restart", "Restart Valerie (use a newly installed version)"),
@@ -812,7 +806,6 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("reopen_chat", "{ chat }  (from the Closed list)"),
     ("rename_chat", "{ chat, title }"),
     ("set_chat_options", "{ chat, agent?, model?, effort?: low|medium|high|max, access?: read|ask|full, plan? }"),
-    ("toggle_settle_chat", "{ chat? }"),
     ("snooze_chat", "{ chat?, until: hour | three_hours | evening | tomorrow | next_week | wake }"),
     ("copy_chat_id", "{ chat? }"),
     ("ai_action", "{ name, input? }  (run one of the ai_actions from the config)"),
