@@ -1834,6 +1834,8 @@ impl App {
         let full = rect(0.0, 0.0, size.width, size.height);
         let _ = self.chrome.set_bounds(full);
         let _ = self.overlay.set_bounds(full);
+        platform::follow_window(&self.chrome, platform::Follow::Fill);
+        platform::follow_window(&self.overlay, platform::Follow::Fill);
         let (x, y, w, h) = self.content_area(size.width, size.height);
         let panes = self.panes();
         let n = panes.len().max(1) as f64;
@@ -1858,6 +1860,7 @@ impl App {
                 if secs <= 0.0 || !self.shown_panes.contains(id) || !platform::animate_bounds(v, px, y, pw, h, secs) {
                     let _ = v.set_bounds(rect(px, y, pw, h));
                 }
+                platform::follow_window(v, platform::Follow::Pane { first: i == 0, last: i + 1 == panes.len() });
                 let _ = v.set_visible(true);
             }
         }
@@ -1867,6 +1870,7 @@ impl App {
                 Some(_) => {
                     let (ax, ay, aw, ah) = self.answer_rect();
                     let _ = av.set_bounds(rect(ax, ay, aw, ah));
+                    platform::follow_window(av, platform::Follow::TopRight);
                     let _ = av.set_visible(true);
                     platform::bring_to_front(av);
                 }
@@ -1879,11 +1883,13 @@ impl App {
             if self.chats_open {
                 platform::round_corners(cv, self.config.layout.corner_radius, self.pane_corners(0, 1));
                 let _ = cv.set_bounds(rect(x, y, w, h));
+                platform::follow_window(cv, platform::Follow::Fill);
                 let _ = cv.set_visible(true);
             } else if self.chat_float {
                 // The whole window: the page dims behind the chat's card, like behind the command bar.
                 platform::round_corners(cv, 0.0, platform::Corners::None);
                 let _ = cv.set_bounds(full);
+                platform::follow_window(cv, platform::Follow::Fill);
                 let _ = cv.set_visible(true);
             } else {
                 let _ = cv.set_visible(false);
@@ -1894,6 +1900,7 @@ impl App {
                 Some((tx, ty, tw, th)) => {
                     platform::round_corners(tv, self.config.layout.corner_radius, self.pane_corners(0, 1));
                     let _ = tv.set_bounds(rect(tx, ty, tw, th));
+                    platform::follow_window(tv, if self.terminal_max { platform::Follow::Fill } else { platform::Follow::Bottom });
                     let _ = tv.set_visible(true);
                     platform::bring_to_front(tv);
                 }
@@ -1908,6 +1915,7 @@ impl App {
         if let Some(mv) = &self.market_view {
             if self.market_open {
                 let _ = mv.set_bounds(full);
+                platform::follow_window(mv, platform::Follow::Fill);
                 let _ = mv.set_visible(true);
                 platform::bring_to_front(mv);
             } else {
@@ -1917,6 +1925,7 @@ impl App {
         if let Some(wv) = &self.welcome_view {
             if self.welcome_open {
                 let _ = wv.set_bounds(full);
+                platform::follow_window(wv, platform::Follow::Fill);
                 let _ = wv.set_visible(true);
                 platform::bring_to_front(wv);
             } else {
@@ -1933,6 +1942,7 @@ impl App {
         if let Some(p) = &self.peek {
             let (px, py, pw, ph) = self.peek_rect();
             let _ = p.view.set_bounds(rect(px, py, pw, ph));
+            platform::follow_window(&p.view, platform::Follow::Fill);
         }
         if self.bar_open {
             platform::bring_to_front(&self.overlay);
@@ -2006,6 +2016,8 @@ impl App {
             let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
             let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR));
             let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, s.width, s.height - LITTLE_BAR));
+            platform::follow_window(&l.bar, platform::Follow::Top);
+            platform::follow_window(&l.view, platform::Follow::Fill);
         }
     }
 
