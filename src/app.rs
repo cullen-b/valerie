@@ -243,6 +243,8 @@ pub struct App {
     tasks_running: std::collections::HashSet<String>,
     /// The window is on screen and the after-launch work has started.
     revealed: bool,
+    /// When the main window was closed with Valerie left running (app.unload_when_closed_minutes counts from here).
+    closed_since: Option<u64>,
     /// Set while handling an event that should show the window (done once the borrow ends).
     pending_reveal: Option<&'static str>,
     reveal_when_chrome_ready: bool,
@@ -1223,6 +1225,7 @@ impl App {
             answer_label: String::new(),
             tasks_running: Default::default(),
             revealed: false,
+            closed_since: None,
             pending_reveal: None,
             reveal_when_chrome_ready: false,
             preloaded: HashMap::new(),
@@ -4361,6 +4364,46 @@ impl App {
         }
     }
 
+    /// The window has been closed a while with Valerie left running: let go of every page and idle panel (each web view
+    /// is a process holding tens to hundreds of MB); show_main loads them again.
+    fn free_memory_when_closed(&mut self, t: u64) {
+        if !self.main_hidden {
+            self.closed_since = None;
+            return;
+        }
+        let since = *self.closed_since.get_or_insert(t);
+        let secs = (self.config.app.unload_when_closed_minutes * 60.0) as u64;
+        if secs == 0 || t.saturating_sub(since) < secs {
+            return;
+        }
+        let tabs: Vec<TabId> = self
+            .views
+            .keys()
+            .copied()
+            .filter(|id| self.state.tabs.get(id).is_none_or(|tab| self.site_settings(&tab.url).unload != Some(false)))
+            .collect();
+        let freed = tabs.len() + [self.chat_view.is_some(), self.answer_view.is_some()].iter().filter(|b| **b).count();
+        for id in tabs {
+            self.unload(id);
+        }
+        self.chat_view = None;
+        self.answer_view = None;
+        self.answer_tab = None;
+        if !self.market_open {
+            self.market_view = None;
+        }
+        if !self.welcome_open {
+            self.welcome_view = None;
+        }
+        // Its shells' scrollback lives only in the page, so the panel stays while any shell is open.
+        if self.terminals.is_empty() && self.terminal_view.take().is_some() {
+            self.terminal_ready = false;
+        }
+        if freed > 0 {
+            crate::log::line("memory", format!("window closed: unloaded {freed} views"));
+        }
+    }
+
     fn tick(&mut self) {
         self.close_idle_agent_tabs();
         let shown: Vec<(Target, PathBuf)> = self.md_watch.lock().map(|w| w.iter().map(|(t, f)| (*t, f.clone())).collect()).unwrap_or_default();
@@ -4382,6 +4425,7 @@ impl App {
         }
         self.touch_panes();
         let t = now();
+        self.free_memory_when_closed(t);
         let panes = self.panes();
         let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
         if archive_secs > 0 {
@@ -7314,8 +7358,12 @@ impl App {
     /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
     fn show_main(&mut self) {
         if std::mem::take(&mut self.main_hidden) {
+            self.closed_since = None;
             for p in self.panes() {
                 self.ensure_view(p);
+            }
+            if self.chats_open || self.chat_float {
+                self.ensure_chat_view();
             }
             self.layout();
             self.window.set_visible(true);

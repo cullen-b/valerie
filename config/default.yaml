@@ -841,6 +841,9 @@ app:
   keep_running_when_closed: true   # closing the window leaves Valerie running in the Dock (the dot stays), so it opens
                            # again and takes links instantly; anything playing is paused; ⌘Q quits. true | false
                            # (false = closing the window quits, unless little windows are open)
+  unload_when_closed_minutes: 5   # minutes after you close the window (Valerie still running) before every tab, chat and
+                           # idle panel is put to sleep so Valerie takes almost no memory; they reload when you open it
+                           # again. 0 = keep them loaded
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
