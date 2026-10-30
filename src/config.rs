@@ -252,6 +252,7 @@ pub struct SidebarConfig {
     pub pinned_tile_height: f64,
     pub swipe_between_spaces: bool,
     pub swipe_distance: f64,
+    pub swipe_settle_ms: f64,
     pub preload_on_hover: bool,
     pub preload_delay_ms: f64,
     pub preload_at_most: f64,

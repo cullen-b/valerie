@@ -1120,7 +1120,7 @@ $("#empty").onclick = (e) => { if (!$("#empty").classList.contains("plugin-start
 // (fast ones included, while the last one's momentum is still coming) shows as a turn, a long pause, or two events in
 // a row well above the smallest momentum seen. Events that arrive late are several merged ones (the sidebar was busy),
 // so they're scaled back rather than read as a push.
-const swipe = { acc: 0, timer: 0, lock: 0, low: 0, armed: false, strong: false, prev: 0, last: 0, at: 0 };
+const swipe = { acc: 0, timer: 0, lock: 0, low: 0, armed: false, strong: false, prev: 0, last: 0, at: 0, done: 0 };
 function springBack() {
   const sc = $("#scroll");
   sc.style.transition = "transform .2s var(--ease), opacity .16s"; sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
@@ -1135,7 +1135,9 @@ $("#sidebar").addEventListener("wheel", (e) => {
     // The fingers may still be speeding up when a swipe commits: wait for the first slowdown before judging.
     if (!swipe.armed && each < swipe.last) { swipe.armed = true; swipe.low = a; }
     const turned = Math.sign(dx) !== swipe.lock && a > 1, strong = swipe.armed && each > swipe.low * 1.5 + 2;
-    const fresh = gap > 300 || turned || (strong && swipe.strong);
+    // A hard swipe can speed up again after slowing; right after a switch that's the same swipe, not a new one.
+    const settled = now - swipe.done > Math.max(0, +(S.sidebar.swipe_settle_ms ?? 600) || 0);
+    const fresh = gap > 300 || turned || (strong && swipe.strong && settled);
     swipe.strong = strong; swipe.last = each;
     if (!fresh) { if (swipe.armed) swipe.low = Math.min(swipe.low, a); swipe.prev = dx; return; }
     swipe.acc = turned || gap > 300 ? 0 : swipe.prev; swipe.lock = 0;
@@ -1145,7 +1147,7 @@ $("#sidebar").addEventListener("wheel", (e) => {
   const sc = $("#scroll");
   if (Math.abs(swipe.acc) > dist) {
     const dir = Math.sign(swipe.acc);
-    Object.assign(swipe, { acc: 0, lock: dir, armed: false, strong: false });
+    Object.assign(swipe, { acc: 0, lock: dir, armed: false, strong: false, done: now });
     pendingDir = dir;
     cmd({ cmd: dir > 0 ? "next_space" : "prev_space" });
     return;
