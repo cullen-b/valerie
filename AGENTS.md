@@ -53,6 +53,20 @@ Valerie writes a daily log to the data folder's `logs/` (`valerie paths` prints 
 the owner reports a failure. When you add code where something can fail without the user seeing why, log it with
 `crate::log::line("<area>", …)` (every toast is already logged). Never log secrets (tokens, passwords, keys).
 
+## The plugin marketplace
+
+- Lives in its own repo, `cullen-b/valerie-plugins`: `plugins/<name>/` (a `plugin.yaml`) and `extensions/<name>/` (an
+  unpacked web extension's `manifest.json`). `scripts/build_index.py` checks both on pull requests and, on `main`,
+  writes `index.json` with every file pinned to a commit and checksummed. Valerie only installs what's in that list.
+- `index.json` has `plugins` and `extensions` keys. Older Valerie versions read only `plugins`, so never put an
+  extension there, and add new kinds under new keys.
+- Valerie's side: `src/market.rs` (fetch, search, install, share by pull request from the user's GitHub sign-in),
+  `ui/plugins.html` (the "Plugins" window), `valerie plugins …` in `src/main.rs`, and the offer to share after an agent
+  makes one (`offer_to_share` in `src/app.rs`, setting `plugin_marketplace.offer_to_share`).
+- Agents inside Valerie learn it from the guide (`src/llm_guide.rs`, "The plugin marketplace"); chat and task prompts
+  point there (`src/ai.rs`, `src/agents.rs`). Change the guide when the marketplace changes.
+- Merging into the marketplace repo publishes to everyone: only with the owner's yes. Its CI must pass first.
+
 ## Building and checking
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).
