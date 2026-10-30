@@ -821,7 +821,9 @@ function openMenu(sel) {
   }
   const pick = (v) => { closeMenu(); sel.focus(); if (v !== sel.value) { sel.value = v; sel.dispatchEvent(new Event("change")); } };
   const hilite = (i) => { items.forEach((x, j) => x.classList.toggle("hi", j === i)); menu.hi = i; if (items[i]) items[i].scrollIntoView({ block: "nearest" }); };
-  document.body.append(box);
+  // On <html>, not <body>: the floating chat's body is transformed and clipped, which would hide a fixed menu.
+  box.style.font = getComputedStyle(document.body).font; box.style.fontSize = "";
+  document.documentElement.append(box);
   menu = { el: box, sel, items, pick, hilite, hi: -1 };
   // Above the control when there's more room there (the composer sits at the bottom), else below.
   const r = sel.getBoundingClientRect(), up = r.top > innerHeight - r.bottom;
