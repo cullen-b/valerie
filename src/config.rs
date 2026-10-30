@@ -132,6 +132,7 @@ pub struct AppConfig {
     pub command_line_tool: bool,
     pub keep_running_when_closed: bool,
     pub unload_when_closed_minutes: f64,
+    pub reload_when_reopened: bool,
 }
 
 /// A network rule: block, redirect, hide or add a header. Exactly one of block / redirect / hide / header.

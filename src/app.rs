@@ -146,6 +146,8 @@ pub enum UserEvent {
     WidgetText { key: String, text: String },
     /// Time to refresh sidebar widgets whose text is due.
     WidgetTick,
+    /// Time to load the next page put to sleep while the window was closed, if the last one hasn't said it finished.
+    RestoreNext,
     /// The answer to "Quit Valerie?".
     QuitAnswered(bool),
     /// A global shortcut (global_keybindings) was pressed, in any app.
@@ -245,6 +247,11 @@ pub struct App {
     revealed: bool,
     /// When the main window was closed with Valerie left running (app.unload_when_closed_minutes counts from here).
     closed_since: Option<u64>,
+    /// Pages put to sleep while the window was closed, most recently used first: loaded again one at a time after it
+    /// opens (app.reload_when_reopened).
+    restore_queue: Vec<TabId>,
+    /// When the last of them started loading (a page that never finishes holds the rest up only this long).
+    restore_started: u64,
     /// Set while handling an event that should show the window (done once the borrow ends).
     pending_reveal: Option<&'static str>,
     reveal_when_chrome_ready: bool,
@@ -1226,6 +1233,8 @@ impl App {
             tasks_running: Default::default(),
             revealed: false,
             closed_since: None,
+            restore_queue: Vec::new(),
+            restore_started: 0,
             pending_reveal: None,
             reveal_when_chrome_ready: false,
             preloaded: HashMap::new(),
@@ -4385,6 +4394,9 @@ impl App {
         let freed = tabs.len() + [self.chat_view.is_some(), self.answer_view.is_some()].iter().filter(|b| **b).count();
         for id in tabs {
             self.unload(id);
+            if !self.restore_queue.contains(&id) {
+                self.restore_queue.push(id);
+            }
         }
         self.chat_view = None;
         self.answer_view = None;
@@ -4426,6 +4438,7 @@ impl App {
         self.touch_panes();
         let t = now();
         self.free_memory_when_closed(t);
+        self.restore_next();
         let panes = self.panes();
         let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
         if archive_secs > 0 {
@@ -6210,6 +6223,12 @@ impl App {
                     self.render();
                 }
                 Target::Tab(id) => {
+                    if finished && !self.restore_queue.is_empty() {
+                        if let Some(t) = self.state.tabs.get_mut(&id) {
+                            t.loading = false;
+                        }
+                        self.restore_next();
+                    }
                     if finished {
                         // The query and fragment can carry sign-in codes, so they stay out of the log.
                         crate::log::verbose("page", format!("tab {id} loaded {}", url.split(['?', '#']).next().unwrap_or("")));
@@ -6529,6 +6548,7 @@ impl App {
                 }
             }
             UserEvent::WidgetTick => self.refresh_widgets(),
+            UserEvent::RestoreNext => self.restore_next(),
             UserEvent::ExtensionGrant { name, print, allowed } => {
                 self.ext_asking = false;
                 if allowed {
@@ -7355,10 +7375,62 @@ impl App {
         }
     }
 
+    /// The window opens after its pages were put to sleep: the time it was closed doesn't count towards unloading or
+    /// archiving them, and (app.reload_when_reopened) the rest load after the page on screen, most recent first.
+    fn wake_after_closed(&mut self) {
+        let Some(since) = self.closed_since.take() else { return };
+        let closed = now().saturating_sub(since);
+        let mut queue = std::mem::take(&mut self.restore_queue);
+        queue.retain(|id| self.state.tabs.contains_key(id));
+        for id in &queue {
+            if let Some(t) = self.state.tabs.get_mut(id) {
+                t.last_active = t.last_active.saturating_add(closed).min(now());
+            }
+        }
+        if !self.config.app.reload_when_reopened {
+            return;
+        }
+        let rank = |id: &TabId| self.recent_tabs.iter().position(|r| r == id).unwrap_or(usize::MAX);
+        queue.sort_by_key(|id| rank(id));
+        crate::log::line("memory", format!("window opened: reloading {} pages after the one on screen", queue.len()));
+        self.restore_queue = queue;
+        self.restore_later();
+    }
+
+    /// The next sleeping page loads when this one says it finished, or in 5 seconds if it never does.
+    fn restore_later(&mut self) {
+        self.restore_started = now();
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            send(&p, UserEvent::RestoreNext);
+        });
+    }
+
+    /// Load the next page from restore_queue once nothing else is loading, so the page on screen gets the network first.
+    fn restore_next(&mut self) {
+        let busy = self.views.keys().any(|id| self.state.tabs.get(id).is_some_and(|t| t.loading));
+        if self.main_hidden || busy && now().saturating_sub(self.restore_started) < 5 {
+            return;
+        }
+        while !self.restore_queue.is_empty() {
+            let id = self.restore_queue.remove(0);
+            if self.state.tabs.contains_key(&id) && !self.views.contains_key(&id) {
+                self.ensure_view(id);
+                self.layout();
+                // Counts as loading before WebKit says it started, so the next one waits for it.
+                if let Some(t) = self.state.tabs.get_mut(&id) {
+                    t.loading = true;
+                }
+                return self.restore_later();
+            }
+        }
+    }
+
     /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
     fn show_main(&mut self) {
         if std::mem::take(&mut self.main_hidden) {
-            self.closed_since = None;
+            self.wake_after_closed();
             for p in self.panes() {
                 self.ensure_view(p);
             }
