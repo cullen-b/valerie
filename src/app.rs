@@ -1801,12 +1801,9 @@ impl App {
         if self.chats_open {
             return vec![];
         }
-        let s = self.state.space();
-        match self.state.active_tab() {
-            None => vec![],
-            Some(a) if s.split.len() > 1 && s.split.contains(&a) => s.split.clone(),
-            Some(a) => vec![a],
-        }
+        let Some(a) = self.state.active_tab() else { return vec![] };
+        let group: Vec<TabId> = self.state.split_of(a).into_iter().flatten().copied().filter(|t| self.state.tabs.contains_key(t)).collect();
+        if group.len() > 1 { group } else { vec![a] }
     }
 
     /// Where pages and chats go: the content area less the terminal panel when it's open.
@@ -1856,6 +1853,7 @@ impl App {
 
     /// Lay out every view; with `secs > 0` visible panes glide to their new bounds instead of jumping.
     fn layout_anim(&mut self, secs: f64) {
+        self.state.tidy_splits();
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         let _ = self.chrome.set_bounds(full);
@@ -2332,7 +2330,8 @@ impl App {
             "pinned": s.pinned.iter().filter_map(|n| self.node_vm(n)).collect::<Vec<_>>(),
             "today": s.today.iter().filter_map(|id| self.state.tabs.get(id)).map(|t| self.tab_vm(t)).collect::<Vec<_>>(),
             "active": active,
-            "split": if s.split.len() > 1 { s.split.clone() } else { vec![] },
+            "split": active.and_then(|a| self.state.split_of(a)).cloned().unwrap_or_default(),
+            "splits": s.splits,
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
             "agents": self.agents_running,
             "peek": self.sidebar_peek,
@@ -2506,10 +2505,6 @@ impl App {
                     return self.activate(n);
                 }
             }
-        }
-        let split = &mut self.state.space_mut().split;
-        if split.len() < 2 {
-            split.clear();
         }
         self.layout();
         self.focus_active();
@@ -2744,6 +2739,11 @@ impl App {
         if !self.state.tabs.contains_key(&tab) {
             return;
         }
+        if self.state.split_of(tab).is_some() {
+            let space = space.or_else(|| self.state.space_of(tab).map(|i| self.state.spaces[i].name.clone()));
+            let section = section.or_else(|| self.state.section_of(tab).filter(|s| *s != "favorites").map(str::to_string));
+            return self.move_items(&[tab], space, folder, section, false, index);
+        }
         let from = self.state.space_of(tab);
         let was_active = from.map(|s| self.state.spaces[s].active == Some(tab)).unwrap_or(false);
         let dest = space.and_then(|n| self.state.space_index(&n)).or(from).unwrap_or(self.state.active_space);
@@ -2792,7 +2792,16 @@ impl App {
     fn move_items(&mut self, ids: &[TabId], space: Option<String>, folder: Option<TabId>, section: Option<String>, favorite: bool, index: Option<usize>) {
         let dest = space.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
         let actives: Vec<Option<TabId>> = self.state.spaces.iter().map(|s| s.active).collect();
-        let moved = self.state.move_items(ids, dest, folder, section.as_deref(), favorite, index);
+        // A split-view group moves as one: each tab brings the rest of its group along, left to right.
+        let mut all: Vec<TabId> = Vec::new();
+        for &id in ids {
+            for t in self.state.split_of(id).cloned().unwrap_or_else(|| vec![id]) {
+                if !all.contains(&t) {
+                    all.push(t);
+                }
+            }
+        }
+        let moved = self.state.move_items(&all, dest, folder, section.as_deref(), favorite, index);
         for (i, a) in actives.into_iter().enumerate() {
             let Some(a) = a.filter(|a| moved.iter().any(|m| m.0 == *a)) else { continue };
             let here = self.state.space_of(a);
@@ -3033,7 +3042,11 @@ impl App {
             }
         }
         e.push(None);
-        e.push(item("Open in Split View", json!({ "cmd": "split_view", "tab": tab })));
+        if self.state.split_of(tab).is_some() {
+            e.push(item("Close Split View", json!({ "cmd": "unsplit", "tab": tab })));
+        } else {
+            e.push(item("Open in Split View", json!({ "cmd": "split_view", "tab": tab })));
+        }
         e.push(item("Rename…", json!({ "cmd": "prompt", "label": "Rename tab", "value": t.display_title(), "then": { "cmd": "rename_tab", "tab": tab }, "field": "title" })));
         e.push(item("Copy Link", json!({ "cmd": "copy_url", "tab": tab })));
         let others: Vec<String> = self.state.spaces.iter().enumerate().filter(|(i, _)| *i != self.state.active_space).map(|(_, s)| s.name.clone()).collect();
@@ -3595,7 +3608,7 @@ impl App {
             cmds.insert(item.id().clone(), cmd.clone());
             let usual = match &cmd {
                 Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => "Spaces",
-                Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit | Command::FocusNextPane | Command::ZoomIn
+                Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit { .. } | Command::FocusNextPane | Command::ZoomIn
                 | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } | Command::ToggleTerminal
                 | Command::NewTerminal { .. } => "View",
                 Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => "Tools",
@@ -3941,7 +3954,7 @@ impl App {
                 }
                 let id = self.state.add_tab(space, url, true);
                 self.queue_event("tab_opened", Some(id), None);
-                self.dispatch(Command::SplitView { tab: Some(id) }, elwt);
+                self.dispatch(Command::SplitView { tab: Some(id), with: None }, elwt);
             }
             _ => {
                 let id = self.state.add_tab(space, url, true);
@@ -4484,7 +4497,7 @@ impl App {
                 .state
                 .spaces
                 .iter()
-                .flat_map(|s| s.today.iter().copied().filter(|id| s.active != Some(*id) && !s.split.contains(id)))
+                .flat_map(|s| s.today.iter().copied().filter(|id| !s.active.is_some_and(|a| a == *id || s.splits.iter().any(|g| g.contains(&a) && g.contains(id)))))
                 .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && t.saturating_sub(tab.last_active) > archive_secs))
                 .collect();
             for id in stale {
@@ -4744,6 +4757,10 @@ impl App {
             }
             Command::TogglePin { tab } => {
                 if let Some(t) = self.target_tab(tab) {
+                    if self.state.split_of(t).is_some() && !self.state.favorites.contains(&t) {
+                        let to = if self.state.is_pinned(t) { "today" } else { "pinned" };
+                        return self.move_tab(t, None, None, Some(to.into()), None);
+                    }
                     if self.state.is_pinned(t) {
                         self.state.unpin(t);
                     } else {
@@ -4869,10 +4886,6 @@ impl App {
                     self.state.close_tab(t, |v| views.contains_key(&v));
                     self.views.remove(&t);
                 }
-                let split = &mut self.state.space_mut().split;
-                if split.len() < 2 {
-                    split.clear();
-                }
                 self.dirty = true;
                 if let Some(n) = self.state.space().active {
                     return self.activate(n);
@@ -4887,7 +4900,6 @@ impl App {
                     self.state.archive_tab(id);
                     self.views.remove(&id);
                 }
-                self.state.space_mut().split.clear();
                 self.dirty = true;
                 self.layout();
                 self.focus_active();
@@ -5036,25 +5048,29 @@ impl App {
                 self.render();
                 self.refresh_content_config();
             }
-            Command::SplitView { tab } => {
-                let Some(a) = self.state.active_tab() else { return };
-                let other = tab.filter(|t| *t != a).or_else(|| {
+            Command::SplitView { tab, with } => {
+                let Some(a) = with.filter(|w| self.state.tabs.contains_key(w)).or_else(|| self.state.active_tab()) else { return };
+                let other = tab.filter(|t| *t != a && self.state.tabs.contains_key(t)).or_else(|| {
                     let list = self.state.order(self.state.active_space, true);
-                    let split = &self.state.space().split;
-                    list.iter().copied().find(|t| *t != a && !split.contains(t))
+                    list.iter().copied().find(|t| *t != a && self.state.split_of(*t).is_none())
                 });
                 let Some(other) = other else { return self.toast("Open another tab to split with") };
-                let s = self.state.space_mut();
-                if !(s.split.len() > 1 && s.split.contains(&a)) {
-                    s.split = vec![a];
+                let from = self.state.space_of(other);
+                let max = self.config.layout.split_max_panes.max(2);
+                if !self.state.join_split(a, other, max) {
+                    return self.toast(&format!("Split view holds up to {max} pages (layout.split_max_panes)"));
                 }
-                if !s.split.contains(&other) && s.split.len() < self.config.layout.split_max_panes.max(2) {
-                    s.split.push(other);
+                if from.is_some_and(|f| self.state.space_of(other) != Some(f)) {
+                    self.unload(other);
                 }
+                self.dirty = true;
                 self.activate(a);
             }
-            Command::Unsplit => {
-                self.state.space_mut().split.clear();
+            Command::Unsplit { tab } => {
+                if let Some(t) = self.target_tab(tab) {
+                    self.state.unsplit(t);
+                }
+                self.dirty = true;
                 self.layout();
                 self.render();
             }

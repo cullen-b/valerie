@@ -257,6 +257,8 @@ pub struct SidebarConfig {
     pub preload_at_most: f64,
     pub double_click_edge: bool,
     pub multi_select: bool,
+    pub drop_to_split: bool,
+    pub split_rows: bool,
 }
 
 /// What modified clicks on links do; values are link actions (see config/default.yaml).

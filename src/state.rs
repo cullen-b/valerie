@@ -82,7 +82,12 @@ pub struct Space {
     pub today: Vec<TabId>,
     #[serde(default)]
     pub active: Option<TabId>,
+    /// Tabs shown side by side in split view, one list per group (left to right). Groups stay until split up, so a
+    /// pinned or kept group opens as a split again.
     #[serde(default)]
+    pub splits: Vec<Vec<TabId>>,
+    /// The one split older versions saved; read into `splits` by `tidy_splits`.
+    #[serde(default, skip_serializing)]
     pub split: Vec<TabId>,
     #[serde(default)]
     pub theme: Option<String>,
@@ -270,6 +275,18 @@ fn node_id(n: &Node) -> TabId {
     match n {
         Node::Tab { id } | Node::Folder { id, .. } => *id,
     }
+}
+
+/// Put `tab` just after `after` wherever that sits in the tree.
+fn insert_after(nodes: &mut Vec<Node>, after: TabId, tab: TabId) -> bool {
+    if let Some(i) = nodes.iter().position(|n| matches!(n, Node::Tab { id } if *id == after)) {
+        nodes.insert(i + 1, Node::Tab { id: tab });
+        return true;
+    }
+    nodes.iter_mut().any(|n| match n {
+        Node::Folder { children, .. } => insert_after(children, after, tab),
+        _ => false,
+    })
 }
 
 fn remove_from(nodes: &mut Vec<Node>, tab: TabId) -> bool {
@@ -470,7 +487,6 @@ impl State {
             remove_from(&mut s.pinned, tab);
             remove_from(&mut s.kept, tab);
             s.today.retain(|t| *t != tab);
-            s.split.retain(|t| *t != tab);
             if s.active == Some(tab) {
                 s.active = None;
             }
@@ -538,6 +554,75 @@ impl State {
                 Archived { url: t.url.clone(), title: t.display_title().to_string(), space, archived_at: now() },
             );
             self.archive.truncate(self.limits.archive);
+        }
+    }
+
+    /// The split-view group holding a tab, left to right.
+    pub fn split_of(&self, tab: TabId) -> Option<&Vec<TabId>> {
+        self.spaces.iter().flat_map(|s| &s.splits).find(|g| g.contains(&tab))
+    }
+
+    /// Drop closed tabs and ones that left the space from split groups, and groups down to one tab.
+    pub fn tidy_splits(&mut self) {
+        for i in 0..self.spaces.len() {
+            let mut groups = std::mem::take(&mut self.spaces[i].splits);
+            let old = std::mem::take(&mut self.spaces[i].split);
+            if old.len() > 1 && groups.is_empty() {
+                groups.push(old);
+            }
+            let here = self.order(i, false);
+            let mut seen = std::collections::BTreeSet::new();
+            for g in &mut groups {
+                g.retain(|t| (here.contains(t) || self.favorites.contains(t)) && seen.insert(*t));
+            }
+            groups.retain(|g| g.len() > 1);
+            self.spaces[i].splits = groups;
+        }
+    }
+
+    /// Put `tab` in split view beside `with` (joining its group), and next to it in the sidebar so the group moves,
+    /// pins and keeps as one. False when the group already has `max` pages.
+    pub fn join_split(&mut self, with: TabId, tab: TabId, max: usize) -> bool {
+        if with == tab || self.split_of(with).is_some_and(|g| g.contains(&tab)) {
+            return true;
+        }
+        let space = self.space_of(with).unwrap_or(self.active_space);
+        if self.split_of(with).is_some_and(|g| g.len() >= max) {
+            return false;
+        }
+        for s in &mut self.spaces {
+            for g in &mut s.splits {
+                g.retain(|t| *t != tab);
+            }
+        }
+        let sp = &mut self.spaces[space];
+        match sp.splits.iter_mut().find(|g| g.contains(&with)) {
+            Some(g) => g.push(tab),
+            None => sp.splits.push(vec![with, tab]),
+        }
+        let group = self.split_of(with).cloned().unwrap_or_default();
+        let last = group.iter().rev().copied().find(|t| *t != tab).unwrap_or(with);
+        // Favorites live in every space, so a favorite in a split stays where it is.
+        if !self.favorites.contains(&tab) && !self.favorites.contains(&last) {
+            let actives: Vec<Option<TabId>> = self.spaces.iter().map(|s| s.active).collect();
+            self.detach(tab);
+            let sp = &mut self.spaces[space];
+            if !insert_after(&mut sp.pinned, last, tab) && !insert_after(&mut sp.kept, last, tab) {
+                let i = sp.today.iter().position(|t| *t == last).map_or(0, |i| i + 1);
+                sp.today.insert(i, tab);
+            }
+            for (s, a) in self.spaces.iter_mut().zip(actives) {
+                s.active = a;
+            }
+        }
+        self.tidy_splits();
+        true
+    }
+
+    /// Split up the group holding a tab (its tabs stay where they are).
+    pub fn unsplit(&mut self, tab: TabId) {
+        for s in &mut self.spaces {
+            s.splits.retain(|g| !g.contains(&tab));
         }
     }
 
@@ -957,7 +1042,6 @@ impl State {
                 if s.active == Some(id) {
                     s.active = None;
                 }
-                s.split.retain(|t| *t != id);
                 self.tabs.remove(&id);
                 removed.push(id);
             }
@@ -1124,5 +1208,36 @@ mod tests {
         // Into the folder, but not the folder into itself.
         s.move_items(&[f, a], 0, Some(f), None, false, None);
         assert_eq!(flat_ids(&s.spaces[0].pinned), vec![d, a]);
+    }
+
+    #[test]
+    fn split_groups_sit_together_and_survive_moves() {
+        let mut s = state();
+        let [a, b, c] = ["a", "b", "c"].map(|u| s.add_tab(0, &format!("https://{u}"), false));
+        s.pin(a);
+        // Dropping c on pinned a: c joins a's split and sits after it in the pinned list.
+        assert!(s.join_split(a, c, 4));
+        assert_eq!(s.spaces[0].splits, vec![vec![a, c]]);
+        assert_eq!(s.spaces[0].pinned.iter().map(node_id).collect::<Vec<_>>(), vec![a, c]);
+        assert_eq!(s.spaces[0].today, vec![b]);
+        // Moving the group to today keeps it a group.
+        s.move_items(&[a, c], 0, None, Some("today"), false, Some(0));
+        s.tidy_splits();
+        assert_eq!(s.spaces[0].splits, vec![vec![a, c]]);
+        assert!(!s.join_split(a, b, 2));
+        // Closing one leaves a group of one, which goes.
+        s.close_tab(c, |_| true);
+        s.tidy_splits();
+        assert!(s.spaces[0].splits.is_empty());
+    }
+
+    #[test]
+    fn old_single_split_is_read_into_groups() {
+        let mut s = state();
+        let [a, b] = ["a", "b"].map(|u| s.add_tab(0, &format!("https://{u}"), false));
+        s.spaces[0].split = vec![a, b];
+        s.tidy_splits();
+        assert_eq!(s.spaces[0].splits, vec![vec![a, b]]);
+        assert!(s.spaces[0].split.is_empty());
     }
 }

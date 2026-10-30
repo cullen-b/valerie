@@ -172,11 +172,18 @@ pub enum Command {
     SetSpaceTheme {
         theme: String,
     },
+    /// Show `tab` beside `with` (default: the tab you're on) in split view; they stay a group in the sidebar.
     SplitView {
         #[serde(default)]
         tab: Option<TabId>,
+        #[serde(default)]
+        with: Option<TabId>,
     },
-    Unsplit,
+    /// Split up the split-view group holding `tab` (default: the tab you're on).
+    Unsplit {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
     FocusNextPane,
     /// Move focus to the split-view pane on the left/right; outside split view, go back/forward.
     FocusPane {
@@ -788,7 +795,8 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("rename_space", "{ name, space? }"),
     ("delete_space", "{ name?, confirm? }  (its tabs are archived)"),
     ("set_space_theme", "{ theme }"),
-    ("split_view", "{ tab? }"),
+    ("split_view", "{ tab?, with? }  (show tab beside with, default the tab you're on)"),
+    ("unsplit", "{ tab? }"),
     ("focus_pane", "{ direction: left | right }  (outside split view: back / forward)"),
     ("open_little_window", "{ url }"),
     ("move_to_main_window", "{ space? }"),
