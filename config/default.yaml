@@ -404,6 +404,8 @@ pages:
   dark_fallback: none      # sites with no dark look of their own, when dark_mode is on. one of: none (left as they are)
                            # | invert (flip their colours: rough on busy pages). toggle_dark_page inverts one site
   loading_bar: true        # a thin line across the top of a page while it loads
+  wait_for_first_draw: true # a tab that's loading from scratch (new, or asleep) stays hidden until it has drawn, up to a
+                           # second, then fades in, so it never flashes white. false = show it straight away
   markdown: true           # show Markdown files (.md, on this computer or the web) as formatted documents: headings,
                            # tables, highlighted code, task lists, GitHub-style notes. false = the plain text
   markdown_theme: auto     # their look. one of: auto (dark when your computer or dark_mode is) | light | dark

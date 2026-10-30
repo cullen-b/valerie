@@ -241,6 +241,11 @@ mod mac {
     pub fn set_alpha(wv: &WebView, alpha: f64, secs: f64) {
         let v = ptr(wv);
         unsafe {
+            // layout runs on every resize event; don't start an animation that changes nothing.
+            let now: f64 = msg_send![v, alphaValue];
+            if (now - alpha).abs() < 0.001 {
+                return;
+            }
             animate(secs, || {
                 let animator: *mut AnyObject = msg_send![v, animator];
                 let _: () = msg_send![animator, setAlphaValue: alpha];
@@ -989,6 +994,26 @@ mod mac {
         }
     }
 
+    /// Do what System Settings says a title-bar double-click does: zoom (also for "Fill"), minimize or nothing.
+    pub fn title_bar_double_click(window: &tao::window::Window) {
+        use tao::platform::macos::WindowExtMacOS;
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            let defaults: *mut AnyObject = msg_send![objc2::class!(NSUserDefaults), standardUserDefaults];
+            let key = objc2_foundation::NSString::from_str("AppleActionOnDoubleClick");
+            let action: Option<objc2::rc::Retained<objc2_foundation::NSString>> = msg_send![defaults, stringForKey: &*key];
+            match action.map(|a| a.to_string()).as_deref() {
+                Some("Minimize") => {
+                    let _: () = msg_send![w, miniaturize: std::ptr::null::<AnyObject>()];
+                }
+                Some("None") => {}
+                _ => {
+                    let _: () = msg_send![w, zoom: std::ptr::null::<AnyObject>()];
+                }
+            }
+        }
+    }
+
     pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -1435,6 +1460,14 @@ pub fn follow_window(wv: &WebView, follow: Follow) {
     mac::follow_window(wv, follow);
     #[cfg(not(target_os = "macos"))]
     let _ = (wv, follow);
+}
+
+/// The window's title bar was double-clicked: zoom or minimize as the system is set to.
+pub fn title_bar_double_click(window: &tao::window::Window) {
+    #[cfg(target_os = "macos")]
+    mac::title_bar_double_click(window);
+    #[cfg(not(target_os = "macos"))]
+    window.set_maximized(!window.is_maximized());
 }
 
 pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {

@@ -994,7 +994,7 @@ function renderTop() {
   });
   const plus = el("div", "chip", "+"); plus.onclick = () => cmd({ cmd: "new_tab" });
   tb.append(sp, tabs, plus);
-  tb.onmousedown = (e) => { if (e.target === tb) send({ t: "drag" }); };
+  tb.onmousedown = (e) => { if (e.target === tb && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 }
 const flat = (nodes) => nodes.flatMap((n) => (n.type === "folder" ? flat(n.children) : [n]));
 
@@ -1023,7 +1023,7 @@ $("#fwd").onclick = () => cmd({ cmd: "forward" });
 $("#reload").onclick = () => cmd({ cmd: "reload" });
 $("#url").onclick = () => cmd({ cmd: "open_command_bar", mode: "current" });
 $("#sidebar").addEventListener("mouseleave", () => { if (S && S.peek) send({ t: "unpeek" }); });
-$("#drag").onmousedown = (e) => { if (e.target.id === "drag") send({ t: "drag" }); };
+$("#drag").onmousedown = (e) => { if (e.target.id === "drag" && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 $("#empty").onclick = (e) => { if (!$("#empty").classList.contains("plugin-start")) cmd({ cmd: "new_tab" }); };
 
 // ---------- two-finger swipe between spaces: the list follows your fingers, then commits or springs back ----------

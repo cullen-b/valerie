@@ -98,6 +98,8 @@ pub enum UserEvent {
     TaskRequested { slug: String },
     /// Show the window even if the first page is slow.
     RevealTimeout,
+    /// A waking page took too long to draw: show it anyway.
+    DrawTimeout(TabId),
     DiscoverModels,
     /// A notification was clicked; its action JSON.
     NotificationClicked(String),
@@ -331,6 +333,8 @@ pub struct App {
     peek: Option<PeekView>,
     /// Tabs whose page script has reported in (so it can handle vim keys).
     ready_views: std::collections::HashSet<TabId>,
+    /// New webviews kept hidden until their page has drawn, so they don't flash white (pages.wait_for_first_draw).
+    waiting_draw: std::collections::HashSet<TabId>,
     /// The profile each tab's webview was created with (site_profiles can move a tab to another).
     view_profiles: HashMap<TabId, String>,
     pending_focus: std::cell::Cell<Option<TabId>>,
@@ -1287,6 +1291,7 @@ impl App {
             pending_save: None,
             peek: None,
             ready_views: Default::default(),
+            waiting_draw: Default::default(),
             view_profiles: HashMap::new(),
             pending_focus: std::cell::Cell::new(None),
             last_render: Default::default(),
@@ -1753,8 +1758,28 @@ impl App {
                     blocking::mac::apply(&v, self.rules.as_ref());
                 }
                 self.views.insert(tab, v);
+                // Not at launch: the window itself waits for the first page to draw.
+                if self.revealed && self.config.pages.wait_for_first_draw {
+                    self.waiting_draw.insert(tab);
+                    let p = self.proxy.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        send(&p, UserEvent::DrawTimeout(tab));
+                    });
+                }
             }
             Err(e) => crate::log::line("webview", format!("could not create webview: {e}")),
+        }
+    }
+
+    /// A page kept hidden until it drew has drawn (or waited long enough): fade it in.
+    fn drawn(&mut self, tab: TabId) {
+        if !self.waiting_draw.remove(&tab) || !self.panes().contains(&tab) {
+            return;
+        }
+        self.layout();
+        if let Some(v) = self.views.get(&tab) {
+            platform::fade_in(v, self.anim_secs().min(0.15));
         }
     }
 
@@ -1763,6 +1788,7 @@ impl App {
         self.crashed.remove(&tab);
         self.preloaded.remove(&tab);
         self.ready_views.remove(&tab);
+        self.waiting_draw.remove(&tab);
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.loading = false;
             t.playing = false;
@@ -1861,10 +1887,10 @@ impl App {
                     let _ = v.set_bounds(rect(px, y, pw, h));
                 }
                 platform::follow_window(v, platform::Follow::Pane { first: i == 0, last: i + 1 == panes.len() });
-                let _ = v.set_visible(true);
+                let _ = v.set_visible(!self.waiting_draw.contains(id));
             }
         }
-        self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id)).collect();
+        self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id) && !self.waiting_draw.contains(id)).collect();
         if let Some(av) = &self.answer_view {
             match self.answer_tab.filter(|t| panes.contains(t)) {
                 Some(_) => {
@@ -5920,6 +5946,7 @@ impl App {
             (Source::Chrome, "drag") => {
                 let _ = self.window.drag_window();
             }
+            (Source::Chrome, "title_double_click") => platform::title_bar_double_click(&self.window),
             (Source::LittleBar(id), "ready") => {
                 trace("little bar ready");
                 self.render_little(id)
@@ -5941,6 +5968,11 @@ impl App {
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {
                     let _ = l.window.drag_window();
+                }
+            }
+            (Source::LittleBar(id), "title_double_click") => {
+                if let Some(l) = self.littles.get(&id) {
+                    platform::title_bar_double_click(&l.window);
                 }
             }
             (_, "cmd") => {
@@ -5977,6 +6009,7 @@ impl App {
                     return;
                 };
                 self.ready_views.insert(id);
+                self.drawn(id);
                 if !self.revealed && self.state.active_tab() == Some(id) {
                     trace("active page drawn");
                     self.pending_reveal = Some("active page drawn");
@@ -6789,6 +6822,7 @@ impl App {
                 }
             }
             UserEvent::RevealTimeout => self.reveal("timeout"),
+            UserEvent::DrawTimeout(id) => self.drawn(id),
             UserEvent::PrepareLittle => self.prepare_little(elwt),
             UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
@@ -8916,6 +8950,7 @@ impl App {
             "drag" => {
                 let _ = self.window.drag_window();
             }
+            "title_double_click" => platform::title_bar_double_click(&self.window),
             _ => {}
         }
         let _ = elwt;
@@ -9213,6 +9248,7 @@ impl App {
             "drag" => {
                 let _ = self.window.drag_window();
             }
+            "title_double_click" => platform::title_bar_double_click(&self.window),
             _ => {}
         }
     }

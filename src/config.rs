@@ -818,6 +818,7 @@ pub struct PagesConfig {
     pub markdown_live: bool,
     pub markdown_edit: String,
     pub pdf_viewer: bool,
+    pub wait_for_first_draw: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
