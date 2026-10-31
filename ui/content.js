@@ -1097,6 +1097,12 @@ document.addEventListener("visibilitychange", () => {
     autoPip = null;
   }
 });
+// The floating window's "back to tab" button: the video returns inline still playing (its close button pauses it).
+document.addEventListener("webkitpresentationmodechanged", (e) => {
+  const v = e.target;
+  if (!document.hidden || !(v instanceof HTMLVideoElement) || v.webkitPresentationMode !== "inline") return;
+  setTimeout(() => { if (document.hidden && !v.paused) post({ t: "pip_return" }); }, 150);
+}, true);
 
 // ---------- page metadata for the sidebar ----------
 function favicon() {
