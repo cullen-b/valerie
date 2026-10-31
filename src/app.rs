@@ -6080,6 +6080,13 @@ impl App {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
+            (Source::Page(Target::Tab(id)), "pip_return") => {
+                // Only a tab with media playing, so a page can't pull itself forward otherwise.
+                if self.state.tabs.get(&id).is_some_and(|t| t.media.as_deref() == Some("playing")) {
+                    self.activate(id);
+                    self.show_main();
+                }
+            }
             (Source::Page(Target::Tab(id)), "focused") => {
                 if self.panes().contains(&id) && self.state.active_tab() != Some(id) {
                     self.state.space_mut().active = Some(id);
@@ -6876,6 +6883,9 @@ impl App {
                     if let (Some(v), Some(n)) = (self.views.get(&tab), a["note"].as_u64()) {
                         let _ = v.evaluate_script(&format!("window.__valerie && __valerie.notificationClicked({n})"));
                     }
+                } else if let Some(tab) = a["answer"].as_u64().filter(|t| self.state.tabs.contains_key(t)) {
+                    self.activate(tab);
+                    self.reopen_answer(tab);
                 } else if let Ok(cmd) = serde_json::from_value::<Command>(a["command"].clone()) {
                     self.dispatch(cmd, elwt);
                 }
@@ -6957,6 +6967,21 @@ impl App {
                 let agent = self.page_answers.get(&tab).map(|a| a.2.clone()).unwrap_or_default();
                 if let Some(v) = self.answer_view.as_ref().filter(|_| self.answer_tab == Some(tab)) {
                     let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "done", "agent": agent })));
+                }
+                // Clicked away from the answer (another tab, Esc, another app): say it's ready.
+                let shown = self.answer_tab == Some(tab) && self.shown_panes.contains(&tab);
+                if let Some((q, a, _)) = self.page_answers.get(&tab).filter(|_| self.config.chats.find_answer_notification).cloned() {
+                    let title: String = q.chars().take(60).collect();
+                    if !shown {
+                        self.toast(&format!("✦ Answer ready: {title}"));
+                    }
+                    if !shown || !self.window_focused {
+                        let body: String = a.chars().take(160).collect();
+                        let action = json!({ "answer": tab }).to_string();
+                        if self.config.notifications.from_valerie {
+                            platform::notify(&platform::Note { title: &format!("✦ {title}"), subtitle: "", body: &body, action: Some(action), sound: self.config.notifications.sound });
+                        }
+                    }
                 }
             }
             UserEvent::DownloadStarted { target, name, path, url } => {
@@ -8347,6 +8372,16 @@ impl App {
             let _ = v.evaluate_script(&format!("window.answer && answer.start({}, {})", json!(label), json!(accent)));
         }
         self.layout();
+    }
+
+    /// Show a finished answer from find again (its notification was clicked).
+    fn reopen_answer(&mut self, tab: TabId) {
+        let Some((q, text, agent)) = self.page_answers.get(&tab).cloned() else { return };
+        self.show_answer(tab, &q);
+        if let Some(v) = &self.answer_view {
+            let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "block", "text": text })));
+            let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "done", "agent": agent })));
+        }
     }
 
     fn close_answer(&mut self) {
