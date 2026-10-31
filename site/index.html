@@ -229,24 +229,30 @@ body.top #chat { top: 0; }
 .msg.ai { background: rgba(255,255,255,.06); }
 .tool { align-self: flex-start; font: 11.5px ui-monospace, Menlo, monospace; color: rgba(255,255,255,.6); padding: 4px 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,.1); animation: pgin .25s; }
 .tool b { color: var(--accent); font-weight: 600; }
-/* the sign-in demo at the top of Agents: a chat and the little window it opens */
+/* the demo at the top of Agents: Claude Code in a terminal, and the little Valerie window it pops open */
 .card { container-type: inline-size; }
-#stage { --w: min(1120px, calc(100cqw - 64px)); width: var(--w); margin-left: calc((100% - var(--w)) / 2); display: grid; grid-template-columns: 1fr 420px; height: 480px; border-radius: 14px; overflow: hidden; background: #121118; color: #ecebf2; font-size: 13.5px;
+#stage { --w: min(1120px, calc(100cqw - 64px)); --cc: #d77757; position: relative; width: var(--w); margin-left: calc((100% - var(--w)) / 2); height: 500px; border-radius: 16px; overflow: hidden;
+  background: radial-gradient(120% 90% at 85% 10%, #5b4a8a 0%, transparent 55%), radial-gradient(90% 80% at 10% 100%, #2c5a6e 0%, transparent 60%), #1a1726;
   box-shadow: 0 24px 70px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.08); }
-#stage .today { position: relative; background: #f1efec; color: var(--ink); padding: 18px 20px; overflow: hidden; }
-#stage .today h4 { margin: 0 0 12px; font-size: 13px; color: var(--ink2); font-weight: 600; }
-#stage .today .none { color: var(--ink2); font-size: 13px; } #stage .task { padding: 8px 10px; margin-bottom: 6px; border-radius: 8px; background: #fff; font-size: 13px; animation: tabin .3s var(--ease); }
-#stage .task b { color: #5e6ad2; font-weight: 600; margin-right: 6px; }
-#stage .side { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid rgba(255,255,255,.08); }
-#stage .hd { display: flex; align-items: center; gap: 8px; padding: 11px 12px 11px 14px; border-bottom: 1px solid rgba(255,255,255,.08); font-weight: 600; font-size: 13px; }
-#stage .hd i { font-style: normal; color: var(--accent); } #stage .hd span { color: rgba(255,255,255,.45); font-weight: 400; }
-#stage .hd button { all: unset; margin-left: auto; cursor: pointer; font-size: 12px; color: rgba(255,255,255,.5); } #stage .hd button:hover { color: #fff; }
-#smsgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; } #smsgs .tool { white-space: normal; }
-#little { position: absolute; left: 50%; top: 50%; width: 280px; z-index: 2; border-radius: 12px; overflow: hidden; background: #fff; color: #1d1c21;
-  box-shadow: 0 24px 60px rgba(0,0,0,.3), 0 0 0 1px rgba(0,0,0,.12); transform: translate(-50%, -50%); transition: opacity .25s, transform .3s var(--ease); }
-#little[hidden] { display: block; opacity: 0; transform: translate(-50%, -46%) scale(.94); pointer-events: none; }
-#little .bar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: #1b1a23; color: rgba(255,255,255,.6); font-size: 11.5px; }
-#little .bar i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.18); } #little .bar span { margin-left: 6px; }
+.term { position: absolute; left: 28px; top: 28px; bottom: 28px; width: min(620px, calc(100% - 56px)); display: flex; flex-direction: column; border-radius: 11px; overflow: hidden;
+  background: #141414f5; color: #e6e6e6; font: 13px/1.55 ui-monospace, Menlo, monospace; box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.1); }
+.wbar { display: flex; align-items: center; gap: 7px; padding: 9px 12px; background: #2a2a2c; color: rgba(255,255,255,.55); font: 12px -apple-system, system-ui, sans-serif; }
+.wbar i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; } .wbar i + i { background: #febc2e; } .wbar i + i + i { background: #28c840; }
+.wbar span { flex: 1; text-align: center; margin-right: 40px; } .wbar button { all: unset; cursor: pointer; color: rgba(255,255,255,.5); } .wbar button:hover { color: #fff; }
+#tout { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+#tout .welcome { border: 1px solid var(--cc); border-radius: 8px; padding: 8px 12px; color: #9a9a9a; } #tout .welcome b { color: #e6e6e6; font-weight: 400; } #tout .welcome em { font-style: normal; color: var(--cc); }
+#tout .prompt { border: 1px solid #555; border-radius: 8px; padding: 6px 10px; } #tout .prompt::before { content: "> "; color: #9a9a9a; }
+#tout .prompt.on::after { content: "▌"; color: #aaa; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+#tout .said { color: #9a9a9a; } #tout .said::before { content: "> "; }
+#tout .call::before, #tout .reply::before { content: "⏺ "; color: #4fbf67; } #tout .call.bad::before { color: #e5484d; } #tout .call b { font-weight: 700; } #tout .call span { color: #9a9a9a; }
+#tout .res { color: #9a9a9a; padding-left: 16px; } #tout .res::before { content: "⎿  "; } #tout .res.err { color: #e5484d; } #tout .res.wait { color: var(--cc); }
+#tout .reply::before { color: #e6e6e6; } #tout .reply { white-space: pre-wrap; }
+#tout .spin { color: var(--cc); } #tout .spin::before { content: "✻ "; }
+#little { position: absolute; right: 44px; top: 70px; width: 300px; z-index: 2; border-radius: 12px; overflow: hidden; background: #fff; color: #1d1c21;
+  box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.2); transition: opacity .3s, transform .45s cubic-bezier(.2,1.3,.4,1); }
+#little[hidden] { display: block; opacity: 0; transform: translateY(24px) scale(.85); pointer-events: none; }
+#little .wbar span { margin-right: 46px; white-space: nowrap; } #little .wbar span b { color: #fff; font-weight: 600; }
 #little .help { padding: 9px 12px; background: color-mix(in srgb, var(--accent) 16%, #fff); font-size: 12.5px; line-height: 1.45; }
 #little .help b { display: block; font-size: 11.5px; } #little .help div { display: flex; justify-content: flex-end; margin-top: 6px; }
 #little .body { padding: 16px 18px 18px; text-align: center; font-size: 13px; } #little .body h3 { margin: 4px 0 2px; font-size: 15px; } #little .body p { margin: 0 0 10px; color: #6e6b76; }
@@ -255,7 +261,8 @@ body.top #chat { top: 0; }
 #little .help button { background: var(--accent); color: #0d0c12; padding: 3px 12px; } #little button:disabled { opacity: .4; cursor: default; }
 #little button.flash { animation: flash .9s; }
 .more { margin-top: 56px; } .more h3 { font-size: 20px; letter-spacing: -.02em; margin: 0 0 14px; }
-@media (max-width: 760px) { #stage { width: auto; margin-left: 0; grid-template-columns: 1fr; grid-template-rows: 370px 1fr; height: 700px; } #stage .side { border-left: 0; } }
+@media (max-width: 900px) { #little { right: 50%; margin-right: -150px; top: auto; bottom: 40px; } }
+@media (max-width: 760px) { #stage { width: auto; margin-left: 0; height: 560px; } .term { left: 10px; right: 10px; top: 10px; bottom: 10px; width: auto; } }
 #chat .again { all: unset; align-self: center; margin-top: 6px; font-size: 12.5px; color: rgba(255,255,255,.55); cursor: pointer; } #chat .again:hover { color: #fff; }
 
 /* ---------- the command bar ---------- */
@@ -322,13 +329,12 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
           <h2>An AI that can <em>use</em> your browser.</h2>
           <p class="sub">It opens tabs, reads pages and fills things in, with the access you choose. When only you can do a step, it hands it to you.</p>
           <div id="stage">
-            <div class="today"><h4>Today</h4><div id="slist"><p class="none">Nothing on your list yet.</p></div>
-              <div id="little" hidden role="dialog" aria-label="Little window"><div class="bar"><i></i><i></i><i></i><span>linear.app/oauth/authorize</span></div>
-                <div class="help"><b>Claude Code needs you</b>Sign in to Linear so I can read your issues, then press Done.<div><button id="ldone" disabled>Done</button></div></div>
-                <div class="body"><div class="logo2">◐</div><h3>Valerie wants to use Linear</h3><p>as you@acme.dev</p><ul><li>Read your issues</li><li>Read your teams and projects</li></ul><button id="lauth">Authorize</button></div></div></div>
-            <div class="side"><div class="hd"><i>✦</i> Chat <span>· Claude Code</span><button id="sagain">↻ Replay</button></div><div id="smsgs"></div></div>
+            <div class="term"><div class="wbar"><i></i><i></i><i></i><span>claude — ~/acme</span><button id="sagain">↻ Replay</button></div><div id="tout"></div></div>
+            <div id="little" hidden role="dialog" aria-label="Little Valerie window"><div class="wbar"><i></i><i></i><i></i><span><b>Valerie</b> · linear.app</span></div>
+              <div class="help"><b>Claude Code needs you</b>Sign in to Linear so I can read your issues, then press Done.<div><button id="ldone" disabled>Done</button></div></div>
+              <div class="body"><div class="logo2">◐</div><h3>Valerie wants to use Linear</h3><p>as you@acme.dev</p><ul><li>Read your issues</li><li>Read your teams and projects</li></ul><button id="lauth">Authorize</button></div></div>
           </div>
-          <p class="fine">A tool needs you to take action? It opens a little window, waits for Done, then carries on.</p>
+          <p class="fine">A tool needs you to take action? Your agent pops open a little Valerie window, waits for Done, then carries on.</p>
           <div class="more"><h3>More it can do</h3>
           <div class="ctas">
             <button class="btn primary" data-run="weather">▶ Check the weather</button>
@@ -995,48 +1001,33 @@ const SCRIPTS = {
     ["tool", "create_task", "Update the release notes · due Wednesday", 700],
     ["ai", "Three things:\n• Launch moved to Thursday 10am.\n• Legal signed off on the pricing page.\n• Dana needs the release notes updated by Wednesday. I added that to your tasks."]] },
 };
-const ISSUES = [["ENG-112", "Onboarding skips the welcome step"], ["ENG-118", "Invite email has the wrong logo"], ["ENG-121", "Slow search on big teams"], ["ENG-125", "Dark mode toggle forgets its state"]];
-const SIGNIN = [
-  ["me", "Put my open Linear issues on today's list."],
-  ["tool", "linear.list_issues", "assignee: me", 700],
-  ["tool", "linear.list_issues", "✕ not signed in", 600],
-  ["tool", "ask_user", "linear.app/oauth/authorize · “Sign in to Linear…”", 300],
-  ["do", (alive) => signIn(alive), 300],
-  ["tool", "linear.list_issues", "4 open, assigned to you", 900],
-  ["tool", "create_task", "4 tasks · today", 200],
-  ["do", () => $("#slist").replaceChildren(...ISSUES.map(([id, t]) => { const r = el("div", "task"); r.append(el("b", null, id), t); return r; })), 500],
-  ["ai", "Thanks, Linear is connected. Your four open issues are on today's list, starting with ENG-112 (due tomorrow)."]];
-let run = 0;
-async function play(steps, msgs, alive) {
-  const add = (node) => { msgs.append(node); msgs.scrollTop = 1e6; return node; };
-  for (const [kind, a, b, ms] of steps) {
-    if (!alive()) return false;
-    if (kind === "me") { add(el("div", "msg me", a)); await wait(800); }
-    else if (kind === "tool") { const t = el("div", "tool"); t.append(el("b", null, a), " " + b); add(t); await wait(ms); }
-    else if (kind === "do") { await a(alive); await wait(b); }
-    else {
-      const m = add(el("div", "msg ai", ""));
-      for (let i = 0; i <= a.length; i += 3) { if (!alive()) return false; m.textContent = a.slice(0, i); msgs.scrollTop = 1e6; await wait(14); }
-      m.textContent = a;
-    }
-  }
-  return alive();
-}
-async function agent(key) {
-  const me = ++run, alive = () => me === run, msgs = $("#msgs"), script = SCRIPTS[key];
-  script.reset?.(); show(script.start);
-  $("#chat").hidden = false; document.body.classList.add("chatting"); msgs.replaceChildren();
-  if (!(await play(script.steps, msgs, alive))) return;
-  const again = el("button", "again", "↻ Play again"); again.onclick = () => agent(key); msgs.append(again); msgs.scrollTop = 1e6;
-}
-// The sign-in demo plays by itself whenever the Agents page is on screen.
+// The demo plays by itself whenever the Agents page is on screen.
 let stageRun = 0, stageDone = false;
 async function playStage() {
-  const me = ++stageRun, alive = () => me === stageRun;
-  stageDone = false; $("#little").hidden = true; $("#smsgs").replaceChildren();
-  $("#slist").replaceChildren(el("p", "none", "Nothing on your list yet."));
-  await wait(500);
-  stageDone = await play(SIGNIN, $("#smsgs"), alive);
+  const me = ++stageRun, alive = () => me === stageRun, out = $("#tout");
+  const add = (cls, ...kids) => { const n = el("div", cls); n.append(...kids); out.append(n); out.scrollTop = 1e6; return n; };
+  const call = (name, args, cls = "call") => add(cls, el("b", null, name), el("span", null, args));
+  const think = async (ms, text = "Working…") => { const n = add("spin", text); await wait(ms); n.remove(); };
+  stageDone = false; $("#little").hidden = true; out.replaceChildren();
+  const w = add("welcome"); w.append(el("em", null, "✻ "), el("b", null, "Welcome to Claude Code!"), el("br"), "cwd: ~/acme");
+  const ask = "Fix the Linear bugs assigned to me.", p = add("prompt on");
+  await wait(700);
+  for (let i = 1; i <= ask.length; i++) { if (!alive()) return; p.textContent = ask.slice(0, i); await wait(28); }
+  await wait(400); if (!alive()) return;
+  p.remove(); add("said", ask);
+  await think(900); if (!alive()) return;
+  call("linear - list_issues (MCP)", '(assignee: "me")', "call bad"); add("res err", "Error: not signed in to Linear");
+  await think(800, "Asking you…"); if (!alive()) return;
+  call("valerie - ask_user (MCP)", '(url: "linear.app/oauth/authorize", note: "Sign in to Linear…")');
+  const r = add("res wait", "Waiting for you in Valerie…");
+  await wait(500); await signIn(alive); if (!alive()) return;
+  r.className = "res"; r.textContent = "You pressed Done";
+  await think(800); if (!alive()) return;
+  call("linear - list_issues (MCP)", '(assignee: "me")'); add("res", "4 issues · ENG-112, ENG-118, ENG-121, ENG-125");
+  await think(900); if (!alive()) return;
+  const say = "Linear is connected. Four bugs are yours; starting with ENG-112, onboarding skipping the welcome step.", m = add("reply", "");
+  for (let i = 0; i <= say.length; i += 3) { if (!alive()) return; m.textContent = say.slice(0, i); await wait(14); }
+  m.textContent = say; stageDone = true;
 }
 new IntersectionObserver(([e]) => { if (e.isIntersecting) { if (!stageDone) playStage(); } else if (!stageDone) { stageRun++; $("#little").hidden = true; } }).observe($("#stage"));
 $("#sagain").onclick = playStage;
