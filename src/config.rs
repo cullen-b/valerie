@@ -577,6 +577,7 @@ pub struct ChatsConfig {
     pub composer_hint: bool,
     pub sync: bool,
     pub ask_in_find: bool,
+    pub find_answer_notification: bool,
     pub find_question_words: usize,
     pub page_text_limit: usize,
     pub browser_context: bool,

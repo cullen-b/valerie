@@ -286,6 +286,7 @@ chats:
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
   sync: true               # sync chats between machines (encrypted with the sync passphrase). false = this machine only
   ask_in_find: true        # in find (/), Enter on something that reads like a question asks the find agent about the page
+  find_answer_notification: true # notify you when an answer asked in find is ready and you'd clicked away from it. true | false
   find_question_words: 4   # a find query this many words long (or ending in "?") counts as a question
   page_text_limit: 60000   # most characters of the page sent along with a question
   browser_context: true    # tell chat agents which tabs you have open (titles and addresses) so they can answer about them
