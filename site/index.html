@@ -229,20 +229,32 @@ body.top #chat { top: 0; }
 .msg.ai { background: rgba(255,255,255,.06); }
 .tool { align-self: flex-start; font: 11.5px ui-monospace, Menlo, monospace; color: rgba(255,255,255,.6); padding: 4px 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,.1); animation: pgin .25s; }
 .tool b { color: var(--accent); font-weight: 600; }
-/* a little window an agent opens for you to sign in */
-#little { position: absolute; left: 50%; top: 18%; width: 340px; z-index: 8; border-radius: 12px; overflow: hidden; background: #fff; color: #1d1c21;
-  box-shadow: 0 30px 90px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.12); transform: translateX(calc(-50% - 170px)); transition: opacity .25s, transform .3s var(--ease); }
-#little[hidden] { display: block; opacity: 0; transform: translateX(calc(-50% - 170px)) scale(.94); pointer-events: none; }
-#little .bar { display: flex; align-items: center; gap: 7px; padding: 8px 10px; background: #1b1a23; color: rgba(255,255,255,.6); font-size: 12px; }
-#little .bar i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.18); } #little .bar span { margin-left: 6px; }
-#little .help { padding: 10px 14px; background: color-mix(in srgb, var(--accent) 16%, #fff); font-size: 13px; line-height: 1.45; }
-#little .help b { display: block; font-size: 12px; } #little .help div { display: flex; justify-content: flex-end; margin-top: 8px; }
-#little .body { padding: 22px 22px 24px; text-align: center; font-size: 13.5px; } #little .body h3 { margin: 6px 0 4px; font-size: 16px; } #little .body p { margin: 0 0 14px; color: #6e6b76; }
-#little .logo2 { font-size: 26px; } #little ul { list-style: none; padding: 0; margin: 0 0 16px; text-align: left; color: #6e6b76; font-size: 12.5px; } #little li::before { content: "✓ "; color: #3fa66b; }
+/* the sign-in demo at the top of Agents: a chat and the little window it opens */
+#stage { display: grid; grid-template-columns: 1fr 290px; height: 430px; border-radius: 14px; overflow: hidden; background: #121118; color: #ecebf2; font-size: 13.5px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.08); }
+#stage .today { position: relative; background: #f1efec; color: var(--ink); padding: 18px 20px; overflow: hidden; }
+#stage .today h4 { margin: 0 0 12px; font-size: 13px; color: var(--ink2); font-weight: 600; }
+#stage .today .none { color: var(--ink2); font-size: 13px; } #stage .task { padding: 8px 10px; margin-bottom: 6px; border-radius: 8px; background: #fff; font-size: 13px; animation: tabin .3s var(--ease); }
+#stage .task b { color: #5e6ad2; font-weight: 600; margin-right: 6px; }
+#stage .side { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid rgba(255,255,255,.08); }
+#stage .hd { display: flex; align-items: center; gap: 8px; padding: 11px 12px 11px 14px; border-bottom: 1px solid rgba(255,255,255,.08); font-weight: 600; font-size: 13px; }
+#stage .hd i { font-style: normal; color: var(--accent); } #stage .hd span { color: rgba(255,255,255,.45); font-weight: 400; }
+#stage .hd button { all: unset; margin-left: auto; cursor: pointer; font-size: 12px; color: rgba(255,255,255,.5); } #stage .hd button:hover { color: #fff; }
+#smsgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; } #smsgs .tool { white-space: normal; }
+#little { position: absolute; left: 50%; top: 50%; width: 280px; z-index: 2; border-radius: 12px; overflow: hidden; background: #fff; color: #1d1c21;
+  box-shadow: 0 24px 60px rgba(0,0,0,.3), 0 0 0 1px rgba(0,0,0,.12); transform: translate(-50%, -50%); transition: opacity .25s, transform .3s var(--ease); }
+#little[hidden] { display: block; opacity: 0; transform: translate(-50%, -46%) scale(.94); pointer-events: none; }
+#little .bar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: #1b1a23; color: rgba(255,255,255,.6); font-size: 11.5px; }
+#little .bar i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.18); } #little .bar span { margin-left: 6px; }
+#little .help { padding: 9px 12px; background: color-mix(in srgb, var(--accent) 16%, #fff); font-size: 12.5px; line-height: 1.45; }
+#little .help b { display: block; font-size: 11.5px; } #little .help div { display: flex; justify-content: flex-end; margin-top: 6px; }
+#little .body { padding: 16px 18px 18px; text-align: center; font-size: 13px; } #little .body h3 { margin: 4px 0 2px; font-size: 15px; } #little .body p { margin: 0 0 10px; color: #6e6b76; }
+#little .logo2 { font-size: 22px; } #little ul { list-style: none; padding: 0; margin: 0 0 12px; text-align: left; color: #6e6b76; font-size: 12px; } #little li::before { content: "✓ "; color: #3fa66b; }
 #little button { all: unset; cursor: pointer; padding: 6px 14px; border-radius: 8px; background: #5e6ad2; color: #fff; font-weight: 600; font-size: 13px; }
-#little .help button { background: var(--accent); color: #0d0c12; padding: 4px 12px; } #little button:disabled { opacity: .4; cursor: default; }
+#little .help button { background: var(--accent); color: #0d0c12; padding: 3px 12px; } #little button:disabled { opacity: .4; cursor: default; }
 #little button.flash { animation: flash .9s; }
-@media (max-width: 760px) { #little, #little[hidden] { left: 16px; right: 16px; width: auto; transform: none; } }
+.more { margin-top: 56px; } .more h3 { font-size: 20px; letter-spacing: -.02em; margin: 0 0 14px; }
+@media (max-width: 760px) { #stage { grid-template-columns: 1fr; grid-template-rows: 370px 1fr; height: 700px; } #stage .side { border-left: 0; } }
 #chat .again { all: unset; align-self: center; margin-top: 6px; font-size: 12.5px; color: rgba(255,255,255,.55); cursor: pointer; } #chat .again:hover { color: #fff; }
 
 /* ---------- the command bar ---------- */
@@ -307,16 +319,24 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
       <section class="pg" data-tab="agents" data-title="Agents" hidden>
         <div class="inner">
           <h2>An AI that can <em>use</em> your browser.</h2>
-          <p class="sub">It opens tabs, reads pages and fills things in, with the access you choose.</p>
+          <p class="sub">It opens tabs, reads pages and fills things in, with the access you choose. When only you can do a step, it hands it to you.</p>
+          <div id="stage">
+            <div class="today"><h4>Today</h4><div id="slist"><p class="none">Nothing on your list yet.</p></div>
+              <div id="little" hidden role="dialog" aria-label="Little window"><div class="bar"><i></i><i></i><i></i><span>linear.app/oauth/authorize</span></div>
+                <div class="help"><b>Claude Code needs you</b>Sign in to Linear so I can read your issues, then press Done.<div><button id="ldone" disabled>Done</button></div></div>
+                <div class="body"><div class="logo2">◐</div><h3>Valerie wants to use Linear</h3><p>as you@acme.dev</p><ul><li>Read your issues</li><li>Read your teams and projects</li></ul><button id="lauth">Authorize</button></div></div></div>
+            <div class="side"><div class="hd"><i>✦</i> Chat <span>· Claude Code</span><button id="sagain">↻ Replay</button></div><div id="smsgs"></div></div>
+          </div>
+          <p class="fine">A tool needs you to sign in? It opens a little window, waits for Done, then carries on.</p>
+          <div class="more"><h3>More it can do</h3>
           <div class="ctas">
             <button class="btn primary" data-run="weather">▶ Check the weather</button>
             <button class="btn" data-run="tickets">▶ Close finished tickets</button>
             <button class="btn" data-run="meeting">▶ Join my next meeting</button>
             <button class="btn" data-run="catchup">▶ Catch me up on #launch</button>
-            <button class="btn" data-run="signin">▶ Sign in for a tool</button>
           </div>
-          <p class="fine">When it needs you to sign in, it opens a little window and waits for Done.</p>
           <p class="fine">Claude Code, Codex, Cursor, or a free AI Valerie sets up for you.</p>
+          </div>
         </div>
       </section>
 
@@ -500,9 +520,6 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
     <div class="card" id="card2"></div>
 
     <div id="yaml" hidden><div class="hd">config.yaml <span id="st"></span><button id="yclose" aria-label="Close">✕</button></div><pre id="ypre"></pre><div id="try" hidden><b>▶ Try it</b><div id="trylist"></div></div></div>
-    <div id="little" hidden role="dialog" aria-label="Little window"><div class="bar"><i></i><i></i><i></i><span>linear.app/oauth/authorize</span></div>
-      <div class="help"><b>Claude Code needs you</b>Sign in to Linear so I can read your issues, then press Done.<div><button id="ldone" disabled>Done</button></div></div>
-      <div class="body"><div class="logo2">◐</div><h3>Valerie wants to use Linear</h3><p>as you@acme.dev</p><ul><li>Read your issues</li><li>Read your teams and projects</li></ul><button id="lauth">Authorize</button></div></div>
     <aside id="chat" hidden><div class="hd"><i>✦</i> Chat <span>· Claude Code</span><button id="cclose" aria-label="Close">✕</button></div><div id="msgs"></div></aside>
   </main>
 </div>
@@ -977,35 +994,52 @@ const SCRIPTS = {
     ["tool", "create_task", "Update the release notes · due Wednesday", 700],
     ["ai", "Three things:\n• Launch moved to Thursday 10am.\n• Legal signed off on the pricing page.\n• Dana needs the release notes updated by Wednesday. I added that to your tasks."]] },
 };
-SCRIPTS.signin = { start: "agents", steps: [
+const ISSUES = [["ENG-112", "Onboarding skips the welcome step"], ["ENG-118", "Invite email has the wrong logo"], ["ENG-121", "Slow search on big teams"], ["ENG-125", "Dark mode toggle forgets its state"]];
+const SIGNIN = [
   ["me", "Put my open Linear issues on today's list."],
   ["tool", "linear.list_issues", "assignee: me", 700],
   ["tool", "linear.list_issues", "✕ not signed in", 600],
   ["tool", "ask_user", "linear.app/oauth/authorize · “Sign in to Linear…”", 300],
   ["do", (alive) => signIn(alive), 300],
   ["tool", "linear.list_issues", "4 open, assigned to you", 900],
-  ["tool", "create_task", "4 tasks · today", 600],
-  ["ai", "Thanks, Linear is connected. Your four open issues are on today's list, starting with ENG-112 (due tomorrow)."]] };
+  ["tool", "create_task", "4 tasks · today", 200],
+  ["do", () => $("#slist").replaceChildren(...ISSUES.map(([id, t]) => { const r = el("div", "task"); r.append(el("b", null, id), t); return r; })), 500],
+  ["ai", "Thanks, Linear is connected. Your four open issues are on today's list, starting with ENG-112 (due tomorrow)."]];
 let run = 0;
-async function agent(key) {
-  const me = ++run, alive = () => me === run, msgs = $("#msgs"), script = SCRIPTS[key];
-  script.reset?.(); show(script.start); $("#little").hidden = true;
-  $("#chat").hidden = false; document.body.classList.add("chatting"); msgs.replaceChildren();
+async function play(steps, msgs, alive) {
   const add = (node) => { msgs.append(node); msgs.scrollTop = 1e6; return node; };
-  for (const [kind, a, b, ms] of script.steps) {
-    if (!alive()) return;
+  for (const [kind, a, b, ms] of steps) {
+    if (!alive()) return false;
     if (kind === "me") { add(el("div", "msg me", a)); await wait(800); }
     else if (kind === "tool") { const t = el("div", "tool"); t.append(el("b", null, a), " " + b); add(t); await wait(ms); }
     else if (kind === "do") { await a(alive); await wait(b); }
     else {
       const m = add(el("div", "msg ai", ""));
-      for (let i = 0; i <= a.length; i += 3) { if (!alive()) return; m.textContent = a.slice(0, i); msgs.scrollTop = 1e6; await wait(14); }
+      for (let i = 0; i <= a.length; i += 3) { if (!alive()) return false; m.textContent = a.slice(0, i); msgs.scrollTop = 1e6; await wait(14); }
       m.textContent = a;
     }
   }
-  const again = el("button", "again", "↻ Play again"); again.onclick = () => agent(key); add(again);
+  return alive();
 }
-function closeChat() { run++; $("#little").hidden = true; $("#chat").hidden = true; document.body.classList.remove("chatting"); dropTab("weather"); }
+async function agent(key) {
+  const me = ++run, alive = () => me === run, msgs = $("#msgs"), script = SCRIPTS[key];
+  script.reset?.(); show(script.start);
+  $("#chat").hidden = false; document.body.classList.add("chatting"); msgs.replaceChildren();
+  if (!(await play(script.steps, msgs, alive))) return;
+  const again = el("button", "again", "↻ Play again"); again.onclick = () => agent(key); msgs.append(again); msgs.scrollTop = 1e6;
+}
+// The sign-in demo plays by itself whenever the Agents page is on screen.
+let stageRun = 0, stageDone = false;
+async function playStage() {
+  const me = ++stageRun, alive = () => me === stageRun;
+  stageDone = false; $("#little").hidden = true; $("#smsgs").replaceChildren();
+  $("#slist").replaceChildren(el("p", "none", "Nothing on your list yet."));
+  await wait(500);
+  stageDone = await play(SIGNIN, $("#smsgs"), alive);
+}
+new IntersectionObserver(([e]) => { if (e.isIntersecting) { if (!stageDone) playStage(); } else if (!stageDone) { stageRun++; $("#little").hidden = true; } }).observe($("#stage"));
+$("#sagain").onclick = playStage;
+function closeChat() { run++; $("#chat").hidden = true; document.body.classList.remove("chatting"); dropTab("weather"); }
 for (const b of document.querySelectorAll("[data-run]")) b.onclick = () => agent(b.dataset.run);
 $("#cclose").onclick = closeChat;
 $("#join").onclick = () => joinMeeting(false);
