@@ -621,7 +621,7 @@ const PAGE_BRIDGE: &str = r#"(function () {
 
 /// What this machine's tabs file was called before machines had ids (its short hostname).
 fn legacy_device_name() -> String {
-    std::process::Command::new("hostname").arg("-s").output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string()).unwrap_or_default()
+    crate::platform::command("hostname").arg("-s").output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string()).unwrap_or_default()
 }
 
 /// Chats live on this machine; with chats.sync they also travel, encrypted, through the sync repo.
@@ -679,7 +679,7 @@ fn is_image(path: &str) -> bool {
 /// A git command in a project folder; its output when it worked. It never takes git's lock, so it can't get in the
 /// way of the agent's own git commands.
 fn git(folder: &Path, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("git")
+    let out = crate::platform::command("git")
         .arg("-C")
         .arg(folder)
         .args(["-c", "core.quotepath=off"])
@@ -5287,14 +5287,14 @@ impl App {
                         // `open` starts the app without this one's environment: carry Valerie's own settings over (a test
                         // instance's folders, say), so it comes back as the same instance.
                         let env: String = std::env::vars().filter(|(k, _)| k.starts_with("VALERIE_")).map(|(k, v)| format!(" --env {}", shell_word(&format!("{k}={v}")))).collect();
-                        let _ = std::process::Command::new("/bin/sh").arg("-c").arg(format!("sleep 1; open -n{env} {}", shell_word(&app.to_string_lossy()))).spawn();
+                        let _ = crate::platform::command("/bin/sh").arg("-c").arg(format!("sleep 1; open -n{env} {}", shell_word(&app.to_string_lossy()))).spawn();
                         self.quit = true;
                     }
                     None => self.toast("Restart: open Valerie again yourself (it isn't running as an app)"),
                 }
             }
             Command::UpdateInstalled => {
-                let installed = std::process::Command::new("/Applications/Valerie.app/Contents/MacOS/valerie").arg("--version").output().ok()
+                let installed = crate::platform::command("/Applications/Valerie.app/Contents/MacOS/valerie").arg("--version").output().ok()
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_start_matches("Valerie ").to_string()).unwrap_or_default();
                 if installed != version() {
                     self.toast(&format!("Valerie {installed} is installed: Restart Valerie (from the command bar) to use it"));
@@ -5584,13 +5584,10 @@ impl App {
             Command::SetUpAgent { agent } => {
                 let (_, def) = self.config.agent_named(&agent);
                 match crate::ai::kind(&def.cli) {
-                    Some(k) => match crate::ai::set_up(k) {
-                        Ok(status) => {
-                            self.watch_set_up(k, status);
-                            self.toast(&format!("Finish setting up {} in the terminal window", k.title));
-                        }
-                        Err(e) => self.toast(&format!("Couldn't start {} setup: {e}", k.title)),
-                    },
+                    Some(k) => {
+                        self.set_up_agent(k);
+                        self.toast(&format!("Setting up {}…", k.title));
+                    }
                     None => self.toast(&format!("{agent} runs your own command: nothing to set up")),
                 }
             }
@@ -9181,20 +9178,36 @@ impl App {
         })
     }
 
-    /// Tell the welcome guide (and the log) how a set-up in a terminal window goes.
-    fn watch_set_up(&self, k: &'static crate::ai::Kind, status: std::path::PathBuf) {
-        self.welcome_send(&json!({ "type": "setup", "id": k.id, "step": "running" }));
+    /// Install an AI app and sign in, telling the welcome guide (and the log) how it goes. On Windows it installs in the
+    /// background (`agents.quiet_install`), so a terminal window only opens if there's a sign-in to do.
+    fn set_up_agent(&self, k: &'static crate::ai::Kind) {
+        let quiet = cfg!(windows) && self.config.agents.quiet_install && crate::ai::find_bin(k, &crate::ai::search_path()).is_none();
+        self.welcome_send(&json!({ "type": "setup", "id": k.id, "step": if quiet { "installing" } else { "running" } }));
         let p = self.proxy.clone();
         std::thread::spawn(move || {
-            let ev = match crate::ai::set_up_outcome(k, &status) {
-                Some(Ok(())) => json!({ "type": "setup", "id": k.id, "step": "done" }),
-                Some(Err(why)) => {
-                    crate::log::line("setup", &why);
-                    json!({ "type": "setup", "id": k.id, "step": "failed", "detail": why })
-                }
-                None => return crate::log::line("setup", format!("{}: gave up waiting for the terminal window", k.title)),
+            let failed = |why: String| {
+                crate::log::line("setup", &why);
+                send(&p, UserEvent::Toast(why.clone()));
+                send(&p, UserEvent::ToWelcome(json!({ "type": "setup", "id": k.id, "step": "failed", "detail": why })));
             };
-            send(&p, UserEvent::ToWelcome(ev));
+            if quiet {
+                if let Err(e) = crate::ai::install_quietly(k) {
+                    return failed(format!("{e:#}"));
+                }
+                if crate::ai::already_signed_in(k) {
+                    return send(&p, UserEvent::ToWelcome(json!({ "type": "setup", "id": k.id, "step": "done" })));
+                }
+                send(&p, UserEvent::ToWelcome(json!({ "type": "setup", "id": k.id, "step": "running" })));
+            }
+            let status = match crate::ai::set_up(k) {
+                Ok(status) => status,
+                Err(e) => return failed(format!("Valerie couldn't open a terminal window for {}: {e:#}", k.title)),
+            };
+            match crate::ai::set_up_outcome(k, &status) {
+                Some(Ok(())) => send(&p, UserEvent::ToWelcome(json!({ "type": "setup", "id": k.id, "step": "done" }))),
+                Some(Err(why)) => failed(why),
+                None => crate::log::line("setup", format!("{}: gave up waiting for the terminal window", k.title)),
+            }
         });
     }
 
@@ -9246,13 +9259,7 @@ impl App {
             }
             "sign_in" => {
                 if let Some(k) = m["id"].as_str().and_then(crate::ai::kind) {
-                    match crate::ai::set_up(k) {
-                        Ok(status) => self.watch_set_up(k, status),
-                        Err(e) => {
-                            crate::log::line("setup", format!("{}: couldn't open a terminal: {e:#}", k.title));
-                            self.welcome_send(&json!({ "type": "setup", "id": k.id, "step": "failed", "detail": format!("Valerie couldn't open a terminal window: {e:#}") }));
-                        }
-                    }
+                    self.set_up_agent(k);
                 }
             }
             "open_setup_help" => {
@@ -9570,7 +9577,7 @@ impl App {
     fn sign_in_with_safari(&mut self, tab: TabId) {
         let Some(url) = self.state.tabs.get(&tab).map(|t| t.url.clone()).filter(|u| u.starts_with("http")) else { return };
         let site = site_of(&url).unwrap_or_default();
-        if let Err(e) = std::process::Command::new("open").args(["-a", "Safari", &url]).spawn() {
+        if let Err(e) = crate::platform::command("open").args(["-a", "Safari", &url]).spawn() {
             return self.toast(&format!("Couldn't open Safari: {e}"));
         }
         let Some(v) = self.views.get(&tab) else { return };
@@ -9805,7 +9812,7 @@ impl App {
             let path = crate::ai::search_path();
             let run = |cli: &str, args: &[&str]| -> Option<String> {
                 let bin = crate::ai::kind(cli).and_then(|k| crate::ai::find_bin(k, &path))?;
-                let out = std::process::Command::new(bin).args(args).env("PATH", &path).stdin(std::process::Stdio::null()).output().ok()?;
+                let out = crate::platform::command(bin).args(args).env("PATH", &path).stdin(std::process::Stdio::null()).output().ok()?;
                 out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
             };
             let read = |rel: &str| -> Option<Value> { serde_json::from_str(&std::fs::read_to_string(dirs::home_dir()?.join(rel)).ok()?).ok() };
@@ -10653,7 +10660,7 @@ fn make_worktree(plan: &WorktreePlan, copy: &[String]) -> Result<(), String> {
     } else {
         vec!["worktree", "add", "-b", &plan.branch, &root, &plan.base]
     };
-    let out = std::process::Command::new("git")
+    let out = crate::platform::command("git")
         .arg("-C")
         .arg(&plan.repo)
         .args(&args)
@@ -10679,7 +10686,7 @@ fn make_worktree(plan: &WorktreePlan, copy: &[String]) -> Result<(), String> {
 /// Take away a closed chat's worktree if nothing in it is uncommitted, and its branch if that's merged.
 fn remove_worktree(folder: &Path, worktree: &Path, branch: &str) -> Result<(), String> {
     let root = git(worktree, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).ok_or("it's gone already")?;
-    let out = std::process::Command::new("git")
+    let out = crate::platform::command("git")
         .arg("-C")
         .arg(folder)
         .args(["worktree", "remove", &root])

@@ -5,7 +5,6 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncedTab {
@@ -108,7 +107,7 @@ impl Git<'_> {
     /// stop sync for good. PATH includes Homebrew's folders, for credential helpers like `gh` when Valerie was opened
     /// from the Dock.
     fn run(&self, args: &[&str]) -> Result<String> {
-        let mut c = Command::new("git");
+        let mut c = crate::platform::command("git");
         c.arg("-C").arg(self.dir).env("GIT_TERMINAL_PROMPT", "0").env("PATH", crate::ai::search_path());
         c.arg("-c").arg(format!("core.hooksPath={}", no_hooks().display()));
         if let Some(t) = self.token {
@@ -130,7 +129,7 @@ impl Git<'_> {
     }
 
     fn show(&self, rev: &str, path: &str) -> Option<Vec<u8>> {
-        let out = Command::new("git").arg("-C").arg(self.dir).args(["show", &format!("{rev}:{path}")]).output().ok()?;
+        let out = crate::platform::command("git").arg("-C").arg(self.dir).args(["show", &format!("{rev}:{path}")]).output().ok()?;
         out.status.success().then_some(out.stdout)
     }
 }
@@ -607,7 +606,7 @@ mod tests {
     use super::*;
 
     fn git(dir: &Path, args: &[&str]) -> String {
-        let o = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
         String::from_utf8_lossy(&o.stdout).into_owned()
     }
 
@@ -723,7 +722,7 @@ mod tests {
         let encrypted: Vec<String> = git(&bare, &["ls-tree", "-r", "--name-only", "main"]).lines().filter(|l| l.ends_with(".enc")).map(str::to_string).collect();
         assert!(!encrypted.is_empty());
         for f in &encrypted {
-            let blob = Command::new("git").arg("-C").arg(&bare).args(["show", &format!("main:{f}")]).output().unwrap().stdout;
+            let blob = std::process::Command::new("git").arg("-C").arg(&bare).args(["show", &format!("main:{f}")]).output().unwrap().stdout;
             assert!(crate::crypt::open(&new_key, &blob).is_ok(), "{f} isn't under the new passphrase");
         }
         assert!(set_passphrase(&b.join("config"), "correct horse battery staple").is_err(), "the old passphrase still works");

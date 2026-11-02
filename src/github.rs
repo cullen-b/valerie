@@ -3,7 +3,7 @@
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 const KEYCHAIN: &str = "Valerie GitHub";
 
@@ -18,7 +18,7 @@ pub enum Step {
 
 // Opened from the Dock, Valerie's PATH has no Homebrew folders: look where Homebrew and friends put `gh` too.
 fn gh(args: &[&str]) -> Option<String> {
-    let o = Command::new("gh").env("PATH", crate::ai::search_path()).args(args).output().ok()?;
+    let o = crate::platform::command("gh").env("PATH", crate::ai::search_path()).args(args).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty())
 }
 
@@ -53,7 +53,7 @@ pub fn token() -> Option<String> {
 
 /// Call the GitHub API. The token goes to curl on stdin, so it never shows up in the process list.
 pub fn api(token: &str, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value)> {
-    let mut c = Command::new("curl");
+    let mut c = crate::platform::command("curl");
     c.args(["-sS", "-X", method, "-H", "@-", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28"]);
     c.args(["-w", "\n%{http_code}"]);
     if let Some(b) = body {
@@ -69,7 +69,7 @@ pub fn api(token: &str, method: &str, path: &str, body: Option<&Value>) -> Resul
 }
 
 fn post_form(url: &str, form: &[(&str, &str)]) -> Result<Value> {
-    let mut c = Command::new("curl");
+    let mut c = crate::platform::command("curl");
     c.args(["-sS", "-X", "POST", "-H", "Accept: application/json"]);
     for (k, v) in form {
         c.args(["--data-urlencode", &format!("{k}={v}")]);
@@ -109,7 +109,7 @@ fn device_flow(client_id: &str, notify: &dyn Fn(Step)) -> Result<String> {
 
 /// `gh auth login` in the background: pass its one-time code to the user, wait for them to approve it.
 fn gh_login(notify: &dyn Fn(Step)) -> Result<String> {
-    let mut child = Command::new("gh")
+    let mut child = crate::platform::command("gh")
         .env("PATH", crate::ai::search_path())
         .args(["auth", "login", "--web", "--hostname", "github.com", "--git-protocol", "https", "--scopes", "repo"])
         .stdin(Stdio::piped())
@@ -233,7 +233,7 @@ pub fn add_repo_key(token: &str, repo: &str, device: &str) -> Result<()> {
     let key = repo_key_path();
     if !key.exists() {
         std::fs::create_dir_all(key.parent().context("data dir")?)?;
-        let out = Command::new("ssh-keygen")
+        let out = crate::platform::command("ssh-keygen")
             .args(["-q", "-t", "ed25519", "-N", "", "-C", &format!("Valerie on {device}"), "-f"])
             .arg(&key)
             .output()

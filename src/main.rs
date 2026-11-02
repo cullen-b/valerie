@@ -1,3 +1,6 @@
+// No console window behind the app on Windows; command-line uses borrow the terminal they ran in (see main).
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 mod agents;
 mod app;
 mod blocking;
@@ -464,6 +467,8 @@ fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    let _ = unsafe { windows::Win32::System::Console::AttachConsole(windows::Win32::System::Console::ATTACH_PARENT_PROCESS) };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let loaded = Config::load();
     log::init(loaded.as_ref().map_or(Config::defaults().logs.keep_days, |c| c.logs.keep_days));
@@ -629,5 +634,14 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     log::line("app", format!("Valerie {} started", app::version()));
-    app::run(config, urls)
+    // The app outlives the terminal it may have started from: closing that terminal mustn't close the browser.
+    #[cfg(windows)]
+    let _ = unsafe { windows::Win32::System::Console::FreeConsole() };
+    let result = app::run(config, urls);
+    if let Err(e) = &result {
+        log::line("app", format!("couldn't start: {e:#}"));
+        #[cfg(windows)]
+        platform::startup_error(&format!("Valerie couldn't start: {e:#}"));
+    }
+    result
 }

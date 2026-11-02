@@ -153,13 +153,14 @@ function btn(text, cls, on) { const b = el("button", cls, text); b.onclick = on;
 let W = null;                      // data from Valerie
 const S = { step: 0, dir: 1, agents: {}, setup: {}, chosen: "", free: null, sync: null, key: null, only: "", imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
 const STEPS = ["hello", "import", "ai", "sync", "yours", "tour"];
+const IS_MAC = /Mac/.test(navigator.platform);
 
 // ---------- shortcut labels from the user's keybindings ----------
 function keyLabel(cmd) {
   const k = W && W.keys && W.keys[cmd];
   if (!k) return "";
-  return k.replace(/CmdOrCtrl\+/g, "⌘").replace(/Cmd\+/g, "⌘").replace(/Ctrl\+/g, "⌃").replace(/Alt\+/g, "⌥").replace(/Shift\+/g, "⇧")
-    .replace(/Equal/, "=").replace(/Minus/, "−").replace(/Down/, "↓").replace(/Up/, "↑").replace(/Left/, "←").replace(/Right/, "→");
+  const mods = IS_MAC ? k.replace(/CmdOrCtrl\+/g, "⌘").replace(/Cmd\+/g, "⌘").replace(/Ctrl\+/g, "⌃").replace(/Alt\+/g, "⌥").replace(/Shift\+/g, "⇧") : k.replace(/CmdOrCtrl\+/g, "Ctrl+");
+  return mods.replace(/Equal/, "=").replace(/Minus/, "−").replace(/Down/, "↓").replace(/Up/, "↑").replace(/Left/, "←").replace(/Right/, "→");
 }
 
 // ---------- agents ----------
@@ -168,6 +169,7 @@ const AGENT_PROVIDER = { codex: "OpenAI" };
 const AGENT_NOTE = { claude: "Claude Pro or Max", codex: "ChatGPT Plus or Pro", opencode: "Free models or your own keys", cursor: "Cursor plan", pi: "Your own keys", hermes: "Nous or your own keys" };
 function agentState(a) {
   const s = S.agents[a.id] || {}, u = S.setup[a.id];
+  if (u && u.step === "installing" && !s.works) return { chip: "Installing", cls: "wait", detail: "Installing " + a.title + ". This takes a minute or two." };
   if (u && u.step === "running" && !s.works) return { chip: "In terminal", cls: "wait", detail: "Follow the steps in the terminal window. This updates when it's done." };
   if (u && !s.works) return { chip: "Didn't finish", cls: "warn", detail: u.detail };
   if (!a.installed) return { chip: "Not installed", cls: "", detail: AGENT_NOTE[a.id] || "" };
@@ -192,7 +194,7 @@ function hello(root) {
   h.append(el("div", "mark", "✦"), el("h1", null, "Welcome to Valerie"),
     el("p", "lead", "A fast browser where everything is yours to change. Let's set up the few things that make it yours. It takes about two minutes, and you can skip anything."));
   const ag = el("div", "agenda");
-  [["1", "Bring your bookmarks"], ["2", "Pick your AI"], ["3", "Sync your Macs"], ["4", "Describe your browser"], ["5", "A quick tour"]]
+  [["1", "Bring your bookmarks"], ["2", "Pick your AI"], ["3", "Sync your computers"], ["4", "Describe your browser"], ["5", "A quick tour"]]
     .forEach(([n, t]) => { const s = el("span"); s.append(el("b", null, n), t); ag.append(s); });
   h.append(ag);
   root.append(h);
@@ -234,6 +236,7 @@ function aiStep(root) {
     const actions = el("div", "row");
     const s = S.agents[a.id] || {};
     if (s.works) actions.append(S.chosen === a.id ? el("span", "chip ok", "✓ Valerie uses this") : btn("Use " + a.title, "small primary", () => use(a.id)));
+    else if (S.setup[a.id] && S.setup[a.id].step === "installing") { /* no second install while this one runs */ }
     else if (S.setup[a.id]) {
       actions.append(btn("Try again", "small", () => send({ t: "sign_in", id: a.id })));
       if (W.setup_help_link) actions.append(btn("Download page", "small ghost", () => send({ t: "open_setup_help", id: a.id })));
@@ -350,9 +353,9 @@ function tuneCard() {
 }
 
 function syncStep(root) {
-  root.append(el("div", "kicker", S.only ? "Sync" : "Step 3 · Sync"), el("h1", null, "Your Valerie on every Mac"));
+  root.append(el("div", "kicker", S.only ? "Sync" : "Step 3 · Sync"), el("h1", null, "Your Valerie on every computer"));
   const wrap = el("div", "sync"), left = el("div");
-  left.append(el("p", "lead", "Settings, spaces, pinned tabs and folders follow you to every Mac. They live in a private GitHub repo that only you can see, and change history comes free."));
+  left.append(el("p", "lead", "Settings, spaces, pinned tabs and folders follow you to every computer. They live in a private GitHub repo that only you can see, and change history comes free."));
   const s = S.sync || (W.sync ? { step: "done", repo: W.sync } : null);
   if (!s) left.append(btn("Sign in with GitHub", "primary", () => { S.sync = { step: "waiting" }; draw(); send({ t: "sync" }); }));
   else if (s.step === "waiting") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Signing in to GitHub…")); left.append(w); }
@@ -369,7 +372,7 @@ function syncStep(root) {
 }
 
 // The sync passphrase: tabs, chats and passwords are encrypted with it before they reach GitHub. `mode` is change (a new
-// one, re-encrypting with this Mac's key) or reset (forgotten everywhere: start over).
+// one, re-encrypting with this computer's key) or reset (forgotten everywhere: start over).
 function passphrase() {
   const box = el("div", "key"), k = S.key || {};
   if (!k.state || k.state === "checking") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Looking at your sync repo…")); box.append(w); return box; }
@@ -377,16 +380,16 @@ function passphrase() {
   const mode = k.mode || "";
   if (k.state === "done" && !mode) {
     const d = el("div", "done-line");
-    d.append("✓ ", el("span", null, k.changed ? "Passphrase changed. Type the new one once on each of your other Macs." : "Tabs, chats and passwords are encrypted with your passphrase"));
+    d.append("✓ ", el("span", null, k.changed ? "Passphrase changed. Type the new one once on each of your other computers." : "Tabs, chats and passwords are encrypted with your passphrase"));
     box.append(d, btn("Change passphrase", "small", () => { S.key = { ...k, mode: "change", changed: false }; S.typed = null; draw(); }));
     return box;
   }
   const kind = mode || (k.state === "new" || (k.state === "failed" && k.was === "new") ? "new" : "enter");
   const text = {
-    new: ["Choose a sync passphrase", "It encrypts your tabs, chats and passwords before they reach GitHub. You'll type it once on each Mac. Nobody can recover it, so keep it somewhere safe, like your password manager.", "Use this passphrase"],
-    enter: ["Enter your sync passphrase", "The one you chose on your other Mac. It unlocks your tabs, chats and passwords here.", "Unlock"],
-    change: ["Choose a new sync passphrase", "Everything in your sync repo is encrypted again with it, and the repo's history starts over so nothing stays under the old one. Each of your other Macs asks for the new one once.", "Change passphrase"],
-    reset: ["Start over with a new passphrase", "Valerie removes the encrypted copies in your sync repo. Every Mac keeps its own tabs, chats and passwords and sends them again once you type the new passphrase there. Only what came from a Mac you no longer have is lost.", "Start over"],
+    new: ["Choose a sync passphrase", "It encrypts your tabs, chats and passwords before they reach GitHub. You'll type it once on each computer. Nobody can recover it, so keep it somewhere safe, like your password manager.", "Use this passphrase"],
+    enter: ["Enter your sync passphrase", "The one you chose on your other computer. It unlocks your tabs, chats and passwords here.", "Unlock"],
+    change: ["Choose a new sync passphrase", "Everything in your sync repo is encrypted again with it, and the repo's history starts over so nothing stays under the old one. Each of your other computers asks for the new one once.", "Change passphrase"],
+    reset: ["Start over with a new passphrase", "Valerie removes the encrypted copies in your sync repo. Every computer keeps its own tabs, chats and passwords and sends them again once you type the new passphrase there. Only what came from a computer you no longer have is lost.", "Start over"],
   }[kind];
   const fresh = kind !== "enter";
   box.append(el("h3", null, text[0]), el("p", "hint", text[1]));
@@ -413,7 +416,7 @@ function passphrase() {
 // ---------- make it yours: a few questions, then the agent changes Valerie ----------
 const QUESTIONS = [
   { id: "use", q: "What's Valerie for?", help: "Pick any that fit, or say it your way.", picks: ["Work", "School", "Coding", "Design", "Reading and news", "Research", "Shopping", "Videos and music"], placeholder: "e.g. I run a small business and live in Gmail, Notion and Shopify" },
-  { id: "look", q: "How should it look?", help: "Colors, size, layout: anything.", picks: ["Dark", "Light", "Follow my Mac", "Minimal", "Colorful", "Bigger text", "Compact", "Tabs on top", "Sidebar on the right"], placeholder: "e.g. deep green, rounded, a serif font, no clutter" },
+  { id: "look", q: "How should it look?", help: "Colors, size, layout: anything.", picks: ["Dark", "Light", "Follow my system", "Minimal", "Colorful", "Bigger text", "Compact", "Tabs on top", "Sidebar on the right"], placeholder: "e.g. deep green, rounded, a serif font, no clutter" },
   { id: "spaces", q: "Which spaces do you want?", help: "Spaces are separate sets of tabs with their own color. Swipe between them.", picks: ["Work", "Personal", "School", "Side project", "Family", "Fun"], placeholder: "e.g. Work in blue, Home in orange, a School space with separate logins" },
   { id: "move", q: "How do you like to get around?", help: "Valerie can be driven entirely from the keyboard, or not at all.", picks: ["Keyboard all the way", "Vim keys", "Mostly the mouse", "Trackpad swipes", "Fewer shortcuts"], placeholder: "e.g. ⌘T should open a new tab like Chrome" },
   { id: "more", q: "Anything else? Describe your perfect browser.", help: "Say it in your own words: your agent turns it into settings.", picks: [], placeholder: "e.g. reject cookie banners, open articles in reader view, use DuckDuckGo, make YouTube open in a little window, close old tabs after a day" },
@@ -489,7 +492,7 @@ function tickElapsed() {
 
 // ---------- the tour ----------
 const FEATURES = [
-  { ico: "⌘", t: "Command bar", d: "Search tabs, history and the web from one box. Start with ! to change Valerie, or ? to ask your AI.", key: "open_command_bar", cmd: { cmd: "open_command_bar" } },
+  { ico: IS_MAC ? "⌘" : "›", t: "Command bar", d: "Search tabs, history and the web from one box. Start with ! to change Valerie, or ? to ask your AI.", key: "open_command_bar", cmd: { cmd: "open_command_bar" } },
   { ico: "◐", t: "Spaces", d: "Separate sets of tabs for work, home and projects, each with its own color. Swipe sideways to switch.", key: "next_space", cmd: { cmd: "next_space" } },
   { ico: "⤒", t: "Pinned tabs and folders", d: "Keep the tabs you always want at the top; the rest tidy themselves away after a day.", key: "toggle_pin" },
   { ico: "✦", t: "Chats", d: "Agents that can open tabs, read pages and do the clicking, with the access you choose.", cmd: { cmd: "open_chats" } },

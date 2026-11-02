@@ -62,7 +62,7 @@ pub fn app_bundle() -> Option<PathBuf> {
 
 /// Read the release feed (a small JSON file next to the release's downloads).
 pub fn fetch(feed: &str) -> Result<Release> {
-    let out = Command::new("curl").args(["-fsSL", "--max-time", "20", "--proto", "=https,file", feed]).output().context("couldn't run curl")?;
+    let out = crate::platform::command("curl").args(["-fsSL", "--max-time", "20", "--proto", "=https,file", feed]).output().context("couldn't run curl")?;
     if !out.status.success() {
         bail!("couldn't reach {feed}: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
@@ -80,13 +80,13 @@ pub fn install(release: &Release, app: &Path) -> Result<()> {
     std::fs::create_dir_all(&work).with_context(|| format!("Valerie can't write to {} (it updates itself there)", parent.display()))?;
     let result = (|| {
         let zip = work.join("Valerie.zip");
-        run(Command::new("curl").args(["-fsSL", "--max-time", "600", "--proto", "=https,file", "-o"]).arg(&zip).arg(&asset.url), "download the update")?;
-        let sum = String::from_utf8(Command::new("shasum").args(["-a", "256"]).arg(&zip).output()?.stdout)?;
+        run(crate::platform::command("curl").args(["-fsSL", "--max-time", "600", "--proto", "=https,file", "-o"]).arg(&zip).arg(&asset.url), "download the update")?;
+        let sum = String::from_utf8(crate::platform::command("shasum").args(["-a", "256"]).arg(&zip).output()?.stdout)?;
         if !sum.split_whitespace().next().is_some_and(|s| s.eq_ignore_ascii_case(&asset.sha256)) {
             bail!("the download was damaged (its checksum doesn't match)");
         }
         let unpacked = work.join("unpacked");
-        run(Command::new("ditto").args(["-x", "-k"]).arg(&zip).arg(&unpacked), "unpack the update")?;
+        run(crate::platform::command("ditto").args(["-x", "-k"]).arg(&zip).arg(&unpacked), "unpack the update")?;
         let new = unpacked.join("Valerie.app");
         verify(&new, app)?;
         // Swap: the running copy keeps working from memory; the new one is what opens next time.
@@ -97,7 +97,7 @@ pub fn install(release: &Release, app: &Path) -> Result<()> {
             return Err(e).context("couldn't put the new Valerie in place");
         }
         let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-        let _ = Command::new(lsregister).arg("-f").arg(app).status();
+        let _ = crate::platform::command(lsregister).arg("-f").arg(app).status();
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&work);
@@ -106,15 +106,15 @@ pub fn install(release: &Release, app: &Path) -> Result<()> {
 
 /// The new app must have a valid signature that meets the release key's requirement or the running app's own.
 fn verify(new: &Path, running: &Path) -> Result<()> {
-    run(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(new), "check the update's signature")?;
-    let own = Command::new("codesign").args(["-d", "-r-"]).arg(running).output().ok().and_then(|o| {
+    run(crate::platform::command("codesign").args(["--verify", "--deep", "--strict"]).arg(new), "check the update's signature")?;
+    let own = crate::platform::command("codesign").args(["-d", "-r-"]).arg(running).output().ok().and_then(|o| {
         let text = String::from_utf8_lossy(&o.stdout).to_string() + &String::from_utf8_lossy(&o.stderr);
         text.lines().find_map(|l| l.strip_prefix("designated => ").map(str::to_string))
     });
     // An ad-hoc signature's requirement is its exact build, which no other build meets; skip it.
     let own = own.filter(|r| !r.starts_with("cdhash"));
     for req in RELEASE_REQUIREMENTS.iter().map(|r| r.to_string()).chain(own) {
-        let ok = Command::new("codesign").arg("--verify").arg(format!("--test-requirement=={req}")).arg(new).status().is_ok_and(|s| s.success());
+        let ok = crate::platform::command("codesign").arg("--verify").arg(format!("--test-requirement=={req}")).arg(new).status().is_ok_and(|s| s.success());
         if ok {
             return Ok(());
         }

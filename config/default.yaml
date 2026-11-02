@@ -741,6 +741,7 @@ agents:
   timeout_minutes: 20      # stop an agent that's still running after this long
   provider_names: true     # welcome guide: name the company next to an AI app, like "Codex (OpenAI)". true | false
   setup_help_link: true    # welcome guide: offer an AI app's own download page while setting it up or if it fails. true | false
+  quiet_install: true      # Windows: install an AI app in the background; a terminal only opens if it needs you to sign in. true | false
   available:               # your agents by name. cli: one of claude | codex | opencode | pi | cursor | hermes
     claude:   { cli: claude }      # model: "" = the CLI's own default; e.g. { cli: claude, model: opus }
     codex:    { cli: codex }
