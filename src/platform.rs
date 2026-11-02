@@ -1874,7 +1874,7 @@ pub fn notifications_init(on_click: impl Fn(String) + Send + Sync + 'static) {
 }
 
 /// Show a system notification: macOS's own notification system when Valerie runs as an app, otherwise the best the
-/// platform offers (a script on a bare macOS build, notify-send on Linux).
+/// platform offers (a script on a bare macOS build, notify-send on Linux, a PowerShell script on Windows).
 pub fn notify(n: &Note) {
     #[cfg(target_os = "macos")]
     if mac::notify_native(n) || mac::notify_legacy(n) {
@@ -1888,8 +1888,31 @@ pub fn notify(n: &Note) {
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let _ = crate::platform::command("notify-send").args([n.title, &format!("{}\n{}", n.subtitle, n.body)]).spawn();
+    // Through the system's notification service; the words go in as text, so a site's can't become script or markup.
     #[cfg(windows)]
-    let _ = esc;
+    {
+        let _ = esc;
+        const SCRIPT: &str = r#"$k='HKCU:\Software\Classes\AppUserModelId\dev.valerie.browser'
+if(!(Test-Path $k)){New-Item $k -Force|Out-Null;Set-ItemProperty $k DisplayName Valerie}
+[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
+[void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom,ContentType=WindowsRuntime]
+$x=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(1)
+$t=$x.GetElementsByTagName('text')
+[void]$t.Item(0).AppendChild($x.CreateTextNode($env:VALERIE_NOTE_TITLE))
+[void]$t.Item(1).AppendChild($x.CreateTextNode($env:VALERIE_NOTE_BODY))
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('dev.valerie.browser').Show([Windows.UI.Notifications.ToastNotification]::new($x))"#;
+        let body = if n.subtitle.is_empty() { n.body.to_string() } else { format!("{}\n{}", n.subtitle, n.body) };
+        let shown = crate::platform::command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+            .env("VALERIE_NOTE_TITLE", n.title)
+            .env("VALERIE_NOTE_BODY", body)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Err(e) = shown {
+            crate::log::line("notify", format!("couldn't show a notification: {e}"));
+        }
+    }
 }
 
 /// Today's local date, weekday and time: ("2026-10-16", "Thu", "Thursday 16 October", "08:02").

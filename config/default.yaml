@@ -676,7 +676,8 @@ vim:
 # Privacy: passwords and ad blocking
 # --------------------------------------------------------------------------------------------------------------
 
-# Passwords live in the macOS Keychain, one vault per profile.
+# Passwords live in the system's own store, one vault per profile: the Keychain on Mac, Credential Manager on
+# Windows, the desktop's keyring on Linux (GNOME Keyring or KWallet).
 passwords:
   enabled: true
   save_prompt_seconds: 30  # how long "Save password?" stays up before going away by itself

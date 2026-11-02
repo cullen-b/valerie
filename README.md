@@ -206,7 +206,8 @@ Agents open their tabs in their own space and leave yours alone. A dot in the si
 
 ## Passwords
 
-Each profile has its own vault in the macOS Keychain; `passwords.shared` lets several profiles share one. Valerie
+Each profile has its own vault in the system's own store (the Keychain on Mac, Credential Manager on Windows, the
+desktop's keyring on Linux); `passwords.shared` lets several profiles share one. Valerie
 offers to save after you sign in, and shows your saved logins when you focus a login field. Search "Password:" in
 the command bar to copy one (the clipboard clears after 45s). Import an export with
 `valerie import-passwords export.csv [vault]`. Passkeys need an Apple entitlement; see PLAN.md.

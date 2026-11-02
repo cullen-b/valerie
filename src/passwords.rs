@@ -1,5 +1,5 @@
-//! Password vaults in the macOS Keychain: one vault per profile plus shared vaults declared in config.
-//! Each credential is a generic-password item: service "Valerie — <vault>", account "<origin>\n<username>".
+//! Password vaults in the system's own store (macOS Keychain, Windows Credential Manager, the Linux desktop's keyring):
+//! one vault per profile plus shared vaults declared in config. Each credential is an item: service "Valerie — <vault>", account "<origin>\n<username>".
 use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,19 +215,227 @@ pub(crate) mod keychain {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 pub(crate) mod keychain {
     use anyhow::{bail, Result};
-    pub fn save(_: &str, _: &str, _: &str, _: &str) -> Result<()> {
-        bail!("password storage is only implemented on macOS so far")
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::ERROR_NOT_FOUND;
+    use windows::Win32::Security::Credentials::{CredDeleteW, CredEnumerateW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC};
+
+    /// Credential Manager's limit for one secret.
+    const MOST_BYTES: usize = 2560;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
     }
-    pub fn get(_: &str, _: &str) -> Result<Option<String>> {
-        Ok(None)
+
+    fn target(service: &str, account: &str) -> Vec<u16> {
+        wide(&format!("{service}/{account}"))
     }
-    pub fn accounts(_: &str) -> Result<Vec<String>> {
-        Ok(vec![])
+
+    fn missing(e: &windows::core::Error) -> bool {
+        e.code() == ERROR_NOT_FOUND.to_hresult()
     }
-    pub fn delete(_: &str, _: &str) -> Result<()> {
+
+    pub fn save(service: &str, account: &str, label: &str, password: &str) -> Result<()> {
+        if password.len() > MOST_BYTES {
+            bail!("that password is too long for Windows Credential Manager");
+        }
+        let (mut name, mut comment, mut secret) = (target(service, account), wide(label), password.as_bytes().to_vec());
+        let credential = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: PWSTR(name.as_mut_ptr()),
+            Comment: PWSTR(comment.as_mut_ptr()),
+            CredentialBlobSize: secret.len() as u32,
+            CredentialBlob: secret.as_mut_ptr(),
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            ..Default::default()
+        };
+        unsafe { CredWriteW(&credential, 0) }.map_err(|e| anyhow::anyhow!("Windows Credential Manager refused it: {}", e.message()))
+    }
+
+    pub fn get(service: &str, account: &str) -> Result<Option<String>> {
+        let name = target(service, account);
+        let mut found: *mut CREDENTIALW = std::ptr::null_mut();
+        match unsafe { CredReadW(PCWSTR(name.as_ptr()), CRED_TYPE_GENERIC, None, &mut found) } {
+            Ok(()) => {}
+            Err(e) if missing(&e) => return Ok(None),
+            Err(e) => bail!("couldn't read Windows Credential Manager: {}", e.message()),
+        }
+        unsafe {
+            let bytes = std::slice::from_raw_parts((*found).CredentialBlob, (*found).CredentialBlobSize as usize);
+            let password = String::from_utf8_lossy(bytes).into_owned();
+            CredFree(found as *const _);
+            Ok(Some(password))
+        }
+    }
+
+    /// Account names stored under a service.
+    pub fn accounts(service: &str) -> Result<Vec<String>> {
+        let prefix = format!("{service}/");
+        let filter = wide(&format!("{prefix}*"));
+        let (mut count, mut found) = (0u32, std::ptr::null_mut());
+        match unsafe { CredEnumerateW(PCWSTR(filter.as_ptr()), None, &mut count, &mut found) } {
+            Ok(()) => {}
+            Err(e) if missing(&e) => return Ok(vec![]),
+            Err(e) => bail!("couldn't read Windows Credential Manager: {}", e.message()),
+        }
+        unsafe {
+            let all = std::slice::from_raw_parts(found, count as usize);
+            let names = all.iter().filter_map(|c| (**c).TargetName.to_string().ok()?.strip_prefix(&prefix).map(str::to_string)).collect();
+            CredFree(found as *const _);
+            Ok(names)
+        }
+    }
+
+    pub fn delete(service: &str, account: &str) -> Result<()> {
+        let name = target(service, account);
+        match unsafe { CredDeleteW(PCWSTR(name.as_ptr()), CRED_TYPE_GENERIC, None) } {
+            Ok(()) => Ok(()),
+            Err(e) if missing(&e) => Ok(()),
+            Err(e) => bail!("couldn't delete from Windows Credential Manager: {}", e.message()),
+        }
+    }
+}
+
+/// The desktop's keyring (GNOME Keyring, KWallet, ...) through the freedesktop Secret Service.
+#[cfg(target_os = "linux")]
+pub(crate) mod keychain {
+    use anyhow::{anyhow, bail, Context, Result};
+    use gtk::gio;
+    use gtk::glib::variant::ObjectPath;
+    use gtk::glib::{ToVariant, Variant};
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    const ROOT: &str = "/org/freedesktop/secrets";
+    const SERVICE: &str = "org.freedesktop.Secret.Service";
+    const COLLECTION: &str = "org.freedesktop.Secret.Collection";
+    const ITEM: &str = "org.freedesktop.Secret.Item";
+    const NO_STORE: &str = "this computer has no keyring running to keep passwords in (GNOME Keyring or KWallet, say)";
+    /// How long to wait for someone to answer the keyring's own window.
+    const PROMPT_WAIT: Duration = Duration::from_secs(90);
+
+    struct Keyring {
+        bus: gio::DBusConnection,
+        session: ObjectPath,
+    }
+
+    impl Drop for Keyring {
+        fn drop(&mut self) {
+            let _ = self.call(&self.session.to_string(), "org.freedesktop.Secret.Session", "Close", ().to_variant());
+        }
+    }
+
+    fn path(v: Variant) -> Result<ObjectPath> {
+        v.get().context("the keyring sent something unexpected")
+    }
+
+    impl Keyring {
+        fn open() -> Result<Self> {
+            let bus = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).context(NO_STORE)?;
+            let mut keyring = Self { bus, session: ObjectPath::try_from("/").map_err(|_| anyhow!("bad path"))? };
+            // "plain": the secret crosses the desktop's own private bus, which only this user can reach.
+            let opened = keyring.call(ROOT, SERVICE, "OpenSession", ("plain", "".to_variant()).to_variant()).context(NO_STORE)?;
+            keyring.session = path(opened.child_value(1))?;
+            Ok(keyring)
+        }
+
+        fn call(&self, object: &str, interface: &str, method: &str, args: Variant) -> Result<Variant> {
+            self.bus
+                .call_sync(Some("org.freedesktop.secrets"), object, interface, method, Some(&args), None, gio::DBusCallFlags::NONE, 10_000, gio::Cancellable::NONE)
+                .map_err(|e| anyhow!("the keyring said: {}", e.message()))
+        }
+
+        fn property(&self, object: &str, interface: &str, name: &str) -> Result<Variant> {
+            let reply = self.call(object, "org.freedesktop.DBus.Properties", "Get", (interface, name).to_variant())?;
+            reply.child_value(0).as_variant().context("the keyring sent something unexpected")
+        }
+
+        /// The keyring draws its own window for this; there's nothing to wait on without a main loop, so `done` is polled.
+        fn answer(&self, prompt: &ObjectPath, done: impl Fn() -> bool) -> Result<()> {
+            if prompt.as_str() != "/" {
+                self.call(prompt, "org.freedesktop.Secret.Prompt", "Prompt", ("",).to_variant())?;
+            }
+            let start = Instant::now();
+            while !done() {
+                if start.elapsed() > PROMPT_WAIT {
+                    bail!("the keyring is still locked, so try again and unlock it when it asks");
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Ok(())
+        }
+
+        fn default_alias(&self) -> Result<ObjectPath> {
+            path(self.call(ROOT, SERVICE, "ReadAlias", ("default",).to_variant())?.child_value(0))
+        }
+
+        /// The default keyring, unlocked; a new account may not have one yet, and this makes it.
+        fn unlocked(&self) -> Result<String> {
+            let mut collection = self.default_alias()?;
+            if collection.as_str() == "/" {
+                let label = HashMap::from([(format!("{COLLECTION}.Label"), "Login".to_variant())]);
+                let made = self.call(ROOT, SERVICE, "CreateCollection", (label, "default").to_variant())?;
+                self.answer(&path(made.child_value(1))?, || self.default_alias().is_ok_and(|a| a.as_str() != "/"))?;
+                collection = self.default_alias()?;
+            }
+            let locked = || self.property(&collection, COLLECTION, "Locked").ok().and_then(|v| v.get::<bool>()).unwrap_or(true);
+            if locked() {
+                let reply = self.call(ROOT, SERVICE, "Unlock", (vec![collection.clone()],).to_variant())?;
+                self.answer(&path(reply.child_value(1))?, || !locked())?;
+            }
+            Ok(collection.to_string())
+        }
+
+        /// Matching items, whether or not their keyring is locked (their names can be read either way).
+        fn find(&self, attributes: HashMap<String, String>) -> Result<Vec<ObjectPath>> {
+            let reply = self.call(ROOT, SERVICE, "SearchItems", (attributes,).to_variant())?;
+            let list = |i| reply.child_value(i).get::<Vec<ObjectPath>>().unwrap_or_default();
+            Ok(list(0).into_iter().chain(list(1)).collect())
+        }
+    }
+
+    fn named(service: &str, account: Option<&str>) -> HashMap<String, String> {
+        let mut attributes = HashMap::from([("service".to_string(), service.to_string())]);
+        attributes.extend(account.map(|a| ("account".to_string(), a.to_string())));
+        attributes
+    }
+
+    pub fn save(service: &str, account: &str, label: &str, password: &str) -> Result<()> {
+        let keyring = Keyring::open()?;
+        let collection = keyring.unlocked()?;
+        let properties = HashMap::from([(format!("{ITEM}.Label"), label.to_variant()), (format!("{ITEM}.Attributes"), named(service, Some(account)).to_variant())]);
+        let secret = (keyring.session.clone(), Vec::<u8>::new(), password.as_bytes().to_vec(), "text/plain");
+        keyring.call(&collection, COLLECTION, "CreateItem", (properties, secret, true).to_variant())?;
+        Ok(())
+    }
+
+    pub fn get(service: &str, account: &str) -> Result<Option<String>> {
+        let keyring = Keyring::open()?;
+        let Some(item) = keyring.find(named(service, Some(account)))?.into_iter().next() else { return Ok(None) };
+        keyring.unlocked()?;
+        let reply = keyring.call(&item, ITEM, "GetSecret", (keyring.session.clone(),).to_variant())?;
+        let value = reply.child_value(0).child_value(2).get::<Vec<u8>>().context("the keyring sent something unexpected")?;
+        Ok(Some(String::from_utf8_lossy(&value).into_owned()))
+    }
+
+    /// Account names stored under a service.
+    pub fn accounts(service: &str) -> Result<Vec<String>> {
+        let keyring = Keyring::open()?;
+        let items = keyring.find(named(service, None))?;
+        Ok(items.iter().filter_map(|i| keyring.property(i, ITEM, "Attributes").ok()?.get::<HashMap<String, String>>()?.remove("account")).collect())
+    }
+
+    pub fn delete(service: &str, account: &str) -> Result<()> {
+        let keyring = Keyring::open()?;
+        let items = keyring.find(named(service, Some(account)))?;
+        if !items.is_empty() {
+            keyring.unlocked()?;
+        }
+        for item in items {
+            keyring.call(&item, ITEM, "Delete", ().to_variant())?;
+        }
         Ok(())
     }
 }

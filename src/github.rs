@@ -166,6 +166,10 @@ pub fn ensure_repo(token: &str, name: &str) -> Result<(String, String)> {
 /// The whole "Set Up Sync": sign in, find or create the repo, and (with `repo_key`) give this machine its own key
 /// for that repo alone, after which Valerie keeps no GitHub sign-in of its own.
 pub fn set_up(client_id: &str, repo_name: &str, repo_key: bool, device: &str, notify: &dyn Fn(Step)) -> Step {
+    // Before asking anyone to sign in for something that can't work yet.
+    if !crate::platform::command("git").arg("--version").env("PATH", crate::ai::search_path()).output().is_ok_and(|o| o.status.success()) {
+        return Step::Failed("Sync uses Git, which isn't on this computer yet. Install it from git-scm.com/downloads, then try again.".into());
+    }
     let done = sign_in(client_id, notify).and_then(|t| {
         let (login, repo) = ensure_repo(&t, repo_name)?;
         // Without ssh-keygen (or if GitHub says no) sync carries on with the sign-in, as before.
