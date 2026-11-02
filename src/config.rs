@@ -131,6 +131,7 @@ pub struct AppConfig {
     pub menu_bar_menu: Vec<Binding>,
     pub command_line_tool: bool,
     pub keep_running_when_closed: bool,
+    pub keep_running_when_closed_without_dock: bool,
     pub unload_when_closed_minutes: f64,
     pub reload_when_reopened: bool,
 }
