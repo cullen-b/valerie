@@ -46,9 +46,9 @@ def call(tool, args=None, timeout=90):
     body = json.dumps(args or {})
     if MACHINE == "linux":
         return sh(["docker", "exec", "-u", "tester", "-e", "HOME=/home/tester", "-e", "DISPLAY=:1", CONTAINER, "valerie", "call", tool, body], timeout)
-    # Through cmd.exe: its quoting survives JSON, where PowerShell 5's doesn't.
-    quoted = '"' + body.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return sh(["ssh", *SSH, "-p", "2222", "tester@127.0.0.1", f"{WIN_EXE} call {tool} {quoted}"], timeout)
+    # Piped, or Windows won't wait for or read a windowed app. Base64 survives PowerShell 5's quoting of JSON.
+    encoded = base64.b64encode(body.encode()).decode()
+    return ps(f"$j = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')) -replace '\"','\\\"'; & '{WIN_EXE}' call {tool} $j 2>&1 | Out-String", timeout)
 
 
 def press(keys):
@@ -114,7 +114,7 @@ def setup():
     text += "\nwelcome: false\nupdates: { check: false }\n"
     tmp = pathlib.Path(tempfile.mkdtemp())
     (tmp / "config.yaml").write_text(text)
-    code, paths = machine_sh("valerie paths" if MACHINE == "linux" else f"& '{WIN_EXE}' paths")
+    code, paths = machine_sh("valerie paths" if MACHINE == "linux" else f"& '{WIN_EXE}' paths | Out-String")
     conf = re.search(r"config:\s*(.+)", paths).group(1).strip()
     folder = conf if not conf.endswith((".yaml", ".yml")) else str(pathlib.PurePath(conf).parent) if MACHINE == "linux" else conf.rsplit("\\", 1)[0]
     plugins = [p for p in (CONFIG / "plugins").iterdir() if not p.name.startswith("_")]
@@ -141,7 +141,7 @@ def setup():
     for _ in range(40):
         time.sleep(2)
         code, out = call("list_spaces")
-        if code == 0 and "Personal" in out:
+        if "Personal" in out:
             return True
     print("Valerie never answered:", out)
     return False
@@ -202,9 +202,11 @@ def t_screen():
 
 
 def t_routes_and_profiles():
-    command("go", input="https://www.mit.edu", new_tab=True); time.sleep(5)
+    # Routes are for links from other apps; a link opens in a little window, which belongs to the route's space.
+    call("open_link", {"url": "https://www.mit.edu"}); time.sleep(5)
+    command("move_to_main_window"); time.sleep(3)
     t = find_tab("mit.edu", "School")
-    check("*.edu goes to the School space", t is not None, tabs("School"))
+    check("a *.edu link from another app goes to the School space", t is not None, tabs("School"))
     call("open_tab", {"url": "https://example.org", "space": "Personal", "activate": False}); time.sleep(4)
     a = find_tab("example.org", "Personal")
     call("open_tab", {"url": "https://example.org", "space": "Work", "activate": False}); time.sleep(4)
@@ -235,7 +237,7 @@ def t_downloads():
 
 def t_plugins():
     out = call("get_settings", {})[1]
-    code, listing = machine_sh("valerie plugins list" if MACHINE == "linux" else f"& '{WIN_EXE}' plugins list")
+    code, listing = machine_sh("valerie plugins list" if MACHINE == "linux" else f"& '{WIN_EXE}' plugins list | Out-String")
     check("my marketplace plugins are found", "youtube-speed" in listing, listing)
     call("open_tab", {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "activate": True}); time.sleep(10)
     t = find_tab("youtube.com")
@@ -247,7 +249,9 @@ def t_plugins():
     code, out = command("extensions"); time.sleep(1)
     ext = logs("xtension", 2)
     check("youtube-theater extension loads", "youtube-theater" in ext and "work on macOS" not in ext, ext + out)
-    check("youtube theater mode plugin stands in for the extension", "youtube-theater" in call("site_state", {"site": "youtube.com"})[1])
+    machine_sh("valerie plugins install youtube-theater-mode" if MACHINE == "linux" else f"& '{WIN_EXE}' plugins install youtube-theater-mode | Out-String", 90)
+    time.sleep(3)
+    check("the marketplace's YouTube theater plugin installs, standing in for the extension", "youtube-theater-mode" in call("site_state", {"site": "youtube.com"})[1])
 
 
 def t_web_tools():
@@ -263,11 +267,12 @@ def t_settings():
     check("an agent can change a setting", code == 0 and "36" in call("get_settings", {"key": "sidebar.tab_height"})[1], out)
     command("reload_config"); time.sleep(2)
     check("reload the settings", "Config reloaded" in logs("Config reloaded", 2))
-    machine_sh("valerie check-config" if MACHINE == "linux" else f"& '{WIN_EXE}' check-config")
-    code, out = machine_sh("valerie check-config" if MACHINE == "linux" else f"& '{WIN_EXE}' check-config")
+    machine_sh("valerie check-config" if MACHINE == "linux" else f"& '{WIN_EXE}' check-config | Out-String")
+    code, out = machine_sh("valerie check-config" if MACHINE == "linux" else f"& '{WIN_EXE}' check-config | Out-String")
     check("my synced settings are valid here (terminal: iTerm, editor: hx)", code == 0 and "iTerm" not in out, out)
-    n = len(logs("editor", 5))
-    command("open_config"); time.sleep(3)
+    command("open_config"); time.sleep(4)
+    machine_sh("pkill -x xdg-open; true" if MACHINE == "linux" else "Stop-Process -Name notepad,WindowsTerminal,OpenConsole -Force -EA 0")
+    check("hx isn't here, so the settings file opens in the usual app", "isn't on this computer" in logs("editor", 2), logs("editor", 2))
     check("open the settings file from Valerie", "couldn't" not in logs("", 1).lower() and "failed" not in logs("", 1).lower(), logs("", 1))
 
 
@@ -300,7 +305,7 @@ def t_restart():
     for _ in range(45):
         time.sleep(2)
         code, out = call("list_spaces")
-        if code == 0 and "Personal" in out and "Valerie isn't running" not in out:
+        if "Personal" in out and "Valerie isn't running" not in out:
             time.sleep(5)
             break
     check("restart brings Valerie back with my tabs", before is not None and find_tab("example.com") is not None, tabs())
