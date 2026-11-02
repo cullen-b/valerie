@@ -51,6 +51,8 @@ button.b[disabled] { opacity: .5; pointer-events: none; }
 .switch { all: unset; width: 34px; height: 20px; border-radius: 10px; background: var(--card2); position: relative; transition: background .2s; flex: none; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--fg); transition: transform .2s; }
 .switch.on { background: var(--accent); } .switch.on::after { transform: translateX(14px); background: #0b0a10; }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
 .empty { text-align: center; color: var(--dim); padding: 50px 20px; }
 .empty b { display: block; color: var(--fg); font-size: 17px; margin-bottom: 6px; }
 .share { margin-top: 18px; display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 16px;
@@ -115,12 +117,14 @@ function mineCard(p) {
   const c = el("div", "card"), inIndex = (S.index || []).find((e) => same(e, p)), busy = S.busy[key(p)];
   const head = el("div", "head"), title = el("div", "title");
   const from = p.builtin ? "comes with Valerie" : p.market_version ? "from the marketplace" : "yours";
-  title.append(el("b", null, isExt(p) ? p.title || pretty(p.name) : pretty(p.name)), el("small", null, isExt(p) ? `extension · ${from}${p.running ? " · running" : ""}` : from));
+  title.append(el("b", null, isExt(p) ? p.title || pretty(p.name) : pretty(p.name)), el("small", null, isExt(p) ? `extension · ${from}${p.off_because ? " · " + p.off_because : p.running ? " · running" : p.enabled ? "" : " · off"}` : from));
   head.append(el("div", "ico", pretty(p.name)[0]), title);
-  // Plugins switch on and off here; extensions are allowed (or not) when Valerie asks to load them.
-  if (!isExt(p)) {
+  // Without off_because (this computer can't run extensions, or they're all off), plugins and extensions switch on and off here.
+  if (!p.off_because) {
     const sw = el("button", "switch" + (p.enabled ? " on" : "")); sw.title = p.enabled ? "On" : "Off";
-    sw.onclick = () => send({ t: "toggle", name: p.name, enabled: !p.enabled });
+    sw.setAttribute("role", "switch"); sw.setAttribute("aria-checked", String(!!p.enabled));
+    sw.setAttribute("aria-label", "Turn " + (isExt(p) ? p.title || pretty(p.name) : pretty(p.name)) + (p.enabled ? " off" : " on"));
+    sw.onclick = () => send({ ...msg("toggle", p), enabled: !p.enabled });
     head.append(sw);
   }
   c.append(head, el("div", "desc", p.description || "(no description)"));

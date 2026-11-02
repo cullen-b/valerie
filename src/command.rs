@@ -584,6 +584,16 @@ pub enum Command {
         #[serde(default)]
         options: bool,
     },
+    /// Turn a plugin or browser extension on or off.
+    TogglePlugin {
+        name: String,
+        /// Set it to this; without it, switch to the other state.
+        #[serde(default)]
+        on: Option<bool>,
+        /// It's an extension, when a plugin has the same name.
+        #[serde(default)]
+        extension: bool,
+    },
     Quit,
 }
 
@@ -835,6 +845,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("new_window", "{ url? }  (a separate window for one page)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
+    ("toggle_plugin", "{ name, on?, extension? }  (turn a plugin or browser extension on or off; without `on`, switch it; `extension: true` when a plugin has the same name)"),
     ("open_page", "{ name }  (a page from the config folder's pages/, e.g. one an agent made with show_page; or downloads, history)"),
     ("plugin", "{ plugin, command, context? }  (run a plugin command by its title; context: { link?, selection?, image?, page? })"),
 ];

@@ -201,6 +201,7 @@ pub fn site_settings_for(sites: &BTreeMap<String, Option<SiteSettings>>, url: &s
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionsConfig {
     pub enabled: bool,
+    pub turned_off: Vec<String>,
     pub folder: String,
 }
 
@@ -999,6 +1000,7 @@ pub struct PasswordsConfig {
     pub save_prompt_seconds: f64,
     pub offer_passkeys: String,
     pub passkeys_through_safari: bool,
+    pub explain_keychain_prompt: bool,
     pub shared: Vec<SharedVault>,
 }
 

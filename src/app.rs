@@ -60,6 +60,12 @@ pub enum UserEvent {
     /// The built-in Markdown editor's text, to write to the file the page shows.
     MarkdownSave { target: Target, file: PathBuf, text: String },
     ConfigChanged,
+    /// A saved password was read for a page to fill.
+    PasswordToFill { target: Target, origin: String, username: String, read: Result<Option<String>, String> },
+    /// A submitted login was compared with the saved ones.
+    CredentialChecked { target: Target, origin: String, username: String, password: String, known: bool },
+    /// The system's password store has been slow to answer, so it's probably asking the user something.
+    PasswordStoreWaiting,
     SyncDone(Result<sync::Outcome, String>),
     /// The answer about saved tabs not opened in a long while: 0 keep all, 1 remove all, 2 one by one.
     SavedAnswer(Vec<TabId>, Option<usize>),
@@ -335,6 +341,7 @@ pub struct App {
     /// When each page last clicked or submitted by keyboard: the page it leads to puts the cursor in its text box.
     keyed: HashMap<Target, u64>,
     pending_save: Option<PendingSave>,
+    keychain_prompt_explained: bool,
     peek: Option<PeekView>,
     /// Tabs whose page script has reported in (so it can handle vim keys).
     ready_views: std::collections::HashSet<TabId>,
@@ -1116,6 +1123,12 @@ fn scheme_of(url: &str) -> String {
     url.split(':').next().unwrap_or("").to_ascii_lowercase()
 }
 
+/// Uses the password store, which on Mac may stop to ask permission: call it off the main thread so Valerie can explain.
+fn watching_password_store<T>(proxy: &EventLoopProxy<UserEvent>, work: impl FnOnce() -> T) -> T {
+    let p = proxy.clone();
+    passwords::noting_a_wait(std::time::Duration::from_secs(1), move || send(&p, UserEvent::PasswordStoreWaiting), work)
+}
+
 fn send(proxy: &EventLoopProxy<UserEvent>, ev: UserEvent) {
     let _ = proxy.send_event(ev);
 }
@@ -1319,6 +1332,7 @@ impl App {
             fill_offers: HashMap::new(),
             keyed: HashMap::new(),
             pending_save: None,
+            keychain_prompt_explained: false,
             peek: None,
             ready_views: Default::default(),
             waiting_draw: Default::default(),
@@ -3965,15 +3979,12 @@ impl App {
                     return;
                 }
                 let Some(e) = m["index"].as_u64().and_then(|i| entries.get(i as usize)).filter(|e| e.origin == origin) else { return };
-                match passwords::password(e) {
-                    Ok(Some(pw)) => {
-                        if let Some(v) = self.view_for(target) {
-                            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.fill({}, {})", json!(e.username), json!(pw)));
-                        }
-                    }
-                    Ok(None) => self.toast("That password is no longer saved"),
-                    Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
-                }
+                let e = e.clone();
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let read = watching_password_store(&proxy, || passwords::password(&e)).map_err(|err| err.to_string());
+                    send(&proxy, UserEvent::PasswordToFill { target, origin: e.origin, username: e.username, read });
+                });
             }
             "credential" => {
                 let (Some(username), Some(password)) = (m["username"].as_str(), m["password"].as_str()) else { return };
@@ -3981,22 +3992,16 @@ impl App {
                     return;
                 }
                 let vaults = self.vaults_for_target(target);
-                let known = passwords::list(&vaults)
-                    .into_iter()
-                    .filter(|e| e.origin == origin && e.username == username)
-                    .any(|e| passwords::password(&e).ok().flatten().as_deref() == Some(password));
-                if known {
-                    return;
+                let saved: Vec<passwords::Entry> = passwords::list(&vaults).into_iter().filter(|e| e.origin == origin && e.username == username).collect();
+                let (username, password) = (username.to_string(), password.to_string());
+                if saved.is_empty() {
+                    return self.credential_checked(target, origin, username, password, false);
                 }
-                self.pending_save = Some(PendingSave {
-                    target,
-                    origin,
-                    username: username.to_string(),
-                    password: password.to_string(),
-                    nonce: crate::mcp::random_hex(),
-                    at: now(),
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let known = watching_password_store(&proxy, || saved.iter().any(|e| passwords::password(e).ok().flatten().as_deref() == Some(password.as_str())));
+                    send(&proxy, UserEvent::CredentialChecked { target, origin, username, password, known });
                 });
-                self.offer_pending_save();
             }
             "save_password" | "never_password" | "dismiss_password" => {
                 let Some(p) = self.pending_save.take() else { return };
@@ -4019,7 +4024,7 @@ impl App {
                 // The system's store may stop to ask something (unlock the keyring, say), and the browser shouldn't freeze meanwhile.
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
-                    let said = match passwords::save(&vault, &p.origin, &p.username, &p.password) {
+                    let said = match watching_password_store(&proxy, || passwords::save(&vault, &p.origin, &p.username, &p.password)) {
                         Ok(()) => format!("Password saved to {vault}"),
                         Err(e) => format!("Could not save password: {e}"),
                     };
@@ -4028,6 +4033,46 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn credential_checked(&mut self, target: Target, origin: String, username: String, password: String, known: bool) {
+        if known {
+            return;
+        }
+        self.pending_save = Some(PendingSave { target, origin, username, password, nonce: crate::mcp::random_hex(), at: now() });
+        self.offer_pending_save();
+    }
+
+    fn fill_password(&mut self, target: Target, origin: &str, username: &str, read: Result<Option<String>, String>) {
+        // The Keychain may have been asking for a while, and the page could have gone somewhere else by now.
+        if self.origin_of_target(target).as_deref() != Some(origin) {
+            return crate::log::line("passwords", "not filling: the page changed while the password was being read");
+        }
+        match read {
+            Ok(Some(pw)) => {
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.fill({}, {})", json!(username), json!(pw)));
+                }
+            }
+            Ok(None) => self.toast("That password is no longer saved"),
+            Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
+        }
+    }
+
+    /// Once a run: every update makes the Mac ask again, one password at a time, which looks alarming if nobody says why.
+    fn explain_keychain_prompt(&mut self) {
+        if !cfg!(target_os = "macos") || !self.config.passwords.explain_keychain_prompt || self.keychain_prompt_explained {
+            return;
+        }
+        self.keychain_prompt_explained = true;
+        let body = "This is expected. After Valerie updates, your Mac asks once for each saved password it uses. Click Always Allow and it won't ask for that password again until the next update.";
+        platform::choose(&self.chrome, "Your Mac is asking about a saved password", body, &["Got It", "Don't Show Again"], |answer| {
+            if answer == Some(1) {
+                if let Err(e) = config::set_setting(&["passwords", "explain_keychain_prompt"], "false") {
+                    crate::log::line("passwords", format!("couldn't turn off the Keychain explanation: {e}"));
+                }
+            }
+        });
     }
 
     fn peek_rect(&self) -> (f64, f64, f64, f64) {
@@ -5925,23 +5970,22 @@ impl App {
             Command::CopyPassword { vault, origin, username } => {
                 self.close_bar();
                 let e = passwords::Entry { vault, origin, username };
-                match passwords::password(&e) {
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || match watching_password_store(&proxy, || passwords::password(&e)) {
                     Ok(Some(pw)) => {
                         if arboard::Clipboard::new().and_then(|mut c| c.set_text(pw.clone())).is_ok() {
-                            self.toast("Password copied: clears in 45 seconds");
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_secs(45));
-                                if let Ok(mut c) = arboard::Clipboard::new() {
-                                    if c.get_text().ok().as_deref() == Some(pw.as_str()) {
-                                        let _ = c.set_text(String::new());
-                                    }
+                            send(&proxy, UserEvent::Toast("Password copied: clears in 45 seconds".into()));
+                            std::thread::sleep(std::time::Duration::from_secs(45));
+                            if let Ok(mut c) = arboard::Clipboard::new() {
+                                if c.get_text().ok().as_deref() == Some(pw.as_str()) {
+                                    let _ = c.set_text(String::new());
                                 }
-                            });
+                            }
                         }
                     }
-                    Ok(None) => self.toast("Password not found"),
-                    Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
-                }
+                    Ok(None) => send(&proxy, UserEvent::Toast("Password not found".into())),
+                    Err(err) => send(&proxy, UserEvent::Toast(format!("Couldn't use saved passwords: {err}"))),
+                });
             }
             Command::DeletePassword { vault, origin, username } => {
                 self.close_bar();
@@ -6051,6 +6095,10 @@ impl App {
                 self.show_extensions();
             }
             Command::ExtensionAction { name, options } => self.extension_action(&name, options),
+            Command::TogglePlugin { name, on, extension } => {
+                self.close_bar();
+                self.toggle_plugin(&name, on, extension);
+            }
             Command::Quit if self.config.menu.confirm_quit && !self.quit_asked => {
                 self.quit_asked = true;
                 let p = self.proxy.clone();
@@ -6624,6 +6672,7 @@ impl App {
                 self.prepare_little_later();
                 self.reload_config();
                 self.schedule_sync();
+                self.unload_unwanted_extensions();
                 // A new extension folder (installed, or made by an agent) is asked about and loaded without a restart.
                 if self.revealed && self.ext_loading == 0 {
                     self.load_extensions(true);
@@ -6811,6 +6860,7 @@ impl App {
                     self.ext_denied.insert(name);
                 }
                 self.load_extensions(true);
+                self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
             }
             UserEvent::ExtensionLoaded { name, result, announce } => {
                 self.ext_loading = self.ext_loading.saturating_sub(1);
@@ -6824,6 +6874,9 @@ impl App {
                 if self.ext_loading == 0 && !crate::extensions::loaded().is_empty() {
                     self.rebuild_views();
                 }
+                // Turned off while it was still loading.
+                self.unload_unwanted_extensions();
+                self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
             }
             UserEvent::ClearSiteAnswered { site, ok, reply } => {
                 if !ok {
@@ -6881,6 +6934,9 @@ impl App {
             }
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
             UserEvent::Toast(msg) => self.toast(&msg),
+            UserEvent::PasswordToFill { target, origin, username, read } => self.fill_password(target, &origin, &username, read),
+            UserEvent::CredentialChecked { target, origin, username, password, known } => self.credential_checked(target, origin, username, password, known),
+            UserEvent::PasswordStoreWaiting => self.explain_keychain_prompt(),
             UserEvent::PageCrashed { target } => {
                 trace(&format!("page process ended: {target:?}"));
                 let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
@@ -6909,8 +6965,18 @@ impl App {
                         None => self.toast(&format!("Couldn't share {}: {}", ev["name"].as_str().unwrap_or("it"), ev["detail"].as_str().unwrap_or(""))),
                     }
                 }
+                // A reinstalled extension starts on, and a removed one stops running.
+                if ev["type"] == "removed" && ev["ok"] == true && ev["kind"] == crate::market::EXTENSION {
+                    let name = ev["name"].as_str().unwrap_or("");
+                    if self.config.extensions.turned_off.iter().any(|n| n == name) {
+                        if let Err(e) = crate::extensions::set_on(&self.config.extensions, name, true) {
+                            crate::log::line("extensions", format!("forgetting {name} was off: {e:#}"));
+                        }
+                    }
+                }
                 if ev["type"] == "installed" || ev["type"] == "removed" {
                     self.reload_config();
+                    self.unload_unwanted_extensions();
                 }
                 self.market_send(&ev);
                 if ev["type"] == "installed" || ev["type"] == "removed" {
@@ -9388,8 +9454,17 @@ impl App {
                              "market_version": crate::market::installed_version(&p.dir), "matches": p.manifest.matches }))
             .collect();
         let loaded = crate::extensions::loaded();
+        // Then a switch would do nothing.
+        let off_because = if !crate::extensions::supported() {
+            Some("needs macOS 15.4 or later")
+        } else if !self.config.extensions.enabled {
+            Some("all extensions are off in settings")
+        } else {
+            None
+        };
         out.extend(crate::extensions::find(&crate::extensions::dir(&self.config.extensions)).into_iter().map(|e| {
             json!({ "kind": crate::market::EXTENSION, "name": e.name, "title": e.title, "description": e.description, "running": loaded.contains(&e.name),
+                    "enabled": self.extension_on(&e.name), "off_because": off_because,
                     "market_version": crate::market::installed_version(&e.dir), "matches": e.wants })
         }));
         out
@@ -9447,7 +9522,7 @@ impl App {
                 let px = self.proxy.clone();
                 let Some(v) = self.market_view.as_ref() else { return };
                 let body = if kind == crate::market::EXTENSION {
-                    "Its folder is deleted from your extensions. It stops running when Valerie restarts."
+                    "Its folder is deleted from your extensions."
                 } else {
                     "Its folder is deleted from your plugins."
                 };
@@ -9459,20 +9534,8 @@ impl App {
                 });
             }
             "toggle" => {
-                let Some(p) = self.plugins.iter().find(|p| p.name == name) else { return };
-                let on = m["enabled"].as_bool().unwrap_or(true);
-                let file = p.dir.join("plugin.yaml");
-                let text = std::fs::read_to_string(&file).unwrap_or_default();
-                let line = format!("enabled: {on}");
-                let new = if text.lines().any(|l| l.starts_with("enabled:")) {
-                    text.lines().map(|l| if l.starts_with("enabled:") { line.clone() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n"
-                } else {
-                    format!("{line}\n{text}")
-                };
-                if std::fs::write(&file, new).is_ok() {
-                    self.reload_config();
-                    self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
-                }
+                self.toggle_plugin(&name, m["enabled"].as_bool(), kind.is_some());
+                self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
             }
             "share" => self.share_plugin(name, kind.or(Some("plugin"))),
             "open" => {
@@ -10559,7 +10622,7 @@ impl App {
         }
         let loaded = crate::extensions::loaded();
         for e in crate::extensions::find(&crate::extensions::dir(&self.config.extensions)) {
-            if loaded.contains(&e.name) || self.ext_denied.contains(&e.name) {
+            if loaded.contains(&e.name) || !self.extension_on(&e.name) {
                 continue;
             }
             if self.state.extension_grants.get(&e.name) == Some(&e.print) {
@@ -10577,6 +10640,59 @@ impl App {
         }
     }
 
+    /// Not turned off, and not turned down with "Not Now" this session.
+    fn extension_on(&self, name: &str) -> bool {
+        !self.config.extensions.turned_off.iter().any(|n| n == name) && !self.ext_denied.contains(name)
+    }
+
+    /// Stop extensions that shouldn't be running any more (turned off, or their folder is gone), and rebuild the pages
+    /// they were in so they leave those too.
+    fn unload_unwanted_extensions(&mut self) {
+        let found = crate::extensions::find(&crate::extensions::dir(&self.config.extensions));
+        let mut any = false;
+        for name in crate::extensions::loaded() {
+            if self.config.extensions.enabled && self.extension_on(&name) && found.iter().any(|e| e.name == name) {
+                continue;
+            }
+            match crate::extensions::unload(&name) {
+                Ok(()) => any = true,
+                Err(e) => self.toast(&format!("Extension {name}: {e}")),
+            }
+        }
+        if any {
+            self.rebuild_views();
+        }
+    }
+
+    /// Turn a plugin or extension on or off (`on`: None = the other way). It happens right away: extensions stop or
+    /// load now, and turning one back on asks again if the user said "Not Now" or its manifest changed.
+    fn toggle_plugin(&mut self, name: &str, on: Option<bool>, extension: bool) {
+        let kind = extension.then_some(crate::market::EXTENSION);
+        let Some((dir, kind)) = crate::market::local(name, kind, &plugins::plugins_dir(), &crate::extensions::dir(&self.config.extensions)) else {
+            return self.toast(&format!("There's no plugin or extension called {name}"));
+        };
+        let on = if kind == crate::market::EXTENSION {
+            let on = on.unwrap_or(!self.extension_on(name));
+            if on {
+                self.ext_denied.remove(name);
+            }
+            crate::extensions::set_on(&self.config.extensions, name, on).map(|_| on)
+        } else {
+            let on = on.unwrap_or_else(|| !self.plugins.iter().any(|p| p.name == name && p.manifest.enabled));
+            plugins::set_enabled(&dir, on).map(|_| on)
+        };
+        let on = match on {
+            Ok(on) => on,
+            Err(e) => return self.toast(&format!("Couldn't change {name}: {e:#}")),
+        };
+        self.reload_config();
+        self.unload_unwanted_extensions();
+        if kind == crate::market::EXTENSION && self.ext_loading == 0 {
+            self.load_extensions(true);
+        }
+        crate::log::line("plugins", format!("{name} turned {}", if on { "on" } else { "off" }));
+    }
+
     /// The extensions in the command bar: open a popup or options page, or see why one isn't running.
     fn show_extensions(&mut self) {
         let found = crate::extensions::find(&crate::extensions::dir(&self.config.extensions));
@@ -10587,6 +10703,7 @@ impl App {
         let mut items = Vec::new();
         for e in found {
             let on = loaded.contains(&e.name);
+            let can_switch = crate::extensions::supported() && self.config.extensions.enabled;
             let status = if !crate::extensions::supported() {
                 "needs macOS 15.4 or later"
             } else if !self.config.extensions.enabled {
@@ -10594,7 +10711,9 @@ impl App {
             } else if on {
                 "running"
             } else if self.ext_denied.contains(&e.name) {
-                "not loaded (you said Not Now; restart Valerie to be asked again)"
+                "not loaded (you said Not Now)"
+            } else if !self.extension_on(&e.name) {
+                "turned off"
             } else {
                 "waiting for you to allow it"
             };
@@ -10605,6 +10724,11 @@ impl App {
             }
             if on && e.options {
                 items.push(json!({ "kind": "plugin", "title": format!("{}: options", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name, "options": true } }));
+            }
+            if can_switch {
+                let turn_on = !self.extension_on(&e.name);
+                let title = format!("{} {}", if turn_on { "Turn On" } else { "Turn Off" }, e.title);
+                items.push(json!({ "kind": "plugin", "title": title, "sub": sub, "cmd": { "cmd": "toggle_plugin", "name": e.name, "on": turn_on, "extension": true } }));
             }
             if items.len() == before {
                 items.push(json!({ "kind": "plugin", "title": e.title, "sub": sub, "cmd": { "cmd": "copy_text", "text": e.dir.to_string_lossy() } }));

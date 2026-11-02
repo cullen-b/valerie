@@ -444,6 +444,19 @@ fn account(origin: &str, username: &str) -> String {
     format!("{origin}\n{username}")
 }
 
+/// Runs `work`, calling `slow` if it's still going after `after`: the Mac's Keychain window holds a call open until it's answered.
+pub fn noting_a_wait<T>(after: std::time::Duration, slow: impl FnOnce() + Send + 'static, work: impl FnOnce() -> T) -> T {
+    let (finished, wait) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if matches!(wait.recv_timeout(after), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+            slow();
+        }
+    });
+    let out = work();
+    drop(finished);
+    out
+}
+
 pub fn save(vault: &str, origin: &str, username: &str, password: &str) -> Result<()> {
     store(vault, origin, username, password)?;
     stamp(vault, origin, username, crate::state::now(), false);
@@ -608,6 +621,18 @@ mod tests {
     fn csv_handles_quotes_and_newlines() {
         let rows = parse_csv("name,url,username,password\n\"a, b\",https://x.com,me,\"p\"\"w\nd\"\n");
         assert_eq!(rows[1], vec!["a, b", "https://x.com", "me", "p\"w\nd"]);
+    }
+
+    #[test]
+    fn a_wait_is_noted_only_when_the_work_runs_long() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let (tx, rx) = channel();
+        assert_eq!(noting_a_wait(Duration::from_millis(300), move || tx.send(()).unwrap(), || 1), 1);
+        assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
+        let (tx, rx) = channel();
+        noting_a_wait(Duration::from_millis(10), move || tx.send(()).unwrap(), || std::thread::sleep(Duration::from_millis(200)));
+        assert!(rx.try_recv().is_ok());
     }
 
     /// Touches the real login keychain, so it only runs on request: `cargo test -- --ignored keychain`.
