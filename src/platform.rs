@@ -460,7 +460,60 @@ mod mac {
                 std::mem::transmute::<*const (), Imp>(prompt as *const ()),
                 c"v@:@@@@@?",
             );
+            unsafe extern "C-unwind" fn did_close(_: *mut AnyObject, _: Sel, wv: *mut AnyObject) {
+                let window: *mut AnyObject = msg_send![wv, window];
+                if window.is_null() {
+                    return;
+                }
+                // Only a pop-up fills its window; a tab asking to close must not close Valerie's.
+                let content: *mut AnyObject = msg_send![window, contentView];
+                if content == wv {
+                    crate::log::line("page", "a pop-up window closed itself");
+                    // Later: closing frees this webview, which WebKit is still calling.
+                    let _: () = msg_send![window, performSelector: sel!(close), withObject: std::ptr::null_mut::<AnyObject>(), afterDelay: 0.0f64];
+                }
+            }
+            add(sel!(webViewDidClose:), std::mem::transmute::<*const (), Imp>(did_close as *const ()), c"v@:@");
         });
+    }
+
+    /// A site's pop-up at the size it asked for ("Sign in with Google"). Wry's own pop-ups have no UI delegate, so
+    /// `window.close()` did nothing and they stayed open after signing in; this one shares its opener's delegate.
+    pub fn popup_window<T: objc2::Message>(opener: &impl objc2::Message, configuration: &impl objc2::Message, size: (f64, f64), position: Option<(f64, f64)>) -> Option<objc2::rc::Retained<T>> {
+        use objc2::class;
+        use objc2_app_kit::{NSBackingStoreType, NSWindowStyleMask};
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+        unsafe {
+            let opener = opener as *const _ as *mut AnyObject;
+            let configuration = configuration as *const _ as *mut AnyObject;
+            let parent: *mut AnyObject = msg_send![opener, window];
+            if parent.is_null() {
+                return None;
+            }
+            let screen: *mut AnyObject = msg_send![parent, screen];
+            if screen.is_null() {
+                return None;
+            }
+            let parent_frame: NSRect = msg_send![parent, frame];
+            let screen_frame: NSRect = msg_send![screen, frame];
+            let origin = match position {
+                Some((x, y)) => NSPoint::new(x, screen_frame.size.height - y - size.1),
+                None => parent_frame.origin,
+            };
+            let rect = NSRect::new(origin, NSSize::new(size.0, size.1));
+            let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable | NSWindowStyleMask::Resizable;
+            let window: *mut AnyObject = msg_send![class!(NSWindow), alloc];
+            let window: *mut AnyObject = msg_send![window, initWithContentRect: rect, styleMask: style, backing: NSBackingStoreType::Buffered, defer: false];
+            let webview: *mut AnyObject = msg_send![class!(WKWebView), alloc];
+            let webview: *mut AnyObject = msg_send![webview, initWithFrame: rect, configuration: configuration];
+            let delegate: *mut AnyObject = msg_send![opener, UIDelegate];
+            let _: () = msg_send![webview, setUIDelegate: delegate];
+            // The window frees itself, and with it the webview, when it closes.
+            let _: () = msg_send![window, setReleasedWhenClosed: true];
+            let _: () = msg_send![window, setContentView: webview];
+            let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
+            objc2::rc::Retained::from_raw(webview.cast())
+        }
     }
 
     /// Nobody can answer a dialog from a tab they can't see (an agent's hidden tab, a page being read, a background
@@ -1842,6 +1895,9 @@ pub fn local_timestamp() -> String {
 }
 
 /// Make `alert()`, `confirm()` and `prompt()` in web pages show real dialogs (pass any webview Valerie made).
+#[cfg(target_os = "macos")]
+pub use mac::popup_window;
+
 pub fn install_page_dialogs(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::install_page_dialogs(wv);

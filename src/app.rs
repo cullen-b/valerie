@@ -1685,7 +1685,15 @@ impl App {
                     Some("window") => true,
                     _ => popup_windows,
                 };
-                if windows && features.size.is_some() {
+                if let Some(size) = features.size.filter(|_| windows) {
+                    let host = url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                    crate::log::line("page", format!("opened a pop-up window for {host}"));
+                    #[cfg(target_os = "macos")]
+                    if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.map(|p| (p.x, p.y))) {
+                        return NewWindowResponse::Create { webview };
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = size;
                     return NewWindowResponse::Allow;
                 }
                 send(&p4, UserEvent::NewWindow { target, url });
@@ -3699,8 +3707,8 @@ impl App {
         for (i, (accel, binding)) in self.config.keybindings.iter().enumerate() {
             let Some(cmd) = binding.as_ref().and_then(|b| b.command()) else { continue };
             let accel = &portable_accel(accel, &cmd);
-            // CmdOrCtrl is Ctrl here, so "Ctrl+1" and "CmdOrCtrl+1" can be the same keys: one of them can't work.
-            if !accel.contains(' ') && !taken.insert(accel.replace("CmdOrCtrl", "Ctrl").to_lowercase()) {
+            // Off a Mac, "Ctrl+1" and "CmdOrCtrl+1" are the same keys: one of them can't work.
+            if !accel.contains(' ') && !taken.insert(accel_keys(accel)) {
                 crate::log::line("keys", format!("{accel} is bound twice on this computer; ignoring it for {}", self.command_label(&cmd)));
                 continue;
             }
@@ -7847,6 +7855,11 @@ fn on_this_system(name: &str) -> bool {
     cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari")
 }
 
+/// The keys a shortcut really presses here, for telling whether two shortcuts are the same.
+fn accel_keys(accel: &str) -> String {
+    accel.replace("CmdOrCtrl", if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" }).to_lowercase()
+}
+
 /// A binding as it works on this computer. A Mac has Ctrl+1 and ⌘1 for spaces and tabs; elsewhere both are Ctrl+1, which
 /// other browsers use for tabs, so spaces take Alt+1.
 fn portable_accel(accel: &str, cmd: &Command) -> String {
@@ -11666,6 +11679,12 @@ mod tests {
         assert!(super::plan_worktree(&folder, "auto", "", "x", "123-abcdef").is_none());
         assert!(super::plan_worktree(&folder, "always", "", "x", "123-abcdef").is_some());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ctrl_and_cmd_or_ctrl_clash_only_off_a_mac() {
+        assert_eq!(super::accel_keys("Ctrl+1") == super::accel_keys("CmdOrCtrl+1"), !cfg!(target_os = "macos"));
+        assert_eq!(super::accel_keys("CmdOrCtrl+T"), super::accel_keys(if cfg!(target_os = "macos") { "Cmd+t" } else { "ctrl+T" }));
     }
 
     #[test]
