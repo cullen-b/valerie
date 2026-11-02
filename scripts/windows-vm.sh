@@ -21,7 +21,7 @@ QEMU_SHARE="$(brew --prefix qemu)/share/qemu"
 VIRTIO="$(dirname "$DIR")/virtio/virtio-win.iso"
 
 ssh_opts=(-q -i "$DIR/key" -P "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5)
-ps_run() { ssh "${ssh_opts[@]/-P/-p}" tester@127.0.0.1 "powershell -NoProfile -EncodedCommand $(printf '%s' "$1" | iconv -t UTF-16LE | base64)"; }
+ps_run() { ssh "${ssh_opts[@]/-P/-p}" tester@127.0.0.1 "powershell -NoProfile -OutputFormat Text -EncodedCommand $(printf '%s' "\$ProgressPreference='SilentlyContinue'; $1" | iconv -t UTF-16LE | base64)"; }
 
 qmp() { # one QMP command, as JSON; prints the answers
   printf '{"execute":"qmp_capabilities"}\n%s\n' "$1" | nc -U -w 2 "$QMP"
