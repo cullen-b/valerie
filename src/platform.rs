@@ -57,7 +57,7 @@ fn terminal_command(editor: &str) -> Option<&str> {
     TERMINAL_EDITORS.contains(&e.split_whitespace().next().unwrap_or("")).then_some(e)
 }
 
-fn shell_quote(s: &str) -> String {
+pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 

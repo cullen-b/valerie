@@ -18,28 +18,79 @@ pub struct Kind {
     pub bins: &'static [&'static str],
     /// Shell command that installs it (run in a terminal when it's missing).
     pub install: &'static str,
-    /// Shell command that signs in.
+    /// The same in PowerShell, for Windows.
+    pub install_windows: &'static str,
+    /// Command that signs in (also runs in PowerShell on Windows).
     pub login: &'static str,
+    /// Its own install page, for when installing fails.
+    pub help: &'static str,
+}
+
+impl Kind {
+    fn install_command(&self) -> &'static str {
+        if cfg!(windows) {
+            self.install_windows
+        } else {
+            self.install
+        }
+    }
 }
 
 pub const KINDS: &[Kind] = &[
-    Kind { id: "claude", title: "Claude Code", bins: &["claude"], install: "curl -fsSL https://claude.ai/install.sh | bash", login: "claude auth login" },
-    Kind { id: "codex", title: "Codex", bins: &["codex"], install: "npm install -g @openai/codex", login: "codex login" },
-    Kind { id: "opencode", title: "OpenCode", bins: &["opencode"], install: "curl -fsSL https://opencode.ai/install | bash", login: "opencode auth login" },
+    Kind {
+        id: "claude",
+        title: "Claude Code",
+        bins: &["claude"],
+        install: "curl -fsSL https://claude.ai/install.sh | bash",
+        install_windows: "irm https://claude.ai/install.ps1 | iex",
+        login: "claude auth login",
+        help: "https://code.claude.com/docs/en/setup",
+    },
+    Kind {
+        id: "codex",
+        title: "Codex",
+        bins: &["codex"],
+        install: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        install_windows: "irm https://chatgpt.com/codex/install.ps1 | iex",
+        login: "codex login",
+        help: "https://learn.chatgpt.com/docs/codex/cli",
+    },
+    Kind {
+        id: "opencode",
+        title: "OpenCode",
+        bins: &["opencode"],
+        install: "curl -fsSL https://opencode.ai/install | bash",
+        // OpenCode has no Windows install script; its zip holds just opencode.exe. Only single quotes: this is passed on a command line.
+        install_windows: r"$ProgressPreference = 'SilentlyContinue'; $d = Join-Path $HOME '.opencode\bin'; $z = Join-Path $env:TEMP 'opencode.zip'; New-Item -ItemType Directory -Force $d | Out-Null; irm https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip -OutFile $z; Expand-Archive -Force $z $d; Remove-Item $z",
+        login: "opencode auth login",
+        help: "https://opencode.ai/docs/",
+    },
     Kind {
         id: "pi",
         title: "Pi",
         bins: &["pi"],
         install: "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+        install_windows: "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
         login: "echo 'Type /login, pick your provider and sign in, then /quit.'; pi",
+        help: "https://pi.dev",
     },
-    Kind { id: "cursor", title: "Cursor", bins: &["cursor-agent", "agent"], install: "curl https://cursor.com/install -fsS | bash", login: "cursor-agent login" },
+    Kind {
+        id: "cursor",
+        title: "Cursor",
+        bins: &["cursor-agent", "agent"],
+        install: "curl https://cursor.com/install -fsS | bash",
+        install_windows: "irm 'https://cursor.com/install?win32=true' | iex",
+        login: "cursor-agent login",
+        help: "https://cursor.com/docs/cli/installation",
+    },
     Kind {
         id: "hermes",
         title: "Hermes",
         bins: &["hermes"],
         install: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+        install_windows: "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex",
         login: "hermes setup",
+        help: "https://github.com/NousResearch/hermes-agent",
     },
 ];
 
@@ -237,6 +288,14 @@ pub fn search_path() -> String {
     for extra in [".local/bin", ".bun/bin", ".npm-global/bin", ".cargo/bin", ".opencode/bin", ".hermes/bin"] {
         dirs.push(home.join(extra));
     }
+    // Where the Windows installers put them: they add these to PATH, but only for programs started afterwards.
+    if cfg!(windows) {
+        for (base, sub) in [("LOCALAPPDATA", r"Programs\OpenAI\Codex\bin"), ("LOCALAPPDATA", "cursor-agent"), ("APPDATA", "npm")] {
+            if let Some(b) = std::env::var_os(base) {
+                dirs.push(PathBuf::from(b).join(sub));
+            }
+        }
+    }
     if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
         dirs.push(d); // so agents and scripts can run `valerie …`
     }
@@ -245,7 +304,9 @@ pub fn search_path() -> String {
 }
 
 pub fn find_bin(kind: &Kind, path: &str) -> Option<PathBuf> {
-    kind.bins.iter().find_map(|b| std::env::split_paths(path).map(|d| d.join(b)).find(|p| p.is_file()))
+    // Windows programs carry an extension: codex.exe, or agent.cmd from npm and Cursor's installer.
+    let names = |b: &str| if cfg!(windows) { ["exe", "cmd", "bat"].map(|e| format!("{b}.{e}")).to_vec() } else { vec![b.to_string()] };
+    kind.bins.iter().find_map(|b| std::env::split_paths(path).find_map(|d| names(b).iter().map(|n| d.join(n)).find(|p| p.is_file())))
 }
 
 /// How an agent without MCP support drives the browser: Valerie's own command line.
@@ -895,8 +956,13 @@ pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
     let k = kind("opencode").context("no OpenCode")?;
     if find_bin(k, &path).is_none() {
         step("Installing OpenCode…");
-        let mut c = Command::new("/bin/bash");
-        c.args(["-c", k.install]).env("PATH", &path).stdin(std::process::Stdio::null());
+        let mut c = if cfg!(windows) { Command::new("powershell") } else { Command::new("/bin/bash") };
+        if cfg!(windows) {
+            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]);
+        } else {
+            c.arg("-c");
+        }
+        c.arg(k.install_command()).env("PATH", &path).stdin(std::process::Stdio::null());
         let out = run_with_timeout(&mut c, Duration::from_secs(600))?;
         if !out.status.success() || find_bin(k, &search_path()).is_none() {
             bail!("couldn't install OpenCode: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim());
@@ -951,32 +1017,134 @@ fn run_with_timeout(c: &mut Command, limit: Duration) -> Result<std::process::Ou
     Ok(std::process::Output { status, stdout: out_t.join().unwrap_or_default(), stderr: err_t.join().unwrap_or_default() })
 }
 
-pub fn set_up(k: &Kind) -> Result<()> {
+/// What a set-up script does, for bash. It installs if needed, signs in, and writes how that went to `status`:
+/// install_failed | login_failed | done.
+#[cfg_attr(windows, allow(dead_code))]
+fn set_up_script_unix(k: &Kind, path: &str, status: &Path) -> String {
+    use crate::platform::shell_quote as q;
+    let found = k.bins.iter().map(|b| format!("command -v {b} >/dev/null")).collect::<Vec<_>>().join(" || ");
+    let (title, install, login, help) = (k.title, k.install, k.login, k.help);
+    format!(
+        r#"export PATH={path}
+status={status}
+finish() {{ printf '%s' "$1" > "$status"; echo; echo "$2"; echo; read -r -p 'Press Enter to close this window. ' _; exit; }}
+echo 'Setting up {title} for Valerie'
+if ! {{ {found}; }}; then
+  echo 'Installing {title}…'
+  {install}
+  hash -r
+  {{ {found}; }} || finish install_failed "{title} didn't install. Valerie has a link to its download page, or get it here: {help}"
+fi
+{login}
+[ $? -eq 0 ] || finish login_failed "{title} is installed, but signing in didn't finish. Go back to Valerie and press Try again."
+finish done 'All set: go back to Valerie.'
+"#,
+        path = q(path),
+        status = q(&status.to_string_lossy()),
+    )
+}
+
+/// The same for PowerShell. Installers run in their own PowerShell because `irm … | iex` scripts can call `exit`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn set_up_script_windows(k: &Kind, path: &str, status: &Path) -> String {
+    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let found = k.bins.join(",");
+    let (title, login, help) = (k.title, k.login, k.help);
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+$env:Path = {path}
+$status = {status}
+$install = {install}
+function Found {{ Get-Command {found} -ErrorAction SilentlyContinue }}
+function Finish($state, $text) {{
+  Set-Content -LiteralPath $status -Value $state -NoNewline -Encoding Ascii
+  Write-Host ''; Write-Host $text; Write-Host ''
+  Read-Host 'Press Enter to close this window' | Out-Null
+  exit
+}}
+Write-Host 'Setting up {title} for Valerie'
+if (-not (Found)) {{
+  Write-Host 'Installing {title}...'
+  try {{ & powershell -NoProfile -ExecutionPolicy Bypass -Command $install }} catch {{ Write-Host $_ }}
+  $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
+  if (-not (Found)) {{ Finish 'install_failed' "{title} didn't install. Valerie has a link to its download page, or get it here: {help}" }}
+}}
+$signedIn = $true
+$global:LASTEXITCODE = 0
+try {{ {login}; if ($LASTEXITCODE -ne 0) {{ $signedIn = $false }} }} catch {{ Write-Host $_; $signedIn = $false }}
+if (-not $signedIn) {{ Finish 'login_failed' "{title} is installed, but signing in didn't finish. Go back to Valerie and press Try again." }}
+Finish 'done' 'All set: go back to Valerie.'
+"#,
+        path = q(path),
+        status = q(&status.to_string_lossy()),
+        install = q(k.install_windows),
+    )
+}
+
+/// Install if needed and sign in, in a terminal window the user can see. Returns the file the script writes its result to.
+pub fn set_up(k: &Kind) -> Result<PathBuf> {
     let path = search_path();
-    let mut script = format!("export PATH=\"{path}\"\necho 'Setting up {} for Valerie'\n", k.title);
-    if find_bin(k, &path).is_none() {
-        script.push_str(&format!("echo 'Installing {}…'\n{}\n", k.title, k.install));
-    }
-    script.push_str(&format!("{}\necho\necho 'All set: you can close this window and go back to Valerie.'\n", k.login));
+    let dir = crate::config::data_dir().join("setup");
+    std::fs::create_dir_all(&dir)?;
+    let status = dir.join(format!("{}.status", k.id));
+    let _ = std::fs::remove_file(&status);
     #[cfg(target_os = "macos")]
     {
-        let file = std::env::temp_dir().join(format!("valerie-set-up-{}.command", k.id));
-        std::fs::write(&file, format!("#!/bin/bash\n{script}"))?;
+        let file = dir.join(format!("{}.command", k.id));
+        std::fs::write(&file, format!("#!/bin/bash\n{}", set_up_script_unix(k, &path, &status)))?;
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
         Command::new("open").args(["-a", "Terminal"]).arg(&file).spawn()?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let file = std::env::temp_dir().join(format!("valerie-set-up-{}.sh", k.id));
-        std::fs::write(&file, format!("#!/bin/bash\n{script}\nread -p 'Press Enter to close'"))?;
-        Command::new("x-terminal-emulator").args(["-e", "bash"]).arg(&file).spawn()?;
+        let file = dir.join(format!("{}.sh", k.id));
+        std::fs::write(&file, format!("#!/bin/bash\n{}", set_up_script_unix(k, &path, &status)))?;
+        // x-terminal-emulator only exists on Debian and its relatives.
+        let terminals: &[(&str, &[&str])] = &[
+            ("x-terminal-emulator", &["-e"]),
+            ("gnome-terminal", &["--"]),
+            ("ptyxis", &["--"]),
+            ("kgx", &["-e"]),
+            ("konsole", &["-e"]),
+            ("xfce4-terminal", &["-x"]),
+            ("alacritty", &["-e"]),
+            ("kitty", &[]),
+            ("foot", &[]),
+            ("wezterm", &["start", "--"]),
+            ("xterm", &["-e"]),
+        ];
+        if !terminals.iter().any(|(t, args)| Command::new(t).args(*args).arg("bash").arg(&file).spawn().is_ok()) {
+            bail!("no terminal app found");
+        }
     }
     #[cfg(windows)]
     {
-        Command::new("cmd").args(["/C", "start", "cmd", "/K", k.login]).spawn()?;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_CONSOLE: u32 = 0x10;
+        let file = dir.join(format!("{}.ps1", k.id));
+        // The mark tells Windows PowerShell it's UTF-8, for user names with accents.
+        std::fs::write(&file, format!("\u{feff}{}", set_up_script_windows(k, &path, &status)))?;
+        Command::new("powershell").args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(&file).creation_flags(CREATE_NEW_CONSOLE).spawn()?;
     }
-    Ok(())
+    Ok(status)
+}
+
+/// Wait for a set-up window to finish; None if it never does (people close windows). The error is what went wrong, in plain words.
+pub fn set_up_outcome(k: &Kind, status: &Path) -> Option<Result<(), String>> {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(30 * 60) {
+        if let Ok(result) = std::fs::read_to_string(status) {
+            return Some(match result.trim() {
+                "done" if find_bin(k, &search_path()).is_none() => Err(format!("{} is installed. Restart Valerie so it can find it.", k.title)),
+                "done" => Ok(()),
+                "login_failed" => Err(format!("{} is installed, but signing in didn't finish.", k.title)),
+                _ => Err(format!("{} didn't install. The terminal window says why.", k.title)),
+            });
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    None
 }
 
 // ---------------------------------------------------------------- chats
@@ -1181,6 +1349,65 @@ pub fn close_chat(dir: &Path, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs the real set-up script for this OS with a made-up app, and returns what it wrote to its status file and printed.
+    fn run_set_up(name: &str, install: &'static str, login: &'static str) -> (String, String) {
+        let dir = std::env::temp_dir().join(format!("valerie-set-up-test-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let k = Kind { id: "fake", title: "Fake App", bins: &["valerie-fake-app"], install, install_windows: install, login, help: "https://example.com/fake" };
+        let status = dir.join("it's.status");
+        let path = std::env::join_paths([dir.clone()].into_iter().chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))).unwrap();
+        let path = path.to_string_lossy();
+        let mut c = if cfg!(windows) {
+            let file = dir.join("set-up.ps1");
+            std::fs::write(&file, format!("\u{feff}{}", set_up_script_windows(&k, &path, &status))).unwrap();
+            let mut c = Command::new("powershell");
+            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(file);
+            c
+        } else {
+            let mut c = Command::new("bash");
+            c.arg("-c").arg(set_up_script_unix(&k, &path, &status));
+            c
+        };
+        let out = c.current_dir(&dir).stdin(Stdio::null()).output().unwrap();
+        let result = (std::fs::read_to_string(&status).unwrap_or_default(), String::from_utf8_lossy(&out.stdout).into_owned());
+        std::fs::remove_dir_all(&dir).unwrap();
+        result
+    }
+
+    const FAKE_INSTALL: &str = if cfg!(windows) { "Set-Content valerie-fake-app.cmd '@echo off'" } else { "printf '#!/bin/sh\\n' > valerie-fake-app; chmod +x valerie-fake-app" };
+    const FAIL: &str = if cfg!(windows) { "cmd /c exit 3" } else { "false" };
+    const SUCCEED: &str = if cfg!(windows) { "cmd /c exit 0" } else { "true" };
+
+    #[test]
+    fn set_up_stops_with_the_download_page_when_the_install_fails() {
+        let (status, printed) = run_set_up("install", FAIL, SUCCEED);
+        assert_eq!(status, "install_failed", "{printed}");
+        assert!(printed.contains("https://example.com/fake"), "{printed}");
+        assert!(!printed.contains("All set"), "{printed}");
+    }
+
+    #[test]
+    fn set_up_says_so_when_signing_in_fails() {
+        let (status, printed) = run_set_up("login", FAKE_INSTALL, FAIL);
+        assert_eq!(status, "login_failed", "{printed}");
+        assert!(!printed.contains("All set"), "{printed}");
+    }
+
+    #[test]
+    fn set_up_reports_done_only_after_both_steps_work() {
+        let (status, printed) = run_set_up("done", FAKE_INSTALL, SUCCEED);
+        assert_eq!(status, "done", "{printed}");
+        assert!(printed.contains("All set"), "{printed}");
+    }
+
+    #[test]
+    fn every_ai_app_can_install_on_windows() {
+        for k in KINDS {
+            assert!(!k.install_windows.contains("bash") && !k.install_windows.contains('"'), "{}", k.id);
+            assert!(k.help.starts_with("https://"), "{}", k.id);
+        }
+    }
 
     #[test]
     fn parses_each_cli() {
