@@ -224,12 +224,14 @@ html.float.hints #floatHint { display: block; font-size: 11px; color: var(--dim)
       <option value="read">Read only</option><option value="ask">Ask first</option><option value="full">Full access</option>
     </select>
     <button id="plan" class="ctl" title="Plan first: the agent proposes, you say go">Plan</button>
-    <div id="hint">↵ send · ⇧↵ new line</div><button id="send" title="Send">↑</button>
+    <div id="hint"></div><button id="send" title="Send">↑</button>
   </div>
 </div></div>
 <div id="pane"><header><b>Changes</b><span class="sub" id="paneSub"></span><button class="btn quiet" id="paneRefresh">Refresh</button><button class="btn quiet" id="paneClose" title="Close">✕</button></header>
   <div class="split"><nav id="paneNav"></nav><div class="diffwrap" id="paneDiff"></div></div></div>
 <script>
+const ON_MAC = /Mac/.test(navigator.platform);
+if (!ON_MAC) { document.getElementById("floatHint").textContent = "Esc · keep working\u00a0\u00a0Shift+Esc · go to Chats"; document.getElementById("toChats").title = "Open in Chats (Shift+Esc)"; }
 const $ = (s) => document.querySelector(s);
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const cmd = (c) => send({ t: "cmd", cmd: c });
@@ -545,7 +547,8 @@ function askCard(a) {
   const all = el("button", "btn", "Always Allow " + (ALLOW_NAMES[a.tool] || a.tool.replace(/^mcp__valerie__/, "").replace(/_/g, " ")));
   all.title = "Don't ask again about this in this chat"; all.onclick = () => answer(true, true);
   const no = el("button", "btn quiet", "Don't Allow"); no.onclick = () => answer(false, false);
-  btns.append(yes, all, no); c.append(btns);
+  if (a.tool === "ask_each_time") btns.append(yes, no); else btns.append(yes, all, no);
+  c.append(btns);
   return c;
 }
 function changeCounts(f) { const n = el("span", "n"); if (f.added) n.append(el("span", "a", "+" + f.added)); if (f.removed) n.append(" ", el("span", "d", "−" + f.removed)); return n; }
@@ -709,7 +712,7 @@ function renderControls() {
   $("#effort").value = chatOpt("effort", "") || D.default_effort || "";
   fillFolders();
   $("#plan").style.display = D.plan_button ? "" : "none";
-  $("#hint").textContent = D.composer_hint ? "↵ send · ⇧↵ new line" : "";
+  $("#hint").textContent = D.composer_hint ? (ON_MAC ? "↵ send · ⇧↵ new line" : "Enter send · Shift+Enter new line") : "";
   const access = chatOpt("access", "") || D.default_access || "full";
   $("#access").value = access; $("#access").className = "ctl " + access;
   $("#plan").classList.toggle("on", !!chatOpt("plan", false));

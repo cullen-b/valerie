@@ -488,7 +488,7 @@ fn main() -> anyhow::Result<()> {
         }
         Some("mcp-stdio") => {
             let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
-            return mcp::stdio_bridge(config.mcp.port, flag("--access"), flag("--chat"));
+            return mcp::stdio_bridge(&config.mcp, flag("--access"), flag("--chat"));
         }
         Some("sync-setup") => return sync::setup(),
         Some("allow-from-sync") => {

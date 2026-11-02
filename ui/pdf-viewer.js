@@ -128,7 +128,7 @@ async function start() {
   };
   const color = el("input"); color.type = "color"; color.value = localStorage.getItem("valerie-pdf-color") || "#d43f3a"; color.title = tr("Colour for text and arrows");
   color.oninput = () => { localStorage.setItem("valerie-pdf-color", color.value); if (selected && selected.color) { snapshot(); selected.color = color.value; drawMarks(selected.page); } };
-  const undoBtn = btn("Undo", "Undo (⌘Z)", () => undo());
+  const undoBtn = btn("Undo", /Mac/.test(navigator.platform) ? "Undo (⌘Z)" : "Undo (Ctrl+Z)", () => undo());
   const saveBtn = btn("Save Copy", "Save a copy with your marks to your downloads", () => save(), "primary");
   const toolGroup = el("div", "group"); toolGroup.append(...Object.values(tools));
   const zoomGroup = el("div", "group");

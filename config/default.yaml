@@ -12,6 +12,7 @@
 #     over config.yaml and never syncs). Use it when one machine differs, e.g. `agents: { default: codex }` on a
 #     Mac signed in to Codex but not Claude, or a different `downloads.folder`.
 # ==============================================================================================================
+# Comments use Mac key symbols: ⌘ is Ctrl and ⌥ is Alt on Windows and Linux. "Finder" and "Dock" mean your file manager and taskbar there.
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -528,6 +529,7 @@ routes:
 
 # App shortcuts. Value: a command name, or a command with options like { cmd: switch_space, index: 0 }.
 # Modifiers: CmdOrCtrl (⌘ on Mac, Ctrl elsewhere), Cmd, Ctrl, Alt, Shift. Set a shortcut to null to turn it off.
+# On Windows and Linux, the Ctrl+1 to Ctrl+5 space shortcuts below are Alt+1 to Alt+5 (Ctrl+1 is the first tab there).
 # A key sequence is keys separated by spaces: "CmdOrCtrl+K CmdOrCtrl+S" means ⌘K, then ⌘S.
 keybindings:
   "CmdOrCtrl+D": open_command_bar
@@ -548,6 +550,10 @@ keybindings:
   "Ctrl+Shift+Tab": prev_tab
   "CmdOrCtrl+Alt+Right": next_space
   "CmdOrCtrl+Alt+Left": prev_space
+  "Ctrl+PageDown": next_tab          # also on desktops that keep Ctrl+Alt+arrows for themselves
+  "Ctrl+PageUp": prev_tab
+  "Ctrl+Shift+PageDown": next_space
+  "Ctrl+Shift+PageUp": prev_space
   "Ctrl+1": { cmd: switch_space, index: 0 }
   "Ctrl+2": { cmd: switch_space, index: 1 }
   "Ctrl+3": { cmd: switch_space, index: 2 }
@@ -729,6 +735,39 @@ mcp:
                            # choices. true | false
   network_log: true        # keep a list of each page's requests (address, status, time) for agents debugging a page
                            # (read_network). Stays in the page; nothing is saved. true | false
+  answer_in_background: true # keep answering agents at full speed while Valerie is in the background. Off lets macOS slow
+                           # it down to save battery, and a busy Mac can then leave agents waiting for minutes. macOS only;
+                           # takes effect at the next start. true | false
+  start_when_needed: true  # open Valerie when an agent calls one of its tools while it's closed. Off: the agent is told it
+                           # isn't running. true | false
+  ask_before_paying: true  # ask you first each time an agent clicks a button or runs a script (eval_js) that looks like
+                           # spending money, even with full access ("Always Allow" doesn't cover it). It checks the
+                           # button's words and address, or the script's own text, against paying_words. A safety net,
+                           # not a guarantee. Agents need your yes to change this or paying_words. true | false
+  paying_words: [          # words that make a button or script ask (mcp.ask_before_paying); whole words, any capitals. Setting
+                           # this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
+    # buying
+    "pay", "pays", "paying", "payment", "payments", "paynow", "pay now", "paypal", "stripe", "venmo",
+    "klarna", "affirm", "afterpay", "checkout", "check out", "buy", "buys", "buying", "buy now", "purchase",
+    "purchases", "purchasing", "order", "orders", "ordering", "preorder", "pre-order", "reorder", "cart",
+    "basket", "bag", "add to", "shop now", "get it now", "bid", "offer", "book", "book now", "reserve",
+    "reservation", "rent", "hire", "enroll", "register now", "ticket", "tickets", "price", "$", "€", "£",
+    "¥", "₹",
+    # plans and billing
+    "subscribe", "subscribes", "subscribing", "subscription", "subscriptions", "resubscribe", "upgrade",
+    "upgrades", "upgrading", "downgrade", "renew", "renewal", "plan", "plans", "pricing", "billing", "bill",
+    "invoice", "invoices", "premium", "pro", "plus", "trial", "free trial", "unlock", "activate", "license",
+    "seats", "credits", "top up", "topup", "recharge", "add funds", "add money", "add card", "add credit",
+    # money and cards
+    "card", "cards", "credit card", "debit", "bank", "wallet", "donate", "donation", "tip", "gift",
+    "contribute", "pledge", "send money", "transfer", "wire", "withdraw", "deposit", "redeem", "crypto",
+    "swap", "trade", "sell", "invest", "confirm and", "charge", "fee", "cost", "refund",
+    # other languages
+    "kaufen", "kasse", "bezahlen", "zahlen", "bestellen", "warenkorb", "comprar", "pagar", "carrito",
+    "pedido", "acheter", "payer", "panier", "commander", "acquistare", "pagare", "carrello", "ordine", "購入",
+    "支払", "注文", "カート", "购买", "支付", "订单", "购物车", "결제", "구매", "주문", "장바구니", "купить", "оплатить", "заказать",
+    "корзина", "شراء", "ادفع",
+  ]
 
 # Headless agents run on your own Claude Code / Codex / OpenCode login. Type "> task" in the command bar, or
 # schedule jobs here.

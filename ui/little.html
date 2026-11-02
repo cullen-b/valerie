@@ -36,6 +36,7 @@ body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #co
 <div class="btn" id="copy" title="Copy URL (⌘⇧C)">Copy link</div>
 <div class="split" id="split"><div class="btn" id="open" title="⌘O">Open in Valerie</div><div class="btn" id="pick" title="Open in another space">▾</div></div>
 <script>
+if (!/Mac/.test(navigator.platform)) { document.getElementById("copy").title = "Copy URL (Ctrl+Shift+C)"; document.getElementById("open").title = "Ctrl+O"; }
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const cmd = (c) => send({ t: "cmd", cmd: c });
 document.getElementById("open").onclick = () => cmd({ cmd: "move_to_main_window" });

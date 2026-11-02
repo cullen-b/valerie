@@ -73,7 +73,25 @@ fn eq_const(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// macOS's App Nap drops a background app to the lowest priority, where a busy computer can leave it unanswered for
+/// minutes. Holding this activity for as long as Valerie runs keeps agents answered (mcp.answer_in_background).
+#[cfg(target_os = "macos")]
+fn stay_out_of_app_nap() {
+    use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
+    const USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 = 0x00FF_FFFF & !(1 << 20);
+    let reason = objc2_foundation::NSString::from_str("Answering AI agents");
+    unsafe {
+        let info: Retained<AnyObject> = msg_send![class!(NSProcessInfo), processInfo];
+        let activity: Retained<AnyObject> = msg_send![&*info, beginActivityWithOptions: USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP, reason: &*reason];
+        std::mem::forget(activity);
+    }
+}
+
 pub fn spawn(port: u16, token: String, proxy: EventLoopProxy<UserEvent>) {
+    #[cfg(target_os = "macos")]
+    if crate::config::Config::load().map_or(true, |c| c.mcp.answer_in_background) {
+        stay_out_of_app_nap();
+    }
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(s) => s,
@@ -144,10 +162,12 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
 }
 
 const INSTRUCTIONS: &str = "Valerie is the user's own web browser; these tools drive it.\n\
+Use web_search and fetch_page for every web search and page you read, before any other web tool, curl or a scraper: \
+they have no quota and see what the user sees. Keep curl for APIs and raw files.\n\
 Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
 user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
 top results). fetch_page reads pages and PDFs as Markdown; give focus (your question) to get just the sections about it, word \
-for word, and urls to read several at once. Prefer these to your other web tools.\n\
+for word, and urls to read several at once.\n\
 Building a site or app: check_page loads it (localhost or a file) at phone and desktop sizes and returns screenshots, \
 console errors, broken images and anything sticking out past the screen, in one call. read_network lists a page's \
 requests (status, time; bodies: true for API responses).\n\
@@ -178,13 +198,101 @@ pub const LOOKING: &[&str] = &[
     "list_pages", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
 ];
 
+/// The confirm tool that always reaches a person: "Always Allow" can't cover it.
+pub const ASK_EACH_TIME: &str = "ask_each_time";
+
+/// What the agent is about to do, if it could spend money (or turn this check off). mcp.ask_before_paying.
+fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Option<String>, String> {
+    let key_press = name == "press_key" && matches!(args["key"].as_str(), Some("Enter" | "Return" | " " | "Space" | "Spacebar"));
+    let submit = name == "type" && args["submit"].as_bool() == Some(true);
+    if name != "click" && name != "set_setting" && name != "eval_js" && !key_press && !submit {
+        return Ok(None);
+    }
+    // A config that doesn't load counts as the defaults, so the check stays on.
+    let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
+    if !config.mcp.ask_before_paying {
+        return Ok(None);
+    }
+    if name == "set_setting" {
+        let key = args["key"].as_str().unwrap_or("").split('.').map(str::trim).filter(|k| !k.is_empty()).collect::<Vec<_>>().join(".");
+        let guarded = key == "mcp" || key == "mcp.ask_before_paying" || key == "mcp.paying_words";
+        return Ok(guarded.then(|| format!("change the {key} setting to {}", args["value"])));
+    }
+    if name == "eval_js" {
+        let Some(word) = script_word(args["script"].as_str().unwrap_or(""), &config.mcp.paying_words) else { return Ok(None) };
+        let site = eval(proxy, args.get("tab").and_then(Value::as_i64), "return location.hostname || location.href").ok();
+        return Ok(Some(format!("run a script on {} that mentions “{word}”", site.as_ref().and_then(Value::as_str).unwrap_or("this page"))));
+    }
+    let target = match name {
+        "click" => json!({ "ref": args["ref"], "selector": args["selector"] }),
+        "type" => json!({ "ref": args["ref"], "selector": args["selector"], "submits": true }),
+        _ => json!({ "submits": true }),
+    };
+    let found = eval(proxy, args.get("tab").and_then(Value::as_i64), &with_args(&target, &format!("{FIND_JS}\n{CLICK_TARGET_JS}")))?;
+    let text = found["text"].as_str().unwrap_or("");
+    Ok(paying_word(text, &config.mcp.paying_words).map(|word| {
+        let label = found["label"].as_str().unwrap_or("").trim();
+        let site = found["site"].as_str().unwrap_or("this page");
+        if label.is_empty() { format!("click a button on {site} (it mentions “{word}”)") } else { format!("click “{label}” on {site}") }
+    }))
+}
+
+/// The listed word a script mentions. `$` is everyday JavaScript (jQuery, `${x}`), not a price.
+fn script_word(script: &str, words: &[String]) -> Option<String> {
+    let words: Vec<String> = words.iter().filter(|w| w.trim() != "$").cloned().collect();
+    paying_word(script, &words).map(str::to_string)
+}
+
+/// The first of `words` in `text`: whole words, so "pay" doesn't match "display". Words with symbols or non-English
+/// letters ("$", "購入") match anywhere, since those languages don't put spaces between words.
+fn paying_word<'a>(text: &str, words: &'a [String]) -> Option<&'a str> {
+    let spaced = |t: &str| {
+        let mut out = String::from(" ");
+        let mut prev_lower = false;
+        for c in t.chars() {
+            if prev_lower && c.is_uppercase() {
+                out.push(' '); // payNow, checkoutBtn
+            }
+            prev_lower = c.is_lowercase();
+            if c.is_alphanumeric() { out.extend(c.to_lowercase()) } else if !out.ends_with(' ') { out.push(' ') }
+        }
+        if !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out
+    };
+    let (normal, lower) = (spaced(text), text.to_lowercase());
+    words.iter().map(String::as_str).find(|w| {
+        let word = spaced(w);
+        if word.trim().is_empty() || !w.is_ascii() { !w.trim().is_empty() && lower.contains(&w.trim().to_lowercase()) } else { normal.contains(&word) }
+    })
+}
+
+fn ask_each_time(what: &str, name: &str, args: &Value, chat: &str, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
+    let answer = call_wait(proxy, "confirm", json!({ "chat": chat, "tool": ASK_EACH_TIME, "args": { "what": what } }), 600)?;
+    if answer["allowed"].as_bool() != Some(true) {
+        return Err(format!("The user said no to this: {what}. Don't try it another way; ask them what they'd like instead."));
+    }
+    // They may have taken minutes to answer: the yes only covers what they were shown.
+    match risky_action(name, args, proxy)? {
+        Some(now) if now != what => Err(format!("The page changed while the user was deciding: they approved “{what}”, not “{now}”. Take a new snapshot.")),
+        _ => Ok(()),
+    }
+}
+
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
 fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
-    if LOOKING.contains(&name) || name == "approve" || who.access == "full" {
+    if LOOKING.contains(&name) || name == "approve" {
         return Ok(());
     }
     if who.access == "read" {
         return Err(format!("This chat is read-only, so `{name}` isn't allowed. Tell the user what you'd do instead; they can switch the chat to Ask first or Full access."));
+    }
+    if let Some(what) = risky_action(name, args, proxy)? {
+        return ask_each_time(&what, name, args, &who.chat, proxy);
+    }
+    if who.access == "full" {
+        return Ok(());
     }
     match call_wait(proxy, "confirm", json!({ "chat": who.chat, "tool": name, "args": args }), 600)?["allowed"].as_bool() {
         Some(true) => Ok(()),
@@ -192,24 +300,35 @@ fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEv
     }
 }
 
-fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Value> {
-    let id = msg.get("id").cloned()?; // notifications get no response
-    let method = msg["method"].as_str().unwrap_or("");
-    let params = msg.get("params").cloned().unwrap_or(json!({}));
-    let result = match method {
-        "initialize" => Ok(json!({
+/// What every MCP app asks before using a tool. None of it needs the browser, so the stdio bridge answers it too: an agent
+/// that starts while Valerie is closed or busy still gets its tools.
+fn catalog_answer(method: &str, params: &Value, who: &Caller) -> Option<Value> {
+    Some(match method {
+        "initialize" => json!({
             "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": "valerie", "version": env!("CARGO_PKG_VERSION") },
             "instructions": INSTRUCTIONS
-        })),
-        "ping" => Ok(json!({})),
+        }),
+        "ping" => json!({}),
         // Some apps ask for these whatever the server offers; an empty list beats an error.
-        "resources/list" => Ok(json!({ "resources": [] })),
-        "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
-        "prompts/list" => Ok(json!({ "prompts": [] })),
+        "resources/list" => json!({ "resources": [] }),
+        "resources/templates/list" => json!({ "resourceTemplates": [] }),
+        "prompts/list" => json!({ "prompts": [] }),
         // `approve` is only for Valerie's own chats (Claude Code's permission prompts); it'd only confuse other agents.
-        "tools/list" => Ok(json!({ "tools": tools().into_iter().filter(|t| !who.chat.is_empty() || t["name"] != "approve").collect::<Vec<_>>() })),
+        "tools/list" => json!({ "tools": tools().into_iter().filter(|t| !who.chat.is_empty() || t["name"] != "approve").collect::<Vec<_>>() }),
+        _ => return None,
+    })
+}
+
+fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Value> {
+    let id = msg.get("id").cloned()?; // notifications get no response
+    let method = msg["method"].as_str().unwrap_or("");
+    let params = msg.get("params").cloned().unwrap_or(json!({}));
+    if let Some(result) = catalog_answer(method, &params, who) {
+        return Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+    }
+    let result = match method {
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or("");
             let args = loosen(name, params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or(json!({})));
@@ -297,8 +416,13 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
     if WEB.contains(&name) {
         hints["openWorldHint"] = json!(true);
     }
-    json!({ "name": name, "description": description, "annotations": hints,
-            "inputSchema": { "type": "object", "properties": props, "required": required } })
+    let mut tool = json!({ "name": name, "description": description, "annotations": hints,
+            "inputSchema": { "type": "object", "properties": props, "required": required } });
+    // Claude Code hides most MCP tools behind a search; agents only reach for the web tools they can see.
+    if ["web_search", "fetch_page"].contains(&name) {
+        tool["_meta"] = json!({ "anthropic/alwaysLoad": true });
+    }
+    tool
 }
 
 /// Models don't all send the types a schema asks for (`"tab": "12"`, `"full_page": "true"`, a bare command name):
@@ -348,7 +472,7 @@ pub fn tools() -> Vec<Value> {
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     let web = WEB_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
     let all = vec![
-        tool("web_search", "Search the web and get the results: title, url and snippet each, from the user's search engine in \
+        tool("web_search", "Use this for every web search. Get the results: title, url and snippet each, from the user's search engine in \
              a hidden tab (their tabs and history aren't touched; no rate limits). Filter by time (recent), to news or to \
              sites. With read: N it also reads the top N results and returns the parts of each about your question (focus), \
              so one call answers most research questions.", json!({
@@ -360,7 +484,7 @@ pub fn tools() -> Vec<Value> {
             "read": { "type": "integer", "description": "Also read the top this many results (up to 5)" },
             "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
             "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
-        tool("fetch_page", "Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
+        tool("fetch_page", "Use this to read any web page, before curl or a scraper. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
              logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N) and \
              local files work, with no rate limits. \
              Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
@@ -435,9 +559,14 @@ pub fn tools() -> Vec<Value> {
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
         tool("click", "Click an element by snapshot ref or CSS selector.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
-        tool("type", "Type text into an input/textarea/contenteditable by ref or selector.", json!({
+        tool("type", "Type text into an input/textarea/contenteditable by ref or selector. On a dropdown (<select>), text picks the option with that label or value.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" },
             "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" } }), &["text"]),
+        tool("hover", "Move the mouse onto an element by ref or selector, for menus and tooltips that open from scripts. A page's CSS :hover styles don't change (use check_page or eval_js to look at those).", json!({
+            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
+        tool("upload_file", "Choose files for a file input (<input type=file>) by ref or selector, without the file picker. Files stay on this computer until the page sends them. Up to 20 MB in all.", json!({
+            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
+            "paths": { "type": "array", "items": { "type": "string" }, "description": "Files on this computer" } }), &["paths"]),
         tool("press_key", "Dispatch a key (e.g. Enter, Escape, ArrowDown) to the focused element.",
              json!({ "tab": tab_prop(), "key": { "type": "string" } }), &["key"]),
         tool("scroll", "Scroll the page or scroll an element into view.", json!({
@@ -539,6 +668,9 @@ pub fn run_tool(name: &str, args: Value, proxy: &EventLoopProxy<UserEvent>) -> R
     if name == "clear_site_data" {
         return call_wait(proxy, "clear_site_data", args, 600);
     }
+    if let Some(what) = risky_action(name, &args, proxy)? {
+        ask_each_time(&what, name, &args, "", proxy)?;
+    }
     call_tool(name, args, proxy)
 }
 
@@ -637,6 +769,26 @@ function find() {
   return e;
 }
 function describe(e) { return (e.tagName.toLowerCase() + " " + (e.innerText || e.value || e.getAttribute("aria-label") || "").trim().slice(0, 80)).trim(); }
+"#;
+
+/// What a click (or Enter on a form) would press, in every word a site might describe it with.
+const CLICK_TARGET_JS: &str = r#"
+const hit = find();
+const pressable = 'button,a,summary,label,input,[role=button],[role=link],[role=menuitem],[role=option],[onclick]';
+const isButton = (e) => e.matches('button,a,summary,[role=button],[role=link],input[type=submit],input[type=button],input[type=image]');
+const submit = A.submits && hit.form && !isButton(hit) ? hit.form.querySelector('[type=submit],button:not([type=button]):not([type=reset]),input[type=image]') || hit.form : hit;
+const nodes = [...new Set([submit, submit.closest(pressable) || submit])];
+const parts = [];
+for (const e of nodes) {
+  parts.push(e.innerText, e.textContent);
+  if (e.matches('input[type=submit],input[type=button],input[type=image]')) parts.push(e.value);
+  for (const a of e.attributes) if (!/^(style|data-valerie-ref)$/.test(a.name)) parts.push(a.name.startsWith('data-') || a.name.startsWith('aria-') || /^(id|class|name|title|alt|href|action|formaction|value|onclick)$/.test(a.name) ? a.value : '');
+  for (const i of e.querySelectorAll ? e.querySelectorAll('img[alt],[aria-label],[title]') : []) parts.push(i.getAttribute('alt'), i.getAttribute('aria-label'), i.getAttribute('title'));
+  if (e.form) parts.push(e.form.getAttribute('action'), e.form.id, e.form.getAttribute('name'));
+}
+const c = nodes[nodes.length - 1];
+const label = (c.innerText || c.value || c.getAttribute('aria-label') || c.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+return { site: location.hostname || location.href, label, text: parts.filter(Boolean).map((p) => String(p).slice(0, 1000)).join(' \n ') };
 "#;
 
 const SNAPSHOT_JS: &str = r#"
@@ -935,7 +1087,14 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
         args["max_chars"] = json!(2_000_000);
         args["format"] = json!("markdown");
     }
-    let mut page = in_web_tab(proxy, json!({ "url": as_address(url) }), |tab| {
+    // Raw files open as downloads, so the browser would only wait for nothing.
+    if looks_like_a_file(url) {
+        if let Some(mut page) = plain_file(url, if focus_on.is_empty() { max } else { 2_000_000 }) {
+            keep_focus(&mut page, &focus_on, max);
+            return Ok(page);
+        }
+    }
+    let read = in_web_tab(proxy, json!({ "url": as_address(url) }), |tab| {
         let tab = wait_ready(proxy, tab)?;
         if eval(proxy, tab, "return document.contentType")? == "application/pdf" {
             // Valerie's PDF viewer downloads it and loads it first.
@@ -949,14 +1108,41 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
         }
         Ok(page)
     })
-    .map_err(|e| if e.contains("timed out") { format!("{url} didn't load (no such site, or it's down)") } else { e })?;
+    .map_err(|e| if e.contains("timed out") { format!("{url} didn't finish loading in time: it may be down or very slow, or this computer is busy. Try once more before giving up on it.") } else { e });
+    // A browser downloads what it can't show (raw .md, .ps1 and .json files) instead of opening it.
+    let mut page = match read {
+        Ok(p) if p["content"].is_string() => p,
+        other => plain_file(url, if focus_on.is_empty() { max } else { 2_000_000 }).map_or(other, Ok)?,
+    };
+    keep_focus(&mut page, &focus_on, max);
+    Ok(page)
+}
+
+fn keep_focus(page: &mut Value, focus_on: &str, max: usize) {
     if !focus_on.is_empty() {
-        let f = focus(page["content"].as_str().unwrap_or(""), &focus_on, max.min(40_000));
+        let f = focus(page["content"].as_str().unwrap_or(""), focus_on, max.min(40_000));
         page["content"] = f["content"].clone();
         page["truncated"] = f["truncated"].clone();
         page["focus"] = json!({ "query": focus_on, "sections_matched": f["matched"], "outline": f["outline"] });
     }
-    Ok(page)
+}
+
+fn looks_like_a_file(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    let ext = path.rsplit('/').next().and_then(|name| name.rsplit_once('.')).map_or("", |(_, e)| e).to_ascii_lowercase();
+    url.starts_with("https://raw.githubusercontent.com/") || ["ps1", "sh", "bash", "py", "rs", "toml", "yaml", "yml", "json", "txt", "csv"].contains(&ext.as_str())
+}
+
+/// A text file at `url`, fetched without the browser (so without the user's logins).
+fn plain_file(url: &str, max: usize) -> Option<Value> {
+    let out = crate::platform::command("curl")
+        .args(["-fsSL", "--max-time", "20", "--max-filesize", "20000000", "--proto", "=https,http", "--", url])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let text = String::from_utf8(out.stdout).ok().filter(|t| !t.trim().is_empty() && !t.contains('\0'))?;
+    let truncated = text.chars().count() > max;
+    Some(json!({ "url": url, "content": text.chars().take(max).collect::<String>(), "truncated": truncated }))
 }
 
 const STOP: &[&str] = &[
@@ -1517,14 +1703,49 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         }
         "type" => {
             let js = with_args(&a, &format!("{FIND_JS}\nconst e = find(); e.focus(); \
-                if (e.isContentEditable) {{ if (A.clear) document.execCommand('selectAll'); document.execCommand('insertText', false, A.text); }} \
-                else {{ const proto = e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : e instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype; \
+                if (e instanceof HTMLSelectElement) {{ const o = [...e.options].find((o) => o.value === A.text || o.text.trim() === A.text.trim()); \
+                  if (!o) throw new Error('no option ' + A.text + '; the options are: ' + [...e.options].map((o) => o.text.trim()).join(', ')); \
+                  e.value = o.value; e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); }} \
+                else if (e.isContentEditable) {{ if (A.clear) document.execCommand('selectAll'); document.execCommand('insertText', false, A.text); }} \
+                else {{ const proto = e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; \
                   Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, (A.clear ? '' : e.value) + A.text); \
                   e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); }} \
                 if (A.submit) {{ const opts = {{key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true}}; \
                   const go = e.dispatchEvent(new KeyboardEvent('keydown', opts)); e.dispatchEvent(new KeyboardEvent('keyup', opts)); \
                   if (go && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit()); }} \
                 return 'typed into ' + describe(e);"));
+            eval(proxy, tab, &js)
+        }
+        "hover" => {
+            let js = with_args(&a, &format!("{FIND_JS}\nconst e = find(); e.scrollIntoView({{block: 'center'}}); const r = e.getBoundingClientRect(); \
+                const at = {{bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2}}; \
+                for (const t of ['pointerover','pointerenter']) e.dispatchEvent(new PointerEvent(t, at)); \
+                for (const t of ['mouseover','mouseenter','pointermove','mousemove']) e.dispatchEvent(t[0] === 'p' ? new PointerEvent(t, at) : new MouseEvent(t, at)); \
+                return 'hovering over ' + describe(e);"));
+            eval(proxy, tab, &js)
+        }
+        "upload_file" => {
+            let mut files = Vec::new();
+            let mut total = 0;
+            for path in a["paths"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(Value::as_str) {
+                let bytes = std::fs::read(path).map_err(|e| format!("can't read {path}: {e}"))?;
+                total += bytes.len();
+                if total > 20 << 20 {
+                    return Err("those files are over 20 MB in all".into());
+                }
+                let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                files.push(json!({ "name": name, "data": base64(&bytes) }));
+            }
+            if files.is_empty() {
+                return Err("paths lists no files".into());
+            }
+            let args = json!({ "ref": a["ref"], "selector": a["selector"], "files": files });
+            let js = with_args(&args, &format!("{FIND_JS}\nconst e = find(); \
+                if (!(e instanceof HTMLInputElement) || e.type !== 'file') throw new Error('that is not a file input: ' + describe(e)); \
+                const list = new DataTransfer(); \
+                for (const f of A.files) list.items.add(new File([Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0))], f.name)); \
+                e.files = list.files; e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); \
+                return 'chose ' + e.files.length + ' file(s) for ' + describe(e);"));
             eval(proxy, tab, &js)
         }
         "press_key" => {
@@ -1611,6 +1832,59 @@ pub fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn raw_files_are_told_from_pages() {
+        for url in ["https://raw.githubusercontent.com/a/b/main/README.md", "https://x.com/install.ps1?v=1", "https://x.com/a.json"] {
+            assert!(super::looks_like_a_file(url), "{url}");
+        }
+        for url in ["https://docs.rs/tokio/latest/tokio/", "https://x.com/a.html", "https://arxiv.org/abs/2406.09895"] {
+            assert!(!super::looks_like_a_file(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_plain_file_is_only_fetched_over_the_web() {
+        assert!(super::plain_file("file:///etc/hosts", 100).is_none());
+    }
+
+    #[test]
+    fn the_bridge_can_answer_what_apps_ask_first_without_the_browser() {
+        use super::{catalog_answer, Caller};
+        use serde_json::json;
+        let who = Caller { access: "full".into(), chat: String::new() };
+        assert!(catalog_answer("initialize", &json!({}), &who).unwrap()["instructions"].as_str().unwrap().contains("web_search"));
+        let tools = catalog_answer("tools/list", &json!({}), &who).unwrap();
+        let tools = tools["tools"].as_array().unwrap();
+        let always = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap()["_meta"]["anthropic/alwaysLoad"] == json!(true);
+        assert!(always("web_search") && always("fetch_page") && !always("click"));
+        assert!(catalog_answer("tools/call", &json!({}), &who).is_none());
+    }
+
+    #[test]
+    fn paying_words_are_whole_words_and_err_towards_asking() {
+        let config = crate::config::Config::defaults();
+        let words = &config.mcp.paying_words;
+        for caught in ["Pay now", "PLACE ORDER", "Proceed to Checkout", "check out", "Buy", "payNow", "btn-checkout", "/cart/view", "Add to Bag",
+            "Subscribe", "Upgrade to Pro", "Get it for $9.99", "Start free trial", "Confirm purchase", "Donate", "Jetzt kaufen", "購入する", "Payment"] {
+            assert!(super::paying_word(caught, words).is_some(), "should ask about {caught:?}");
+        }
+        for fine in ["Display settings", "Save", "Payload", "Next", "Sign in", "Repay nothing", "Search", "Open menu", "Border"] {
+            assert_eq!(super::paying_word(fine, words), None, "{fine:?}");
+        }
+    }
+
+    #[test]
+    fn scripts_only_ask_when_they_mention_a_listed_word() {
+        let config = crate::config::Config::defaults();
+        let words = &config.mcp.paying_words;
+        for caught in ["document.querySelector('.checkout').click()", "payNow()", "fetch('/api/purchase', {method: 'POST'})", "$('#buy').click()"] {
+            assert!(super::script_word(caught, words).is_some(), "should ask about {caught:?}");
+        }
+        for fine in ["return document.title", "return $('h1').text()", "return `${location.href}`", "return window.scrollY", "return display.innerText"] {
+            assert_eq!(super::script_word(fine, words), None, "{fine:?}");
+        }
+    }
+
     #[test]
     fn base64_matches_rfc4648() {
         assert_eq!(super::base64(b""), "");
@@ -1710,7 +1984,7 @@ pub fn forward_open(port: u16, urls: &[String]) -> bool {
 }
 
 /// `valerie mcp-stdio`: bridge for MCP clients that only speak stdio.
-pub fn stdio_bridge(port: u16, access: Option<String>, chat: Option<String>) -> anyhow::Result<()> {
+pub fn stdio_bridge(mcp: &crate::config::McpConfig, access: Option<String>, chat: Option<String>) -> anyhow::Result<()> {
     // Some CLIs start MCP servers with a scrubbed environment, so the access level also arrives as arguments.
     if let Some(a) = access {
         std::env::set_var("VALERIE_ACCESS", a);
@@ -1718,25 +1992,78 @@ pub fn stdio_bridge(port: u16, access: Option<String>, chat: Option<String>) -> 
     if let Some(c) = chat {
         std::env::set_var("VALERIE_CHAT", c);
     }
-    let token = load_or_create_token();
+    set_web_tools(mcp.web_tools);
+    set_ask_user(mcp.ask_user);
+    let who = Caller { access: "full".into(), chat: std::env::var("VALERIE_CHAT").unwrap_or_default() };
+    let token = std::sync::Arc::new(load_or_create_token());
+    let (port, start) = (mcp.port, mcp.start_when_needed);
+    let stdout = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
+    let reply = |stdout: &std::sync::Mutex<std::io::Stdout>, text: &str| {
+        let mut out = stdout.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = writeln!(out, "{}", text.trim()).and_then(|()| out.flush());
+    };
+    let mut calls = Vec::new();
     let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
     let mut line = String::new();
     while { line.clear(); stdin.read_line(&mut line)? > 0 } {
-        if line.trim().is_empty() {
+        let Ok(msg) = serde_json::from_str::<Value>(line.trim()) else { continue };
+        let Some(id) = msg.get("id").cloned() else { continue }; // notifications need no answer
+        let empty = json!({});
+        if let Some(result) = catalog_answer(msg["method"].as_str().unwrap_or(""), msg.get("params").unwrap_or(&empty), &who) {
+            reply(&stdout, &json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string());
             continue;
         }
-        let out = match post_local(port, &token, line.trim()) {
-            Ok((200, body)) => Some(body),
-            Ok(_) => None,
-            Err(_) => serde_json::from_str::<Value>(&line).ok().and_then(|m| m.get("id").cloned()).map(|id| {
-                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "Valerie is not running" } }).to_string()
-            }),
-        };
-        if let Some(o) = out {
-            writeln!(stdout, "{}", o.trim())?;
-            stdout.flush()?;
-        }
+        // One at a time would leave every other call waiting behind a slow page or an ask_user.
+        let (stdout, token, body) = (stdout.clone(), token.clone(), line.trim().to_string());
+        calls.push(std::thread::spawn(move || {
+            let answer = bridge_call(port, &token, &body, start)
+                .unwrap_or_else(|why| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": why } }).to_string());
+            reply(&stdout, &answer);
+        }));
+    }
+    for call in calls {
+        let _ = call.join();
     }
     Ok(())
+}
+
+/// Send one call to the browser, starting it first if it's closed (mcp.start_when_needed).
+fn bridge_call(port: u16, token: &str, body: &str, start: bool) -> Result<String, String> {
+    let refused = |r: &std::io::Result<(u16, String)>| matches!(r, Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused);
+    let mut sent = post_local(port, token, body);
+    if refused(&sent) && start && start_browser() {
+        for _ in 0..60 {
+            std::thread::sleep(Duration::from_millis(500));
+            sent = post_local(port, token, body);
+            if !refused(&sent) {
+                break;
+            }
+        }
+    }
+    match sent {
+        Ok((200, answer)) => Ok(answer),
+        Ok((status, _)) => Err(format!("Valerie answered with an error (HTTP {status})")),
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+            Err("Valerie is not running and didn't start. Ask the user to open it.".to_string())
+        }
+        Err(e) => Err(format!("Valerie didn't answer: {e}. It may be busy; try again.")),
+    }
+}
+
+/// Start the browser on its own, so it outlives the agent that needed it. Calls at the same moment start it once.
+fn start_browser() -> bool {
+    static STARTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STARTED.get_or_init(|| {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        let mut browser = crate::platform::command(exe);
+        browser.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut browser, 0);
+        let started = browser.spawn();
+        crate::log::line("mcp", match &started {
+            Ok(_) => "started the browser for an agent".to_string(),
+            Err(e) => format!("couldn't start the browser for an agent: {e}"),
+        });
+        started.is_ok()
+    })
 }

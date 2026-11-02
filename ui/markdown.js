@@ -783,7 +783,7 @@ function markdownViewer() {
           if (!dirty) { src = text; ta.value = text; preview(); return; }
           // Changed somewhere else while you have unsaved edits here: yours stay until you choose.
           clearTimeout(saveTimer);
-          theirs = text; setStatus("Changed elsewhere · load it", "warn", tr("Click to load the file as it is now (your unsaved changes go); ⌘S keeps yours"));
+          theirs = text; setStatus("Changed elsewhere · load it", "warn", tr(`Click to load the file as it is now (your unsaved changes go); ${/Mac/.test(navigator.platform) ? "⌘S" : "Ctrl+S"} keeps yours`));
           status.onclick = () => { if (theirs == null) return; src = theirs; ta.value = theirs; theirs = null; dirty = false; status.onclick = null; setStatus(""); preview(); };
           return;
         }

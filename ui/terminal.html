@@ -76,6 +76,8 @@ function make(s) {
     if (e.type !== "keydown") return true;
     const mod = e.metaKey && !e.altKey && !e.ctrlKey ? "meta" : e.altKey && !e.metaKey && !e.ctrlKey ? "alt" : "";
     if (mod === "meta" && e.key === "k") { term.clear(); return false; }
+    // Plain Ctrl+K belongs to the shell.
+    if (!/Mac/.test(navigator.platform) && e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyK") { term.clear(); return false; }
     const seq = mod && MAC_KEYS[mod + ":" + e.key];
     if (seq) { send({ t: "input", id, data: seq }); e.preventDefault(); return false; }
     // ⌘ shortcuts belong to Valerie (copy, paste, the command bar …).

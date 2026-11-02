@@ -5,7 +5,7 @@ use crate::config::AgentDef;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -531,7 +531,8 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
             // The folder is the process's own. OpenCode 2 talks to a shared background service unless told otherwise,
             // and that service wouldn't see this run's settings (Valerie's tools, the chat's access).
             let v2 = opencode_major(&bin) >= 2;
-            c.args(["run", prompt]);
+            // OpenCode only says on stderr, with its logs, why it's waiting (see watch_stderr).
+            c.args(["run", "--print-logs", prompt]);
             if v2 {
                 c.arg("--standalone");
                 // It refuses anything it would have to ask about; with full access, the settings below decide.
@@ -883,12 +884,39 @@ static RUNNING: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec
 
 pub fn stop(run: &str) -> bool {
     let pid = RUNNING.lock().ok().and_then(|r| r.iter().find(|(n, _)| n == run).map(|(_, p)| *p));
-    let Some(pid) = pid else { return false };
+    pid.is_some_and(kill_process)
+}
+
+fn kill_process(pid: u32) -> bool {
     #[cfg(unix)]
     let ok = crate::platform::command("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
     #[cfg(windows)]
     let ok = crate::platform::command("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
     ok
+}
+
+const FREE_LIMIT: &str = "OpenCode's free AI has reached its usage limit for now. Try again later, or pick another AI.";
+
+/// Read an agent's stderr to the end, leaving out OpenCode's log lines. When OpenCode says its free models are at their
+/// limit it keeps retrying without a word, so stop it there.
+fn watch_stderr(err: Option<std::process::ChildStderr>, limited: std::sync::Arc<std::sync::atomic::AtomicBool>, pid: Option<u32>) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut kept = String::new();
+        let Some(err) = err else { return kept };
+        for line in BufReader::new(err).lines().map_while(Result::ok) {
+            if line.contains("Free usage limit reached") && !limited.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                crate::log::line("agents", "OpenCode's free models are at their usage limit");
+                if let Some(pid) = pid {
+                    kill_process(pid);
+                }
+            }
+            if !line.starts_with("timestamp=") {
+                kept.push_str(&line);
+                kept.push('\n');
+            }
+        }
+        kept
+    })
 }
 
 /// Run one turn to the end (blocking), handing each piece of the answer to `on` as it arrives.
@@ -897,14 +925,8 @@ pub fn stream(run: &str, mut cmd: Command, format: Format, timeout: Duration, on
     if let Ok(mut r) = RUNNING.lock() {
         r.push((run.to_string(), child.id()));
     }
-    let mut err = child.stderr.take();
-    let errs = std::thread::spawn(move || {
-        let mut s = String::new();
-        if let Some(e) = err.as_mut() {
-            let _ = e.read_to_string(&mut s);
-        }
-        s
-    });
+    let limited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let errs = watch_stderr(child.stderr.take(), limited.clone(), Some(child.id()));
     let start = Instant::now();
     let mut got = false;
     if let Some(out) = child.stdout.take() {
@@ -925,7 +947,9 @@ pub fn stream(run: &str, mut cmd: Command, format: Format, timeout: Duration, on
         r.retain(|(n, _)| n != run);
     }
     let stderr = errs.join().unwrap_or_default();
-    if !status.is_ok_and(|s| s.success()) && !got {
+    if limited.load(std::sync::atomic::Ordering::Relaxed) && !got {
+        on(Ev::Error { text: FREE_LIMIT.into() });
+    } else if !status.is_ok_and(|s| s.success()) && !got {
         let tail: String = stderr.lines().rev().filter(|l| !l.trim().is_empty()).take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
         on(Ev::Error { text: if tail.is_empty() { "the agent stopped without answering".into() } else { tail } });
     }
@@ -1033,12 +1057,19 @@ pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
     if order.is_empty() {
         bail!("OpenCode lists no free models right now");
     }
+    let mut at_limit = false;
     for m in order.iter().take(4) {
         step(&format!("Trying {}…", m.trim_start_matches("opencode/")));
         match probe(&AgentDef { cli: "opencode".into(), model: m.clone(), command: vec![] }) {
             Ok(()) => return Ok(m.clone()),
-            Err(e) => crate::log::line("setup", format!("free model {m} didn't answer: {e:#}")),
+            Err(e) => {
+                at_limit |= e.to_string().contains(FREE_LIMIT);
+                crate::log::line("setup", format!("free model {m} didn't answer: {e:#}"));
+            }
         }
+    }
+    if at_limit {
+        bail!("{FREE_LIMIT}");
     }
     bail!("none of OpenCode's free models answered; try again in a minute")
 }
@@ -1081,7 +1112,9 @@ pub fn already_signed_in(k: &Kind) -> bool {
 /// Run a command, killing it after `limit`.
 fn run_with_timeout(c: &mut Command, limit: Duration) -> Result<std::process::Output> {
     let mut child = c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn()?;
-    let (mut so, mut se) = (child.stdout.take(), child.stderr.take());
+    let mut so = child.stdout.take();
+    let limited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let err_t = watch_stderr(child.stderr.take(), limited.clone(), None);
     let read = |p: Option<&mut dyn std::io::Read>| {
         let mut buf = Vec::new();
         if let Some(p) = p {
@@ -1090,11 +1123,14 @@ fn run_with_timeout(c: &mut Command, limit: Duration) -> Result<std::process::Ou
         buf
     };
     let out_t = std::thread::spawn(move || read(so.as_mut().map(|p| p as &mut dyn std::io::Read)));
-    let err_t = std::thread::spawn(move || read(se.as_mut().map(|p| p as &mut dyn std::io::Read)));
     let start = std::time::Instant::now();
     let status = loop {
         if let Some(s) = child.try_wait()? {
             break s;
+        }
+        if limited.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = child.kill();
+            bail!("{FREE_LIMIT}");
         }
         if start.elapsed() > limit {
             let _ = child.kill();
@@ -1102,7 +1138,7 @@ fn run_with_timeout(c: &mut Command, limit: Duration) -> Result<std::process::Ou
         }
         std::thread::sleep(Duration::from_millis(200));
     };
-    Ok(std::process::Output { status, stdout: out_t.join().unwrap_or_default(), stderr: err_t.join().unwrap_or_default() })
+    Ok(std::process::Output { status, stdout: out_t.join().unwrap_or_default(), stderr: err_t.join().unwrap_or_default().into_bytes() })
 }
 
 /// What a set-up script does, for bash. It installs if needed, signs in, and writes how that went to `status`:
