@@ -138,8 +138,9 @@ fn safe_path(p: &str) -> bool {
 }
 
 fn sha256(path: &Path) -> Result<String> {
-    let out = crate::platform::command("shasum").args(["-a", "256"]).arg(path).output().context("couldn't run shasum")?;
-    Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string())
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(std::fs::read(path).context("couldn't read the download")?);
+    Ok(hash.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Download a plugin into `plugins_dir/<name>` (an extension into `ext_dir/<name>`), checking every file's checksum;
