@@ -87,7 +87,47 @@ fn stay_out_of_app_nap() {
     }
 }
 
+/// Set on a browser started by an agent's tool call: it opens with no window and no pages.
+pub const STARTED_FOR_AGENT: &str = "VALERIE_STARTED_FOR_AGENT";
+/// Set by Restart on the copy that replaces this one.
+pub const RESTARTING: &str = "VALERIE_RESTARTING";
+
+static CALLS_RUNNING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LAST_CALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A tool call running now or just finished, for telling when agents have stopped needing Valerie.
+struct CallRunning;
+
+impl CallRunning {
+    fn begin() -> Self {
+        CALLS_RUNNING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for CallRunning {
+    fn drop(&mut self) {
+        LAST_CALL.store(crate::state::now(), std::sync::atomic::Ordering::Relaxed);
+        CALLS_RUNNING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Seconds since agents last used Valerie (0 while a call is running). Starting counts as use, so the call that
+/// started Valerie gets to arrive.
+pub fn idle_for(now: u64) -> u64 {
+    if CALLS_RUNNING.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        return 0;
+    }
+    let last = LAST_CALL.load(std::sync::atomic::Ordering::Relaxed);
+    if last == 0 {
+        LAST_CALL.store(now, std::sync::atomic::Ordering::Relaxed);
+        return 0;
+    }
+    now.saturating_sub(last)
+}
+
 pub fn spawn(port: u16, token: String, proxy: EventLoopProxy<UserEvent>) {
+    let for_agent = std::env::var_os(STARTED_FOR_AGENT).is_some();
     #[cfg(target_os = "macos")]
     if crate::config::Config::load().map_or(true, |c| c.mcp.answer_in_background) {
         stay_out_of_app_nap();
@@ -95,6 +135,8 @@ pub fn spawn(port: u16, token: String, proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(s) => s,
+            // Two agents' calls started Valerie at once: the other one is answering, so this one isn't needed.
+            Err(_) if for_agent => std::process::exit(0),
             Err(e) => return crate::log::line("mcp", format!("MCP server could not bind 127.0.0.1:{port}: {e}")),
         };
         for rq in server.incoming_requests() {
@@ -357,6 +399,7 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
             let name = params["name"].as_str().unwrap_or("");
             let args = loosen(name, params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or(json!({})));
             let started = Instant::now();
+            let _running = CallRunning::begin();
             let result = allowed(name, &args, who, proxy).and_then(|()| match name {
                 // Claude Code's permission questions (--permission-prompt-tool): the user answers in Valerie.
                 "approve" => {
@@ -2103,7 +2146,8 @@ pub fn forward_open(port: u16, urls: &[String]) -> bool {
     let token = load_or_create_token();
     urls.iter().all(|u| {
         let req = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "open_link", "arguments": { "url": u } } });
-        matches!(post_local(port, &token, &req.to_string()), Ok((200, _)))
+        // A refusal (an older Valerie that doesn't know valerie://show) means this one should open by itself.
+        matches!(post_local(port, &token, &req.to_string()), Ok((200, answer)) if !answer.contains("\"isError\":true"))
     })
 }
 
@@ -2176,10 +2220,18 @@ fn bridge_call(port: u16, token: &str, body: &str, start: bool) -> Result<String
 
 /// Start the browser on its own, so it outlives the agent that needed it. Calls at the same moment start it once.
 fn start_browser() -> bool {
-    static STARTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *STARTED.get_or_init(|| {
+    // Parallel calls start it once; a browser that has since quit (mcp.quit_when_unused_minutes) is started again.
+    static TRIED: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, started)) = *tried {
+        if at.elapsed() < Duration::from_secs(30) {
+            return started;
+        }
+    }
+    let started = (|| {
         let Ok(exe) = std::env::current_exe() else { return false };
         let mut browser = crate::platform::command(exe);
+        browser.env(STARTED_FOR_AGENT, "1");
         browser.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut browser, 0);
@@ -2189,5 +2241,7 @@ fn start_browser() -> bool {
             Err(e) => format!("couldn't start the browser for an agent: {e}"),
         });
         started.is_ok()
-    })
+    })();
+    *tried = Some((Instant::now(), started));
+    started
 }

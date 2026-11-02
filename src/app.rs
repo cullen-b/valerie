@@ -248,6 +248,8 @@ pub struct App {
     tasks_running: std::collections::HashSet<String>,
     /// The window is on screen and the after-launch work has started.
     revealed: bool,
+    /// Started by an agent's tool call and not used by a person since (mcp.quit_when_unused_minutes).
+    started_for_agent: bool,
     /// When the main window was closed with Valerie left running (app.unload_when_closed_minutes counts from here).
     closed_since: Option<u64>,
     /// Pages put to sleep while the window was closed, most recently used first: loaded again one at a time after it
@@ -1263,6 +1265,7 @@ impl App {
             answer_label: String::new(),
             tasks_running: Default::default(),
             revealed: false,
+            started_for_agent: false,
             closed_since: None,
             restore_queue: Vec::new(),
             restore_started: 0,
@@ -3426,6 +3429,11 @@ impl App {
         let lw = &self.config.little_window;
         let alone = lw.enabled && lw.open_links_alone && (self.main_hidden || !self.revealed);
         for url in urls {
+            // Someone opened Valerie again while it's running out of sight (macOS uses Event::Reopen).
+            if url == "valerie://show" {
+                self.show_main();
+                continue;
+            }
             // valerie://little (Karabiner, Shortcuts, a script): a new little window, or ?url=… opens that page in one.
             if let Some(rest) = url.strip_prefix("valerie://little") {
                 let page = url::Url::parse(&url).ok().and_then(|u| u.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.into_owned()));
@@ -3470,6 +3478,25 @@ impl App {
     /// slow the little window down.
     fn parked(&self) -> bool {
         self.main_hidden && !self.revealed
+    }
+
+    /// Only macOS has a Dock to open a closed window from; elsewhere a hidden Valerie would just linger out of reach.
+    fn keep_running_when_closed(&self) -> bool {
+        cfg!(target_os = "macos") && self.config.app.keep_running_when_closed
+    }
+
+    /// Valerie opened only to answer an agent, and nobody has used it since: nothing is lost by quitting, and the next
+    /// tool call opens it again.
+    fn quit_if_unused_by_anyone(&mut self, t: u64) {
+        let minutes = self.config.mcp.quit_when_unused_minutes;
+        if !self.started_for_agent || minutes <= 0.0 || !self.main_hidden || !self.littles.is_empty() {
+            return;
+        }
+        let working = !self.terminals.is_empty() || !self.chat_running.is_empty() || !self.tasks_running.is_empty() || !self.agents_running.is_empty();
+        if !working && crate::mcp::idle_for(t) >= (minutes * 60.0) as u64 {
+            crate::log::line("mcp", "no agent has needed Valerie for a while: quitting");
+            self.quit = true;
+        }
     }
 
     // ---------------------------------------------------------------- config, menu, sync
@@ -4587,6 +4614,7 @@ impl App {
         self.touch_panes();
         let t = now();
         self.free_memory_when_closed(t);
+        self.quit_if_unused_by_anyone(t);
         self.restore_next();
         let panes = self.panes();
         let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
@@ -4636,7 +4664,10 @@ impl App {
         if self.dirty {
             self.save();
         }
-        self.render();
+        // Nothing can see the sidebar behind a closed window; show_main draws it.
+        if !self.main_hidden || !self.littles.is_empty() {
+            self.render();
+        }
     }
 
     // ---------------------------------------------------------------- dispatch
@@ -4681,7 +4712,7 @@ impl App {
                 Command::CloseTab { tab: None } => {
                     self.littles.remove(&id);
                     self.focused_little = None;
-                    if self.main_hidden && self.littles.is_empty() && !self.config.app.keep_running_when_closed {
+                    if self.main_hidden && self.littles.is_empty() && !self.keep_running_when_closed() {
                         self.dispatch(Command::Quit, elwt);
                     }
                     return;
@@ -5369,6 +5400,8 @@ impl App {
                 self.check_updates(true);
             }
             Command::Restart => {
+                // The new copy mustn't hand over to this one if it hasn't finished quitting yet.
+                std::env::set_var(crate::mcp::RESTARTING, "1");
                 // Reopen this app (an update replaces it in place), else the installed one.
                 let installed = PathBuf::from("/Applications/Valerie.app");
                 let target = crate::update::app_bundle().or_else(|| installed.exists().then_some(installed));
@@ -7238,7 +7271,7 @@ impl App {
             },
             "open_link" => {
                 let url = args["url"].as_str().unwrap_or("").to_string();
-                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") {
+                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") || url == "valerie://show" {
                     self.open_external(vec![url], elwt);
                     Ok(json!("opened"))
                 } else {
@@ -7518,7 +7551,7 @@ impl App {
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),
             WindowEvent::CloseRequested => {
-                let keep_running = self.config.app.keep_running_when_closed;
+                let keep_running = self.keep_running_when_closed();
                 if main && (keep_running || self.config.little_window.keep_open_when_main_closes && !self.littles.is_empty()) {
                     // Nothing keeps playing behind a closed window.
                     for v in self.views.values() {
@@ -7528,6 +7561,7 @@ impl App {
                     self.save();
                     self.window.set_visible(false);
                     self.main_hidden = true;
+                    set_window_closed(true);
                 } else if main {
                     self.dispatch(Command::Quit, elwt);
                 } else {
@@ -7566,10 +7600,22 @@ impl App {
         self.apply_app_settings();
         trace("start");
         self.build_menu();
+        // An agent's tool call started Valerie: no window and no pages, only what the call needs.
+        if std::env::var_os(crate::mcp::STARTED_FOR_AGENT).is_some() {
+            std::env::remove_var(crate::mcp::STARTED_FOR_AGENT);
+            self.started_for_agent = true;
+            self.main_hidden = true;
+            set_window_closed(true);
+        }
         let a = self.state.active_space;
         self.switch_space(a);
         if !urls.is_empty() {
             self.open_external(urls, elwt);
+        }
+        if self.started_for_agent {
+            for p in self.panes() {
+                self.unload(p);
+            }
         }
         trace("active space requested");
         let p = self.proxy.clone();
@@ -7652,7 +7698,9 @@ impl App {
 
     /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
     fn show_main(&mut self) {
+        self.started_for_agent = false;
         if std::mem::take(&mut self.main_hidden) {
+            set_window_closed(false);
             self.wake_after_closed();
             for p in self.panes() {
                 self.ensure_view(p);
@@ -7661,6 +7709,7 @@ impl App {
                 self.ensure_chat_view();
             }
             self.layout();
+            self.render();
             self.window.set_visible(true);
             self.focused_little = None;
             self.window.set_focus();
@@ -7739,6 +7788,12 @@ impl App {
     }
 }
 
+static WINDOW_CLOSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn set_window_closed(closed: bool) {
+    WINDOW_CLOSED.store(closed, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let path = config::config_path();
@@ -7761,7 +7816,9 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
         };
         let mut last = mtime();
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(800));
+            // A closed window can wait for a settings change; it shouldn't wake the Mac to look.
+            let closed = WINDOW_CLOSED.load(std::sync::atomic::Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_millis(if closed { 5000 } else { 800 }));
             let m = mtime();
             if m != last {
                 last = m;
@@ -10889,6 +10946,9 @@ impl App {
 
     /// Run the scripts of widgets whose text is due.
     fn refresh_widgets(&mut self) {
+        if self.main_hidden {
+            return;
+        }
         let now_i = std::time::Instant::now();
         for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
             for w in &p.manifest.sidebar {
