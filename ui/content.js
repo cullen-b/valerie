@@ -1579,10 +1579,35 @@ function pluginSend(fields, args) {
   s += ',"args":' + (args === undefined ? "{}" : toJson(args));
   try { (ipcPost || ((m) => window.ipc.postMessage(m)))(s + "}"); } catch (_) {}
 }
+// For logs only, so it stops early: following every property of `console.log(window)` never ends and freezes the page
+// (Google's sign-in logs window right before it closes). Windows and DOM nodes are only named.
+const LogSeen = WeakSet;
+function logValue(v, depth, seen, left) {
+  if (v === null || v === undefined) return "null";
+  const t = typeof v;
+  if (t === "string" || t === "number" || t === "boolean") return stringify(v);
+  if (t !== "object") return "null";
+  if (depth > 6 || left.n-- <= 0) return '"…"';
+  if (seen.has(v)) return '"[circular]"';
+  seen.add(v);
+  if (v.window === v || typeof v.nodeType === "number") return stringify("[" + (v.window === v ? "window" : String(v.nodeName)) + "]");
+  if (isArray(v)) {
+    let s = "[";
+    for (let i = 0; i < v.length; i++) { if (left.n <= 0) return s + (i ? "," : "") + '"…"]'; s += (i ? "," : "") + logValue(v[i], depth + 1, seen, left); }
+    return s + "]";
+  }
+  let s = "{", first = true;
+  for (const k of keysOf(v)) {
+    if (left.n <= 0) return s + (first ? "" : ",") + '"…":"…"}';
+    if (v[k] === undefined || typeof v[k] === "function") continue;
+    s += (first ? "" : ",") + stringify(String(k)) + ":" + logValue(v[k], depth + 1, seen, left); first = false;
+  }
+  return s + "}";
+}
 function logText(v) {
   if (v instanceof Error) return String(v.stack || v.message || v);
   if (typeof v === "string") return v;
-  try { return toJson(v); } catch (_) { return String(v); }
+  try { return logValue(v, 0, new LogSeen(), { n: 300 }); } catch (_) { try { return String(v); } catch (_) { return "[unprintable]"; } }
 }
 function pluginApi(plugin, key) {
   plugin = String(plugin); key = String(key);
