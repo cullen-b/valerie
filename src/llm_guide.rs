@@ -83,12 +83,14 @@ changed in plain words. Some translations:
 | "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
+| "Turn off that plugin / extension" | `"{exe}" plugins off <name>` (`on` to turn it back on; add `--extension` when a plugin has the same name) |
 | "Find me a plugin for…" / "is there a plugin that…" | `"{exe}" plugins search <words>`, then `"{exe}" plugins install <name>`; "Plugins" in the command bar browses them |
 | "Don't update by yourself" / "ask before updating" | `updates.install: ask` (or `off` to only be told) |
 | "Give me test builds" / "early versions" / "beta" | `updates.channel: edge` in this-mac.yaml (or "Toggle Test Builds"); `stable` goes back |
 | "Open my settings in VS Code" / "in vim" | `editor: "Visual Studio Code"` (any app's name), or `editor: vim` with `terminal: Ghostty` (or Terminal, iTerm, WezTerm, kitty, Alacritty) |
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
+| "Stop explaining the Keychain window" / "stop the Always Allow message" | `passwords.explain_keychain_prompt: false` |
 | "Use DuckDuckGo" | `search_engine: "https://duckduckgo.com/?q=%s"` |
 | "Make the sidebar look like …" / "rounder tabs" / "a different font for tab titles" | CSS in `ui/chrome.css` (see "Restyling Valerie itself") |
 | "Make the find bar / link hints bigger" | CSS in `ui/page.css` |
@@ -316,7 +318,8 @@ What each piece can do:
   plugin by editing its `plugin.yaml` instead of its code.
 
 Plugins that ship with Valerie (like `youtube-speed`) are copied into `plugins/` once and then belong to the user:
-edit them, disable them with `enabled: false`, or delete them.
+edit them, disable them with `enabled: false`, or delete them. `"{exe}" plugins off <name>` and `on <name>` turn any
+plugin off and on, as do the switches in "Plugins" and the `toggle_plugin` command.
 
 ### The plugin marketplace
 
@@ -417,8 +420,10 @@ Examples:
 
 Unpacked web extensions (a folder with a manifest.json, as for Safari or Chrome "load unpacked") go in `extensions/`
 (macOS 15.4 or later). Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
-and opens their popups and options pages. `extensions.enabled: false` turns them all off. A new folder is picked up
-without a restart. To change how a site behaves, prefer a plugin with a `script.js`: it works on every platform and
+and opens their popups and options pages. To turn one off, never move or delete its folder: use
+`"{exe}" plugins off <name>` (`on` turns it back on), the switch in "Plugins", or `extensions.turned_off: [<folder name>]`.
+It stops right away, and open pages reload without it. `extensions.enabled: false` turns them all off. A new folder is
+picked up without a restart. To change how a site behaves, prefer a plugin with a `script.js`: it works on every platform and
 can use Valerie's commands and settings. Both can be shared in the marketplace.
 
 ## Limits

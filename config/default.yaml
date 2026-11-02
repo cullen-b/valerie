@@ -686,6 +686,8 @@ passwords:
                            # your password instead of showing a passkey prompt that never finishes) | on | off
   passkeys_through_safari: true  # when a site asks for a passkey, offer to sign in through Safari (where passkeys
                            # work) and bring the login back. Also "Sign In with Safari" in the command bar. true | false
+  explain_keychain_prompt: true  # on Mac, when the system asks for permission to use a saved password, explain why
+                           # and to click Always Allow ("Don't Show Again" turns this off). true | false
   shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared
@@ -911,4 +913,6 @@ app:
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
 extensions:
   enabled: true            # load the extensions in that folder. true | false
+  turned_off: []           # extensions that stay off, by folder name, e.g. [youtube-theater]. The switches in
+                           # "Plugins" change this list; removing a name turns that extension back on
   folder: ""               # where they live; empty = the extensions folder next to this file

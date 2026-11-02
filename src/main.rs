@@ -407,6 +407,9 @@ fn check_new_settings(c: &Config) -> Vec<String> {
             p.push(format!("extensions: {} has no readable manifest.json", e.file_name().to_string_lossy()));
         }
     }
+    for name in c.extensions.turned_off.iter().filter(|n| !ext.join(n).join("manifest.json").exists()) {
+        p.push(format!("extensions.turned_off: there's no extension called {name} in {}", ext.display()));
+    }
     p
 }
 
@@ -582,6 +585,19 @@ fn main() -> anyhow::Result<()> {
                     let next = if e.is_extension() { "Valerie asks once before loading it; needs macOS 15.4 or later" } else { "Valerie picks it up by itself" };
                     println!("Installed the {} {name} in {} ({next}).", e.noun(), dir.display());
                 }
+                Some(word @ ("on" | "off")) => {
+                    let name = args.get(2).with_context(|| format!("usage: valerie plugins {word} <name> [--extension]"))?;
+                    let kind = args.iter().any(|a| a == "--extension").then_some(market::EXTENSION);
+                    let (dir, found) = market::local(name, kind, &plugins::plugins_dir(), &ext_dir)
+                        .with_context(|| format!("no plugin or extension called {name} in {} or {}", plugins::plugins_dir().display(), ext_dir.display()))?;
+                    let on = word == "on";
+                    if found == market::EXTENSION {
+                        extensions::set_on(&config.extensions, name, on)?;
+                    } else {
+                        plugins::set_enabled(&dir, on)?;
+                    }
+                    println!("Turned {word} the {found} {name}; a running Valerie follows by itself.");
+                }
                 Some("share") => {
                     let name = args.get(2).context("usage: valerie plugins share <name> [--extension]")?;
                     let kind = args.iter().any(|a| a == "--extension").then_some(market::EXTENSION);
@@ -599,7 +615,7 @@ fn main() -> anyhow::Result<()> {
                         let have = if e.is_extension() { exts.contains(&e.name) } else { mine.contains(&e.name) };
                         println!("{:<24} {}{}{}", e.name, e.description, tag(e), if have { "  (installed)" } else { "" });
                     }
-                    println!("\nvalerie plugins search <words> | install <name> | share <name>  (add --extension when a plugin has the same name)");
+                    println!("\nvalerie plugins search <words> | install <name> | on <name> | off <name> | share <name>  (add --extension when a plugin has the same name)");
                 }
             }
             return Ok(());

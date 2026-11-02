@@ -32,6 +32,15 @@ pub fn dir(config: &crate::config::ExtensionsConfig) -> PathBuf {
     }
 }
 
+/// Turn one extension on or off in the settings (`extensions.turned_off`); a running Valerie follows the file.
+pub fn set_on(config: &crate::config::ExtensionsConfig, name: &str, on: bool) -> anyhow::Result<()> {
+    let mut off: Vec<&str> = config.turned_off.iter().map(String::as_str).filter(|n| *n != name).collect();
+    if !on {
+        off.push(name);
+    }
+    crate::config::set_setting(&["extensions", "turned_off"], &serde_json::to_string(&off)?)
+}
+
 /// Extension folders (each with a manifest.json), sorted by name.
 pub fn find(root: &Path) -> Vec<Found> {
     let mut out: Vec<Found> = std::fs::read_dir(root)
@@ -147,6 +156,22 @@ mod mac {
         }
     }
 
+    /// Stop a loaded extension. Pages built while it ran need rebuilding to lose what it already put in them.
+    pub fn unload(name: &str) -> Result<(), String> {
+        let Some(i) = LOADED.with(|l| l.borrow().iter().position(|(n, _)| n == name)) else { return Ok(()) };
+        let ctrl = controller().ok_or("this macOS can't run browser extensions")?;
+        let ctx = LOADED.with(|l| l.borrow()[i].1.clone());
+        let mut error: *mut AnyObject = std::ptr::null_mut();
+        unsafe {
+            let ok: bool = msg_send![&*ctrl, unloadExtensionContext: &*ctx, error: &mut error];
+            if !ok {
+                return Err(describe(error));
+            }
+        }
+        LOADED.with(|l| l.borrow_mut().remove(i));
+        Ok(())
+    }
+
     unsafe fn set_items(set: *mut AnyObject) -> Vec<*mut AnyObject> {
         if set.is_null() {
             return vec![];
@@ -244,6 +269,9 @@ mod other {
     pub fn load(_name: String, _dir: &std::path::Path, done: impl FnOnce(Result<(), String>) + 'static) {
         done(Err("browser extensions work on macOS 15.4 or later".into()))
     }
+    pub fn unload(_name: &str) -> Result<(), String> {
+        Ok(())
+    }
     pub fn options_url(_name: &str) -> Option<String> {
         None
     }
@@ -251,3 +279,30 @@ mod other {
 
 #[cfg(not(target_os = "macos"))]
 pub use other::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_on_edits_the_list_and_keeps_the_rest_of_the_file() {
+        let _guard = crate::config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("valerie-ext-switch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("VALERIE_CONFIG_DIR", &dir);
+        let file = dir.join("config.yaml");
+        std::fs::write(&file, "# mine\nextensions:\n  enabled: true\n").unwrap();
+        let read = || -> crate::config::ExtensionsConfig { crate::config::Config::load().unwrap().extensions };
+
+        set_on(&read(), "a", false).unwrap();
+        set_on(&read(), "b", false).unwrap();
+        set_on(&read(), "b", false).unwrap();
+        assert_eq!(read().turned_off, ["a", "b"]);
+        set_on(&read(), "a", true).unwrap();
+        assert_eq!(read().turned_off, ["b"]);
+        assert!(std::fs::read_to_string(&file).unwrap().starts_with("# mine\n"));
+
+        std::env::remove_var("VALERIE_CONFIG_DIR");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

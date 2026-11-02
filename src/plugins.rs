@@ -224,6 +224,20 @@ pub fn load_all() -> (Vec<Plugin>, Vec<String>) {
     (plugins, errors)
 }
 
+/// Turn the plugin in `dir` on or off (`enabled:` in its plugin.yaml), keeping the rest of the file.
+pub fn set_enabled(dir: &std::path::Path, on: bool) -> Result<()> {
+    let file = dir.join("plugin.yaml");
+    let text = std::fs::read_to_string(&file)?;
+    let line = format!("enabled: {on}");
+    let new = if text.lines().any(|l| l.starts_with("enabled:")) {
+        text.lines().map(|l| if l.starts_with("enabled:") { line.as_str() } else { l }).collect::<Vec<_>>().join("\n") + "\n"
+    } else {
+        format!("{line}\n{text}")
+    };
+    std::fs::write(&file, new)?;
+    Ok(())
+}
+
 /// Whether the plugin in `dir` loads (its plugin.yaml parses and its commands are valid).
 pub fn check_dir(dir: &std::path::Path) -> Result<()> {
     load(dir)?.map(|_| ()).context("there's no plugin.yaml")
@@ -473,6 +487,21 @@ sidebar:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn set_enabled_changes_only_that_line() {
+        let dir = std::env::temp_dir().join(format!("valerie-switch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.yaml"), "description: hi # note\nenabled: true\nmatches: [a.com]\n").unwrap();
+        set_enabled(&dir, false).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("plugin.yaml")).unwrap(), "description: hi # note\nenabled: false\nmatches: [a.com]\n");
+        std::fs::write(dir.join("plugin.yaml"), "description: hi\n").unwrap();
+        set_enabled(&dir, false).unwrap();
+        assert!(!load(&dir).unwrap().unwrap().manifest.enabled);
+        set_enabled(&dir, true).unwrap();
+        assert!(load(&dir).unwrap().unwrap().manifest.enabled);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
 
     #[test]
     fn bundled_plugins_update_only_untouched_files() {
