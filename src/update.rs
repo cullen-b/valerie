@@ -38,6 +38,9 @@ pub fn current() -> &'static str {
     option_env!("VALERIE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
+/// Next to the app: the update being unpacked, and the copy still running after an update.
+const KEPT_FOLDER: &str = ".valerie-update";
+
 /// Whether version `a` is later than `b` ("0.1.10" > "0.1.9").
 pub fn newer(a: &str, b: &str) -> bool {
     let parts = |v: &str| v.trim_start_matches('v').split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
@@ -69,13 +72,26 @@ pub fn fetch(feed: &str) -> Result<Release> {
     serde_json::from_slice(&out.stdout).context("the update feed isn't valid")
 }
 
+/// Delete the copy of Valerie the last update kept for the process that was running then. Call when the app starts.
+pub fn clean_up_previous() {
+    if let Some(parent) = app_bundle().filter(|_| !is_test_instance()).as_deref().and_then(Path::parent) {
+        let _ = std::fs::remove_dir_all(parent.join(KEPT_FOLDER));
+    }
+}
+
+/// A test instance leaves updates alone, unless VALERIE_UPDATE_TEST lets it update its own copy of the app.
+pub fn is_test_instance() -> bool {
+    (std::env::var_os("VALERIE_CONFIG_DIR").is_some() || std::env::var_os("VALERIE_DATA_DIR").is_some()) && std::env::var_os("VALERIE_UPDATE_TEST").is_none()
+}
+
 /// Download `release` and put it in place of `app` (macOS). Only a build signed with Valerie's release key (or the
 /// same way as the running app) is accepted; anything else is thrown away.
 pub fn install(release: &Release, app: &Path) -> Result<()> {
     let asset = release.assets.get(platform()).context("this release has no download for this computer")?;
     let parent = app.parent().context("no folder around the app")?;
     // Unpack next to the app, so the swap is a rename on the same disk.
-    let work = parent.join(".valerie-update");
+    let kept = parent.join(KEPT_FOLDER);
+    let work = kept.join("incoming");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).with_context(|| format!("Valerie can't write to {} (it updates itself there)", parent.display()))?;
     let result = (|| {
@@ -89,8 +105,10 @@ pub fn install(release: &Release, app: &Path) -> Result<()> {
         run(crate::platform::command("ditto").args(["-x", "-k"]).arg(&zip).arg(&unpacked), "unpack the update")?;
         let new = unpacked.join("Valerie.app");
         verify(&new, app)?;
-        // Swap: the running copy keeps working from memory; the new one is what opens next time.
-        let old = work.join("previous.app");
+        // Swap: the new one is what opens next time. The running copy stays on disk until then (macOS refuses it the
+        // Downloads folder once its files are gone, so downloads fail); if it's already kept, `app` never ran.
+        let previous = kept.join("previous.app");
+        let old = if previous.exists() { work.join("replaced.app") } else { previous };
         std::fs::rename(app, &old).context("couldn't move the current Valerie aside")?;
         if let Err(e) = std::fs::rename(&new, app) {
             let _ = std::fs::rename(&old, app);

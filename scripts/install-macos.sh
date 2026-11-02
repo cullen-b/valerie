@@ -8,7 +8,10 @@ DEST=/Applications/Valerie.app
 # ditto copies the signed bundle as-is; the running app keeps using the old files until it restarts.
 rm -rf "$DEST.new"
 ditto target/Valerie.app "$DEST.new"
-rm -rf "$DEST"
+# macOS refuses a running Valerie the Downloads folder if its files vanish, so keep them until the next launch (src/update.rs).
+KEPT=/Applications/.valerie-update
+mkdir -p "$KEPT"
+[ -e "$KEPT/previous.app" ] && rm -rf "$DEST" || mv "$DEST" "$KEPT/previous.app" 2>/dev/null || true
 mv "$DEST.new" "$DEST"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST" >/dev/null 2>&1 || true
 BUILD=$("$DEST/Contents/MacOS/valerie" --version 2>/dev/null || echo "")

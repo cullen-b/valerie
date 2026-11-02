@@ -543,10 +543,9 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
                 c.args(["--format", "json"]);
             }
             let cfg = match mode {
-                // OpenCode 2's free models refuse a request with no tools, so the tools stay but every use needs a "yes"
-                // a non-interactive run can't give: it's refused.
-                Mode::PageOnly if v2 => json!({ "mcp": {}, "permission": { "*": "ask" } }),
-                Mode::PageOnly => json!({ "mcp": {}, "tools": { "*": false } }),
+                // OpenCode's free models refuse a request with no tools (it then retries forever), so the tools stay but every
+                // use needs a "yes" a non-interactive run can't give: it's refused.
+                Mode::PageOnly => json!({ "mcp": {}, "permission": { "*": "ask" } }),
                 // Changing Valerie means editing its settings file; the only command it may run is the settings check.
                 Mode::Customize => json!({
                     "mcp": { "valerie": { "type": "local", "command": [exe, "mcp-stdio", "--access", "full"], "enabled": true } },
@@ -1036,8 +1035,9 @@ pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
     }
     for m in order.iter().take(4) {
         step(&format!("Trying {}…", m.trim_start_matches("opencode/")));
-        if probe(&AgentDef { cli: "opencode".into(), model: m.clone(), command: vec![] }).is_ok() {
-            return Ok(m.clone());
+        match probe(&AgentDef { cli: "opencode".into(), model: m.clone(), command: vec![] }) {
+            Ok(()) => return Ok(m.clone()),
+            Err(e) => crate::log::line("setup", format!("free model {m} didn't answer: {e:#}")),
         }
     }
     bail!("none of OpenCode's free models answered; try again in a minute")
