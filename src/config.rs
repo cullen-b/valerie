@@ -943,6 +943,8 @@ pub struct McpConfig {
     pub hidden_tabs_max: usize,
     pub ask_user: bool,
     pub network_log: bool,
+    pub ask_before_paying: bool,
+    pub paying_words: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

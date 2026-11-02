@@ -178,13 +178,90 @@ pub const LOOKING: &[&str] = &[
     "list_pages", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
 ];
 
+/// The confirm tool that always reaches a person: "Always Allow" can't cover it.
+pub const ASK_EACH_TIME: &str = "ask_each_time";
+
+/// What the agent is about to do, if it could spend money (or turn this check off). mcp.ask_before_paying.
+fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Option<String>, String> {
+    let key_press = name == "press_key" && matches!(args["key"].as_str(), Some("Enter" | "Return" | " " | "Space" | "Spacebar"));
+    let submit = name == "type" && args["submit"].as_bool() == Some(true);
+    if name != "click" && name != "set_setting" && !key_press && !submit {
+        return Ok(None);
+    }
+    // A config that doesn't load counts as the defaults, so the check stays on.
+    let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
+    if !config.mcp.ask_before_paying {
+        return Ok(None);
+    }
+    if name == "set_setting" {
+        let key = args["key"].as_str().unwrap_or("").split('.').map(str::trim).filter(|k| !k.is_empty()).collect::<Vec<_>>().join(".");
+        let guarded = key == "mcp" || key == "mcp.ask_before_paying" || key == "mcp.paying_words";
+        return Ok(guarded.then(|| format!("change the {key} setting to {}", args["value"])));
+    }
+    let target = match name {
+        "click" => json!({ "ref": args["ref"], "selector": args["selector"] }),
+        "type" => json!({ "ref": args["ref"], "selector": args["selector"], "submits": true }),
+        _ => json!({ "submits": true }),
+    };
+    let found = eval(proxy, args.get("tab").and_then(Value::as_i64), &with_args(&target, &format!("{FIND_JS}\n{CLICK_TARGET_JS}")))?;
+    let text = found["text"].as_str().unwrap_or("");
+    Ok(paying_word(text, &config.mcp.paying_words).map(|word| {
+        let label = found["label"].as_str().unwrap_or("").trim();
+        let site = found["site"].as_str().unwrap_or("this page");
+        if label.is_empty() { format!("click a button on {site} (it mentions “{word}”)") } else { format!("click “{label}” on {site}") }
+    }))
+}
+
+/// The first of `words` in `text`: whole words, so "pay" doesn't match "display". Words with symbols or non-English
+/// letters ("$", "購入") match anywhere, since those languages don't put spaces between words.
+fn paying_word<'a>(text: &str, words: &'a [String]) -> Option<&'a str> {
+    let spaced = |t: &str| {
+        let mut out = String::from(" ");
+        let mut prev_lower = false;
+        for c in t.chars() {
+            if prev_lower && c.is_uppercase() {
+                out.push(' '); // payNow, checkoutBtn
+            }
+            prev_lower = c.is_lowercase();
+            if c.is_alphanumeric() { out.extend(c.to_lowercase()) } else if !out.ends_with(' ') { out.push(' ') }
+        }
+        if !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out
+    };
+    let (normal, lower) = (spaced(text), text.to_lowercase());
+    words.iter().map(String::as_str).find(|w| {
+        let word = spaced(w);
+        if word.trim().is_empty() || !w.is_ascii() { !w.trim().is_empty() && lower.contains(&w.trim().to_lowercase()) } else { normal.contains(&word) }
+    })
+}
+
+fn ask_each_time(what: &str, name: &str, args: &Value, chat: &str, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
+    let answer = call_wait(proxy, "confirm", json!({ "chat": chat, "tool": ASK_EACH_TIME, "args": { "what": what } }), 600)?;
+    if answer["allowed"].as_bool() != Some(true) {
+        return Err(format!("The user said no to this: {what}. Don't try it another way; ask them what they'd like instead."));
+    }
+    // They may have taken minutes to answer: the yes only covers what they were shown.
+    match risky_action(name, args, proxy)? {
+        Some(now) if now != what => Err(format!("The page changed while the user was deciding: they approved “{what}”, not “{now}”. Take a new snapshot.")),
+        _ => Ok(()),
+    }
+}
+
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
 fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
-    if LOOKING.contains(&name) || name == "approve" || who.access == "full" {
+    if LOOKING.contains(&name) || name == "approve" {
         return Ok(());
     }
     if who.access == "read" {
         return Err(format!("This chat is read-only, so `{name}` isn't allowed. Tell the user what you'd do instead; they can switch the chat to Ask first or Full access."));
+    }
+    if let Some(what) = risky_action(name, args, proxy)? {
+        return ask_each_time(&what, name, args, &who.chat, proxy);
+    }
+    if who.access == "full" {
+        return Ok(());
     }
     match call_wait(proxy, "confirm", json!({ "chat": who.chat, "tool": name, "args": args }), 600)?["allowed"].as_bool() {
         Some(true) => Ok(()),
@@ -539,6 +616,9 @@ pub fn run_tool(name: &str, args: Value, proxy: &EventLoopProxy<UserEvent>) -> R
     if name == "clear_site_data" {
         return call_wait(proxy, "clear_site_data", args, 600);
     }
+    if let Some(what) = risky_action(name, &args, proxy)? {
+        ask_each_time(&what, name, &args, "", proxy)?;
+    }
     call_tool(name, args, proxy)
 }
 
@@ -637,6 +717,26 @@ function find() {
   return e;
 }
 function describe(e) { return (e.tagName.toLowerCase() + " " + (e.innerText || e.value || e.getAttribute("aria-label") || "").trim().slice(0, 80)).trim(); }
+"#;
+
+/// What a click (or Enter on a form) would press, in every word a site might describe it with.
+const CLICK_TARGET_JS: &str = r#"
+const hit = find();
+const pressable = 'button,a,summary,label,input,[role=button],[role=link],[role=menuitem],[role=option],[onclick]';
+const isButton = (e) => e.matches('button,a,summary,[role=button],[role=link],input[type=submit],input[type=button],input[type=image]');
+const submit = A.submits && hit.form && !isButton(hit) ? hit.form.querySelector('[type=submit],button:not([type=button]):not([type=reset]),input[type=image]') || hit.form : hit;
+const nodes = [...new Set([submit, submit.closest(pressable) || submit])];
+const parts = [];
+for (const e of nodes) {
+  parts.push(e.innerText, e.textContent);
+  if (e.matches('input[type=submit],input[type=button],input[type=image]')) parts.push(e.value);
+  for (const a of e.attributes) if (!/^(style|data-valerie-ref)$/.test(a.name)) parts.push(a.name.startsWith('data-') || a.name.startsWith('aria-') || /^(id|class|name|title|alt|href|action|formaction|value|onclick)$/.test(a.name) ? a.value : '');
+  for (const i of e.querySelectorAll ? e.querySelectorAll('img[alt],[aria-label],[title]') : []) parts.push(i.getAttribute('alt'), i.getAttribute('aria-label'), i.getAttribute('title'));
+  if (e.form) parts.push(e.form.getAttribute('action'), e.form.id, e.form.getAttribute('name'));
+}
+const c = nodes[nodes.length - 1];
+const label = (c.innerText || c.value || c.getAttribute('aria-label') || c.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+return { site: location.hostname || location.href, label, text: parts.filter(Boolean).map((p) => String(p).slice(0, 1000)).join(' \n ') };
 "#;
 
 const SNAPSHOT_JS: &str = r#"
@@ -1611,6 +1711,19 @@ pub fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn paying_words_are_whole_words_and_err_towards_asking() {
+        let config = crate::config::Config::defaults();
+        let words = &config.mcp.paying_words;
+        for caught in ["Pay now", "PLACE ORDER", "Proceed to Checkout", "check out", "Buy", "payNow", "btn-checkout", "/cart/view", "Add to Bag",
+            "Subscribe", "Upgrade to Pro", "Get it for $9.99", "Start free trial", "Confirm purchase", "Donate", "Jetzt kaufen", "購入する", "Payment"] {
+            assert!(super::paying_word(caught, words).is_some(), "should ask about {caught:?}");
+        }
+        for fine in ["Display settings", "Save", "Payload", "Next", "Sign in", "Repay nothing", "Search", "Open menu", "Border"] {
+            assert_eq!(super::paying_word(fine, words), None, "{fine:?}");
+        }
+    }
+
     #[test]
     fn base64_matches_rfc4648() {
         assert_eq!(super::base64(b""), "");
