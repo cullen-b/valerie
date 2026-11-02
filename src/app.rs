@@ -1718,7 +1718,9 @@ impl App {
                 }
                 send(&p5, UserEvent::ExternalScheme(url));
                 false
-            })
+            });
+        // On Linux these live on the profile's context too, so another view adding them would run each download twice.
+        let built = if shared_protocol { built } else { built
             .with_download_started_handler(move |url, path| {
                 let name = path
                     .file_name()
@@ -1753,7 +1755,7 @@ impl App {
                     None => (path, false),
                 };
                 send(&p, UserEvent::Downloaded { ok, path, url, open })
-            });
+            }) };
         plugin_scripts.into_iter().fold(built, |b, (script, main_only)| b.with_initialization_script_for_main_only(script, main_only))
     }
 
@@ -2884,7 +2886,7 @@ impl App {
                                "sub": space.map(|s| self.state.spaces[s].name.clone()) }));
             rank += 1;
         }
-        for (name, title) in CATALOG {
+        for (name, title) in CATALOG.iter().filter(|(name, _)| on_this_system(name)) {
             items.push(json!({ "kind": "command", "title": self.translate(title), "cmd": { "cmd": name } }));
         }
         for (i, s) in self.state.spaces.iter().enumerate() {
@@ -3599,13 +3601,11 @@ impl App {
             &PredefinedMenuItem::separator(),
             &settings,
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::services(None),
-            &PredefinedMenuItem::hide(None),
-            &PredefinedMenuItem::hide_others(None),
-            &PredefinedMenuItem::show_all(None),
-            &PredefinedMenuItem::separator(),
             &quit,
         ]);
+        // Mac menu items. Elsewhere they do nothing or take Ctrl+H and Ctrl+M from the page.
+        #[cfg(target_os = "macos")]
+        let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 4);
         let edit = Submenu::new(name_of("Edit"), true);
         let _ = edit.append_items(&[
             &PredefinedMenuItem::undo(None),
@@ -3631,8 +3631,15 @@ impl App {
             mc.commands.get(&name).map(|m| m.clone().filter(|m| !m.is_empty() && m != "none"))
         };
         let mut bound: Vec<Command> = Vec::new();
+        let mut taken = std::collections::HashSet::new();
         for (i, (accel, binding)) in self.config.keybindings.iter().enumerate() {
             let Some(cmd) = binding.as_ref().and_then(|b| b.command()) else { continue };
+            let accel = &portable_accel(accel, &cmd);
+            // CmdOrCtrl is Ctrl here, so "Ctrl+1" and "CmdOrCtrl+1" can be the same keys: one of them can't work.
+            if !accel.contains(' ') && !taken.insert(accel.replace("CmdOrCtrl", "Ctrl").to_lowercase()) {
+                crate::log::line("keys", format!("{accel} is bound twice on this computer; ignoring it for {}", self.command_label(&cmd)));
+                continue;
+            }
             // Key sequences ("CmdOrCtrl+K CmdOrCtrl+S") start with their first key; Valerie waits for the rest.
             if accel.trim().contains(' ') {
                 continue;
@@ -3668,7 +3675,7 @@ impl App {
             let _ = groups[g].1.append(&item);
         }
         // Unbound catalog commands still appear in the menu so everything is discoverable.
-        for (name, title) in CATALOG {
+        for (name, title) in CATALOG.iter().filter(|(name, _)| on_this_system(name)) {
             let Some(cmd) = Command::from_name(name) else { continue };
             if bound.contains(&cmd) || matches!(cmd, Command::Quit | Command::OpenConfig) {
                 continue;
@@ -3700,7 +3707,9 @@ impl App {
             }
         }
         let window_menu = Submenu::new(name_of("Window"), true);
-        let _ = window_menu.append_items(&[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::fullscreen(None)]);
+        #[cfg(target_os = "macos")]
+        let _ = window_menu.append(&PredefinedMenuItem::minimize(None));
+        let _ = window_menu.append_items(&[&PredefinedMenuItem::fullscreen(None)]);
         let _ = menu.append(&app_menu);
         // A hidden menu moves inside the Valerie menu: out of the bar, but its shortcuts (and ⌘C / ⌘V) still work.
         let mut tucked = false;
@@ -3868,8 +3877,8 @@ impl App {
                             let _ = v.evaluate_script(&format!("window.__valerie && __valerie.fill({}, {})", json!(e.username), json!(pw)));
                         }
                     }
-                    Ok(None) => self.toast("That password is no longer in the keychain"),
-                    Err(err) => self.toast(&format!("Keychain: {err}")),
+                    Ok(None) => self.toast("That password is no longer saved"),
+                    Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
                 }
             }
             "credential" => {
@@ -3957,7 +3966,7 @@ impl App {
         let _ = focus_view(&view);
         self.peek = Some(PeekView { view, url: url.to_string() });
         if self.config.escape_hints {
-            let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
+            let _ = self.peek.as_ref().map(|p| p.view.evaluate_script(&format!("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · {} to open as tab'), 400)", if cfg!(target_os = "macos") { "⌘O" } else { "Ctrl+O" })));
         }
     }
 
@@ -5810,14 +5819,14 @@ impl App {
                         }
                     }
                     Ok(None) => self.toast("Password not found"),
-                    Err(err) => self.toast(&format!("Keychain: {err}")),
+                    Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
                 }
             }
             Command::DeletePassword { vault, origin, username } => {
                 self.close_bar();
                 match passwords::delete(&passwords::Entry { vault, origin, username }) {
                     Ok(()) => self.toast("Password deleted"),
-                    Err(e) => self.toast(&format!("Keychain: {e}")),
+                    Err(e) => self.toast(&format!("Couldn't use saved passwords: {e}")),
                 }
             }
             Command::SetDefaultMarkdownApp => {
@@ -5830,7 +5839,7 @@ impl App {
             Command::SetDefaultBrowser => {
                 self.close_bar();
                 match platform::set_default_browser() {
-                    Ok(()) => self.toast("Confirm in the macOS dialog to finish"),
+                    Ok(()) => self.toast("Finish in the window your system opens"),
                     Err(e) => self.toast(&format!("Couldn't set default browser: {e}")),
                 }
             }
@@ -6874,7 +6883,7 @@ impl App {
                             let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string());
                             // macOS asks before an app uses these folders; the answer lives in System Settings.
                             let home = dirs::home_dir().unwrap_or_default();
-                            let guarded = ["Downloads", "Desktop", "Documents"].iter().any(|f| dir.starts_with(home.join(f)));
+                            let guarded = cfg!(target_os = "macos") && ["Downloads", "Desktop", "Documents"].iter().any(|f| dir.starts_with(home.join(f)));
                             self.toast(&if guarded {
                                 format!("Download failed: Valerie isn't allowed to save in {name}. Allow it in System Settings › Privacy & Security › Files and Folders")
                             } else {
@@ -7696,6 +7705,20 @@ static MENU_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIs
 #[cfg(target_os = "windows")]
 static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
+/// Commands that only mean something on one system.
+fn on_this_system(name: &str) -> bool {
+    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari")
+}
+
+/// A binding as it works on this computer. A Mac has Ctrl+1 and ⌘1 for spaces and tabs; elsewhere both are Ctrl+1, which
+/// other browsers use for tabs, so spaces take Alt+1.
+fn portable_accel(accel: &str, cmd: &Command) -> String {
+    match accel.strip_prefix("Ctrl+") {
+        Some(key) if !cfg!(target_os = "macos") && key.len() == 1 && key.as_bytes()[0].is_ascii_digit() && matches!(cmd, Command::SwitchSpace { .. }) => format!("Alt+{key}"),
+        _ => accel.to_string(),
+    }
+}
+
 /// Every webview is built through this, so each one gets what it needs on this system.
 trait ChildOf {
     fn child_of<W: wry::raw_window_handle::HasWindowHandle>(self, parent: &W) -> wry::Result<WebView>;
@@ -7715,6 +7738,7 @@ impl ChildOf for WebViewBuilder<'_> {
                 view.set_visible(false)?;
             }
             linux_keys::watch(&view.webview());
+            linux_keys::download_what_cant_show(&view.webview());
         }
         Ok(view)
     }
@@ -7772,6 +7796,22 @@ mod linux_keys {
         }
     }
 
+    /// WebKit quietly drops a file it can't display unless told to save it.
+    pub fn download_what_cant_show(view: &webkit2gtk::WebView) {
+        use webkit2gtk::{PolicyDecisionExt, PolicyDecisionType, ResponsePolicyDecision, ResponsePolicyDecisionExt, WebViewExt};
+        view.connect_decide_policy(|_, decision, kind| {
+            if kind != PolicyDecisionType::Response {
+                return false;
+            }
+            let Some(response) = decision.downcast_ref::<ResponsePolicyDecision>() else { return false };
+            if response.is_mime_type_supported() {
+                return false;
+            }
+            decision.download();
+            true
+        });
+    }
+
     pub fn watch(view: &webkit2gtk::WebView) {
         view.connect_button_press_event(|v, _| {
             take_focus(v);
@@ -7781,7 +7821,7 @@ mod linux_keys {
             use gdk::keys::constants as key;
             let ctrl = ev.state().contains(gdk::ModifierType::CONTROL_MASK);
             // The focused box handles these itself, as on Windows.
-            if ctrl && !ev.state().contains(gdk::ModifierType::SHIFT_MASK) && [key::a, key::c, key::v, key::x, key::y, key::z].contains(&ev.keyval()) {
+            if ctrl && !ev.state().contains(gdk::ModifierType::SHIFT_MASK) && [key::a, key::c, key::v, key::x, key::y, key::z].contains(&ev.keyval().to_lower()) {
                 return glib::Propagation::Proceed;
             }
             let ran = MAIN.with(|m| m.borrow().as_ref().is_some_and(|w| w.activate_key(ev)));
@@ -9757,7 +9797,7 @@ impl App {
     fn passkey_wanted(&mut self, tab: TabId) {
         let Some(site) = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)) else { return };
         trace(&format!("{site} asked for a passkey"));
-        if !self.config.passwords.passkeys_through_safari || self.preloaded.contains_key(&tab) || !self.passkey_offered.insert(site.clone()) {
+        if !cfg!(target_os = "macos") || !self.config.passwords.passkeys_through_safari || self.preloaded.contains_key(&tab) || !self.passkey_offered.insert(site.clone()) {
             return;
         }
         let Some(v) = self.views.get(&tab) else { return };

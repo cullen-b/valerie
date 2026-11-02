@@ -18,6 +18,13 @@ add a setting so anyone can switch it back on or off:
 No "press Esc to exit full screen" banners, ever, and no "esc to …" reminders unless `escape_hints` is on. The owner
 finds them maddening.
 
+## Name a device only when you know it's that device
+
+Valerie runs on macOS, Windows and Linux. Text people see never assumes one: no `⌘`, `⇧`, "Keychain", "Finder" or "macOS dialog"
+unless a platform check (`cfg!(target_os = ...)`, `/Mac/.test(navigator.platform)`) chose it. Write Mac and everyone-else versions
+of a shortcut, and hide commands that only work on one system (`on_this_system` in `src/app.rs`). A new shortcut has to work on
+all three; `scripts/shortcut-test.py` presses each one on real machines.
+
 ## Page scripts: no innerHTML
 
 Scripts that run inside web pages (`ui/content.js`, plugin `script.js`) must build DOM with `createElement` /

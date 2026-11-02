@@ -224,12 +224,14 @@ html.float.hints #floatHint { display: block; font-size: 11px; color: var(--dim)
       <option value="read">Read only</option><option value="ask">Ask first</option><option value="full">Full access</option>
     </select>
     <button id="plan" class="ctl" title="Plan first: the agent proposes, you say go">Plan</button>
-    <div id="hint">↵ send · ⇧↵ new line</div><button id="send" title="Send">↑</button>
+    <div id="hint"></div><button id="send" title="Send">↑</button>
   </div>
 </div></div>
 <div id="pane"><header><b>Changes</b><span class="sub" id="paneSub"></span><button class="btn quiet" id="paneRefresh">Refresh</button><button class="btn quiet" id="paneClose" title="Close">✕</button></header>
   <div class="split"><nav id="paneNav"></nav><div class="diffwrap" id="paneDiff"></div></div></div>
 <script>
+const ON_MAC = /Mac/.test(navigator.platform);
+if (!ON_MAC) { document.getElementById("floatHint").textContent = "Esc · keep working\u00a0\u00a0Shift+Esc · go to Chats"; document.getElementById("toChats").title = "Open in Chats (Shift+Esc)"; }
 const $ = (s) => document.querySelector(s);
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const cmd = (c) => send({ t: "cmd", cmd: c });
@@ -710,7 +712,7 @@ function renderControls() {
   $("#effort").value = chatOpt("effort", "") || D.default_effort || "";
   fillFolders();
   $("#plan").style.display = D.plan_button ? "" : "none";
-  $("#hint").textContent = D.composer_hint ? "↵ send · ⇧↵ new line" : "";
+  $("#hint").textContent = D.composer_hint ? (ON_MAC ? "↵ send · ⇧↵ new line" : "Enter send · Shift+Enter new line") : "";
   const access = chatOpt("access", "") || D.default_access || "full";
   $("#access").value = access; $("#access").className = "ctl " + access;
   $("#plan").classList.toggle("on", !!chatOpt("plan", false));

@@ -419,8 +419,8 @@ function passphrase() {
 const QUESTIONS = [
   { id: "use", q: "What's Valerie for?", help: "Pick any that fit, or say it your way.", picks: ["Work", "School", "Coding", "Design", "Reading and news", "Research", "Shopping", "Videos and music"], placeholder: "e.g. I run a small business and live in Gmail, Notion and Shopify" },
   { id: "look", q: "How should it look?", help: "Colors, size, layout: anything.", picks: ["Dark", "Light", "Follow my system", "Minimal", "Colorful", "Bigger text", "Compact", "Tabs on top", "Sidebar on the right"], placeholder: "e.g. deep green, rounded, a serif font, no clutter" },
-  { id: "spaces", q: "Which spaces do you want?", help: "Spaces are separate sets of tabs with their own color. Swipe between them.", picks: ["Work", "Personal", "School", "Side project", "Family", "Fun"], placeholder: "e.g. Work in blue, Home in orange, a School space with separate logins" },
-  { id: "move", q: "How do you like to get around?", help: "Valerie can be driven entirely from the keyboard, or not at all.", picks: ["Keyboard all the way", "Vim keys", "Mostly the mouse", "Trackpad swipes", "Fewer shortcuts"], placeholder: "e.g. ⌘T should open a new tab like Chrome" },
+  { id: "spaces", q: "Which spaces do you want?", help: "Spaces are separate sets of tabs with their own color. Move between them with a swipe or a shortcut.", picks: ["Work", "Personal", "School", "Side project", "Family", "Fun"], placeholder: "e.g. Work in blue, Home in orange, a School space with separate logins" },
+  { id: "move", q: "How do you like to get around?", help: "Valerie can be driven entirely from the keyboard, or not at all.", picks: ["Keyboard all the way", "Vim keys", "Mostly the mouse", "Trackpad swipes", "Fewer shortcuts"], placeholder: `e.g. ${IS_MAC ? "⌘T" : "Ctrl+T"} should open a new tab like Chrome` },
   { id: "more", q: "Anything else? Describe your perfect browser.", help: "Say it in your own words: your agent turns it into settings.", picks: [], placeholder: "e.g. reject cookie banners, open articles in reader view, use DuckDuckGo, make YouTube open in a little window, close old tabs after a day" },
 ];
 function compose() {
@@ -495,7 +495,7 @@ function tickElapsed() {
 // ---------- the tour ----------
 const FEATURES = [
   { ico: IS_MAC ? "⌘" : "›", t: "Command bar", d: "Search tabs, history and the web from one box. Start with ! to change Valerie, or ? to ask your AI.", key: "open_command_bar", cmd: { cmd: "open_command_bar" } },
-  { ico: "◐", t: "Spaces", d: "Separate sets of tabs for work, home and projects, each with its own color. Swipe sideways to switch.", key: "next_space", cmd: { cmd: "next_space" } },
+  { ico: "◐", t: "Spaces", d: "Separate sets of tabs for work, home and projects, each with its own color. Swipe sideways on a trackpad or use the shortcut to switch.", key: "next_space", cmd: { cmd: "next_space" } },
   { ico: "⤒", t: "Pinned tabs and folders", d: "Keep the tabs you always want at the top; the rest tidy themselves away after a day.", key: "toggle_pin" },
   { ico: "✦", t: "Chats", d: "Agents that can open tabs, read pages and do the clicking, with the access you choose.", cmd: { cmd: "open_chats" } },
   { ico: "⌕", t: "Ask the page", d: "Find on a page, or type a question and get the answer right under the find bar.", key: "find_in_page" },

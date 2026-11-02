@@ -52,6 +52,8 @@ kbd { font: 11px -apple-system, system-ui; padding: 1px 5px; border-radius: 4px;
   <div id="foot"><span><kbd>↑↓</kbd>navigate</span><span><kbd>↵</kbd>open</span><span><kbd>⇧↵</kbd>open in new tab</span><span><kbd>esc</kbd>close</span></div>
 </div>
 <script>
+// Mac symbols only on a Mac.
+if (!/Mac/.test(navigator.platform)) for (const k of document.querySelectorAll("#foot kbd")) k.textContent = k.textContent.replace("⇧↵", "Shift+Enter").replace("↵", "Enter").replace("esc", "Esc");
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const q = document.getElementById("q"), list = document.getElementById("list");
 let D = { items: [] }, results = [], sel = 0;

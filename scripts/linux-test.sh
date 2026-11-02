@@ -64,7 +64,7 @@ EOF
     sleep 1
     docker exec -d -u tester -e DISPLAY=:1 -e HOME=/home/tester "$NAME" openbox
     # No VALERIE_* folders: this machine is empty, and the guide only opens for a real first launch.
-    docker exec -d -u tester -e DISPLAY=:1 -e HOME=/home/tester -e WEBKIT_DISABLE_COMPOSITING_MODE=1 "$NAME" \
+    docker exec -d -u tester -e DISPLAY=:1 -e HOME=/home/tester "$NAME" \
       dbus-launch --exit-with-session sh -c 'valerie >"$HOME/valerie.out" 2>&1'
     echo "up: $distro. Next: $0 shot first"
     ;;
