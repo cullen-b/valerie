@@ -66,6 +66,8 @@ button[disabled] { opacity: .4; pointer-events: none; }
 .agent .logo, .free .logo { width: 34px; flex: none; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 750; background: var(--card2); }
 .agent .name { font-weight: 650; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent.app { min-height: 0; } .agent.app .grow { flex: 1; }
+.agent .who { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; flex: 1; }
+.agent .who .name { max-width: 100%; }
 .agent .detail { color: var(--dim); font-size: 13px; flex: 1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .chip { font-size: 11.5px; font-weight: 650; padding: 3px 9px; border-radius: 99px; background: var(--card2); color: var(--dim); white-space: nowrap; }
 .chip.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
@@ -149,7 +151,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 function btn(text, cls, on) { const b = el("button", cls, text); b.onclick = on; return b; }
 
 let W = null;                      // data from Valerie
-const S = { step: 0, dir: 1, agents: {}, chosen: "", free: null, sync: null, key: null, only: "", imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
+const S = { step: 0, dir: 1, agents: {}, setup: {}, chosen: "", free: null, sync: null, key: null, only: "", imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
 const STEPS = ["hello", "import", "ai", "sync", "yours", "tour"];
 
 // ---------- shortcut labels from the user's keybindings ----------
@@ -162,9 +164,12 @@ function keyLabel(cmd) {
 
 // ---------- agents ----------
 const MAIN_AGENTS = ["claude", "codex", "opencode"];
+const AGENT_PROVIDER = { codex: "OpenAI" };
 const AGENT_NOTE = { claude: "Claude Pro or Max", codex: "ChatGPT Plus or Pro", opencode: "Free models or your own keys", cursor: "Cursor plan", pi: "Your own keys", hermes: "Nous or your own keys" };
 function agentState(a) {
-  const s = S.agents[a.id] || {};
+  const s = S.agents[a.id] || {}, u = S.setup[a.id];
+  if (u && u.step === "running" && !s.works) return { chip: "In terminal", cls: "wait", detail: "Follow the steps in the terminal window. This updates when it's done." };
+  if (u && !s.works) return { chip: "Didn't finish", cls: "warn", detail: u.detail };
   if (!a.installed) return { chip: "Not installed", cls: "", detail: AGENT_NOTE[a.id] || "" };
   if (s.works === undefined) return { chip: "Checking", cls: "wait", detail: "Asking it a quick question…" };
   if (s.works) return { chip: "Ready", cls: "ok", detail: AGENT_NOTE[a.id] || "" };
@@ -217,16 +222,22 @@ function aiStep(root) {
   const line = el("div", "status-line");
   const r = ready();
   if (chosenWorks()) { line.append(el("span", "chip ok", "In use"), el("span", null, `Valerie will use ${agentTitle(S.chosen)}.`)); }
-  else if (W.agents.some((a) => a.installed && (S.agents[a.id] || {}).works === undefined)) line.append(el("span", "chip wait", "Checking"), el("span", null, "Testing the AI apps on this Mac…"));
+  else if (W.agents.some((a) => a.installed && (S.agents[a.id] || {}).works === undefined)) line.append(el("span", "chip wait", "Checking"), el("span", null, "Testing the AI apps on this computer…"));
   else if (!r.length) line.append(el("span", "chip warn", "None ready"), el("span", null, "No AI answered yet. Sign in to one below, or use free AI."));
   root.append(line);
   const card = (a) => {
     const st = agentState(a), c = el("div", "card agent" + (S.chosen === a.id && chosenWorks() ? " chosen" : ""));
-    const row = el("div", "row"); row.append(el("div", "logo", a.title[0]), el("div", "name", a.title), el("span", "chip " + st.cls, st.chip));
+    const row = el("div", "row"), who = el("div", "who");
+    who.append(el("div", "name", a.title + (W.provider_names && AGENT_PROVIDER[a.id] ? ` (${AGENT_PROVIDER[a.id]})` : "")), el("span", "chip " + st.cls, st.chip));
+    row.append(el("div", "logo", a.title[0]), who);
     const d = el("div", "detail", st.detail); d.title = st.detail;
     const actions = el("div", "row");
     const s = S.agents[a.id] || {};
     if (s.works) actions.append(S.chosen === a.id ? el("span", "chip ok", "✓ Valerie uses this") : btn("Use " + a.title, "small primary", () => use(a.id)));
+    else if (S.setup[a.id]) {
+      actions.append(btn("Try again", "small", () => send({ t: "sign_in", id: a.id })));
+      if (W.setup_help_link) actions.append(btn("Download page", "small ghost", () => send({ t: "open_setup_help", id: a.id })));
+    }
     else if (a.installed && s.works === false) actions.append(btn("Sign in", "small", () => send({ t: "sign_in", id: a.id })), btn("Check again", "small ghost", () => { delete S.agents[a.id]; draw(); send({ t: "probe" }); }));
     else if (!a.installed && a.id !== "opencode") actions.append(btn("Install and sign in", "small", () => send({ t: "sign_in", id: a.id })));
     c.append(row, d, actions);
@@ -245,7 +256,8 @@ function aiStep(root) {
   f.append(el("div", "logo", "✦"), t);
   if (fs && fs.step === "progress") f.append(el("div", "spinner"));
   else if (fs && fs.step === "done") f.append(el("span", "chip ok", "✓ In use"));
-  else f.append(btn(fs ? "Try again" : "Set up free AI", "primary", () => { S.free = { step: "progress", detail: "Starting…" }; draw(); send({ t: "free_ai" }); }));
+  else if (fs && fs.step === "failed" && W.setup_help_link) f.append(btn("Download page", "ghost", () => send({ t: "open_setup_help", id: "opencode" })));
+  if (!fs || fs.step === "failed") f.append(btn(fs ? "Try again" : "Set up free AI", "primary", () => { S.free = { step: "progress", detail: "Starting…" }; draw(); send({ t: "free_ai" }); }));
   root.append(f);
   if (chosenWorks()) root.append(tuneCard());
   const more = el("details", "more"); const sum = el("summary", null, "More AI apps (Cursor, Pi, Hermes)"); sum.style.color = "var(--dim)"; sum.style.cursor = "default";
@@ -566,6 +578,10 @@ window.welcome = {
   event(ev) {
     if (ev.type === "agent") { S.agents[ev.id] = { works: ev.works, detail: ev.detail }; pickDefault(); }
     else if (ev.type === "using") S.chosen = ev.id;
+    else if (ev.type === "setup") {
+      if (ev.step === "done") { delete S.setup[ev.id]; delete S.agents[ev.id]; const a = W.agents.find((x) => x.id === ev.id); if (a) a.installed = true; send({ t: "probe" }); }
+      else S.setup[ev.id] = ev;
+    }
     else if (ev.type === "free") { S.free = ev; if (ev.step === "done") { S.agents.opencode = { works: true }; const a = W.agents.find((x) => x.id === "opencode"); if (a) a.installed = true; S.chosen = "opencode"; S.model.opencode = ev.model; } }
     else if (ev.type === "imported") S.imported[ev.source] = ev;
     else if (ev.type === "models") { W.models = ev.models; if (document.activeElement && document.activeElement.tagName === "SELECT") return; }

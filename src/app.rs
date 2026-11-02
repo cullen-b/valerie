@@ -5585,7 +5585,10 @@ impl App {
                 let (_, def) = self.config.agent_named(&agent);
                 match crate::ai::kind(&def.cli) {
                     Some(k) => match crate::ai::set_up(k) {
-                        Ok(()) => self.toast(&format!("Finish setting up {} in the Terminal window", k.title)),
+                        Ok(status) => {
+                            self.watch_set_up(k, status);
+                            self.toast(&format!("Finish setting up {} in the terminal window", k.title));
+                        }
                         Err(e) => self.toast(&format!("Couldn't start {} setup: {e}", k.title)),
                     },
                     None => self.toast(&format!("{agent} runs your own command: nothing to set up")),
@@ -9174,7 +9177,25 @@ impl App {
             "suggestion": crate::crypt::suggest_passphrase(),
             "ai_apps": crate::connect::exe().map(|e| crate::connect::list(&e)).unwrap_or_default(),
             "connect_mode": self.config.mcp.connect_ai_apps,
+            "provider_names": self.config.agents.provider_names, "setup_help_link": self.config.agents.setup_help_link,
         })
+    }
+
+    /// Tell the welcome guide (and the log) how a set-up in a terminal window goes.
+    fn watch_set_up(&self, k: &'static crate::ai::Kind, status: std::path::PathBuf) {
+        self.welcome_send(&json!({ "type": "setup", "id": k.id, "step": "running" }));
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            let ev = match crate::ai::set_up_outcome(k, &status) {
+                Some(Ok(())) => json!({ "type": "setup", "id": k.id, "step": "done" }),
+                Some(Err(why)) => {
+                    crate::log::line("setup", &why);
+                    json!({ "type": "setup", "id": k.id, "step": "failed", "detail": why })
+                }
+                None => return crate::log::line("setup", format!("{}: gave up waiting for the terminal window", k.title)),
+            };
+            send(&p, UserEvent::ToWelcome(ev));
+        });
     }
 
     fn welcome_message(&mut self, m: &Value, elwt: &EventLoopWindowTarget<UserEvent>) {
@@ -9225,9 +9246,18 @@ impl App {
             }
             "sign_in" => {
                 if let Some(k) = m["id"].as_str().and_then(crate::ai::kind) {
-                    if let Err(e) = crate::ai::set_up(k) {
-                        self.toast(&format!("Couldn't start {} setup: {e}", k.title));
+                    match crate::ai::set_up(k) {
+                        Ok(status) => self.watch_set_up(k, status),
+                        Err(e) => {
+                            crate::log::line("setup", format!("{}: couldn't open a terminal: {e:#}", k.title));
+                            self.welcome_send(&json!({ "type": "setup", "id": k.id, "step": "failed", "detail": format!("Valerie couldn't open a terminal window: {e:#}") }));
+                        }
                     }
+                }
+            }
+            "open_setup_help" => {
+                if let Some(k) = m["id"].as_str().and_then(crate::ai::kind) {
+                    platform::open_external(k.help);
                 }
             }
             "connect_apps" | "disconnect_app" => {

@@ -1013,6 +1013,10 @@ pub struct BlockingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentsConfig {
     pub timeout_minutes: f64,
+    /// Name the company next to an AI app in the welcome guide: "Codex (OpenAI)".
+    pub provider_names: bool,
+    /// Offer an AI app's own download page in the welcome guide when installing it fails.
+    pub setup_help_link: bool,
     pub available: BTreeMap<String, Option<AgentDef>>,
     pub models: BTreeMap<String, Vec<String>>,
     #[serde(rename = "use")]

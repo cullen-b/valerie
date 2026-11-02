@@ -739,6 +739,8 @@ mcp:
 agents:
   default: claude          # the agent used when a job below doesn't name one (a name from `available`)
   timeout_minutes: 20      # stop an agent that's still running after this long
+  provider_names: true     # welcome guide: name the company next to an AI app, like "Codex (OpenAI)". true | false
+  setup_help_link: true    # welcome guide: offer an AI app's own download page while setting it up or if it fails. true | false
   available:               # your agents by name. cli: one of claude | codex | opencode | pi | cursor | hermes
     claude:   { cli: claude }      # model: "" = the CLI's own default; e.g. { cli: claude, model: opus }
     codex:    { cli: codex }
