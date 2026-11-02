@@ -1,0 +1,28 @@
+name: Windows onboarding test
+# Launches the real app on a throwaway Windows machine: no console windows, and "Install and sign in" really installs Codex.
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+    paths: [scripts/windows-e2e.mjs, .github/workflows/windows-e2e.yml, src/main.rs, src/ai.rs, ui/welcome.html]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: cargo build --locked
+      - run: node scripts/windows-e2e.mjs "$env:GITHUB_WORKSPACE\target\debug\valerie.exe" "$env:RUNNER_TEMP\e2e"
+      - name: Valerie's log
+        if: always()
+        run: Get-Content "$env:LOCALAPPDATA\Valerie\logs\*","$env:APPDATA\Valerie\logs\*" -ErrorAction SilentlyContinue | Select-Object -Last 80
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-e2e
+          path: ${{ runner.temp }}/e2e
