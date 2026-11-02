@@ -1459,6 +1459,8 @@ function showAccounts(field) {
     menu.append(d);
   });
   ui().appendChild(menu);
+  // No room under the field: above it instead.
+  if (menu.getBoundingClientRect().bottom > innerHeight && r.top > menu.offsetHeight + 4) menu.style.top = r.top - menu.offsetHeight - 4 + "px";
 }
 document.addEventListener("focusin", (e) => {
   const f = e.target;
@@ -1534,6 +1536,8 @@ function helpBar(who, note, nonce, choices) {
 function helpBarClose() { if (helpBox) helpBox.remove(); helpBox = null; }
 
 function offerSave(host, username, nonce, vaults) {
+  // Windows can get here before the new page has any HTML to show this on.
+  if (!document.documentElement) return document.addEventListener("DOMContentLoaded", () => offerSave(host, username, nonce, vaults), { once: true });
   if (offered === nonce) return;
   offered = nonce;
   const box = document.createElement("div"); box.className = "save";
@@ -1560,6 +1564,8 @@ const watchLogin = () => {
 };
 watchLogin();
 document.addEventListener("visibilitychange", watchLogin);
+// A new page in this tab: a login that just landed here can now show its "Save password?" (see `page_ready`).
+queueMicrotask(() => post({ t: "page_ready" }));
 
 // ---------- plugin scripts: `valerie.run(title)` and `valerie.call(tool, args)` ----------
 // Each plugin's script is handed a key in the code Valerie runs (pages can't read that), and its messages go out

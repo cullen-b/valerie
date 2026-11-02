@@ -947,6 +947,7 @@ pub struct McpConfig {
     pub paying_words: Vec<String>,
     pub answer_in_background: bool,
     pub start_when_needed: bool,
+    pub quit_when_unused_minutes: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

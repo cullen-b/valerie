@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Try Valerie's first launch on a clean Linux desktop in a throwaway container. Nothing stays behind but the build cache.
 #   scripts/linux-test.sh build                  build the Linux version (ARM on an ARM Mac; cached, later builds are quick)
-#   scripts/linux-test.sh up [ubuntu|fedora]     start a clean machine and open Valerie as a new user
+#   scripts/linux-test.sh up [ubuntu|fedora]     start a clean machine and open Valerie as a new user (KEYRING=off: no keyring)
 #   scripts/linux-test.sh shot <name>            save the screen to target/linux-test/<name>.png
 #   scripts/linux-test.sh click <x> <y>          click at a screen position
 #   scripts/linux-test.sh key <keys>             press keys (xdotool names: Return, ctrl+d)
@@ -24,14 +24,14 @@ machine_image() {
     ubuntu) docker build -q -t valerie-linux-ubuntu - <<'EOF'
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0 libxdo3 libsoup-3.0-0 \
-    ca-certificates curl xdg-utils xvfb openbox xdotool imagemagick x11-utils fonts-dejavu dbus-x11 xterm \
+    ca-certificates curl xdg-utils xvfb openbox xdotool imagemagick x11-utils fonts-dejavu dbus-x11 xterm gnome-keyring \
   && useradd -m tester
 EOF
       ;;
     fedora) docker build -q -t valerie-linux-fedora - <<'EOF'
 FROM fedora:42
 RUN dnf install -y --setopt=install_weak_deps=False webkit2gtk4.1 gtk3 libsoup3 \
-    ca-certificates curl xdg-utils xorg-x11-server-Xvfb openbox xdotool ImageMagick dejavu-sans-fonts dbus-x11 xterm \
+    ca-certificates curl xdg-utils xorg-x11-server-Xvfb openbox xdotool ImageMagick dejavu-sans-fonts dbus-x11 xterm gnome-keyring \
   && useradd -m tester
 EOF
       ;;
@@ -65,7 +65,7 @@ EOF
     docker exec -d -u tester -e DISPLAY=:1 -e HOME=/home/tester "$NAME" openbox
     # No VALERIE_* folders: this machine is empty, and the guide only opens for a real first launch.
     docker exec -d -u tester -e DISPLAY=:1 -e HOME=/home/tester "$NAME" \
-      dbus-launch --exit-with-session sh -c 'valerie >"$HOME/valerie.out" 2>&1'
+      dbus-launch --exit-with-session sh -c '[ "'"${KEYRING:-on}"'" = off ] || printf test | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1; valerie >"$HOME/valerie.out" 2>&1'
     echo "up: $distro. Next: $0 shot first"
     ;;
   shot)

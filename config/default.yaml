@@ -676,7 +676,8 @@ vim:
 # Privacy: passwords and ad blocking
 # --------------------------------------------------------------------------------------------------------------
 
-# Passwords live in the macOS Keychain, one vault per profile.
+# Passwords live in the system's own store, one vault per profile: the Keychain on Mac, Credential Manager on
+# Windows, the desktop's keyring on Linux (GNOME Keyring or KWallet).
 passwords:
   enabled: true
   save_prompt_seconds: 30  # how long "Save password?" stays up before going away by itself
@@ -738,14 +739,18 @@ mcp:
   answer_in_background: true # keep answering agents at full speed while Valerie is in the background. Off lets macOS slow
                            # it down to save battery, and a busy Mac can then leave agents waiting for minutes. macOS only;
                            # takes effect at the next start. true | false
-  start_when_needed: true  # open Valerie when an agent calls one of its tools while it's closed. Off: the agent is told it
-                           # isn't running. true | false
-  ask_before_paying: true  # ask you first each time an agent clicks a button or runs a script (eval_js) that looks like
-                           # spending money, even with full access ("Always Allow" doesn't cover it). It checks the
-                           # button's words and address, or the script's own text, against paying_words. A safety net,
-                           # not a guarantee. Agents need your yes to change this or paying_words. true | false
-  paying_words: [          # words that make a button or script ask (mcp.ask_before_paying); whole words, any capitals. Setting
-                           # this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
+  start_when_needed: true  # open Valerie when an agent calls one of its tools while it's closed, with no window and no
+                           # pages loaded. Off: the agent is told it isn't running. true | false
+  quit_when_unused_minutes: 10   # quit a Valerie that an agent opened once no agent has called it for this many minutes,
+                           # unless you've used it since. The next tool call opens it again. 0 = keep it running
+  ask_before_paying: true  # ask you first each time an agent clicks something that looks like spending money, even with
+                           # full access ("Always Allow" doesn't cover it): a button whose words or address are in
+                           # paying_words, anything on a page that takes payment (card fields, a payment form, a pay
+                           # button), or typing into a card field. A script (eval_js) is stopped if it does the same or
+                           # sends a matching request; scripts that only read run freely. A safety net, not a guarantee.
+                           # Agents need your yes to change this or paying_words. true | false
+  paying_words: [          # words that make a button or request ask (mcp.ask_before_paying); whole words, any capitals.
+                           # Setting this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
     # buying
     "pay", "pays", "paying", "payment", "payments", "paynow", "pay now", "paypal", "stripe", "venmo",
     "klarna", "affirm", "afterpay", "checkout", "check out", "buy", "buys", "buying", "buy now", "purchase",
@@ -889,9 +894,10 @@ app:
   command_line_tool: true  # each start, make sure a terminal can run `valerie` (a link in Homebrew's bin, /usr/local/bin
                            # or ~/.local/bin, whichever exists and Valerie may write to; never over another program).
                            # true | false (Install Command Line Tool in the command bar does it by hand)
-  keep_running_when_closed: true   # closing the window leaves Valerie running in the Dock (the dot stays), so it opens
-                           # again and takes links instantly; anything playing is paused; ⌘Q quits. true | false
-                           # (false = closing the window quits, unless little windows are open)
+  keep_running_when_closed: true   # macOS: closing the window leaves Valerie running in the Dock (the dot stays), so it
+                           # opens again and takes links instantly; anything playing is paused; ⌘Q quits. true | false
+                           # (false = closing the window quits, unless little windows are open). Windows and Linux
+                           # have no Dock to open it from, so there closing the window always quits.
   unload_when_closed_minutes: 5   # minutes after you close the window (Valerie still running) before every tab, chat and
                            # idle panel is put to sleep so Valerie takes almost no memory; they reload when you open it
                            # again. 0 = keep them loaded

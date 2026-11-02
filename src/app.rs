@@ -248,6 +248,8 @@ pub struct App {
     tasks_running: std::collections::HashSet<String>,
     /// The window is on screen and the after-launch work has started.
     revealed: bool,
+    /// Started by an agent's tool call and not used by a person since (mcp.quit_when_unused_minutes).
+    started_for_agent: bool,
     /// When the main window was closed with Valerie left running (app.unload_when_closed_minutes counts from here).
     closed_since: Option<u64>,
     /// Pages put to sleep while the window was closed, most recently used first: loaded again one at a time after it
@@ -292,6 +294,8 @@ pub struct App {
     _menu: Option<Menu>,
     menu_cmds: HashMap<MenuId, Command>,
     bar_open: bool,
+    /// How tall the command bar drew itself (only used where its view is just the bar: `bar_bounds`).
+    bar_height: f64,
     remote: Vec<sync::DeviceTabs>,
     dirty: bool,
     last_sync: u64,
@@ -428,7 +432,6 @@ struct PendingSave {
     password: String,
     nonce: String,
     at: u64,
-    reoffered: bool,
 }
 
 /// Per-site CSS/JS from `<config dir>/boosts/<host>.css|.js`; a host also matches its subdomains.
@@ -1192,6 +1195,14 @@ impl App {
             .with_visible(false)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
             .child_of(&window)?;
+        #[cfg(target_os = "linux")]
+        {
+            use wry::WebViewExtUnix;
+            let p = proxy.clone();
+            linux_keys::set_bar(overlay.webview(), move || {
+                send(&p, UserEvent::Ipc { from: Source::Overlay, msg: json!({ "t": "cmd", "cmd": { "cmd": "close_command_bar" } }).to_string() })
+            });
+        }
         trace("  command bar view");
         platform::install_page_dialogs(&chrome);
         trace("  state loaded");
@@ -1253,6 +1264,7 @@ impl App {
             answer_label: String::new(),
             tasks_running: Default::default(),
             revealed: false,
+            started_for_agent: false,
             closed_since: None,
             restore_queue: Vec::new(),
             restore_started: 0,
@@ -1279,6 +1291,7 @@ impl App {
             _menu: None,
             menu_cmds: HashMap::new(),
             bar_open: false,
+            bar_height: 120.0,
             remote: Vec::new(),
             dirty: false,
             last_sync: 0,
@@ -1878,13 +1891,25 @@ impl App {
         self.layout_anim(0.0)
     }
 
+    /// Where the command bar's view goes: the whole window, so the page dims behind the bar. On Linux a view inside a
+    /// window can't be see-through (X11 would paint the rest black), so there it's just the bar.
+    fn bar_bounds(&self, width: f64, height: f64) -> Rect {
+        if !cfg!(target_os = "linux") {
+            return rect(0.0, 0.0, width, height);
+        }
+        let bar = &self.config.command_bar;
+        let w = bar.width.min(width - 48.0).max(1.0);
+        let top = height * bar.top / 100.0;
+        rect((width - w) / 2.0, top, w, self.bar_height.min(height - top - 12.0).max(1.0))
+    }
+
     /// Lay out every view; with `secs > 0` visible panes glide to their new bounds instead of jumping.
     fn layout_anim(&mut self, secs: f64) {
         self.state.tidy_splits();
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         let _ = self.chrome.set_bounds(full);
-        let _ = self.overlay.set_bounds(full);
+        let _ = self.overlay.set_bounds(self.bar_bounds(size.width, size.height));
         platform::follow_window(&self.chrome, platform::Follow::Fill);
         platform::follow_window(&self.overlay, platform::Follow::Fill);
         let (x, y, w, h) = self.content_area(size.width, size.height);
@@ -2986,6 +3011,7 @@ impl App {
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
         let _ = focus_view(&self.overlay);
+        self.repaint_under_bar();
         self.bar_open = true;
     }
 
@@ -2997,6 +3023,7 @@ impl App {
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
         let _ = focus_view(&self.overlay);
+        self.repaint_under_bar();
         self.bar_open = true;
     }
 
@@ -3209,7 +3236,19 @@ impl App {
         self.bar_open = false;
         let _ = self.overlay.evaluate_script("palette.hide()");
         let _ = self.overlay.set_visible(false);
+        self.repaint_under_bar();
         self.focus_active();
+    }
+
+    /// Linux: what the command bar uncovers stays black until it's told to draw again (X11 has no copy of it to put back).
+    fn repaint_under_bar(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            use gtk::prelude::WidgetExt;
+            use wry::WebViewExtUnix;
+            let under: Vec<_> = std::iter::once(&self.chrome).chain(self.state.active_tab().and_then(|t| self.views.get(&t))).map(|v| v.webview()).collect();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(60), move || under.iter().for_each(|v| v.queue_draw()));
+        }
     }
 
     // ---------------------------------------------------------------- little windows
@@ -3389,6 +3428,11 @@ impl App {
         let lw = &self.config.little_window;
         let alone = lw.enabled && lw.open_links_alone && (self.main_hidden || !self.revealed);
         for url in urls {
+            // Someone opened Valerie again while it's running out of sight (macOS uses Event::Reopen).
+            if url == "valerie://show" {
+                self.show_main();
+                continue;
+            }
             // valerie://little (Karabiner, Shortcuts, a script): a new little window, or ?url=… opens that page in one.
             if let Some(rest) = url.strip_prefix("valerie://little") {
                 let page = url::Url::parse(&url).ok().and_then(|u| u.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.into_owned()));
@@ -3433,6 +3477,25 @@ impl App {
     /// slow the little window down.
     fn parked(&self) -> bool {
         self.main_hidden && !self.revealed
+    }
+
+    /// Only macOS has a Dock to open a closed window from; elsewhere a hidden Valerie would just linger out of reach.
+    fn keep_running_when_closed(&self) -> bool {
+        cfg!(target_os = "macos") && self.config.app.keep_running_when_closed
+    }
+
+    /// Valerie opened only to answer an agent, and nobody has used it since: nothing is lost by quitting, and the next
+    /// tool call opens it again.
+    fn quit_if_unused_by_anyone(&mut self, t: u64) {
+        let minutes = self.config.mcp.quit_when_unused_minutes;
+        if !self.started_for_agent || minutes <= 0.0 || !self.main_hidden || !self.littles.is_empty() {
+            return;
+        }
+        let working = !self.terminals.is_empty() || !self.chat_running.is_empty() || !self.tasks_running.is_empty() || !self.agents_running.is_empty();
+        if !working && crate::mcp::idle_for(t) >= (minutes * 60.0) as u64 {
+            crate::log::line("mcp", "no agent has needed Valerie for a while: quitting");
+            self.quit = true;
+        }
     }
 
     // ---------------------------------------------------------------- config, menu, sync
@@ -3751,7 +3814,13 @@ impl App {
             if let Some(old) = &self._menu {
                 let _ = old.remove_for_hwnd(self.window.hwnd());
             }
+            // The first menu bar takes its height out of the page area, and that's the size remembered for next time:
+            // without this the window opens a little shorter on every launch.
+            let keep = self._menu.is_none().then(|| self.window.inner_size()).filter(|_| !self.window.is_maximized());
             let _ = menu.init_for_hwnd(self.window.hwnd());
+            if let Some(size) = keep {
+                self.window.set_inner_size(size);
+            }
             MENU_WINDOW.store(self.window.hwnd(), std::sync::atomic::Ordering::Relaxed);
             MENU_KEYS.store(menu.haccel(), std::sync::atomic::Ordering::Relaxed);
         }
@@ -3843,7 +3912,7 @@ impl App {
     fn offer_pending_save(&self) {
         let Some(p) = &self.pending_save else { return };
         if now().saturating_sub(p.at) > 120 || self.origin_of_target(p.target).is_none() {
-            return;
+            return crate::log::line("passwords", "not offering to save: the page changed or too much time passed");
         }
         let host = url::Url::parse(&p.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
         let args = json!([host, p.username, p.nonce, self.vaults_for_target(p.target)]);
@@ -3856,7 +3925,17 @@ impl App {
         if !self.config.passwords.enabled {
             return;
         }
-        let Some(origin) = self.origin_of_target(target) else { return };
+        // A login form that navigates on submit: the page it lands on shows the prompt. Its own word is what counts, since
+        // Windows says "finished" before that page exists. A repeat on one page is ignored there.
+        if kind == "page_ready" {
+            if self.pending_save.as_ref().is_some_and(|p| p.target == target && now().saturating_sub(p.at) <= 10) {
+                self.offer_pending_save();
+            }
+            return;
+        }
+        let Some(origin) = self.origin_of_target(target) else {
+            return crate::log::line("passwords", format!("{kind}: this page has no address yet, so it was ignored"));
+        };
         match kind {
             "login_form" => {
                 let entries: Vec<passwords::Entry> =
@@ -3907,7 +3986,6 @@ impl App {
                     password: password.to_string(),
                     nonce: crate::mcp::random_hex(),
                     at: now(),
-                    reoffered: false,
                 });
                 self.offer_pending_save();
             }
@@ -3929,10 +4007,15 @@ impl App {
                 if !self.vaults_for_target(target).contains(&vault) {
                     return;
                 }
-                match passwords::save(&vault, &p.origin, &p.username, &p.password) {
-                    Ok(()) => self.toast(&format!("Password saved to {vault}")),
-                    Err(e) => self.toast(&format!("Could not save password: {e}")),
-                }
+                // The system's store may stop to ask something (unlock the keyring, say), and the browser shouldn't freeze meanwhile.
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let said = match passwords::save(&vault, &p.origin, &p.username, &p.password) {
+                        Ok(()) => format!("Password saved to {vault}"),
+                        Err(e) => format!("Could not save password: {e}"),
+                    };
+                    send(&proxy, UserEvent::Toast(said));
+                });
             }
             _ => {}
         }
@@ -4128,6 +4211,7 @@ impl App {
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
         let _ = focus_view(&self.overlay);
+        self.repaint_under_bar();
         self.bar_open = true;
     }
 
@@ -4544,6 +4628,7 @@ impl App {
         self.touch_panes();
         let t = now();
         self.free_memory_when_closed(t);
+        self.quit_if_unused_by_anyone(t);
         self.restore_next();
         let panes = self.panes();
         let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
@@ -4593,7 +4678,10 @@ impl App {
         if self.dirty {
             self.save();
         }
-        self.render();
+        // Nothing can see the sidebar behind a closed window; show_main draws it.
+        if !self.main_hidden || !self.littles.is_empty() {
+            self.render();
+        }
     }
 
     // ---------------------------------------------------------------- dispatch
@@ -4638,7 +4726,7 @@ impl App {
                 Command::CloseTab { tab: None } => {
                     self.littles.remove(&id);
                     self.focused_little = None;
-                    if self.main_hidden && self.littles.is_empty() && !self.config.app.keep_running_when_closed {
+                    if self.main_hidden && self.littles.is_empty() && !self.keep_running_when_closed() {
                         self.dispatch(Command::Quit, elwt);
                     }
                     return;
@@ -5326,6 +5414,8 @@ impl App {
                 self.check_updates(true);
             }
             Command::Restart => {
+                // The new copy mustn't hand over to this one if it hasn't finished quitting yet.
+                std::env::set_var(crate::mcp::RESTARTING, "1");
                 // Reopen this app (an update replaces it in place), else the installed one.
                 let installed = PathBuf::from("/Applications/Valerie.app");
                 let target = crate::update::app_bundle().or_else(|| installed.exists().then_some(installed));
@@ -5979,6 +6069,12 @@ impl App {
                     self.reveal("nothing to load");
                 }
             }
+            (Source::Overlay, "bar_height") => {
+                self.bar_height = m["height"].as_f64().unwrap_or(self.bar_height);
+                let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                let _ = self.overlay.set_bounds(self.bar_bounds(size.width, size.height));
+                self.repaint_under_bar();
+            }
             (Source::Overlay, "swipe") => {
                 let _ = self.chrome.evaluate_script(&format!("swipeWheel({m})"));
             }
@@ -6142,7 +6238,7 @@ impl App {
                     self.after_load(target, &u, true);
                 }
             }
-            (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
+            (Source::Page(target), k @ ("page_ready" | "login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
@@ -6406,12 +6502,6 @@ impl App {
                         self.state.record_visit(&u, &t);
                         self.after_load(Target::Tab(id), &u, false);
                         self.fill_offers.remove(&Target::Tab(id));
-                        // A login form that navigates on submit: show the save prompt once more on the page it lands on.
-                        let reoffer = self.pending_save.as_mut().filter(|p| p.target == Target::Tab(id) && !p.reoffered && now().saturating_sub(p.at) <= 10);
-                        if let Some(p) = reoffer {
-                            p.reoffered = true;
-                            self.offer_pending_save();
-                        }
                     }
                     self.dirty = true;
                     self.render();
@@ -7189,7 +7279,7 @@ impl App {
             },
             "open_link" => {
                 let url = args["url"].as_str().unwrap_or("").to_string();
-                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") {
+                if matches!(scheme_of(&url).as_str(), "http" | "https" | "file") || url.starts_with("valerie://little") || url == "valerie://show" {
                     self.open_external(vec![url], elwt);
                     Ok(json!("opened"))
                 } else {
@@ -7469,7 +7559,7 @@ impl App {
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),
             WindowEvent::CloseRequested => {
-                let keep_running = self.config.app.keep_running_when_closed;
+                let keep_running = self.keep_running_when_closed();
                 if main && (keep_running || self.config.little_window.keep_open_when_main_closes && !self.littles.is_empty()) {
                     // Nothing keeps playing behind a closed window.
                     for v in self.views.values() {
@@ -7479,6 +7569,7 @@ impl App {
                     self.save();
                     self.window.set_visible(false);
                     self.main_hidden = true;
+                    set_window_closed(true);
                 } else if main {
                     self.dispatch(Command::Quit, elwt);
                 } else {
@@ -7517,10 +7608,22 @@ impl App {
         self.apply_app_settings();
         trace("start");
         self.build_menu();
+        // An agent's tool call started Valerie: no window and no pages, only what the call needs.
+        if std::env::var_os(crate::mcp::STARTED_FOR_AGENT).is_some() {
+            std::env::remove_var(crate::mcp::STARTED_FOR_AGENT);
+            self.started_for_agent = true;
+            self.main_hidden = true;
+            set_window_closed(true);
+        }
         let a = self.state.active_space;
         self.switch_space(a);
         if !urls.is_empty() {
             self.open_external(urls, elwt);
+        }
+        if self.started_for_agent {
+            for p in self.panes() {
+                self.unload(p);
+            }
         }
         trace("active space requested");
         let p = self.proxy.clone();
@@ -7603,7 +7706,9 @@ impl App {
 
     /// Bring the main window forward, showing it again if it was closed while a little window stayed open.
     fn show_main(&mut self) {
+        self.started_for_agent = false;
         if std::mem::take(&mut self.main_hidden) {
+            set_window_closed(false);
             self.wake_after_closed();
             for p in self.panes() {
                 self.ensure_view(p);
@@ -7612,6 +7717,7 @@ impl App {
                 self.ensure_chat_view();
             }
             self.layout();
+            self.render();
             self.window.set_visible(true);
             self.focused_little = None;
             self.window.set_focus();
@@ -7690,6 +7796,12 @@ impl App {
     }
 }
 
+static WINDOW_CLOSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn set_window_closed(closed: bool) {
+    WINDOW_CLOSED.store(closed, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let path = config::config_path();
@@ -7712,7 +7824,9 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
         };
         let mut last = mtime();
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(800));
+            // A closed window can wait for a settings change; it shouldn't wake the Mac to look.
+            let closed = WINDOW_CLOSED.load(std::sync::atomic::Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_millis(if closed { 5000 } else { 800 }));
             let m = mtime();
             if m != last {
                 last = m;
@@ -7771,8 +7885,12 @@ fn focus_view(view: &WebView) -> wry::Result<()> {
     view.focus()?;
     #[cfg(target_os = "linux")]
     {
+        use gtk::glib;
         use wry::WebViewExtUnix;
-        linux_keys::take_focus(&view.webview());
+        let webview = view.webview();
+        linux_keys::take_focus(&webview);
+        // A view that was only just shown isn't on screen yet, and X11 refuses it the keyboard until it is.
+        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || linux_keys::take_focus(&webview));
     }
     Ok(())
 }
@@ -7797,6 +7915,7 @@ mod linux_keys {
     }
 
     thread_local!(static MAIN: RefCell<Option<gtk::ApplicationWindow>> = const { RefCell::new(None) });
+    thread_local!(static BAR: RefCell<Option<(webkit2gtk::WebView, Box<dyn Fn()>)>> = const { RefCell::new(None) });
     thread_local!(static TAB_KEYS: RefCell<std::collections::HashMap<String, Box<dyn Fn()>>> = RefCell::new(Default::default()));
 
     pub fn set_main(window: &gtk::ApplicationWindow) {
@@ -7814,6 +7933,11 @@ mod linux_keys {
         });
     }
 
+    /// The command bar has no backdrop here to catch a click elsewhere, so a click in any other view runs `close`.
+    pub fn set_bar(view: webkit2gtk::WebView, close: impl Fn() + 'static) {
+        BAR.with(|b| *b.borrow_mut() = Some((view, Box::new(close))));
+    }
+
     /// GTK refuses Tab in a menu shortcut, so these keys are run from here. `keys` is the binding's keys, `run` runs its command.
     pub fn set_tab_key(keys: &str, run: impl Fn() + 'static) {
         TAB_KEYS.with(|t| t.borrow_mut().insert(keys.to_lowercase().replace("cmdorctrl", "ctrl"), Box::new(run)));
@@ -7829,7 +7953,8 @@ mod linux_keys {
     }
 
     pub fn take_focus(view: &impl IsA<gtk::Widget>) {
-        let Some(window) = view.as_ref().toplevel().and_then(|t| t.window()) else { return };
+        // The view's own X11 window, not the one around it: that only gets keys while the pointer happens to be over the view.
+        let Some(window) = view.as_ref().window() else { return };
         let Some(display) = gdk::Display::default() else { return };
         use glib::translate::ToGlibPtr;
         let (w, d): (*mut gdk::ffi::GdkWindow, *mut gdk::ffi::GdkDisplay) = (window.to_glib_none().0, display.to_glib_none().0);
@@ -7869,6 +7994,11 @@ mod linux_keys {
     pub fn watch(view: &webkit2gtk::WebView) {
         view.connect_button_press_event(|v, _| {
             take_focus(v);
+            BAR.with(|b| {
+                if let Some((_, close)) = b.borrow().as_ref().filter(|(bar, _)| bar != v && bar.is_visible()) {
+                    close();
+                }
+            });
             glib::Propagation::Proceed
         });
         view.connect_key_press_event(|_, ev| {
@@ -10824,6 +10954,9 @@ impl App {
 
     /// Run the scripts of widgets whose text is due.
     fn refresh_widgets(&mut self) {
+        if self.main_hidden {
+            return;
+        }
         let now_i = std::time::Instant::now();
         for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
             for w in &p.manifest.sidebar {

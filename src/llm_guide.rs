@@ -107,7 +107,8 @@ changed in plain words. Some translations:
 | "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
-| "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits) |
+| "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits; macOS only, elsewhere closing always quits) |
+| "Don't leave Valerie running after an agent opened it" / "keep it running" | `mcp.quit_when_unused_minutes: 10` (minutes with no agent calls) / `0` (stays) |
 | "Use less memory when the window is closed" | `app.unload_when_closed_minutes: 1` (sooner) / `0` (keep pages loaded); `app.reload_when_reopened: false` (pages load only when clicked after reopening) |
 | "An icon in the menu bar" / "things in the Dock menu" / "a different Dock icon" | `app.menu_bar_icon: "✦"`, `app.dock_menu: [new_tab, new_window]`, `app.icon: "~/Pictures/icon.png"` |
 | "Answer me in French" / "always be brief" (the AI) | `agents.instructions: "Answer in French."` (or `agents.instructions_for.chat`) |
@@ -385,8 +386,10 @@ hand the user a page for anything only a person can do, such as making an accoun
 or picking an option (`ask_user` with a `url` or `tab`, a note, and a Done button or `choices`; off with
 `mcp.ask_user: false`), and read
 a page's requests (`read_network`; off with `mcp.network_log: false`). A `click`, Enter or form submit on a button that
-looks like spending money, or an `eval_js` script that mentions it (`mcp.paying_words`), waits for the user's yes every time,
-even with full access; `mcp.ask_before_paying: false` turns that off, and an agent changing either setting needs the user's yes too.
+looks like spending money (`mcp.paying_words`), or any of those on a page that takes payment (card fields, a payment form or
+a pay button), waits for the user's yes every time, even with full access, and so does typing into a card field. An `eval_js`
+script is stopped if it clicks, submits or sends anything like that, and told to use `click` instead; scripts that only read
+are never stopped. `mcp.ask_before_paying: false` turns all of this off, and an agent changing either setting needs the user's yes too.
 
 Tools:
 "#,

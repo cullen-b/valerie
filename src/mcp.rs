@@ -87,7 +87,47 @@ fn stay_out_of_app_nap() {
     }
 }
 
+/// Set on a browser started by an agent's tool call: it opens with no window and no pages.
+pub const STARTED_FOR_AGENT: &str = "VALERIE_STARTED_FOR_AGENT";
+/// Set by Restart on the copy that replaces this one.
+pub const RESTARTING: &str = "VALERIE_RESTARTING";
+
+static CALLS_RUNNING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LAST_CALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A tool call running now or just finished, for telling when agents have stopped needing Valerie.
+struct CallRunning;
+
+impl CallRunning {
+    fn begin() -> Self {
+        CALLS_RUNNING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for CallRunning {
+    fn drop(&mut self) {
+        LAST_CALL.store(crate::state::now(), std::sync::atomic::Ordering::Relaxed);
+        CALLS_RUNNING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Seconds since agents last used Valerie (0 while a call is running). Starting counts as use, so the call that
+/// started Valerie gets to arrive.
+pub fn idle_for(now: u64) -> u64 {
+    if CALLS_RUNNING.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        return 0;
+    }
+    let last = LAST_CALL.load(std::sync::atomic::Ordering::Relaxed);
+    if last == 0 {
+        LAST_CALL.store(now, std::sync::atomic::Ordering::Relaxed);
+        return 0;
+    }
+    now.saturating_sub(last)
+}
+
 pub fn spawn(port: u16, token: String, proxy: EventLoopProxy<UserEvent>) {
+    let for_agent = std::env::var_os(STARTED_FOR_AGENT).is_some();
     #[cfg(target_os = "macos")]
     if crate::config::Config::load().map_or(true, |c| c.mcp.answer_in_background) {
         stay_out_of_app_nap();
@@ -95,6 +135,8 @@ pub fn spawn(port: u16, token: String, proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(s) => s,
+            // Two agents' calls started Valerie at once: the other one is answering, so this one isn't needed.
+            Err(_) if for_agent => std::process::exit(0),
             Err(e) => return crate::log::line("mcp", format!("MCP server could not bind 127.0.0.1:{port}: {e}")),
         };
         for rq in server.incoming_requests() {
@@ -162,8 +204,9 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
 }
 
 const INSTRUCTIONS: &str = "Valerie is the user's own web browser; these tools drive it.\n\
-Use web_search and fetch_page for every web search and page you read, before any other web tool, curl or a scraper: \
-they have no quota and see what the user sees. Keep curl for APIs and raw files.\n\
+Use web_search and fetch_page alongside any other web tools you have. Reach for them for pages that need a login or JavaScript, \
+PDFs, research across several pages, and anything another tool returned blocked, empty or thin: they have no quota and see what \
+the user sees. Keep curl for APIs and raw files.\n\
 Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
 user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
 top results). fetch_page reads pages and PDFs as Markdown; give focus (your question) to get just the sections about it, word \
@@ -205,7 +248,7 @@ pub const ASK_EACH_TIME: &str = "ask_each_time";
 fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Option<String>, String> {
     let key_press = name == "press_key" && matches!(args["key"].as_str(), Some("Enter" | "Return" | " " | "Space" | "Spacebar"));
     let submit = name == "type" && args["submit"].as_bool() == Some(true);
-    if name != "click" && name != "set_setting" && name != "eval_js" && !key_press && !submit {
+    if name != "click" && name != "set_setting" && name != "type" && !key_press {
         return Ok(None);
     }
     // A config that doesn't load counts as the defaults, so the check stays on.
@@ -218,29 +261,52 @@ fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> 
         let guarded = key == "mcp" || key == "mcp.ask_before_paying" || key == "mcp.paying_words";
         return Ok(guarded.then(|| format!("change the {key} setting to {}", args["value"])));
     }
-    if name == "eval_js" {
-        let Some(word) = script_word(args["script"].as_str().unwrap_or(""), &config.mcp.paying_words) else { return Ok(None) };
-        let site = eval(proxy, args.get("tab").and_then(Value::as_i64), "return location.hostname || location.href").ok();
-        return Ok(Some(format!("run a script on {} that mentions “{word}”", site.as_ref().and_then(Value::as_str).unwrap_or("this page"))));
-    }
     let target = match name {
         "click" => json!({ "ref": args["ref"], "selector": args["selector"] }),
-        "type" => json!({ "ref": args["ref"], "selector": args["selector"], "submits": true }),
+        "type" => json!({ "ref": args["ref"], "selector": args["selector"], "submits": submit }),
         _ => json!({ "submits": true }),
     };
-    let found = eval(proxy, args.get("tab").and_then(Value::as_i64), &with_args(&target, &format!("{FIND_JS}\n{CLICK_TARGET_JS}")))?;
-    let text = found["text"].as_str().unwrap_or("");
-    Ok(paying_word(text, &config.mcp.paying_words).map(|word| {
-        let label = found["label"].as_str().unwrap_or("").trim();
-        let site = found["site"].as_str().unwrap_or("this page");
-        if label.is_empty() { format!("click a button on {site} (it mentions “{word}”)") } else { format!("click “{label}” on {site}") }
+    let found = eval(proxy, args.get("tab").and_then(Value::as_i64), &with_args(&target, &format!("{FIND_JS}\n{PAYING_JS}\nreturn pressTarget(find(), A.submits);")))?;
+    let site = found["site"].as_str().unwrap_or("this page");
+    if name == "type" && found["card_field"].as_bool() == Some(true) {
+        return Ok(Some(format!("type into a card field on {site}")));
+    }
+    if name == "type" && !submit {
+        return Ok(None);
+    }
+    let label = found["label"].as_str().unwrap_or("").trim();
+    let action = if label.is_empty() { "click a button".to_string() } else { format!("click “{label}”") };
+    if let Some(sign) = found["sign"].as_str().filter(|s| !s.is_empty()) {
+        return Ok(Some(format!("{action} on {site}, a page that takes payment ({sign})")));
+    }
+    Ok(paying_word(found["text"].as_str().unwrap_or(""), &config.mcp.paying_words).map(|word| {
+        if label.is_empty() { format!("{action} on {site} (it mentions “{word}”)") } else { format!("{action} on {site}") }
     }))
 }
 
-/// The listed word a script mentions. `$` is everyday JavaScript (jQuery, `${x}`), not a price.
-fn script_word(script: &str, words: &[String]) -> Option<String> {
-    let words: Vec<String> = words.iter().filter(|w| w.trim() != "$").cloned().collect();
-    paying_word(script, &words).map(str::to_string)
+/// An agent's script, watched while it runs: anything it presses or sends is checked when it happens.
+fn guarded_script(script: &str, words: &[String]) -> String {
+    format!("const __vg = (() => {{ const WORDS = {};\n{PAYING_JS}\n{SCRIPT_GUARD_JS}\n}})();\nreturn __vg.run(function () {{\n{script}\n}});", json!(words))
+}
+
+fn run_script(script: &str, tab: Option<i64>, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
+    let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
+    if !config.mcp.ask_before_paying {
+        return eval(proxy, tab, script);
+    }
+    let out = eval(proxy, tab, &guarded_script(script, &config.mcp.paying_words))?;
+    match out.get("__blocked").and_then(|b| b.get(0)) {
+        Some(first) => Err(format!(
+            "Valerie stopped this script: it tried to {}. That needs the user's yes, and anything before it in the script already ran. {}",
+            first["what"].as_str().unwrap_or("do something that looks like paying"),
+            if first["kind"] == "request" {
+                "Press the page's own button with the click tool so they can approve it, or hand it over with ask_user."
+            } else {
+                "Use the click tool on that button so they can approve it."
+            }
+        )),
+        None => Ok(out.get("__value").cloned().unwrap_or(Value::Null)),
+    }
 }
 
 /// The first of `words` in `text`: whole words, so "pay" doesn't match "display". Words with symbols or non-English
@@ -333,6 +399,7 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
             let name = params["name"].as_str().unwrap_or("");
             let args = loosen(name, params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or(json!({})));
             let started = Instant::now();
+            let _running = CallRunning::begin();
             let result = allowed(name, &args, who, proxy).and_then(|()| match name {
                 // Claude Code's permission questions (--permission-prompt-tool): the user answers in Valerie.
                 "approve" => {
@@ -472,7 +539,7 @@ pub fn tools() -> Vec<Value> {
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     let web = WEB_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
     let all = vec![
-        tool("web_search", "Use this for every web search. Get the results: title, url and snippet each, from the user's search engine in \
+        tool("web_search", "Search the web, with no quota. Get the results: title, url and snippet each, from the user's search engine in \
              a hidden tab (their tabs and history aren't touched; no rate limits). Filter by time (recent), to news or to \
              sites. With read: N it also reads the top N results and returns the parts of each about your question (focus), \
              so one call answers most research questions.", json!({
@@ -484,7 +551,7 @@ pub fn tools() -> Vec<Value> {
             "read": { "type": "integer", "description": "Also read the top this many results (up to 5)" },
             "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
             "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
-        tool("fetch_page", "Use this to read any web page, before curl or a scraper. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
+        tool("fetch_page", "Use this for a page that needs a login or JavaScript, or that another tool couldn't read. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
              logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N) and \
              local files work, with no rate limits. \
              Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
@@ -600,7 +667,8 @@ pub fn tools() -> Vec<Value> {
              you answer; read its output with read_terminal. For quick commands, use your own shell instead.",
              json!({ "command": { "type": "string", "description": "One line, as you'd type it" },
                      "folder": { "type": "string", "description": "Where to run it (default: your project folder)" } }), &["command"]),
-        tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited.",
+        tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited. \
+             If it clicks, submits or sends something that looks like paying, Valerie stops it and says what to do instead.",
              json!({ "tab": tab_prop(), "script": { "type": "string" } }), &["script"]),
         tool("run_command", &format!(
             "Run any browser command, exactly like a keybinding would. Pass {{\"cmd\": name, ...options}}. No-option commands: {}. \
@@ -771,24 +839,128 @@ function find() {
 function describe(e) { return (e.tagName.toLowerCase() + " " + (e.innerText || e.value || e.getAttribute("aria-label") || "").trim().slice(0, 80)).trim(); }
 "#;
 
-/// What a click (or Enter on a form) would press, in every word a site might describe it with.
-const CLICK_TARGET_JS: &str = r#"
-const hit = find();
-const pressable = 'button,a,summary,label,input,[role=button],[role=link],[role=menuitem],[role=option],[onclick]';
-const isButton = (e) => e.matches('button,a,summary,[role=button],[role=link],input[type=submit],input[type=button],input[type=image]');
-const submit = A.submits && hit.form && !isButton(hit) ? hit.form.querySelector('[type=submit],button:not([type=button]):not([type=reset]),input[type=image]') || hit.form : hit;
-const nodes = [...new Set([submit, submit.closest(pressable) || submit])];
-const parts = [];
-for (const e of nodes) {
-  parts.push(e.innerText, e.textContent);
-  if (e.matches('input[type=submit],input[type=button],input[type=image]')) parts.push(e.value);
-  for (const a of e.attributes) if (!/^(style|data-valerie-ref)$/.test(a.name)) parts.push(a.name.startsWith('data-') || a.name.startsWith('aria-') || /^(id|class|name|title|alt|href|action|formaction|value|onclick)$/.test(a.name) ? a.value : '');
-  for (const i of e.querySelectorAll ? e.querySelectorAll('img[alt],[aria-label],[title]') : []) parts.push(i.getAttribute('alt'), i.getAttribute('aria-label'), i.getAttribute('title'));
-  if (e.form) parts.push(e.form.getAttribute('action'), e.form.id, e.form.getAttribute('name'));
+/// How a page shows it takes payment, and what a click (or Enter on a form) would press, in every word a site might
+/// describe it with. Hidden frames don't count: Stripe's script keeps invisible ones on every page of a site using it.
+const PAYING_JS: &str = r#"
+const CARD_FIELD = ['autocomplete*="cc-"', 'name*="cardnumber" i', 'name*="card_number" i', 'name*="card-number" i', 'name*="cvc" i', 'name*="cvv" i',
+  'id*="cardnumber" i', 'id*="card_number" i', 'id*="card-number" i', 'id*="cvc" i', 'id*="cvv" i'].map((a) => 'input[' + a + ']').join(',');
+const PAY_FRAME = /(^|\.)(stripe\.com|paypal\.com|adyen\.com|braintreegateway\.com|braintree-api\.com|squareup\.com|squarecdn\.com|checkout\.com|klarna\.com|affirm\.com|razorpay\.com|paddle\.com|recurly\.com|authorize\.net|mollie\.com|shopifyinc\.com|payments\.amazon\.com|pay\.google\.com)$/i;
+const PAY_SITE = /^(checkout\.stripe\.com|buy\.stripe\.com|pay\.google\.com)$/i;
+const WALLET = 'apple-pay-button,google-pay-button,gpay-button,.apple-pay-button,.gpay-button,.paypal-buttons,#paypal-button-container';
+function shown(e) {
+  const r = e.getBoundingClientRect();
+  if (r.width < 20 || r.height < 10) return false;
+  const s = getComputedStyle(e);
+  return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
 }
-const c = nodes[nodes.length - 1];
-const label = (c.innerText || c.value || c.getAttribute('aria-label') || c.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-return { site: location.hostname || location.href, label, text: parts.filter(Boolean).map((p) => String(p).slice(0, 1000)).join(' \n ') };
+function paymentSign() {
+  if (PAY_SITE.test(location.hostname)) return 'a payment site';
+  if ([...document.querySelectorAll(CARD_FIELD)].some(shown)) return 'card fields';
+  const payFrame = (f) => { try { return PAY_FRAME.test(new URL(f.src, location.href).hostname) && shown(f); } catch (e) { return false; } };
+  if ([...document.querySelectorAll('iframe[src]')].some(payFrame)) return 'a payment form';
+  if ([...document.querySelectorAll(WALLET)].some(shown)) return 'a pay button';
+  return '';
+}
+function pressTarget(hit, submits) {
+  const pressable = 'button,a,summary,label,input,[role=button],[role=link],[role=menuitem],[role=option],[onclick]';
+  const isButton = (e) => e.matches('button,a,summary,[role=button],[role=link],input[type=submit],input[type=button],input[type=image]');
+  const form = hit.tagName === 'FORM' ? hit : hit.form;
+  const submit = submits && form && !isButton(hit) ? form.querySelector('[type=submit],button:not([type=button]):not([type=reset]),input[type=image]') || form : hit;
+  const nodes = [...new Set([submit, submit.closest(pressable) || submit])];
+  const parts = [];
+  for (const e of nodes) {
+    parts.push(e.innerText, e.textContent);
+    if (e.matches('input[type=submit],input[type=button],input[type=image]')) parts.push(e.value);
+    for (const a of e.attributes) if (!/^(style|data-valerie-ref)$/.test(a.name)) parts.push(a.name.startsWith('data-') || a.name.startsWith('aria-') || /^(id|class|name|title|alt|href|action|formaction|value|onclick)$/.test(a.name) ? a.value : '');
+    for (const i of e.querySelectorAll ? e.querySelectorAll('img[alt],[aria-label],[title]') : []) parts.push(i.getAttribute('alt'), i.getAttribute('aria-label'), i.getAttribute('title'));
+    if (e.form) parts.push(e.form.getAttribute('action'), e.form.id, e.form.getAttribute('name'));
+  }
+  const c = nodes[nodes.length - 1];
+  const label = (c.innerText || c.value || c.getAttribute('aria-label') || c.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  return { site: location.hostname || location.href, label, text: parts.filter(Boolean).map((p) => String(p).slice(0, 1000)).join(' \n '), sign: paymentSign(), card_field: hit.matches(CARD_FIELD) };
+}
+"#;
+
+/// A click, typing or key from a tool has passed its own check (and maybe the user): a script's guard still running mustn't stop it.
+const END_SCRIPT_GUARDS_JS: &str = "if (window.__valerieGuards) [...window.__valerieGuards.live].forEach((finish) => finish());";
+
+/// Stops what a script presses or sends if it looks like paying. It runs inside the page, so a script set on getting
+/// around it could; it's for agents heading somewhere by mistake.
+const SCRIPT_GUARD_JS: &str = r#"
+// The same rules as paying_word in mcp.rs.
+const spaced = (t) => ' ' + String(t).replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
+const wordIn = (text, words) => {
+  const normal = spaced(text), lower = String(text).toLowerCase();
+  return words.find((w) => spaced(w).trim() && /^[\x00-\x7f]*$/.test(w) ? normal.includes(spaced(w)) : w.trim() && lower.includes(w.trim().toLowerCase()));
+};
+// `$` means a price on a button, but is everyday syntax in addresses and request bodies.
+const requestWords = WORDS.filter((w) => w.trim() !== '$');
+if (!window.__valerieGuards) Object.defineProperty(window, '__valerieGuards', { value: { live: new Set(), undo: [] }, enumerable: false });
+const guards = window.__valerieGuards, blocked = [];
+let live = true;
+const stop = (kind, what) => {
+  blocked.push({ kind, what });
+  console.warn('Valerie stopped an agent script: it tried to ' + what);
+  return new Error('Valerie stopped this: ' + what + ' needs the user\'s yes');
+};
+const checkPress = (hit, submits) => {
+  if (!live || !hit || hit.nodeType !== 1) return;
+  const t = pressTarget(hit, submits);
+  if (t.sign || wordIn(t.text, WORDS)) throw stop('click', (t.label ? 'click “' + t.label + '”' : 'click a button') + ' on ' + t.site + (t.sign ? ', a page that takes payment (' + t.sign + ')' : ''));
+};
+const bodyText = (b) => typeof b === 'string' ? b : b instanceof URLSearchParams ? String(b) : b instanceof FormData ? [...b.entries()].map(([k, v]) => k + ' ' + (typeof v === 'string' ? v : '')).join(' ') : '';
+const checkRequest = (method, url, body) => {
+  method = String(method || 'GET').toUpperCase();
+  if (!live || method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
+  const sign = paymentSign();
+  if (sign || wordIn(String(url) + ' ' + bodyText(body).slice(0, 4000), requestWords)) throw stop('request', 'send a ' + method + ' to ' + String(url).slice(0, 80) + (sign ? ' from a page that takes payment (' + sign + ')' : ''));
+};
+const patch = (obj, name, wrap) => {
+  if (!obj || typeof obj[name] !== 'function') return;
+  const orig = obj[name], mine = wrap(orig);
+  obj[name] = mine;
+  guards.undo.push(() => { if (obj[name] === mine) obj[name] = orig; });
+};
+const PRESS_EVENTS = /^(click|mousedown|mouseup|pointerdown|pointerup|submit)$/;
+const watch = (w) => {
+  const pressing = (submits) => (orig) => function (...a) { checkPress(this, submits); return orig.apply(this, a); };
+  patch(w.HTMLElement.prototype, 'click', pressing(false));
+  patch(w.HTMLFormElement.prototype, 'submit', pressing(true));
+  patch(w.HTMLFormElement.prototype, 'requestSubmit', pressing(true));
+  patch(w.EventTarget.prototype, 'dispatchEvent', (orig) => function (ev, ...a) {
+    if (ev && (PRESS_EVENTS.test(ev.type) || (ev.type === 'keydown' && ev.key === 'Enter'))) checkPress(this, ev.type !== 'click');
+    return orig.call(this, ev, ...a);
+  });
+  patch(w, 'fetch', (orig) => function (input, init) {
+    try {
+      const isRequest = input && typeof input === 'object' && 'method' in input;
+      checkRequest((init && init.method) || (isRequest && input.method), isRequest ? input.url : input, init && init.body);
+    } catch (e) { return Promise.reject(e); }
+    return orig.apply(this, arguments);
+  });
+  const opened = new WeakMap();
+  patch(w.XMLHttpRequest.prototype, 'open', (orig) => function (method, url) { opened.set(this, [method, url]); return orig.apply(this, arguments); });
+  patch(w.XMLHttpRequest.prototype, 'send', (orig) => function (body) { const o = opened.get(this) || []; checkRequest(o[0], o[1], body); return orig.apply(this, arguments); });
+  patch(w.navigator, 'sendBeacon', (orig) => function (url, data) { checkRequest('POST', url, data); return orig.apply(this, arguments); });
+};
+watch(window);
+for (const f of document.querySelectorAll('iframe')) { try { if (f.contentWindow.HTMLElement) watch(f.contentWindow); } catch (e) {} }
+// Scripts can overlap: the last one out unwraps everything, newest first, so nothing stays wrapped.
+const finish = () => {
+  live = false;
+  guards.live.delete(finish);
+  if (!guards.live.size) guards.undo.splice(0).reverse().forEach((u) => u());
+};
+guards.live.add(finish);
+const giveUp = setTimeout(finish, 30000);
+// A moment longer than the script, for the setTimeout(() => button.click()) it leaves behind.
+const settled = () => { clearTimeout(giveUp); setTimeout(finish, 1000); return blocked.length ? { __blocked: blocked } : null; };
+return { run(script) {
+  let out;
+  try { out = script(); } catch (e) { const r = settled(); if (r) return r; throw e; }
+  if (out && typeof out.then === 'function') return Promise.resolve(out).then((v) => settled() || { __value: v }, (e) => { const r = settled(); if (r) return r; throw e; });
+  return settled() || { __value: out };
+} };
 "#;
 
 const SNAPSHOT_JS: &str = r#"
@@ -1695,14 +1867,14 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             eval(proxy, tab, &with_args(&a, SNAPSHOT_JS))
         }
         "click" => {
-            let js = with_args(&a, &format!("{FIND_JS}\nconst e = find(); e.scrollIntoView({{block: 'center'}}); \
+            let js = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\nconst e = find(); e.scrollIntoView({{block: 'center'}}); \
                 if (e.focus) e.focus({{preventScroll: true}}); \
                 for (const t of ['pointerdown','mousedown','pointerup','mouseup']) e.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}})); \
                 e.click(); return 'clicked ' + describe(e);"));
             eval(proxy, tab, &js)
         }
         "type" => {
-            let js = with_args(&a, &format!("{FIND_JS}\nconst e = find(); e.focus(); \
+            let js = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\nconst e = find(); e.focus(); \
                 if (e instanceof HTMLSelectElement) {{ const o = [...e.options].find((o) => o.value === A.text || o.text.trim() === A.text.trim()); \
                   if (!o) throw new Error('no option ' + A.text + '; the options are: ' + [...e.options].map((o) => o.text.trim()).join(', ')); \
                   e.value = o.value; e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); }} \
@@ -1749,11 +1921,11 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             eval(proxy, tab, &js)
         }
         "press_key" => {
-            let js = with_args(&a, "const e = document.activeElement || document.body; \
+            let js = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{}", "const e = document.activeElement || document.body; \
                 const opts = {key: A.key, code: A.key, bubbles: true, cancelable: true}; \
                 const go = e.dispatchEvent(new KeyboardEvent('keydown', opts)); e.dispatchEvent(new KeyboardEvent('keyup', opts)); \
                 if (go && A.key === 'Enter' && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit()); \
-                return 'pressed ' + A.key;");
+                return 'pressed ' + A.key;"));
             eval(proxy, tab, &js)
         }
         "scroll" => {
@@ -1793,7 +1965,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         }
         "eval_js" => {
             let tab = wait_ready(proxy, tab)?;
-            eval(proxy, tab, a["script"].as_str().unwrap_or(""))
+            run_script(a["script"].as_str().unwrap_or(""), tab, proxy)
         }
         _ => Err(format!("unknown tool {name}; the tools are: {}", tool_names().join(", "))),
     }
@@ -1874,15 +2046,10 @@ mod tests {
     }
 
     #[test]
-    fn scripts_only_ask_when_they_mention_a_listed_word() {
-        let config = crate::config::Config::defaults();
-        let words = &config.mcp.paying_words;
-        for caught in ["document.querySelector('.checkout').click()", "payNow()", "fetch('/api/purchase', {method: 'POST'})", "$('#buy').click()"] {
-            assert!(super::script_word(caught, words).is_some(), "should ask about {caught:?}");
-        }
-        for fine in ["return document.title", "return $('h1').text()", "return `${location.href}`", "return window.scrollY", "return display.innerText"] {
-            assert_eq!(super::script_word(fine, words), None, "{fine:?}");
-        }
+    fn a_guarded_script_keeps_its_words_and_stays_a_function_body() {
+        let js = super::guarded_script("return 1 // a comment", &["pay".to_string()]);
+        assert!(js.contains(r#"const WORDS = ["pay"];"#), "{js}");
+        assert!(js.contains("function () {\nreturn 1 // a comment\n});"), "a trailing comment mustn't swallow the wrapper");
     }
 
     #[test]
@@ -1979,7 +2146,8 @@ pub fn forward_open(port: u16, urls: &[String]) -> bool {
     let token = load_or_create_token();
     urls.iter().all(|u| {
         let req = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "open_link", "arguments": { "url": u } } });
-        matches!(post_local(port, &token, &req.to_string()), Ok((200, _)))
+        // A refusal (an older Valerie that doesn't know valerie://show) means this one should open by itself.
+        matches!(post_local(port, &token, &req.to_string()), Ok((200, answer)) if !answer.contains("\"isError\":true"))
     })
 }
 
@@ -2052,10 +2220,18 @@ fn bridge_call(port: u16, token: &str, body: &str, start: bool) -> Result<String
 
 /// Start the browser on its own, so it outlives the agent that needed it. Calls at the same moment start it once.
 fn start_browser() -> bool {
-    static STARTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *STARTED.get_or_init(|| {
+    // Parallel calls start it once; a browser that has since quit (mcp.quit_when_unused_minutes) is started again.
+    static TRIED: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, started)) = *tried {
+        if at.elapsed() < Duration::from_secs(30) {
+            return started;
+        }
+    }
+    let started = (|| {
         let Ok(exe) = std::env::current_exe() else { return false };
         let mut browser = crate::platform::command(exe);
+        browser.env(STARTED_FOR_AGENT, "1");
         browser.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut browser, 0);
@@ -2065,5 +2241,7 @@ fn start_browser() -> bool {
             Err(e) => format!("couldn't start the browser for an agent: {e}"),
         });
         started.is_ok()
-    })
+    })();
+    *tried = Some((Instant::now(), started));
+    started
 }

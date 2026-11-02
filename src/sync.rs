@@ -117,7 +117,7 @@ impl Git<'_> {
         if let Some(s) = self.ssh {
             c.env("GIT_SSH_COMMAND", s);
         }
-        let out = c.args(["-c", "user.name=Valerie", "-c", "user.email=valerie@localhost"]).args(args).output().context("git isn't installed")?;
+        let out = c.args(["-c", "user.name=Valerie", "-c", "user.email=valerie@localhost"]).args(args).output().context("sync uses Git, which isn't on this computer yet: install it from git-scm.com/downloads")?;
         if !out.status.success() {
             bail!("git {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim());
         }
