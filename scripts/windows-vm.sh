@@ -18,7 +18,7 @@ QMP="$DIR/qmp.sock"
 PIDFILE="$DIR/qemu.pid"
 SSH_PORT=2222
 QEMU_SHARE="$(brew --prefix qemu)/share/qemu"
-VIRTIO="$DIR/../virtio/virtio-win.iso"
+VIRTIO="$(dirname "$DIR")/virtio/virtio-win.iso"
 
 ssh_opts=(-q -i "$DIR/key" -P "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5)
 ps_run() { ssh "${ssh_opts[@]/-P/-p}" tester@127.0.0.1 "powershell -NoProfile -EncodedCommand $(printf '%s' "$1" | iconv -t UTF-16LE | base64)"; }
@@ -73,7 +73,7 @@ case "${1:-}" in
       -drive if=none,id=virtio,media=cdrom,readonly=on,file="$VIRTIO" -device usb-storage,drive=virtio \
       -drive if=none,id=config,media=cdrom,readonly=on,file="$DIR/config.iso" -device usb-storage,drive=config
     # "Press any key to boot from CD" only waits a few seconds.
-    for _ in $(seq 1 30); do hmp "sendkey ret" 2>/dev/null || true; sleep 1; done
+    for _ in $(seq 1 12); do hmp "sendkey ret" 2>/dev/null || true; sleep 1; done
     echo "installing; watch on vnc://127.0.0.1:5905. Waiting for the first boot to finish (up to 90 minutes)."
     wait_ssh 5400 || { echo "the install didn't finish; see vnc://127.0.0.1:5905" >&2; exit 1; }
     ps_run 'Stop-Computer -Force' || true
