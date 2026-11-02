@@ -393,10 +393,16 @@ mod mac {
             type DoneBool = block2::Block<dyn Fn(Bool)>;
             type DoneText = block2::Block<dyn Fn(*mut objc2_foundation::NSString)>;
             unsafe extern "C-unwind" fn alert(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, msg: *mut objc2_foundation::NSString, frame: *mut AnyObject, done: &Done0) {
+                if out_of_sight(wv, msg) {
+                    return done.call(());
+                }
                 let done = done.copy();
                 sheet(wv, msg, frame, &["OK"], None, move |_, _| done.call(()));
             }
             unsafe extern "C-unwind" fn confirm(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, msg: *mut objc2_foundation::NSString, frame: *mut AnyObject, done: &DoneBool) {
+                if out_of_sight(wv, msg) {
+                    return done.call((Bool::new(false),));
+                }
                 let done = done.copy();
                 sheet(wv, msg, frame, &["OK", "Cancel"], None, move |r, _| done.call((Bool::new(r == 1000),)));
             }
@@ -409,6 +415,9 @@ mod mac {
                 frame: *mut AnyObject,
                 done: &DoneText,
             ) {
+                if out_of_sight(wv, msg) {
+                    return done.call((std::ptr::null_mut(),));
+                }
                 let d = if default.is_null() { String::new() } else { (*default).to_string() };
                 let done = done.copy();
                 sheet(wv, msg, frame, &["OK", "Cancel"], Some(&d), move |r, text| match text.filter(|_| r == 1000) {
@@ -427,6 +436,17 @@ mod mac {
                 c"v@:@@@@@?",
             );
         });
+    }
+
+    /// Nobody can answer a dialog from a tab they can't see (an agent's hidden tab, a page being read, a background
+    /// tab), and the page freezes until someone does: it gets "Cancel".
+    unsafe fn out_of_sight(webview: *mut AnyObject, msg: *mut objc2_foundation::NSString) -> bool {
+        let hidden: bool = msg_send![webview, isHiddenOrHasHiddenAncestor];
+        if hidden {
+            let text = if msg.is_null() { String::new() } else { (*msg).to_string() };
+            crate::log::line("page", format!("dismissed a dialog from a tab out of sight: {}", text.chars().take(120).collect::<String>()));
+        }
+        hidden
     }
 
     /// An NSAlert sheet on the page's window, titled with the page's site (a sheet doesn't freeze the rest of

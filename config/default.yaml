@@ -735,6 +735,11 @@ mcp:
                            # choices. true | false
   network_log: true        # keep a list of each page's requests (address, status, time) for agents debugging a page
                            # (read_network). Stays in the page; nothing is saved. true | false
+  answer_in_background: true # keep answering agents at full speed while Valerie is in the background. Off lets macOS slow
+                           # it down to save battery, and a busy Mac can then leave agents waiting for minutes. macOS only;
+                           # takes effect at the next start. true | false
+  start_when_needed: true  # open Valerie when an agent calls one of its tools while it's closed. Off: the agent is told it
+                           # isn't running. true | false
   ask_before_paying: true  # ask you first each time an agent clicks a button or runs a script (eval_js) that looks like
                            # spending money, even with full access ("Always Allow" doesn't cover it). It checks the
                            # button's words and address, or the script's own text, against paying_words. A safety net,
