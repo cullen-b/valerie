@@ -50,6 +50,8 @@ pub enum UserEvent {
     Title { target: Target, title: String },
     NewWindow { target: Target, url: String },
     ExternalScheme(String),
+    /// The floating video's return button was pressed, in this webview (see `platform::is_webview`).
+    VideoReturn(usize),
     /// Time to make the hidden little window that waits for the next link (`little_window.keep_one_ready`).
     PrepareLittle,
     Menu(MenuId),
@@ -1218,6 +1220,10 @@ impl App {
         }
         trace("  command bar view");
         platform::install_page_dialogs(&chrome);
+        {
+            let p = proxy.clone();
+            platform::on_video_return(&chrome, move |id| send(&p, UserEvent::VideoReturn(id)));
+        }
         trace("  state loaded");
         state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
         state.reconcile_spaces(&config);
@@ -6299,13 +6305,6 @@ impl App {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
-            (Source::Page(Target::Tab(id)), "pip_return") => {
-                // Only a tab with media playing, so a page can't pull itself forward otherwise.
-                if self.state.tabs.get(&id).is_some_and(|t| t.media.as_deref() == Some("playing")) {
-                    self.activate(id);
-                    self.show_main();
-                }
-            }
             (Source::Page(Target::Tab(id)), "focused") => {
                 if self.panes().contains(&id) && self.state.active_tab() != Some(id) {
                     self.state.space_mut().active = Some(id);
@@ -6620,6 +6619,14 @@ impl App {
                 self.close_peek();
                 self.open_tab(&url, space, true);
                 self.show_main();
+            }
+            UserEvent::VideoReturn(id) => {
+                let tab = self.views.iter().find(|(_, v)| platform::is_webview(v, id)).map(|(t, _)| *t);
+                crate::log::line("video", &format!("floating video's return button: tab {tab:?}"));
+                if let Some(tab) = tab {
+                    self.activate(tab);
+                    self.show_main();
+                }
             }
             UserEvent::ExternalScheme(url) => {
                 let scheme = scheme_of(&url);

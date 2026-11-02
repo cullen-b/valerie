@@ -477,6 +477,34 @@ mod mac {
         });
     }
 
+    /// The floating video's return button. WebKit asks the UI delegate before the video comes back, on screen or not;
+    /// a hidden tab can't be relied on to report it, and only the button itself calls this.
+    pub fn on_video_return(wv: &WebView, f: Box<dyn Fn(usize) + Send + Sync>) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::sel;
+        static RETURN: std::sync::OnceLock<Box<dyn Fn(usize) + Send + Sync>> = std::sync::OnceLock::new();
+        unsafe extern "C-unwind" fn may_return(_: *mut AnyObject, _: Sel, wv: *mut AnyObject) {
+            if let Some(f) = RETURN.get() {
+                f(wv as usize);
+            }
+        }
+        if RETURN.set(f).is_err() {
+            return;
+        }
+        unsafe {
+            let delegate: *mut AnyObject = msg_send![ptr(wv), UIDelegate];
+            if delegate.is_null() {
+                return;
+            }
+            let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
+            objc2::ffi::class_addMethod(cls, sel!(_webViewFullscreenMayReturnToInline:), std::mem::transmute::<*const (), Imp>(may_return as *const ()), c"v@:@".as_ptr());
+        }
+    }
+
+    pub fn is_webview(wv: &WebView, id: usize) -> bool {
+        ptr(wv) as usize == id
+    }
+
     /// A site's pop-up at the size it asked for ("Sign in with Google"). Wry's own pop-ups have no UI delegate, so
     /// `window.close()` did nothing and they stayed open after signing in; this one shares its opener's delegate.
     pub fn popup_window<T: objc2::Message>(opener: &impl objc2::Message, configuration: &impl objc2::Message, size: (f64, f64), position: Option<(f64, f64)>) -> Option<objc2::rc::Retained<T>> {
@@ -1920,6 +1948,21 @@ pub struct Note<'a> {
     pub body: &'a str,
     pub action: Option<String>,
     pub sound: bool,
+}
+
+/// `f` gets the webview whose floating video's return button was pressed (see `is_webview`).
+#[allow(unused_variables)]
+pub fn on_video_return(wv: &WebView, f: impl Fn(usize) + Send + Sync + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::on_video_return(wv, Box::new(f));
+}
+
+#[allow(unused_variables)]
+pub fn is_webview(wv: &WebView, id: usize) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::is_webview(wv, id);
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// Get ready to send notifications; `on_click` receives a clicked notification's action.
