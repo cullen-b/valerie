@@ -3708,6 +3708,8 @@ impl App {
                 let _ = old.remove_for_hwnd(self.window.hwnd());
             }
             let _ = menu.init_for_hwnd(self.window.hwnd());
+            MENU_WINDOW.store(self.window.hwnd(), std::sync::atomic::Ordering::Relaxed);
+            MENU_KEYS.store(menu.haccel(), std::sync::atomic::Ordering::Relaxed);
         }
         #[cfg(target_os = "linux")]
         {
@@ -7656,9 +7658,43 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     });
 }
 
+#[cfg(target_os = "windows")]
+static MENU_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+#[cfg(target_os = "windows")]
+static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Windows only runs a menu's shortcuts when the message loop asks it to; true if this key was one.
+#[cfg(target_os = "windows")]
+fn menu_shortcut(msg: *const std::ffi::c_void) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT};
+    use windows::Win32::UI::WindowsAndMessaging::{TranslateAcceleratorW, HACCEL, MSG, WM_KEYDOWN};
+    let msg = msg as *const MSG;
+    let keys = MENU_KEYS.load(Relaxed);
+    if keys == 0 {
+        return false;
+    }
+    unsafe {
+        let held = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
+        // The Edit menu runs Ctrl+C and friends by pressing them again, which would land back here forever.
+        if (*msg).message == WM_KEYDOWN && matches!((*msg).wParam.0 as u8, b'A' | b'C' | b'V' | b'X' | b'Y' | b'Z') && held(VK_CONTROL) && !held(VK_SHIFT) && !held(VK_MENU) {
+            return false;
+        }
+        TranslateAcceleratorW(HWND(MENU_WINDOW.load(Relaxed) as _), HACCEL(keys as _), msg) != 0
+    }
+}
+
 pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     trace("launch");
-    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    #[allow(unused_mut)]
+    let mut builder = EventLoopBuilder::<UserEvent>::with_user_event();
+    #[cfg(target_os = "windows")]
+    {
+        use tao::platform::windows::EventLoopBuilderExtWindows;
+        builder.with_msg_hook(menu_shortcut);
+    }
+    let event_loop = builder.build();
     let proxy = event_loop.create_proxy();
     let p = proxy.clone();
     muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| send(&p, UserEvent::Menu(e.id))));
