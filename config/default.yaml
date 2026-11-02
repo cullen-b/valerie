@@ -757,6 +757,12 @@ mcp:
     "支払", "注文", "カート", "购买", "支付", "订单", "购物车", "결제", "구매", "주문", "장바구니", "купить", "оплатить", "заказать",
     "корзина", "شراء", "ادفع",
   ]
+
+# Headless agents run on your own Claude Code / Codex / OpenCode login. Type "> task" in the command bar, or
+# schedule jobs here.
+# AI. Valerie uses the agent apps already on your computer, signed in with your own subscriptions: Claude Code,
+# Codex, OpenCode, Pi, Cursor and Hermes. Pick "Set Up <name>" in the command bar to install one and sign in (one
+# step). They power the Chats space (left of your first space), questions you type into find (/), "Ask …" in the
 # command bar (an agent that can see and use your whole browser), scheduled jobs, and "! change …" customizing.
 agents:
   default: claude          # the agent used when a job below doesn't name one (a name from `available`)
