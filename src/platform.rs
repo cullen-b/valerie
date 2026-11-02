@@ -1421,10 +1421,11 @@ pub fn hotkey_code(accel: &str) -> Option<(u32, u32)> {
 pub fn set_global_hotkeys(keys: &[(u32, u32)], on: impl Fn(u32) + Send + 'static) -> Vec<usize> {
     #[cfg(target_os = "macos")]
     return mac::set_global_hotkeys(keys, on);
+    // macOS only so far: nothing failed, and telling people otherwise on every launch would only nag.
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = on;
-        (0..keys.len()).collect()
+        let _ = (keys, on);
+        Vec::new()
     }
 }
 
@@ -1441,8 +1442,24 @@ pub fn page_url(wv: &WebView) -> Option<String> {
 pub fn bring_to_front(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::bring_to_front(wv);
-    #[cfg(not(target_os = "macos"))]
-    let _ = wv;
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+        use wry::WebViewExtUnix;
+        if let Some(window) = wv.webview().toplevel().and_then(|t| t.window()) {
+            window.raise();
+        }
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
+        use wry::WebViewExtWindows;
+        let mut hwnd = HWND::default();
+        if wv.controller().ParentWindow(&mut hwnd).is_ok() {
+            let _ = SetWindowPos(hwnd, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
 }
 
 /// Which corners of a page to round: the ones that meet the browser's own UI, not the window edge.

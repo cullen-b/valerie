@@ -343,6 +343,8 @@ pub struct App {
     last_render: std::cell::RefCell<String>,
     #[cfg(not(target_os = "macos"))]
     contexts: HashMap<String, wry::WebContext>,
+    /// The profile's context a view is being built in already has the valerie:// protocol.
+    protocol_taken: std::cell::Cell<bool>,
     #[cfg(target_os = "macos")]
     rules: Option<blocking::mac::RuleList>,
     /// Each plugin's key for `valerie.call` / `valerie.run` from its page script (new every launch).
@@ -458,6 +460,7 @@ fn realize_hidden(_window: &tao::window::Window) {
         use gtk::prelude::WidgetExt;
         use tao::platform::unix::WindowExtUnix;
         _window.gtk_window().realize();
+        linux_keys::set_main(_window.gtk_window());
     }
 }
 
@@ -1311,6 +1314,7 @@ impl App {
             last_render: Default::default(),
             #[cfg(not(target_os = "macos"))]
             contexts: HashMap::new(),
+            protocol_taken: std::cell::Cell::new(false),
             #[cfg(target_os = "macos")]
             rules: None,
             plugin_keys: HashMap::new(),
@@ -1599,6 +1603,7 @@ impl App {
         {
             let dir = config::data_dir().join("profiles").join(profile);
             let mut ctx = self.contexts.remove(profile).unwrap_or_else(|| wry::WebContext::new(Some(dir)));
+            self.protocol_taken.set(ctx.is_custom_protocol_registered("valerie"));
             let r = f(self, WebViewBuilder::new_with_web_context(&mut ctx));
             self.contexts.insert(profile.to_string(), ctx);
             r
@@ -1673,10 +1678,15 @@ impl App {
                 send(&p4, UserEvent::NewWindow { target, url });
                 NewWindowResponse::Deny
             })
-            .with_custom_protocol("valerie".into(), move |_, req| match req.uri().host() {
+            ;
+        // Linux keeps protocols on the profile's context, which allows each one once; that first view's handler serves them all.
+        let shared_protocol = self.protocol_taken.get();
+        let built = if shared_protocol { built } else { built.with_custom_protocol("valerie".into(), move |_, req| match req.uri().host() {
                 Some("page") => serve_page(req.uri().path().trim_matches('/'), &page_key, &page_theme.read().map(|t| t.clone()).unwrap_or_default()),
                 // A file:// page's messages (content.js sends them this way there): wry can't make an IPC request out of
                 // a file:// address. Any page could ask for this, but it's the same message it could post anyway.
+                // Linux's one handler can't tell which view asked, so a message there would act for the wrong tab.
+                Some("ipc") if cfg!(target_os = "linux") => wry::http::Response::builder().status(204).body(std::borrow::Cow::Borrowed(&[][..])).unwrap(),
                 Some("ipc") => {
                     if let Some(msg) = req.uri().query().and_then(|q| url::form_urlencoded::parse(q.as_bytes()).next()).map(|(m, _)| m.into_owned()) {
                         if let Ok(p) = ipc_proxy.lock() {
@@ -1686,7 +1696,8 @@ impl App {
                     wry::http::Response::builder().status(204).body(std::borrow::Cow::Borrowed(&[][..])).unwrap()
                 }
                 _ => brief_page(req.uri(), &briefs_proxy),
-            })
+            }) };
+        let built = built
             .with_permission_handler(move |kind| {
                 let site = site_of_page(&current3, &sites2);
                 let choice = match kind {
@@ -2064,26 +2075,26 @@ impl App {
             return;
         }
         if let Some(v) = self.welcome_view.as_ref().filter(|_| self.welcome_open) {
-            let _ = v.focus();
+            let _ = focus_view(v);
             return;
         }
         if let Some(v) = self.market_view.as_ref().filter(|_| self.market_open) {
-            let _ = v.focus();
+            let _ = focus_view(v);
             return;
         }
         if let Some(v) = self.chat_view.as_ref().filter(|_| self.chat_float) {
-            let _ = v.focus();
+            let _ = focus_view(v);
             let _ = v.evaluate_script("window.chat && chat.focus()");
             return;
         }
         if let Some(v) = self.terminal_view.as_ref().filter(|_| self.terminal_open && (self.terminal_focused || self.terminal_max)) {
-            let _ = v.focus();
+            let _ = focus_view(v);
             let _ = v.evaluate_script("window.term && term.focus()");
             return;
         }
         if self.chats_open {
             if let Some(v) = &self.chat_view {
-                let _ = v.focus();
+                let _ = focus_view(v);
                 let _ = v.evaluate_script("window.chat && chat.focus()");
             }
             return;
@@ -2093,14 +2104,14 @@ impl App {
             // A page whose script hasn't started can't hear vim keys: let the sidebar take them until it's ready.
             Some((t, _)) if !self.ready_views.contains(&t) => {
                 self.pending_focus.set(Some(t));
-                let _ = self.chrome.focus();
+                let _ = focus_view(&self.chrome);
             }
             Some((_, v)) => {
                 self.pending_focus.set(None);
-                let _ = v.focus();
+                let _ = focus_view(v);
             }
             None => {
-                let _ = self.chrome.focus();
+                let _ = focus_view(&self.chrome);
             }
         }
     }
@@ -2215,7 +2226,7 @@ impl App {
         let Some(v) = self.views.get(&t) else { return };
         let nonce = crate::mcp::random_hex();
         let _ = v.evaluate_script(&format!("window.__valerie && __valerie.request({kind:?}, {nonce:?})"));
-        let _ = v.focus();
+        let _ = focus_view(v);
         self.page_request = Some((t, nonce, kind));
     }
 
@@ -2972,7 +2983,7 @@ impl App {
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
-        let _ = self.overlay.focus();
+        let _ = focus_view(&self.overlay);
         self.bar_open = true;
     }
 
@@ -2983,7 +2994,7 @@ impl App {
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
-        let _ = self.overlay.focus();
+        let _ = focus_view(&self.overlay);
         self.bar_open = true;
     }
 
@@ -3226,7 +3237,7 @@ impl App {
             let _ = l.view.zoom(zoom);
         }
         // A new empty one types into its address box; otherwise the page has the keyboard.
-        let _ = if url == LITTLE_BLANK { l.bar.focus() } else { l.view.focus() };
+        let _ = focus_view(if url == LITTLE_BLANK { &l.bar } else { &l.view });
         l.window.set_focus();
         let id = l.window.id();
         self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, ..l });
@@ -3943,7 +3954,7 @@ impl App {
             }
         }
         platform::fade_in(&view, self.anim_secs());
-        let _ = view.focus();
+        let _ = focus_view(&view);
         self.peek = Some(PeekView { view, url: url.to_string() });
         if self.config.escape_hints {
             let _ = self.peek.as_ref().map(|p| p.view.evaluate_script("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · ⌘O to open as tab'), 400)"));
@@ -4101,7 +4112,7 @@ impl App {
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
-        let _ = self.overlay.focus();
+        let _ = focus_view(&self.overlay);
         self.bar_open = true;
     }
 
@@ -4634,7 +4645,7 @@ impl App {
                 Command::ReaderView => return drop(l.view.evaluate_script("window.__valerie && __valerie.reader()")),
                 Command::Print => return platform::print(&l.view),
                 Command::FindInPage { query } => {
-                    let _ = l.view.focus();
+                    let _ = focus_view(&l.view);
                     let q = serde_json::to_string(query).unwrap_or("null".into());
                     return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.find({q})")));
                 }
@@ -5882,7 +5893,7 @@ impl App {
             }
             Command::FindInPage { query } => {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
-                    let _ = v.focus();
+                    let _ = focus_view(v);
                     let q = serde_json::to_string(&query).unwrap_or("null".into());
                     let _ = v.evaluate_script(&format!("window.__valerie && __valerie.find({q})"));
                 }
@@ -6013,7 +6024,7 @@ impl App {
                 if let Some(l) = self.littles.get_mut(&id) {
                     l.url = url.clone();
                     let _ = l.view.load_url(&url);
-                    let _ = l.view.focus();
+                    let _ = focus_view(&l.view);
                 }
                 self.render_little(id);
             }
@@ -6073,7 +6084,7 @@ impl App {
                 if self.pending_focus.get() == Some(id) && self.state.active_tab() == Some(id) && !self.bar_open && self.focused_little.is_none() {
                     self.pending_focus.set(None);
                     if let Some(v) = self.views.get(&id) {
-                        let _ = v.focus();
+                        let _ = focus_view(v);
                     }
                 }
                 let real_url = self.views.get(&id).and_then(platform::page_url);
@@ -7695,7 +7706,87 @@ impl ChildOf for WebViewBuilder<'_> {
         let view = self.build_as_child(parent)?;
         #[cfg(target_os = "windows")]
         menu_shortcuts_inside(&view);
+        // wry hides a hidden view before it knows the X11 window around it, which stays up as a black sheet over everything.
+        #[cfg(target_os = "linux")]
+        {
+            use gtk::prelude::WidgetExt;
+            use wry::WebViewExtUnix;
+            if !view.webview().is_visible() {
+                view.set_visible(false)?;
+            }
+            linux_keys::watch(&view.webview());
+        }
         Ok(view)
+    }
+}
+
+/// Focus a webview, in the way that really gets it the keyboard on this system.
+fn focus_view(view: &WebView) -> wry::Result<()> {
+    view.focus()?;
+    #[cfg(target_os = "linux")]
+    {
+        use wry::WebViewExtUnix;
+        linux_keys::take_focus(&view.webview());
+    }
+    Ok(())
+}
+
+/// A webview inside a window is its own X11 window, which no window manager gives the keyboard to and whose keys
+/// never reach the main window's menu shortcuts.
+#[cfg(target_os = "linux")]
+mod linux_keys {
+    use gtk::{gdk, glib, prelude::*};
+    use std::cell::RefCell;
+    use std::ffi::{c_int, c_ulong, c_void};
+
+    extern "C" {
+        fn gdk_x11_window_get_xid(window: *mut c_void) -> c_ulong;
+        fn gdk_x11_get_default_xdisplay() -> *mut c_void;
+        fn gdk_x11_display_error_trap_push(display: *mut c_void);
+        fn gdk_x11_display_error_trap_pop_ignored(display: *mut c_void);
+    }
+    #[link(name = "X11")]
+    extern "C" {
+        fn XSetInputFocus(display: *mut c_void, window: c_ulong, revert_to: c_int, time: c_ulong) -> c_int;
+    }
+
+    thread_local!(static MAIN: RefCell<Option<gtk::ApplicationWindow>> = const { RefCell::new(None) });
+
+    pub fn set_main(window: &gtk::ApplicationWindow) {
+        MAIN.with(|m| {
+            m.borrow_mut().get_or_insert_with(|| window.clone());
+        });
+    }
+
+    pub fn take_focus(view: &impl IsA<gtk::Widget>) {
+        let Some(window) = view.as_ref().toplevel().and_then(|t| t.window()) else { return };
+        let Some(display) = gdk::Display::default() else { return };
+        use glib::translate::ToGlibPtr;
+        let (w, d): (*mut gdk::ffi::GdkWindow, *mut gdk::ffi::GdkDisplay) = (window.to_glib_none().0, display.to_glib_none().0);
+        unsafe {
+            // Not on screen yet (the window is still hidden): X11 refuses, and that isn't worth stopping for.
+            gdk_x11_display_error_trap_push(d as _);
+            const REVERT_TO_PARENT: c_int = 2;
+            XSetInputFocus(gdk_x11_get_default_xdisplay(), gdk_x11_window_get_xid(w as _), REVERT_TO_PARENT, 0);
+            gdk_x11_display_error_trap_pop_ignored(d as _);
+        }
+    }
+
+    pub fn watch(view: &webkit2gtk::WebView) {
+        view.connect_button_press_event(|v, _| {
+            take_focus(v);
+            glib::Propagation::Proceed
+        });
+        view.connect_key_press_event(|_, ev| {
+            use gdk::keys::constants as key;
+            let ctrl = ev.state().contains(gdk::ModifierType::CONTROL_MASK);
+            // The focused box handles these itself, as on Windows.
+            if ctrl && !ev.state().contains(gdk::ModifierType::SHIFT_MASK) && [key::a, key::c, key::v, key::x, key::y, key::z].contains(&ev.keyval()) {
+                return glib::Propagation::Proceed;
+            }
+            let ran = MAIN.with(|m| m.borrow().as_ref().is_some_and(|w| w.activate_key(ev)));
+            if ran { glib::Propagation::Stop } else { glib::Propagation::Proceed }
+        });
     }
 }
 
@@ -10930,7 +11021,7 @@ impl App {
         self.render_terminal();
         if let Some(v) = self.terminal_view.as_ref().filter(|_| focus) {
             self.terminal_focused = true;
-            let _ = v.focus();
+            let _ = focus_view(v);
             let _ = v.evaluate_script("window.term && term.focus()");
         }
     }
@@ -11089,7 +11180,7 @@ impl App {
                 let block = format!("From my terminal:\n```\n{clipped}\n```\n");
                 if let Some(v) = &self.chat_view {
                     let _ = v.evaluate_script(&format!("window.chat && chat.insert({})", json!(block)));
-                    let _ = v.focus();
+                    let _ = focus_view(v);
                 }
                 self.terminal_focused = false;
             }
