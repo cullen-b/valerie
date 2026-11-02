@@ -18,14 +18,34 @@ pub fn profile_id(name: &str) -> [u8; 16] {
     out
 }
 
+/// A program Valerie starts for itself. On Windows it would otherwise open a console window of its own.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut c = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
+}
+
+/// Tell the user Valerie can't start: a Windows app started from the Start menu has no terminal to print to.
+#[cfg(windows)]
+pub fn startup_error(text: &str) {
+    use windows::{core::{w, HSTRING}, Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR}};
+    unsafe { MessageBoxW(None, &HSTRING::from(text), w!("Valerie"), MB_ICONERROR) };
+}
+
 /// Open a URL or file with the OS default handler.
 pub fn open_external(target: &str) {
     #[cfg(target_os = "macos")]
-    let r = std::process::Command::new("open").arg(target).spawn();
+    let r = crate::platform::command("open").arg(target).spawn();
     #[cfg(target_os = "windows")]
-    let r = std::process::Command::new("cmd").args(["/C", "start", "", target]).spawn();
+    let r = crate::platform::command("cmd").args(["/C", "start", "", target]).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let r = std::process::Command::new("xdg-open").arg(target).spawn();
+    let r = crate::platform::command("xdg-open").arg(target).spawn();
     if let Err(e) = r {
         crate::log::line("open", format!("could not open {target}: {e}"));
     }
@@ -34,11 +54,11 @@ pub fn open_external(target: &str) {
 /// Show a file in its folder (Finder, Explorer), selected where the system can.
 pub fn reveal(path: &str) {
     #[cfg(target_os = "macos")]
-    let r = std::process::Command::new("open").args(["-R", path]).spawn();
+    let r = crate::platform::command("open").args(["-R", path]).spawn();
     #[cfg(target_os = "windows")]
-    let r = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
+    let r = crate::platform::command("explorer").arg(format!("/select,{path}")).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let r = std::process::Command::new("xdg-open").arg(std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("/"))).spawn();
+    let r = crate::platform::command("xdg-open").arg(std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("/"))).spawn();
     if let Err(e) = r {
         crate::log::line("open", format!("could not show {path}: {e}"));
     }
@@ -64,7 +84,6 @@ pub fn shell_quote(s: &str) -> String {
 /// Open a text file the way the `editor` setting says: the default app, an app by name, or a terminal editor
 /// running in the `terminal` app.
 pub fn open_in_editor(path: &std::path::Path, editor: &str, terminal: &str) -> Result<(), String> {
-    use std::process::Command;
     let file = path.to_string_lossy().to_string();
     let ran = |r: std::io::Result<std::process::ExitStatus>| match r {
         Ok(s) if s.success() => Ok(()),
@@ -76,24 +95,24 @@ pub fn open_in_editor(path: &std::path::Path, editor: &str, terminal: &str) -> R
         #[cfg(target_os = "macos")]
         {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-            let osa = |script: String| ran(Command::new("osascript").args(["-e", &script]).status());
+            let osa = |script: String| ran(crate::platform::command("osascript").args(["-e", &script]).status());
             let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
             return match terminal.to_lowercase().as_str() {
                 "iterm" | "iterm2" => osa(format!(
                     "tell application \"iTerm\"\nactivate\ncreate window with default profile command \"{}\"\nend tell",
                     esc(&format!("{shell} -lc {}", shell_quote(&line)))
                 )),
-                "ghostty" => ran(Command::new("open").args(["-na", "Ghostty", "--args", "-e", &shell, "-lc", &line]).status()),
-                "wezterm" => ran(Command::new("open").args(["-na", "WezTerm", "--args", "start", "--", &shell, "-lc", &line]).status()),
-                "kitty" => ran(Command::new("open").args(["-na", "kitty", "--args", &shell, "-lc", &line]).status()),
-                "alacritty" => ran(Command::new("open").args(["-na", "Alacritty", "--args", "-e", &shell, "-lc", &line]).status()),
+                "ghostty" => ran(crate::platform::command("open").args(["-na", "Ghostty", "--args", "-e", &shell, "-lc", &line]).status()),
+                "wezterm" => ran(crate::platform::command("open").args(["-na", "WezTerm", "--args", "start", "--", &shell, "-lc", &line]).status()),
+                "kitty" => ran(crate::platform::command("open").args(["-na", "kitty", "--args", &shell, "-lc", &line]).status()),
+                "alacritty" => ran(crate::platform::command("open").args(["-na", "Alacritty", "--args", "-e", &shell, "-lc", &line]).status()),
                 _ => osa(format!("tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell", esc(&line))),
             };
         }
         #[cfg(target_os = "windows")]
-        return ran(Command::new("cmd").args(["/C", "start", "", "cmd", "/K", &line]).status());
+        return ran(crate::platform::command("cmd").args(["/C", "start", "", "cmd", "/K", &line]).status());
         #[cfg(all(unix, not(target_os = "macos")))]
-        return ran(Command::new("x-terminal-emulator").args(["-e", "sh", "-c", &line]).status());
+        return ran(crate::platform::command("x-terminal-emulator").args(["-e", "sh", "-c", &line]).status());
     }
     let _ = terminal;
     match editor.trim().to_lowercase().as_str() {
@@ -101,8 +120,8 @@ pub fn open_in_editor(path: &std::path::Path, editor: &str, terminal: &str) -> R
             #[cfg(target_os = "macos")]
             {
                 // No app set for .yaml files: fall back to the plain text editor.
-                if !Command::new("open").arg(path).status().is_ok_and(|s| s.success()) {
-                    return ran(Command::new("open").arg("-t").arg(path).status());
+                if !crate::platform::command("open").arg(path).status().is_ok_and(|s| s.success()) {
+                    return ran(crate::platform::command("open").arg("-t").arg(path).status());
                 }
                 Ok(())
             }
@@ -112,15 +131,15 @@ pub fn open_in_editor(path: &std::path::Path, editor: &str, terminal: &str) -> R
                 Ok(())
             }
         }
-        "textedit" if cfg!(target_os = "macos") => ran(Command::new("open").args(["-a", "TextEdit"]).arg(path).status()),
+        "textedit" if cfg!(target_os = "macos") => ran(crate::platform::command("open").args(["-a", "TextEdit"]).arg(path).status()),
         _ => {
             #[cfg(target_os = "macos")]
-            return ran(Command::new("open").args(["-a", editor.trim()]).arg(path).status());
+            return ran(crate::platform::command("open").args(["-a", editor.trim()]).arg(path).status());
             #[cfg(not(target_os = "macos"))]
             {
                 let mut words = editor.split_whitespace();
                 let prog = words.next().unwrap_or_default();
-                Command::new(prog).args(words).arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
+                crate::platform::command(prog).args(words).arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
             }
         }
     }
@@ -770,7 +789,7 @@ mod mac {
         }
         // The bare binary must not be running, or its files may be half-written.
         // (Matched on each process's program path, not its arguments.)
-        let bare_running = std::process::Command::new("ps").args(["-Ao", "comm="]).output().is_ok_and(|o| {
+        let bare_running = crate::platform::command("ps").args(["-Ao", "comm="]).output().is_ok_and(|o| {
             String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim_end().ends_with("/target/release/valerie") || l.trim_end().ends_with("/target/debug/valerie"))
         });
         if bare_running {
@@ -787,7 +806,7 @@ mod mac {
             }
             let dest = new.join(&name);
             if !dest.exists() {
-                let ok = std::process::Command::new("ditto").arg(entry.path()).arg(&dest).status().is_ok_and(|s| s.success());
+                let ok = crate::platform::command("ditto").arg(entry.path()).arg(&dest).status().is_ok_and(|s| s.success());
                 report.push_str(&format!("{name}: copied ({})\n", if ok { "ok" } else { "failed" }));
                 continue;
             }
@@ -1801,12 +1820,12 @@ pub fn notify(n: &Note) {
     }
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("osascript")
+    let _ = crate::platform::command("osascript")
         .arg("-e")
         .arg(format!("display notification \"{}\" with title \"{}\" subtitle \"{}\"", esc(n.body), esc(n.title), esc(n.subtitle)))
         .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = std::process::Command::new("notify-send").args([n.title, &format!("{}\n{}", n.subtitle, n.body)]).spawn();
+    let _ = crate::platform::command("notify-send").args([n.title, &format!("{}\n{}", n.subtitle, n.body)]).spawn();
     #[cfg(windows)]
     let _ = esc;
 }

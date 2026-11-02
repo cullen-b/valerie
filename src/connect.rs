@@ -308,7 +308,7 @@ fn claude_cli(a: &AiApp) -> Option<PathBuf> {
 }
 
 fn run(bin: &Path, args: &[&str]) -> Result<()> {
-    let out = std::process::Command::new(bin).args(args).env("PATH", crate::ai::search_path()).stdin(std::process::Stdio::null()).output()?;
+    let out = crate::platform::command(bin).args(args).env("PATH", crate::ai::search_path()).stdin(std::process::Stdio::null()).output()?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
         bail!("{} said: {}", bin.display(), err.lines().find(|l| !l.trim().is_empty()).unwrap_or("it failed").trim());

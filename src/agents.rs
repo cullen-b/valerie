@@ -1,7 +1,7 @@
 //! Headless agents: run the user's own Claude Code, Codex or OpenCode CLI against Valerie's MCP server.
 use anyhow::{bail, Result};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 
@@ -12,9 +12,9 @@ pub fn stop(name: &str) -> bool {
     let pid = RUNNING.lock().ok().and_then(|r| r.iter().find(|(n, _)| n == name).map(|(_, p)| *p));
     let Some(pid) = pid else { return false };
     #[cfg(unix)]
-    let ok = Command::new("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
+    let ok = crate::platform::command("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
     #[cfg(windows)]
-    let ok = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
+    let ok = crate::platform::command("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
     ok
 }
 

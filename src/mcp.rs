@@ -825,7 +825,7 @@ fn resolve_redirects(results: &mut Value) {
         for r in list.iter_mut().filter(|r| r["url"].as_str().is_some_and(|u| u.contains(".google.") && u.contains("/goto?"))) {
             s.spawn(move || {
                 let url = r["url"].as_str().unwrap_or("").to_string();
-                let out = std::process::Command::new("curl")
+                let out = crate::platform::command("curl")
                     .args(["-s", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{redirect_url}", "--max-time", "6", "--proto", "=https", &url])
                     .output();
                 let to = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();

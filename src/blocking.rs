@@ -279,7 +279,7 @@ pub fn fetch(urls: &[String], refresh_days: f64) -> Result<Lists> {
         let path = cache_path(url);
         if !fresh(&path, refresh_days) {
             let tmp = path.with_extension("download");
-            let ok = std::process::Command::new("curl")
+            let ok = crate::platform::command("curl")
                 .args(["-fsSL", "--max-time", "60", "-o"])
                 .arg(&tmp)
                 .arg(url)

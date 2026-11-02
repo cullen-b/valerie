@@ -1017,6 +1017,8 @@ pub struct AgentsConfig {
     pub provider_names: bool,
     /// Offer an AI app's own download page in the welcome guide when installing it fails.
     pub setup_help_link: bool,
+    /// On Windows, install an AI app in the background instead of in a terminal window.
+    pub quiet_install: bool,
     pub available: BTreeMap<String, Option<AgentDef>>,
     pub models: BTreeMap<String, Vec<String>>,
     #[serde(rename = "use")]
@@ -1424,10 +1426,10 @@ impl Config {
             return self.sync.device.clone();
         }
         #[cfg(target_os = "macos")]
-        if let Some(n) = std::process::Command::new("scutil").args(["--get", "ComputerName"]).output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        if let Some(n) = crate::platform::command("scutil").args(["--get", "ComputerName"]).output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
             return n;
         }
-        std::process::Command::new("hostname")
+        crate::platform::command("hostname")
             .arg("-s")
             .output()
             .ok()

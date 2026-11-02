@@ -4,7 +4,6 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SOURCES: [&str; 8] = [
@@ -450,7 +449,7 @@ fn query_places_copy(db: &Path) -> Result<Vec<PlacesRow>> {
     if wal.is_file() {
         fs::copy(&wal, dir.join("places.sqlite-wal")).context("copying Firefox WAL")?;
     }
-    let output = Command::new("/usr/bin/sqlite3")
+    let output = crate::platform::command("/usr/bin/sqlite3")
         .arg("-json")
         .arg(&copy)
         .arg(FIREFOX_QUERY)

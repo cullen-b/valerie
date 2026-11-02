@@ -306,7 +306,12 @@ pub fn search_path() -> String {
 pub fn find_bin(kind: &Kind, path: &str) -> Option<PathBuf> {
     // Windows programs carry an extension: codex.exe, or agent.cmd from npm and Cursor's installer.
     let names = |b: &str| if cfg!(windows) { ["exe", "cmd", "bat"].map(|e| format!("{b}.{e}")).to_vec() } else { vec![b.to_string()] };
-    kind.bins.iter().find_map(|b| std::env::split_paths(path).find_map(|d| names(b).iter().map(|n| d.join(n)).find(|p| p.is_file())))
+    kind.bins.iter().find_map(|b| std::env::split_paths(path).find_map(|d| names(b).iter().map(|n| d.join(n)).find(|p| is_program(p))))
+}
+
+/// Store apps' commands (WindowsApps) are special links that `is_file` can't follow, though they run fine.
+fn is_program(p: &Path) -> bool {
+    p.is_file() || (cfg!(windows) && std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_dir()))
 }
 
 /// How an agent without MCP support drives the browser: Valerie's own command line.
@@ -355,14 +360,14 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
             anyhow::bail!("this AI's program came from another machine through sync and hasn't been allowed here: run \"Allow Plugins from Other Machines\" from the command bar");
         }
         // Any program: `{prompt}` and `{model}` in its arguments are filled in; it prints the answer.
-        let mut c = Command::new(&def.command[0]);
+        let mut c = crate::platform::command(&def.command[0]);
         c.args(def.command[1..].iter().map(|a| a.replace("{prompt}", prompt).replace("{model}", model)));
         c.env("PATH", &path).env("VALERIE_ACCESS", access).env("VALERIE_CHAT", &o.chat).current_dir(work);
         return Ok((c, Format::Text));
     }
     let k = kind(&def.cli).with_context(|| format!("unknown agent CLI `{}` (use claude, codex, opencode, pi, cursor or hermes, or `command`)", def.cli))?;
     let bin = find_bin(k, &path).with_context(|| format!("{} isn't installed: run \"Set Up {}\" from the command bar", k.title, k.title))?;
-    let mut c = Command::new(&bin);
+    let mut c = crate::platform::command(&bin);
     // Some CLIs take their folder from PWD (inherited from whoever started Valerie) rather than the real one.
     c.current_dir(work).env("PWD", work);
     // Valerie's MCP server, told this run's access level (some CLIs start MCP servers with a scrubbed environment).
@@ -823,9 +828,9 @@ pub fn stop(run: &str) -> bool {
     let pid = RUNNING.lock().ok().and_then(|r| r.iter().find(|(n, _)| n == run).map(|(_, p)| *p));
     let Some(pid) = pid else { return false };
     #[cfg(unix)]
-    let ok = Command::new("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
+    let ok = crate::platform::command("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
     #[cfg(windows)]
-    let ok = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
+    let ok = crate::platform::command("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().is_ok_and(|s| s.success());
     ok
 }
 
@@ -940,7 +945,7 @@ pub fn cli_defaults(cli: &str) -> (String, String) {
 fn opencode_major(bin: &Path) -> u32 {
     static MAJOR: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *MAJOR.get_or_init(|| {
-        let out = Command::new(bin).arg("--version").stdin(std::process::Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let out = crate::platform::command(bin).arg("--version").stdin(std::process::Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
         version_major(&out)
     })
 }
@@ -956,21 +961,11 @@ pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
     let k = kind("opencode").context("no OpenCode")?;
     if find_bin(k, &path).is_none() {
         step("Installing OpenCode…");
-        let mut c = if cfg!(windows) { Command::new("powershell") } else { Command::new("/bin/bash") };
-        if cfg!(windows) {
-            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]);
-        } else {
-            c.arg("-c");
-        }
-        c.arg(k.install_command()).env("PATH", &path).stdin(std::process::Stdio::null());
-        let out = run_with_timeout(&mut c, Duration::from_secs(600))?;
-        if !out.status.success() || find_bin(k, &search_path()).is_none() {
-            bail!("couldn't install OpenCode: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim());
-        }
+        install_quietly(k)?;
     }
     step("Finding a free model…");
     let bin = find_bin(k, &search_path()).context("OpenCode isn't installed")?;
-    let mut c = Command::new(bin);
+    let mut c = crate::platform::command(bin);
     // Every provider's models (OpenCode 2 can't list just one); its own free ones are "opencode/…-free".
     c.arg("models").env("PATH", &path).stdin(std::process::Stdio::null());
     let listed = String::from_utf8_lossy(&run_with_timeout(&mut c, Duration::from_secs(60))?.stdout).to_string();
@@ -988,6 +983,41 @@ pub fn set_up_free(step: &dyn Fn(&str)) -> Result<String> {
         }
     }
     bail!("none of OpenCode's free models answered; try again in a minute")
+}
+
+/// Install an AI app with no window to look at. The error says why it failed, in plain words.
+pub fn install_quietly(k: &Kind) -> Result<()> {
+    let mut c = if cfg!(windows) { crate::platform::command("powershell") } else { crate::platform::command("/bin/bash") };
+    if cfg!(windows) {
+        c.args(["-NoProfile", "-OutputFormat", "Text", "-ExecutionPolicy", "Bypass", "-Command"]);
+    } else {
+        c.arg("-c");
+    }
+    // Nobody can answer Codex's installer, which asks to start Codex when it's done.
+    c.arg(k.install_command()).env("PATH", search_path()).env("CODEX_NON_INTERACTIVE", "1");
+    let out = run_with_timeout(&mut c, Duration::from_secs(600))?;
+    let said = String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() {
+        crate::log::line("setup", format!("{} installer said: {}", k.title, said.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect::<String>()));
+        let why = String::from_utf8_lossy(&out.stderr).lines().rfind(|l| !l.trim().is_empty()).unwrap_or("").trim().chars().take(200).collect::<String>();
+        bail!("couldn't install {}: {}", k.title, if why.is_empty() { "the installer stopped" } else { &why });
+    }
+    if find_bin(k, &search_path()).is_none() {
+        bail!("{} is installed. Restart Valerie so it can find it.", k.title);
+    }
+    Ok(())
+}
+
+/// Whether an app that's just been installed has a sign-in to use already: Codex shares the Codex app's.
+pub fn already_signed_in(k: &Kind) -> bool {
+    let args: &[&str] = match k.id {
+        "codex" => &["login", "status"],
+        _ => return false,
+    };
+    let Some(bin) = find_bin(k, &search_path()) else { return false };
+    let mut c = crate::platform::command(bin);
+    c.args(args).env("PATH", search_path());
+    run_with_timeout(&mut c, Duration::from_secs(20)).is_ok_and(|o| o.status.success())
 }
 
 /// Run a command, killing it after `limit`.
@@ -1053,6 +1083,7 @@ fn set_up_script_windows(k: &Kind, path: &str, status: &Path) -> String {
     format!(
         r#"$ErrorActionPreference = 'Stop'
 $env:Path = {path}
+$env:CODEX_NON_INTERACTIVE = '1'
 $status = {status}
 $install = {install}
 function Found {{ Get-Command {found} -ErrorAction SilentlyContinue }}
@@ -1094,7 +1125,7 @@ pub fn set_up(k: &Kind) -> Result<PathBuf> {
         std::fs::write(&file, format!("#!/bin/bash\n{}", set_up_script_unix(k, &path, &status)))?;
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
-        Command::new("open").args(["-a", "Terminal"]).arg(&file).spawn()?;
+        crate::platform::command("open").args(["-a", "Terminal"]).arg(&file).spawn()?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1114,7 +1145,7 @@ pub fn set_up(k: &Kind) -> Result<PathBuf> {
             ("wezterm", &["start", "--"]),
             ("xterm", &["-e"]),
         ];
-        if !terminals.iter().any(|(t, args)| Command::new(t).args(*args).arg("bash").arg(&file).spawn().is_ok()) {
+        if !terminals.iter().any(|(t, args)| crate::platform::command(t).args(*args).arg("bash").arg(&file).spawn().is_ok()) {
             bail!("no terminal app found");
         }
     }
@@ -1351,6 +1382,22 @@ mod tests {
     use super::*;
 
     /// Runs the real set-up script for this OS with a made-up app, and returns what it wrote to its status file and printed.
+    fn quiet_kind(install: &'static str) -> Kind {
+        Kind { id: "quiet-test", title: "Test App", bins: &["valerie-no-such-program"], install, install_windows: install, login: "", help: "" }
+    }
+
+    #[test]
+    fn a_failed_quiet_install_says_so() {
+        let e = install_quietly(&quiet_kind("echo no disk space >&2; exit 3")).unwrap_err();
+        assert!(format!("{e:#}").contains("couldn't install Test App"), "{e:#}");
+    }
+
+    #[test]
+    fn an_install_valerie_cant_find_asks_for_a_restart() {
+        let e = install_quietly(&quiet_kind("exit 0")).unwrap_err();
+        assert!(format!("{e:#}").contains("Restart Valerie"), "{e:#}");
+    }
+
     fn run_set_up(name: &str, install: &'static str, login: &'static str) -> (String, String) {
         let dir = std::env::temp_dir().join(format!("valerie-set-up-test-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

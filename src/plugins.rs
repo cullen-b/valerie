@@ -298,13 +298,13 @@ pub fn matches(patterns: &[String], url: &str) -> bool {
 pub fn run_script(dir: &std::path::Path, script: &str, env: &[(&str, String)]) -> Result<String> {
     #[cfg(windows)]
     let mut cmd = {
-        let mut c = std::process::Command::new("cmd");
+        let mut c = crate::platform::command("cmd");
         c.args(["/C", script]);
         c
     };
     #[cfg(not(windows))]
     let mut cmd = {
-        let mut c = std::process::Command::new("sh");
+        let mut c = crate::platform::command("sh");
         c.args(["-c", script]);
         c
     };

@@ -6,7 +6,6 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Written into a plugin folder installed from the marketplace (which files, so updates can be spotted).
 pub const STAMP: &str = ".marketplace.json";
@@ -63,7 +62,7 @@ pub const EXTENSION: &str = "extension";
 
 /// Every plugin and extension in the marketplace, plugins first.
 pub fn fetch(index: &str) -> Result<Vec<Entry>> {
-    let out = Command::new("curl").args(["-fsSL", "--max-time", "20", "--proto", "=https,file", index]).output().context("couldn't run curl")?;
+    let out = crate::platform::command("curl").args(["-fsSL", "--max-time", "20", "--proto", "=https,file", index]).output().context("couldn't run curl")?;
     if !out.status.success() {
         bail!("couldn't reach the plugin marketplace: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
@@ -139,7 +138,7 @@ fn safe_path(p: &str) -> bool {
 }
 
 fn sha256(path: &Path) -> Result<String> {
-    let out = Command::new("shasum").args(["-a", "256"]).arg(path).output().context("couldn't run shasum")?;
+    let out = crate::platform::command("shasum").args(["-a", "256"]).arg(path).output().context("couldn't run shasum")?;
     Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string())
 }
 
@@ -165,7 +164,7 @@ pub fn install(e: &Entry, plugins_dir: &Path, ext_dir: &Path) -> Result<PathBuf>
             }
             let to = tmp.join(&f.path);
             std::fs::create_dir_all(to.parent().context("no folder")?)?;
-            let ok = Command::new("curl").args(["-fsSL", "--max-time", "60", "--proto", "=https", "-o"]).arg(&to).arg(&f.url).status()?.success();
+            let ok = crate::platform::command("curl").args(["-fsSL", "--max-time", "60", "--proto", "=https", "-o"]).arg(&to).arg(&f.url).status()?.success();
             if !ok {
                 bail!("couldn't download {}", f.path);
             }
