@@ -11,7 +11,7 @@ const CODEX_DIR = join(process.env.LOCALAPPDATA, "Programs", "OpenAI", "Codex");
 const CODEX = join(CODEX_DIR, "bin", "codex.exe");
 const WINDOWS = join(OUT, "console-windows.jsonl");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const ps = (cmd) => execFileSync("powershell", ["-NoProfile", "-Command", cmd], { encoding: "utf8", windowsHide: true });
+const ps = (cmd) => execFileSync("powershell", ["-NoProfile", "-Command", `${cmd}; exit 0`], { encoding: "utf8", windowsHide: true });
 const say = (s) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${s}`);
 const check = (ok, what) => {
   say(`${ok ? "PASS" : "FAIL"}: ${what}`);
