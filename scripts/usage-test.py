@@ -57,6 +57,11 @@ def press(keys):
     return sh([str(REPO / "scripts" / "windows-vm.sh"), "key", keys.lower().replace("+", "-").replace("return", "ret")])
 
 
+def click_center():
+    sh([str(REPO / "scripts" / "windows-vm.sh"), "click", "400", "300"])
+    time.sleep(2)
+
+
 def type_text(text):
     if MACHINE == "linux":
         return sh(["docker", "exec", "-u", "tester", "-e", "DISPLAY=:1", CONTAINER, "xdotool", "type", "--delay", "15", text])
@@ -220,6 +225,9 @@ def t_routes_and_profiles():
 def t_little_window():
     code, out = call("open_link", {"url": "https://example.net"}); time.sleep(5)
     check("external link opens a little window", code == 0 and "failed" not in logs("little", 2).lower(), logs("little", 2) + out)
+    # It acts on the little window that has the keyboard, and Windows won't hand that to a window opened from the background.
+    if MACHINE == "windows":
+        click_center()
     code, out = command("move_to_main_window"); time.sleep(3)
     check("little window moves to the main window", find_tab("example.net") is not None, tabs())
 
