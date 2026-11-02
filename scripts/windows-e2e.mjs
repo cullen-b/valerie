@@ -2,8 +2,10 @@
 // way Explorer does, watches for console windows, and clicks "Install and sign in" in the real onboarding page.
 // It deletes Codex and ~/.codex between steps, so never run it on a computer someone uses.
 import { execFileSync, spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const EXE = process.argv[2], OUT = process.argv[3];
 const HOME = process.env.USERPROFILE, CODEX_HOME = join(HOME, ".codex");
@@ -55,83 +57,62 @@ while ($true) {
 
 const consoles = () => (existsSync(WINDOWS) ? readFileSync(WINDOWS, "utf8").split(/\r?\n/).filter(Boolean) : []);
 
-function evaluate(ws, expression) {
-  return new Promise((resolve, reject) => {
-    const s = new WebSocket(ws);
-    const timer = setTimeout(() => { s.close(); reject(new Error("no answer from the page")); }, 10000);
-    s.onerror = () => { clearTimeout(timer); reject(new Error("couldn't reach the page")); };
-    s.onopen = () => s.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
-    s.onmessage = (m) => { clearTimeout(timer); s.close(); resolve(JSON.parse(m.data).result?.result?.value); };
+// A copy of the UI with one extra script in the onboarding page: it reports the Codex card and does what it's told,
+// pressing the page's real button. WebView2 doesn't take a debugging port from the environment here.
+let latest = null, orders = [];
+const server = createServer((req, res) => {
+  let body = "";
+  req.on("data", (d) => (body += d));
+  req.on("end", () => {
+    latest = JSON.parse(body);
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.end(orders.shift() || "");
   });
-}
+});
+await new Promise((r) => server.listen(0, "127.0.0.1", r));
+const DRIVER = `<script>
+setInterval(async () => {
+  const card = [...document.querySelectorAll('.card.agent')].find((c) => c.innerText.includes('Codex'));
+  const state = { ready: !!(typeof W !== 'undefined' && W && W.agents), chip: card && card.querySelector('.chip') ? card.querySelector('.chip').innerText : null, text: card ? card.innerText : null };
+  const order = await (await fetch('http://127.0.0.1:${server.address().port}/', { method: 'POST', body: JSON.stringify(state) })).text();
+  if (order === 'ai') go(STEPS.indexOf('ai'));
+  if (order === 'click') { const b = card && [...card.querySelectorAll('button')].find((b) => b.innerText === 'Install and sign in'); if (b) b.click(); }
+}, 300);
+</script>
+</body>`;
+const UI = join(OUT, "ui");
+mkdirSync(OUT, { recursive: true });
+cpSync(join(dirname(fileURLToPath(import.meta.url)), "..", "ui"), UI, { recursive: true });
+writeFileSync(join(UI, "welcome.html"), readFileSync(join(UI, "welcome.html"), "utf8").replace("</body>", () => DRIVER));
+process.env.VALERIE_UI_DIR = UI;
 
-async function screenshot(ws, name) {
-  await new Promise((resolve) => {
-    const s = new WebSocket(ws);
-    s.onerror = resolve;
-    s.onopen = () => s.send(JSON.stringify({ id: 1, method: "Page.captureScreenshot" }));
-    s.onmessage = (m) => {
-      const data = JSON.parse(m.data).result?.data;
-      if (data) writeFileSync(join(OUT, name), Buffer.from(data, "base64"));
-      s.close();
-      resolve();
-    };
-  });
+async function waitForWelcome() {
+  latest = null;
+  for (let i = 0; i < 240 && !(latest && latest.ready); i++) await sleep(500);
+  if (!(latest && latest.ready)) throw new Error("the onboarding page never appeared");
 }
-
-// Each browser profile is its own WebView2 process, so each picks a port and writes it to a file in its data folder.
-function debugPorts() {
-  const dirs = [process.env.LOCALAPPDATA, process.env.APPDATA, dirname(EXE)].map((d) => `'${d}'`).join(",");
-  const files = ps(`Get-ChildItem -Path ${dirs} -Recurse -Force -Filter DevToolsActivePort -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }`);
-  return files.split(/\r?\n/).filter(Boolean).map((f) => {
-    try { return readFileSync(f, "utf8").split(/\r?\n/)[0]; } catch { return null; }
-  }).filter(Boolean);
-}
-
-async function findWelcome() {
-  let looked = [];
-  for (let i = 0; i < 60; i++) {
-    looked = [];
-    for (const port of debugPorts()) {
-      try {
-        const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000) })).json();
-        for (const t of targets.filter((t) => t.type === "page")) {
-          looked.push(`${port} ${t.url.slice(0, 60)}`);
-          if (await evaluate(t.webSocketDebuggerUrl, "!!(window.welcome && typeof W !== 'undefined' && W && W.agents)").catch(() => false)) return t.webSocketDebuggerUrl;
-        }
-      } catch {}
-    }
-    await sleep(1500);
-  }
-  throw new Error(`the onboarding page never appeared; pages seen: ${JSON.stringify(looked)}`);
-}
-
-const CARD = `[...document.querySelectorAll('.card.agent')].find((c) => c.innerText.includes('Codex'))`;
-const chip = (ws) => evaluate(ws, `(${CARD})?.querySelector('.chip')?.innerText`);
 
 async function launchAndClick(label) {
   say(`--- ${label}`);
   writeFileSync(WINDOWS, "");
   // Start-Process goes through the shell like a double-click: no console to inherit.
   ps(`Start-Process -FilePath '${EXE}'`);
-  const ws = await findWelcome();
+  await waitForWelcome();
   await sleep(5000); // let everything that runs at launch run
   check(consoles().length === 0, `${label}: no console window at launch (${consoles().length})`);
-  await evaluate(ws, `go(STEPS.indexOf("ai"))`);
-  await sleep(500);
-  check((await chip(ws)) === "Not installed", `${label}: Codex starts out not installed`);
-  const clicked = await evaluate(ws, `(() => { const b = [...(${CARD}).querySelectorAll('button')].find((b) => b.innerText === 'Install and sign in'); if (b) b.click(); return !!b; })()`);
-  check(clicked, `${label}: clicked Install and sign in`);
-  return ws;
+  orders.push("ai");
+  await sleep(1500);
+  check(latest.chip === "Not installed", `${label}: Codex starts out not installed (${latest.chip})`);
+  orders.push("click");
 }
 
-async function watchChips(ws, stop, seconds) {
+async function watchChips(stop, seconds) {
   const seen = [];
-  for (let i = 0; i < seconds * 2; i++) {
-    const c = await chip(ws).catch(() => null);
-    if (c && seen.at(-1) !== c) { seen.push(c); say(`card: ${c}`); }
+  for (let i = 0; i < seconds * 4; i++) {
+    const c = latest && latest.chip;
+    if (c && seen.at(-1) !== c && !(seen.length === 0 && c === "Not installed")) { seen.push(c); say(`card: ${c}: ${latest.text.replace(/\s+/g, " ")}`); }
     if (stop(c)) return seen;
-    await sleep(500);
+    await sleep(250);
   }
   return seen;
 }
@@ -145,8 +126,6 @@ function removeCodex() {
   rmSync(CODEX_HOME, { recursive: true, force: true });
 }
 
-mkdirSync(OUT, { recursive: true });
-process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0";
 writeFileSync(join(OUT, "watch.ps1"), WATCH);
 const watcher = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(OUT, "watch.ps1")], { stdio: "ignore", windowsHide: true });
 
@@ -157,9 +136,8 @@ try {
   check(!ps("Get-Command codex -ErrorAction SilentlyContinue").trim(), "this machine has no Codex to begin with");
 
   // Nobody signed in: installs with no window, then one terminal for the sign-in. It also proves the watcher sees windows.
-  let ws = await launchAndClick("not signed in");
-  let seen = await watchChips(ws, (c) => c === "In terminal" || c === "Didn't finish", 300);
-  await screenshot(ws, "not-signed-in.png");
+  await launchAndClick("not signed in");
+  let seen = await watchChips((c) => c === "In terminal" || c === "Didn't finish", 300);
   check(seen.includes("Installing"), "not signed in: the card said Installing");
   check(seen.at(-1) === "In terminal", `not signed in: the card asks to finish in the terminal (${seen.at(-1)})`);
   check(existsSync(CODEX), "not signed in: the real Codex CLI is installed");
@@ -184,10 +162,9 @@ try {
   rmSync(saved);
 
   // Already signed in, as with the Codex app: the whole thing happens with no window at all.
-  ws = await launchAndClick("already signed in");
-  seen = await watchChips(ws, (c) => ["Checking", "Ready", "Needs sign-in", "Didn't finish", "In terminal"].includes(c), 300);
+  await launchAndClick("already signed in");
+  seen = await watchChips((c) => ["Checking", "Ready", "Needs sign-in", "Didn't finish", "In terminal"].includes(c), 300);
   await sleep(4000);
-  await screenshot(ws, "already-signed-in.png");
   check(seen.includes("Installing"), "already signed in: the card said Installing");
   check(!seen.includes("In terminal") && !seen.includes("Didn't finish"), `already signed in: no terminal step and no failure (${seen.join(" > ")})`);
   check(existsSync(CODEX), "already signed in: the real Codex CLI is installed");
@@ -198,5 +175,7 @@ try {
 } finally {
   watcher.kill();
   closeValerie();
+  server.close();
+  rmSync(UI, { recursive: true, force: true });
   rmSync(join(OUT, "watch.ps1"), { force: true });
 }
