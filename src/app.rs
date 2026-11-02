@@ -5337,6 +5337,22 @@ impl App {
                         let _ = crate::platform::command("/bin/sh").arg("-c").arg(format!("sleep 1; open -n{env} {}", shell_word(&app.to_string_lossy()))).spawn();
                         self.quit = true;
                     }
+                    #[cfg(not(target_os = "macos"))]
+                    None => match std::env::current_exe() {
+                        // Started once this copy has gone: only one can hold the agents' port. Env and folders carry over.
+                        Ok(exe) => {
+                            #[cfg(windows)]
+                            let started = crate::platform::command("cmd").args(["/C", "ping -n 3 127.0.0.1 >nul &"]).arg(&exe).spawn();
+                            #[cfg(not(windows))]
+                            let started = crate::platform::command("/bin/sh").arg("-c").arg(format!("sleep 1; exec {}", platform::shell_quote(&exe.to_string_lossy()))).spawn();
+                            match started {
+                                Ok(_) => self.quit = true,
+                                Err(e) => self.toast(&format!("Couldn't restart Valerie: {e}")),
+                            }
+                        }
+                        Err(e) => self.toast(&format!("Couldn't restart Valerie: {e}")),
+                    },
+                    #[cfg(target_os = "macos")]
                     None => self.toast("Restart: open Valerie again yourself (it isn't running as an app)"),
                 }
             }

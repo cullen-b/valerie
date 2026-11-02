@@ -301,14 +301,20 @@ def t_chat():
 
 def t_restart():
     before = find_tab("example.com")
+    pid = lambda: machine_sh("pgrep -x valerie" if MACHINE == "linux" else "(Get-Process valerie -EA 0).Id")[1].split()
+    old = pid()
     command("restart")
+    came_back = False
     for _ in range(45):
         time.sleep(2)
         code, out = call("list_spaces")
-        if "Personal" in out and "Valerie isn't running" not in out:
+        now = pid()
+        if "Personal" in out and now and now != old:
+            came_back = True
             time.sleep(5)
             break
-    check("restart brings Valerie back with my tabs", before is not None and find_tab("example.com") is not None, tabs())
+    check("restart really starts a new Valerie", came_back, f"{old} -> {pid()}")
+    check("my tabs come back after a restart", before is not None and find_tab("example.com") is not None, tabs())
 
 
 def t_errors():
