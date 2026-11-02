@@ -34,8 +34,11 @@ def call(tool, args=None):
     body = json.dumps(args or {})
     if MACHINE == "linux":
         return sh(["docker", "exec", "-u", "tester", "-e", "HOME=/home/tester", "-e", "DISPLAY=:1", CONTAINER, "valerie", "call", tool, body])
-    quoted = '"' + body.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return sh(["ssh", *SSH, "-p", "2222", "tester@127.0.0.1", f"{WIN_EXE} call {tool} {quoted}"])
+    # Piped, or Windows won't wait for or read a windowed app. Base64 survives PowerShell 5's quoting of JSON.
+    encoded = base64.b64encode(body.encode()).decode()
+    script = f"$ProgressPreference='SilentlyContinue'; $j = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')) -replace '\"','\\\"'; & '{WIN_EXE}' call {tool} $j 2>&1 | Out-String"
+    command = base64.b64encode(script.encode("utf-16-le")).decode()
+    return sh(["ssh", *SSH, "-p", "2222", "tester@127.0.0.1", f"powershell -NoProfile -OutputFormat Text -EncodedCommand {command}"])
 
 
 def press(accel):
@@ -81,6 +84,10 @@ def command_log():
 
 
 def reset():
+    # A new Windows machine opens things of its own over Valerie, and they take the keyboard.
+    if MACHINE == "windows":
+        script = "$ProgressPreference='SilentlyContinue'; Stop-Process -Name SecHealthUI,OneDrive,WindowsTerminal,OpenConsole,notepad,msedge -Force -EA 0"
+        sh(["ssh", *SSH, "-p", "2222", "tester@127.0.0.1", "powershell -NoProfile -OutputFormat Text -EncodedCommand " + base64.b64encode(script.encode("utf-16-le")).decode()])
     call("run_command", {"command": {"cmd": "close_command_bar"}})
     if "example.com" not in call("list_tabs")[1]:
         call("open_tab", {"url": "https://example.com", "activate": True})

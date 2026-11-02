@@ -77,6 +77,19 @@ fn terminal_command(editor: &str) -> Option<&str> {
     TERMINAL_EDITORS.contains(&e.split_whitespace().next().unwrap_or("")).then_some(e)
 }
 
+/// Whether a program can be started by name here.
+fn on_path(program: &str) -> bool {
+    std::env::split_paths(&crate::ai::search_path()).any(|dir| {
+        ["", ".exe", ".cmd", ".bat"].iter().any(|ext| dir.join(format!("{program}{ext}")).is_file())
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn exit_ok() -> std::process::ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    std::process::ExitStatus::from_raw(0)
+}
+
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -91,7 +104,19 @@ pub fn open_in_editor(path: &std::path::Path, editor: &str, terminal: &str) -> R
         Err(e) => Err(e.to_string()),
     };
     if let Some(cmd) = terminal_command(editor) {
+        // Settings sync, and the editor picked on one computer may not be on this one.
+        let program = cmd.split_whitespace().next().unwrap_or(cmd);
+        if !on_path(program) {
+            crate::log::line("editor", format!("{program} isn't on this computer, so the file opens in the usual app"));
+            #[cfg(target_os = "windows")]
+            return ran(crate::platform::command("notepad").arg(path).spawn().map(|_| exit_ok()));
+            #[cfg(not(target_os = "windows"))]
+            return open_in_editor(path, "default", terminal);
+        }
+        #[cfg(not(target_os = "windows"))]
         let line = format!("{cmd} {}", shell_quote(&file));
+        #[cfg(target_os = "windows")]
+        let line = format!("{cmd} \"{file}\"");
         #[cfg(target_os = "macos")]
         {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
