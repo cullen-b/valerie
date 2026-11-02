@@ -76,7 +76,8 @@ def bindings():
 
 
 def command_log():
-    return [l for l in call("read_logs", {"area": "command", "since_minutes": 30})[1].splitlines() if "[command]" in l]
+    # read_logs caps how many it returns, so only look at the last minute.
+    return [l for l in call("read_logs", {"area": "command", "since_minutes": 1})[1].splitlines() if "[command]" in l]
 
 
 def reset():
@@ -90,23 +91,29 @@ def reset():
 
 
 results = []
-all_bindings = bindings()
+all_bindings = [b for b in bindings() if len(sys.argv) < 3 or re.search(sys.argv[2], b[0])]
 print(f"{len(all_bindings)} shortcuts", flush=True)
 for accel, name in all_bindings:
     if name in SKIP:
         results.append({"accel": accel, "command": name, "ok": None, "got": "skipped"})
         continue
     reset()
-    before = len(command_log())
+    before = set(command_log())
     press(accel)
     time.sleep(1.5)
-    new = command_log()[before:]
-    got = [l.split("[command]", 1)[1].split()[0] for l in new if l.split("[command]", 1)[1].split()]
+    new = [l for l in command_log() if l not in before]
+    got = [l.split("[command]", 1)[1].split()[0].strip('",') for l in new if l.split("[command]", 1)[1].split()]
     ok = name in got
     results.append({"accel": accel, "command": name, "ok": ok, "got": got})
     print(f"{'PASS' if ok else 'FAIL'}  {accel:28} {name}" + ("" if ok else f"  got {got}"), flush=True)
-    if name in ("toggle_terminal", "open_chats", "new_chat", "open_history", "open_downloads"):
-        press("Ctrl+W") if name == "open_history" else None
+    # A little window takes the keyboard, and the find bar keeps it: put things back for the next key.
+    if name == "move_to_little_window":
+        call("run_command", {"command": {"cmd": "move_to_main_window"}})
+        time.sleep(2)
+    if name in ("find_in_page", "reader_view"):
+        press("Escape")
+    if name in ("open_chats", "new_chat", "toggle_terminal"):
+        call("run_command", {"command": {"cmd": "close_chat" if name != "toggle_terminal" else "toggle_terminal"}})
     alive = call("list_spaces")[0] == 0
     if not alive:
         print("Valerie stopped; ending here")

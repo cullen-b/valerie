@@ -3640,6 +3640,12 @@ impl App {
                 crate::log::line("keys", format!("{accel} is bound twice on this computer; ignoring it for {}", self.command_label(&cmd)));
                 continue;
             }
+            #[cfg(target_os = "linux")]
+            if accel.to_lowercase().ends_with("+tab") {
+                let (p, msg) = (self.proxy.clone(), json!({ "t": "cmd", "cmd": cmd }).to_string());
+                linux_keys::set_tab_key(accel, move || send(&p, UserEvent::Ipc { from: Source::Chrome, msg: msg.clone() }));
+                continue;
+            }
             // Key sequences ("CmdOrCtrl+K CmdOrCtrl+S") start with their first key; Valerie waits for the rest.
             if accel.trim().contains(' ') {
                 continue;
@@ -5468,7 +5474,7 @@ impl App {
             }
             Command::AnswerChatAsk { id, allow, always } => {
                 if let Some(a) = self.chat_asks.remove(&id) {
-                    if allow && always {
+                    if allow && always && a.tool != crate::mcp::ASK_EACH_TIME {
                         if let Some(c) = self.chats.iter_mut().find(|c| c.id == a.chat) {
                             if !c.allowed.contains(&a.tool) {
                                 c.allowed.push(a.tool.clone());
@@ -7775,11 +7781,35 @@ mod linux_keys {
     }
 
     thread_local!(static MAIN: RefCell<Option<gtk::ApplicationWindow>> = const { RefCell::new(None) });
+    thread_local!(static TAB_KEYS: RefCell<std::collections::HashMap<String, Box<dyn Fn()>>> = RefCell::new(Default::default()));
 
     pub fn set_main(window: &gtk::ApplicationWindow) {
         MAIN.with(|m| {
-            m.borrow_mut().get_or_insert_with(|| window.clone());
+            let mut main = m.borrow_mut();
+            if main.is_none() {
+                *main = Some(window.clone());
+                // Asking about a view that has just gone away is an error here, and GDK ends the app on any error it isn't told to expect.
+                if let Some(display) = gdk::Display::default() {
+                    use glib::translate::ToGlibPtr;
+                    let d: *mut gdk::ffi::GdkDisplay = display.to_glib_none().0;
+                    unsafe { gdk_x11_display_error_trap_push(d as _) };
+                }
+            }
         });
+    }
+
+    /// GTK refuses Tab in a menu shortcut, so these keys are run from here. `keys` is the binding's keys, `run` runs its command.
+    pub fn set_tab_key(keys: &str, run: impl Fn() + 'static) {
+        TAB_KEYS.with(|t| t.borrow_mut().insert(keys.to_lowercase().replace("cmdorctrl", "ctrl"), Box::new(run)));
+    }
+
+    fn ran_tab_key(ev: &gdk::EventKey) -> bool {
+        use gdk::keys::constants as key;
+        if ![key::Tab, key::ISO_Left_Tab].contains(&ev.keyval()) || !ev.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return false;
+        }
+        let keys = if ev.state().contains(gdk::ModifierType::SHIFT_MASK) { "ctrl+shift+tab" } else { "ctrl+tab" };
+        TAB_KEYS.with(|t| t.borrow().get(keys).map(|run| run()).is_some())
     }
 
     pub fn take_focus(view: &impl IsA<gtk::Widget>) {
@@ -7812,6 +7842,14 @@ mod linux_keys {
         });
     }
 
+    /// The key as it is without Shift, on this keyboard layout.
+    fn unshifted(ev: &gdk::EventKey) -> Option<gdk::keys::Key> {
+        let keymap = gdk::Keymap::for_display(&gdk::Display::default()?)?;
+        let group = ev.group() as i32;
+        let keys = keymap.entries_for_keycode(ev.hardware_keycode() as u32);
+        keys.into_iter().find(|(k, _)| k.group() == group && k.level() == 0).map(|(_, key)| gdk::keys::Key::from(key))
+    }
+
     pub fn watch(view: &webkit2gtk::WebView) {
         view.connect_button_press_event(|v, _| {
             take_focus(v);
@@ -7819,12 +7857,24 @@ mod linux_keys {
         });
         view.connect_key_press_event(|_, ev| {
             use gdk::keys::constants as key;
+            if ran_tab_key(ev) {
+                return glib::Propagation::Stop;
+            }
             let ctrl = ev.state().contains(gdk::ModifierType::CONTROL_MASK);
             // The focused box handles these itself, as on Windows.
             if ctrl && !ev.state().contains(gdk::ModifierType::SHIFT_MASK) && [key::a, key::c, key::v, key::x, key::y, key::z].contains(&ev.keyval().to_lower()) {
                 return glib::Propagation::Proceed;
             }
-            let ran = MAIN.with(|m| m.borrow().as_ref().is_some_and(|w| w.activate_key(ev)));
+            let ran = MAIN.with(|m| {
+                m.borrow().as_ref().is_some_and(|w| {
+                    if w.activate_key(ev) {
+                        return true;
+                    }
+                    // Shift+2 arrives as "@" and Shift+= as "+", but shortcuts name the key on the keyboard.
+                    let Some(base) = ev.state().contains(gdk::ModifierType::SHIFT_MASK).then(|| unshifted(ev)).flatten() else { return false };
+                    gtk::accel_groups_activate(w, *base, ev.state() & gtk::accelerator_get_default_mod_mask())
+                })
+            });
             if ran { glib::Propagation::Stop } else { glib::Propagation::Proceed }
         });
     }
@@ -10009,6 +10059,7 @@ impl App {
             "run_command" => format!("run the browser command {}", a["command"]["cmd"].as_str().unwrap_or("?")),
             "history" => format!("go {} on {}", a["action"].as_str().unwrap_or("back"), tab_site(a)),
             "scroll" => format!("scroll {}", tab_site(a)),
+            crate::mcp::ASK_EACH_TIME => s("what"),
             other => {
                 // Claude's own tools (Bash, Edit …) via the permission prompt.
                 let detail = a["command"].as_str().or(a["file_path"].as_str()).or(a["url"].as_str()).unwrap_or("");
@@ -10036,7 +10087,8 @@ impl App {
             self.render_chat();
             return;
         }
-        platform::ask(&self.chrome, &format!("Let the agent {what}?"), &format!("{chat} wants to do this. Its chat is set to ask first."), "Allow", "Don't Allow", move |ok| {
+        let why = if tool == crate::mcp::ASK_EACH_TIME { "It may cost money, so Valerie asks every time (the mcp.ask_before_paying setting)." } else { "Its chat is set to ask first." };
+        platform::ask(&self.chrome, &format!("Let the agent {what}?"), &format!("{chat} wants to do this. {why}"), "Allow", "Don't Allow", move |ok| {
             let _ = reply.send(Ok(json!({ "allowed": ok })));
         });
     }
