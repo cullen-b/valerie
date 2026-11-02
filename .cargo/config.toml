@@ -1,0 +1,3 @@
+# New Windows machines don't all have Microsoft's C runtime (VCRUNTIME140_1.dll), so it's built into valerie.exe.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
