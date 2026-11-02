@@ -12,6 +12,7 @@
 #     over config.yaml and never syncs). Use it when one machine differs, e.g. `agents: { default: codex }` on a
 #     Mac signed in to Codex but not Claude, or a different `downloads.folder`.
 # ==============================================================================================================
+# Comments use Mac key symbols: ⌘ is Ctrl and ⌥ is Alt on Windows and Linux. "Finder" and "Dock" mean your file manager and taskbar there.
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -528,6 +529,7 @@ routes:
 
 # App shortcuts. Value: a command name, or a command with options like { cmd: switch_space, index: 0 }.
 # Modifiers: CmdOrCtrl (⌘ on Mac, Ctrl elsewhere), Cmd, Ctrl, Alt, Shift. Set a shortcut to null to turn it off.
+# On Windows and Linux, the Ctrl+1 to Ctrl+5 space shortcuts below are Alt+1 to Alt+5 (Ctrl+1 is the first tab there).
 # A key sequence is keys separated by spaces: "CmdOrCtrl+K CmdOrCtrl+S" means ⌘K, then ⌘S.
 keybindings:
   "CmdOrCtrl+D": open_command_bar
@@ -548,6 +550,10 @@ keybindings:
   "Ctrl+Shift+Tab": prev_tab
   "CmdOrCtrl+Alt+Right": next_space
   "CmdOrCtrl+Alt+Left": prev_space
+  "Ctrl+PageDown": next_tab          # also on desktops that keep Ctrl+Alt+arrows for themselves
+  "Ctrl+PageUp": prev_tab
+  "Ctrl+Shift+PageDown": next_space
+  "Ctrl+Shift+PageUp": prev_space
   "Ctrl+1": { cmd: switch_space, index: 0 }
   "Ctrl+2": { cmd: switch_space, index: 1 }
   "Ctrl+3": { cmd: switch_space, index: 2 }
