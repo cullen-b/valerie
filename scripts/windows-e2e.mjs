@@ -152,7 +152,7 @@ try {
 
   // Make a real sign-in file with Codex itself (a made-up key: the status check only reads the file), then start over.
   closeValerie();
-  ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'setup.codex.ps1' -or $_.Name -eq 'codex.exe' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep 2`);
+  ps(`Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -match 'setup.codex.ps1' -or $_.Name -eq 'codex.exe') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep 2`);
   execFileSync(CODEX, ["login", "--with-api-key"], { input: "sk-made-up-for-this-test\n", encoding: "utf8", windowsHide: true });
   const saved = join(OUT, "auth-copy.json");
   copyFileSync(join(CODEX_HOME, "auth.json"), saved);
