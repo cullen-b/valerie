@@ -2530,6 +2530,9 @@ impl App {
         if changed {
             self.queue_event("space_switched", self.state.active_tab(), None);
             self.prepare_little_later();
+            if self.bar_open {
+                let _ = self.overlay.evaluate_script(&format!("palette.spaceChanged({})", json!(self.theme_for(i))));
+            }
         }
         let settings_changed = self.apply_space_settings();
         // Not while a link that started Valerie has the screen to itself (show_main loads them).
@@ -5917,6 +5920,9 @@ impl App {
                 if self.reveal_when_chrome_ready {
                     self.reveal("nothing to load");
                 }
+            }
+            (Source::Overlay, "swipe") => {
+                let _ = self.chrome.evaluate_script(&format!("swipeWheel({m})"));
             }
             (Source::Chrome, "unpeek") | (Source::Page(Target::Tab(_)), "unpeek") => {
                 if self.sidebar_peek {
