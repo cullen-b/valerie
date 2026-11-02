@@ -380,8 +380,8 @@ hand the user a page for anything only a person can do, such as making an accoun
 or picking an option (`ask_user` with a `url` or `tab`, a note, and a Done button or `choices`; off with
 `mcp.ask_user: false`), and read
 a page's requests (`read_network`; off with `mcp.network_log: false`). A `click`, Enter or form submit on a button that
-looks like spending money (`mcp.paying_words`) waits for the user's yes every time, even with full access; `mcp.ask_before_paying:
-false` turns that off, and an agent changing either setting needs the user's yes too.
+looks like spending money, or an `eval_js` script that mentions it (`mcp.paying_words`), waits for the user's yes every time,
+even with full access; `mcp.ask_before_paying: false` turns that off, and an agent changing either setting needs the user's yes too.
 
 Tools:
 "#,

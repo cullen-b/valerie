@@ -729,17 +729,11 @@ mcp:
                            # choices. true | false
   network_log: true        # keep a list of each page's requests (address, status, time) for agents debugging a page
                            # (read_network). Stays in the page; nothing is saved. true | false
-
-# Headless agents run on your own Claude Code / Codex / OpenCode login. Type "> task" in the command bar, or
-# schedule jobs here.
-# AI. Valerie uses the agent apps already on your computer, signed in with your own subscriptions: Claude Code,
-# Codex, OpenCode, Pi, Cursor and Hermes. Pick "Set Up <name>" in the command bar to install one and sign in (one
-# step). They power the Chats space (left of your first space), questions you type into find (/), "Ask …" in the
-  ask_before_paying: true  # ask you first each time an agent clicks a button that looks like spending money, even with
-                           # full access ("Always Allow" doesn't cover it). It checks the button's words and address against
-                           # paying_words. A safety net, not a guarantee: a script an agent runs (eval_js) isn't
-                           # checked. Agents need your yes to change this or paying_words. true | false
-  paying_words: [          # words that make a button ask (mcp.ask_before_paying); whole words, any capitals. Setting
+  ask_before_paying: true  # ask you first each time an agent clicks a button or runs a script (eval_js) that looks like
+                           # spending money, even with full access ("Always Allow" doesn't cover it). It checks the
+                           # button's words and address, or the script's own text, against paying_words. A safety net,
+                           # not a guarantee. Agents need your yes to change this or paying_words. true | false
+  paying_words: [          # words that make a button or script ask (mcp.ask_before_paying); whole words, any capitals. Setting
                            # this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
     # buying
     "pay", "pays", "paying", "payment", "payments", "paynow", "pay now", "paypal", "stripe", "venmo",

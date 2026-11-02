@@ -185,7 +185,7 @@ pub const ASK_EACH_TIME: &str = "ask_each_time";
 fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Option<String>, String> {
     let key_press = name == "press_key" && matches!(args["key"].as_str(), Some("Enter" | "Return" | " " | "Space" | "Spacebar"));
     let submit = name == "type" && args["submit"].as_bool() == Some(true);
-    if name != "click" && name != "set_setting" && !key_press && !submit {
+    if name != "click" && name != "set_setting" && name != "eval_js" && !key_press && !submit {
         return Ok(None);
     }
     // A config that doesn't load counts as the defaults, so the check stays on.
@@ -197,6 +197,11 @@ fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> 
         let key = args["key"].as_str().unwrap_or("").split('.').map(str::trim).filter(|k| !k.is_empty()).collect::<Vec<_>>().join(".");
         let guarded = key == "mcp" || key == "mcp.ask_before_paying" || key == "mcp.paying_words";
         return Ok(guarded.then(|| format!("change the {key} setting to {}", args["value"])));
+    }
+    if name == "eval_js" {
+        let Some(word) = script_word(args["script"].as_str().unwrap_or(""), &config.mcp.paying_words) else { return Ok(None) };
+        let site = eval(proxy, args.get("tab").and_then(Value::as_i64), "return location.hostname || location.href").ok();
+        return Ok(Some(format!("run a script on {} that mentions “{word}”", site.as_ref().and_then(Value::as_str).unwrap_or("this page"))));
     }
     let target = match name {
         "click" => json!({ "ref": args["ref"], "selector": args["selector"] }),
@@ -210,6 +215,12 @@ fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> 
         let site = found["site"].as_str().unwrap_or("this page");
         if label.is_empty() { format!("click a button on {site} (it mentions “{word}”)") } else { format!("click “{label}” on {site}") }
     }))
+}
+
+/// The listed word a script mentions. `$` is everyday JavaScript (jQuery, `${x}`), not a price.
+fn script_word(script: &str, words: &[String]) -> Option<String> {
+    let words: Vec<String> = words.iter().filter(|w| w.trim() != "$").cloned().collect();
+    paying_word(script, &words).map(str::to_string)
 }
 
 /// The first of `words` in `text`: whole words, so "pay" doesn't match "display". Words with symbols or non-English
@@ -1721,6 +1732,18 @@ mod tests {
         }
         for fine in ["Display settings", "Save", "Payload", "Next", "Sign in", "Repay nothing", "Search", "Open menu", "Border"] {
             assert_eq!(super::paying_word(fine, words), None, "{fine:?}");
+        }
+    }
+
+    #[test]
+    fn scripts_only_ask_when_they_mention_a_listed_word() {
+        let config = crate::config::Config::defaults();
+        let words = &config.mcp.paying_words;
+        for caught in ["document.querySelector('.checkout').click()", "payNow()", "fetch('/api/purchase', {method: 'POST'})", "$('#buy').click()"] {
+            assert!(super::script_word(caught, words).is_some(), "should ask about {caught:?}");
+        }
+        for fine in ["return document.title", "return $('h1').text()", "return `${location.href}`", "return window.scrollY", "return display.innerText"] {
+            assert_eq!(super::script_word(fine, words), None, "{fine:?}");
         }
     }
 
