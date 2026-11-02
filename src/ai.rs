@@ -290,7 +290,7 @@ pub fn search_path() -> String {
     }
     // Where the Windows installers put them: they add these to PATH, but only for programs started afterwards.
     if cfg!(windows) {
-        for (base, sub) in [("LOCALAPPDATA", r"Programs\OpenAI\Codex\bin"), ("LOCALAPPDATA", "cursor-agent"), ("APPDATA", "npm")] {
+        for (base, sub) in [("LOCALAPPDATA", r"Programs\OpenAI\Codex\bin"), ("LOCALAPPDATA", "cursor-agent"), ("APPDATA", "npm"), ("ProgramFiles", r"Git\cmd")] {
             if let Some(b) = std::env::var_os(base) {
                 dirs.push(PathBuf::from(b).join(sub));
             }

@@ -432,7 +432,6 @@ struct PendingSave {
     password: String,
     nonce: String,
     at: u64,
-    reoffered: bool,
 }
 
 /// Per-site CSS/JS from `<config dir>/boosts/<host>.css|.js`; a host also matches its subdomains.
@@ -3815,7 +3814,13 @@ impl App {
             if let Some(old) = &self._menu {
                 let _ = old.remove_for_hwnd(self.window.hwnd());
             }
+            // The first menu bar takes its height out of the page area, and that's the size remembered for next time:
+            // without this the window opens a little shorter on every launch.
+            let keep = self._menu.is_none().then(|| self.window.inner_size()).filter(|_| !self.window.is_maximized());
             let _ = menu.init_for_hwnd(self.window.hwnd());
+            if let Some(size) = keep {
+                self.window.set_inner_size(size);
+            }
             MENU_WINDOW.store(self.window.hwnd(), std::sync::atomic::Ordering::Relaxed);
             MENU_KEYS.store(menu.haccel(), std::sync::atomic::Ordering::Relaxed);
         }
@@ -3907,7 +3912,7 @@ impl App {
     fn offer_pending_save(&self) {
         let Some(p) = &self.pending_save else { return };
         if now().saturating_sub(p.at) > 120 || self.origin_of_target(p.target).is_none() {
-            return;
+            return crate::log::line("passwords", "not offering to save: the page changed or too much time passed");
         }
         let host = url::Url::parse(&p.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
         let args = json!([host, p.username, p.nonce, self.vaults_for_target(p.target)]);
@@ -3920,7 +3925,17 @@ impl App {
         if !self.config.passwords.enabled {
             return;
         }
-        let Some(origin) = self.origin_of_target(target) else { return };
+        // A login form that navigates on submit: the page it lands on shows the prompt. Its own word is what counts, since
+        // Windows says "finished" before that page exists. A repeat on one page is ignored there.
+        if kind == "page_ready" {
+            if self.pending_save.as_ref().is_some_and(|p| p.target == target && now().saturating_sub(p.at) <= 10) {
+                self.offer_pending_save();
+            }
+            return;
+        }
+        let Some(origin) = self.origin_of_target(target) else {
+            return crate::log::line("passwords", format!("{kind}: this page has no address yet, so it was ignored"));
+        };
         match kind {
             "login_form" => {
                 let entries: Vec<passwords::Entry> =
@@ -3971,7 +3986,6 @@ impl App {
                     password: password.to_string(),
                     nonce: crate::mcp::random_hex(),
                     at: now(),
-                    reoffered: false,
                 });
                 self.offer_pending_save();
             }
@@ -6224,7 +6238,7 @@ impl App {
                     self.after_load(target, &u, true);
                 }
             }
-            (Source::Page(target), k @ ("login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
+            (Source::Page(target), k @ ("page_ready" | "login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
@@ -6488,12 +6502,6 @@ impl App {
                         self.state.record_visit(&u, &t);
                         self.after_load(Target::Tab(id), &u, false);
                         self.fill_offers.remove(&Target::Tab(id));
-                        // A login form that navigates on submit: show the save prompt once more on the page it lands on.
-                        let reoffer = self.pending_save.as_mut().filter(|p| p.target == Target::Tab(id) && !p.reoffered && now().saturating_sub(p.at) <= 10);
-                        if let Some(p) = reoffer {
-                            p.reoffered = true;
-                            self.offer_pending_save();
-                        }
                     }
                     self.dirty = true;
                     self.render();
