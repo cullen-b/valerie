@@ -59,7 +59,9 @@ pub fn run_cli() -> anyhow::Result<()> {
     match bin.filter(|_| matches!(cli.as_str(), "claude" | "codex")) {
         Some(bin) => {
             println!("Starting {cli} to help with what went wrong…");
-            let status = std::process::Command::new(bin).arg(&prompt).current_dir(config::config_dir()).status()?;
+            let (program, first_args) = crate::ai::program_for(&bin, &crate::ai::search_path());
+            let prompt = crate::ai::prompt_for(&program, &prompt);
+            let status = std::process::Command::new(&program).args(first_args).arg(prompt.as_ref()).current_dir(config::config_dir()).status()?;
             if !status.success() {
                 anyhow::bail!("{cli} ended with {status}");
             }

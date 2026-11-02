@@ -295,11 +295,18 @@ pub fn search_path() -> String {
                 dirs.push(PathBuf::from(b).join(sub));
             }
         }
+        // Where Codex's installer really puts it, when CODEX_INSTALL_DIR moved the folder it adds to PATH.
+        let codex_home = std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
+        dirs.push(codex_home.join(r"packages\standalone\current\bin"));
     }
     if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
         dirs.push(d); // so agents and scripts can run `valerie …`
     }
     dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
+    // Store apps' commands come first on most PATHs, but a packaged Codex can be denied its own helpers: a real install wins.
+    if cfg!(windows) {
+        dirs.sort_by_key(|d| is_store_dir(d));
+    }
     std::env::join_paths(dirs).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
@@ -312,6 +319,53 @@ pub fn find_bin(kind: &Kind, path: &str) -> Option<PathBuf> {
 /// Store apps' commands (WindowsApps) are special links that `is_file` can't follow, though they run fine.
 fn is_program(p: &Path) -> bool {
     p.is_file() || (cfg!(windows) && std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_dir()))
+}
+
+fn is_store_dir(d: &Path) -> bool {
+    d.to_string_lossy().to_lowercase().contains("windowsapps")
+}
+
+/// What to start for `bin`, and the arguments that go first. Windows refuses to hand a .cmd a multi-line argument (every
+/// new chat's prompt is one), so npm's launchers are skipped by starting what they would.
+pub fn program_for(bin: &Path, path: &str) -> (PathBuf, Vec<PathBuf>) {
+    let direct = || (bin.to_path_buf(), vec![]);
+    if !is_batch(bin) {
+        return direct();
+    }
+    let Some(target) = std::fs::read_to_string(bin).ok().and_then(|text| npm_shim_target(&text)) else { return direct() };
+    let dir = bin.parent().unwrap_or(Path::new(""));
+    let target = dir.join(target.replace('\\', std::path::MAIN_SEPARATOR_STR));
+    if !target.is_file() {
+        return direct();
+    }
+    match target.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
+        Some("exe") => (target, vec![]),
+        Some("js" | "cjs" | "mjs") => {
+            let node = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(path)).map(|d| d.join("node.exe")).find(|p| p.is_file());
+            node.map_or_else(direct, |node| (node, vec![target]))
+        }
+        _ => direct(),
+    }
+}
+
+/// The script an npm launcher starts, relative to the launcher's folder.
+fn npm_shim_target(text: &str) -> Option<String> {
+    let (at, prefix) = ["\"%dp0%\\", "\"%~dp0\\"].iter().filter_map(|p| Some((text.rfind(p)?, *p))).max_by_key(|(at, _)| *at)?;
+    let rest = &text[at + prefix.len()..];
+    Some(rest[..rest.find('"')?].to_string())
+}
+
+fn is_batch(program: &Path) -> bool {
+    program.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+}
+
+/// A prompt `program` can be given as an argument: a .cmd that isn't npm's can't take line breaks.
+pub fn prompt_for<'a>(program: &Path, prompt: &'a str) -> std::borrow::Cow<'a, str> {
+    if is_batch(program) && prompt.contains(['\r', '\n']) {
+        crate::log::line("agents", format!("{} can't take a multi-line prompt: sending it as one line", program.display()));
+        return prompt.replace(['\r', '\n'], " ").into();
+    }
+    prompt.into()
 }
 
 /// How an agent without MCP support drives the browser: Valerie's own command line.
@@ -367,7 +421,11 @@ pub fn build(def: &AgentDef, mode: Mode, prompt: &str, session: Option<&str>, st
     }
     let k = kind(&def.cli).with_context(|| format!("unknown agent CLI `{}` (use claude, codex, opencode, pi, cursor or hermes, or `command`)", def.cli))?;
     let bin = find_bin(k, &path).with_context(|| format!("{} isn't installed: run \"Set Up {}\" from the command bar", k.title, k.title))?;
-    let mut c = crate::platform::command(&bin);
+    let (program, first_args) = program_for(&bin, &path);
+    let prompt = prompt_for(&program, prompt);
+    let prompt = prompt.as_ref();
+    let mut c = crate::platform::command(&program);
+    c.args(first_args);
     // Some CLIs take their folder from PWD (inherited from whoever started Valerie) rather than the real one.
     c.current_dir(work).env("PWD", work);
     // Valerie's MCP server, told this run's access level (some CLIs start MCP servers with a scrubbed environment).
@@ -1493,6 +1551,58 @@ mod tests {
         let todos = step_for("t2", "TodoWrite", &json!({"todos":[{"content":"a","status":"completed"},{"content":"b","status":"in_progress"}]}));
         assert_eq!(todos.todos[1], Todo { text: "b".into(), state: "in_progress".into() });
         assert_eq!(step_for("t3", "mcp__valerie__open_tab", &json!({"url":"http://localhost:3000"})).detail, "http://localhost:3000");
+    }
+
+    #[test]
+    fn npm_launchers_are_skipped() {
+        use super::{npm_shim_target, program_for, prompt_for};
+        use std::path::Path;
+        // What npm's own cmd-shim writes for a script and for a native program.
+        let script = "IF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n)\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n";
+        let native = "CALL :find_dp0\r\n\"%dp0%\\node_modules\\@x\\y\\y.exe\"   %*\r\n";
+        assert_eq!(npm_shim_target(script).as_deref(), Some(r"node_modules\@openai\codex\bin\codex.js"));
+        assert_eq!(npm_shim_target(native).as_deref(), Some(r"node_modules\@x\y\y.exe"));
+        assert_eq!(npm_shim_target("@echo off\r\nagent.exe %*\r\n"), None);
+
+        let dir = std::env::temp_dir().join(format!("valerie-shim-{}", std::process::id()));
+        let tools = dir.join("tools");
+        std::fs::create_dir_all(dir.join("node_modules/@openai/codex/bin")).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(dir.join("node_modules/@openai/codex/bin/codex.js"), "").unwrap();
+        std::fs::write(tools.join("node.exe"), "").unwrap();
+        let shim = dir.join("codex.cmd");
+        std::fs::write(&shim, script).unwrap();
+        let path = tools.to_string_lossy();
+        assert_eq!(program_for(&shim, &path), (tools.join("node.exe"), vec![dir.join("node_modules/@openai/codex/bin/codex.js")]));
+        // No node to run it with, or a launcher Valerie can't read: the launcher itself, with the prompt on one line.
+        assert_eq!(program_for(&shim, "").0, shim);
+        assert_eq!(prompt_for(&shim, "a\r\n\nb"), "a   b");
+        assert_eq!(prompt_for(Path::new("codex.exe"), "a\nb"), "a\nb");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(super::is_store_dir(Path::new(r"C:\Users\a\AppData\Local\Microsoft\WindowsApps")));
+        assert!(!super::is_store_dir(Path::new(r"C:\Users\a\AppData\Roaming\npm")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_multi_line_prompt_reaches_a_program_npm_installed() {
+        let path = std::env::var("PATH").unwrap();
+        if !std::env::split_paths(&path).any(|d| d.join("node.exe").is_file()) {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("valerie-npm-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(r"node_modules\x\bin")).unwrap();
+        std::fs::write(dir.join(r"node_modules\x\bin\x.js"), "console.log(JSON.stringify(process.argv[2]))").unwrap();
+        let shim = dir.join("x.cmd");
+        std::fs::write(&shim, "@ECHO off\r\nSET dp0=%~dp0\r\n\"node\"  \"%dp0%\\node_modules\\x\\bin\\x.js\" %*\r\n").unwrap();
+        let prompt = "line one\n\nline \"two\" & 100%";
+        // The bug: Windows won't start the launcher with this prompt at all.
+        assert!(std::process::Command::new(&shim).arg(prompt).output().is_err());
+        let (program, first_args) = super::program_for(&shim, &path);
+        let out = std::process::Command::new(program).args(first_args).arg(prompt).output().unwrap();
+        assert_eq!(serde_json::from_slice::<String>(&out.stdout).unwrap(), prompt);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

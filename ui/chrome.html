@@ -1125,11 +1125,12 @@ function springBack() {
   const sc = $("#scroll");
   sc.style.transition = "transform .2s var(--ease), opacity .16s"; sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
 }
-$("#sidebar").addEventListener("wheel", (e) => {
+// The command bar covers the sidebar while it's open, so it passes its swipes here with their time in `at`.
+function swipeWheel(e) {
   if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || !S || (S.spaces.length < 2 && !(S.chats && S.chats.enabled)) || S.sidebar.swipe_between_spaces === false) return;
   const dist = Math.max(20, +S.sidebar.swipe_distance || 90);
   const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerWidth : 1, dx = e.deltaX * k, a = Math.abs(dx);
-  const now = e.timeStamp || performance.now(), gap = now - swipe.at; swipe.at = now;
+  const now = e.at ? e.at - performance.timeOrigin : e.timeStamp || performance.now(), gap = now - swipe.at; swipe.at = now;
   if (swipe.lock) {
     const each = gap > 24 ? a * 16 / Math.min(gap, 160) : a;
     // The fingers may still be speeding up when a swipe commits: wait for the first slowdown before judging.
@@ -1156,7 +1157,8 @@ $("#sidebar").addEventListener("wheel", (e) => {
   sc.style.transition = "none";
   sc.style.transform = `translateX(${-off * 40}px)`; sc.style.opacity = String(1 - Math.abs(off) * 0.4);
   swipe.timer = setTimeout(() => { swipe.acc = 0; springBack(); }, 140);
-}, { passive: true });
+}
+$("#sidebar").addEventListener("wheel", swipeWheel, { passive: true });
 
 // ---------- drag the sidebar's edge to resize (narrow enough and it becomes medium, then icons-only) ----------
 let resizing = false, resizeRaf = 0, resizeW = 0;

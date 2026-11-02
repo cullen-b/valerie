@@ -316,16 +316,25 @@ q.addEventListener("keydown", (e) => {
   else if (k === "Escape") { e.preventDefault(); close(); }
 });
 document.getElementById("backdrop").onmousedown = close;
+// This view covers the sidebar, so sideways swipes go on to it (unless they're scrolling a long URL in the box).
+addEventListener("wheel", (e) => {
+  if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || (e.target === q && q.scrollWidth > q.clientWidth)) return;
+  send({ t: "swipe", deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, at: performance.timeOrigin + e.timeStamp });
+}, { passive: true });
+function applyTheme(t) {
+  const r = document.documentElement;
+  r.classList.toggle("light", t.mode === "light");
+  r.style.setProperty("--accent", t.accent);
+  if (t.mode !== "light") r.style.setProperty("--bg", "color-mix(in srgb, " + t.background[0] + " 70%, #101014)");
+  else r.style.removeProperty("--bg");
+}
 
 window.palette = {
   more,
   open(data) {
     D = data; extra = {};
     const r = document.documentElement;
-    r.classList.toggle("light", data.theme.mode === "light");
-    r.style.setProperty("--accent", data.theme.accent);
-    if (data.theme.mode !== "light") r.style.setProperty("--bg", "color-mix(in srgb, " + data.theme.background[0] + " 70%, #101014)");
-    else r.style.removeProperty("--bg");
+    applyTheme(data.theme);
     document.getElementById("foot").style.display = data.options && data.options.footer_hints === false ? "none" : "";
     const o = data.options || {};
     if (o.width) r.style.setProperty("--width", o.width + "px");
@@ -344,6 +353,11 @@ window.palette = {
     setTimeout(() => { q.focus(); q.select(); }, 0);
   },
   hide() { document.body.classList.remove("open"); },
+  // A new search carries on in the new space; anything else was about the old space's tab or list.
+  spaceChanged(theme) {
+    if (D && D.mode !== "new_tab") return close();
+    applyTheme(theme);
+  },
 };
 send({ t: "ready" });
 </script>
