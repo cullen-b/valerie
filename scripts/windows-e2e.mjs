@@ -3,9 +3,9 @@
 // It deletes Codex and ~/.codex between steps, so never run it on a computer someone uses.
 import { execFileSync, spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-const EXE = process.argv[2], OUT = process.argv[3], PORT = 9222;
+const EXE = process.argv[2], OUT = process.argv[3];
 const HOME = process.env.USERPROFILE, CODEX_HOME = join(HOME, ".codex");
 const CODEX_DIR = join(process.env.LOCALAPPDATA, "Programs", "OpenAI", "Codex");
 const CODEX = join(CODEX_DIR, "bin", "codex.exe");
@@ -79,17 +79,31 @@ async function screenshot(ws, name) {
   });
 }
 
+// Each browser profile is its own WebView2 process, so each picks a port and writes it to a file in its data folder.
+function debugPorts() {
+  const dirs = [process.env.LOCALAPPDATA, process.env.APPDATA, dirname(EXE)].map((d) => `'${d}'`).join(",");
+  const files = ps(`Get-ChildItem -Path ${dirs} -Recurse -Force -Filter DevToolsActivePort -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }`);
+  return files.split(/\r?\n/).filter(Boolean).map((f) => {
+    try { return readFileSync(f, "utf8").split(/\r?\n/)[0]; } catch { return null; }
+  }).filter(Boolean);
+}
+
 async function findWelcome() {
-  for (let i = 0; i < 180; i++) {
-    try {
-      const targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-      for (const t of targets.filter((t) => t.type === "page")) {
-        if (await evaluate(t.webSocketDebuggerUrl, "!!(window.welcome && typeof W !== 'undefined' && W && W.agents)").catch(() => false)) return t.webSocketDebuggerUrl;
-      }
-    } catch {}
-    await sleep(500);
+  let looked = [];
+  for (let i = 0; i < 60; i++) {
+    looked = [];
+    for (const port of debugPorts()) {
+      try {
+        const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000) })).json();
+        for (const t of targets.filter((t) => t.type === "page")) {
+          looked.push(`${port} ${t.url.slice(0, 60)}`);
+          if (await evaluate(t.webSocketDebuggerUrl, "!!(window.welcome && typeof W !== 'undefined' && W && W.agents)").catch(() => false)) return t.webSocketDebuggerUrl;
+        }
+      } catch {}
+    }
+    await sleep(1500);
   }
-  throw new Error("the onboarding page never appeared");
+  throw new Error(`the onboarding page never appeared; pages seen: ${JSON.stringify(looked)}`);
 }
 
 const CARD = `[...document.querySelectorAll('.card.agent')].find((c) => c.innerText.includes('Codex'))`;
@@ -132,7 +146,7 @@ function removeCodex() {
 }
 
 mkdirSync(OUT, { recursive: true });
-process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `--remote-debugging-port=${PORT}`;
+process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=0";
 writeFileSync(join(OUT, "watch.ps1"), WATCH);
 const watcher = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(OUT, "watch.ps1")], { stdio: "ignore", windowsHide: true });
 
