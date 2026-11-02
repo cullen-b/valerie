@@ -6,6 +6,7 @@
      and from "Welcome Tour". It sets up an AI agent and sync, has the agent shape Valerie from the user's own
      words, and tours the main features. Everything is built with createElement/textContent. -->
 <style>
+html { color-scheme: dark; }
 :root { --accent: #9d8cff; --bg: #0b0a10; --card: rgba(255,255,255,.045); --card2: rgba(255,255,255,.075); --line: rgba(255,255,255,.09);
   --fg: #efeef7; --dim: rgba(239,238,247,.58); --faint: rgba(239,238,247,.36); --ok: #6ee7a8; --warn: #f5c56b; --bad: #ff8f8f; }
 * { box-sizing: border-box; }
@@ -306,12 +307,13 @@ function confirmSkipAi() {
     el("p", null, "Without one, you'd miss the things that make Valerie different:"));
   const ul = el("ul");
   ["Answers about any page, right in find", "Chats that open tabs and do things for you", "Daily briefs and tasks that run on their own", "Changing Valerie just by describing what you want"].forEach((t) => ul.append(el("li", null, t)));
-  d.append(ul, el("p", null, "Free AI takes about a minute and needs no account. You can always set one up later from Welcome Tour."));
+  const settingUp = S.free && S.free.step === "progress";
+  d.append(ul, el("p", null, settingUp ? "Free AI is still setting up. Stay a little longer, or set one up later from Welcome Tour." : "Free AI takes about a minute and needs no account. You can always set one up later from Welcome Tour."));
   const close = () => m.remove();
   const row = el("div", "row");
   row.append(btn("Back", "ghost", close),
     btn("Skip anyway", "", () => { close(); S.skippedAi = true; go(S.step + 1); }),
-    btn("Set up free AI", "primary", () => { close(); S.free = { step: "progress", detail: "Starting…" }; draw(); send({ t: "free_ai" }); }));
+    ...(settingUp ? [] : [btn("Set up free AI", "primary", () => { close(); S.free = { step: "progress", detail: "Starting…" }; draw(); send({ t: "free_ai" }); })]));
   d.append(row); m.append(d);
   m.addEventListener("mousedown", (e) => { if (e.target === m) close(); });
   document.body.append(m);
