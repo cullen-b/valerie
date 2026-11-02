@@ -1195,6 +1195,8 @@ addEventListener("keydown", (e) => {
   clearTimeout(vimTimer);
   const fire = (v) => {
     const c = typeof v === "string" ? { cmd: v === "yank_url" ? "copy_url" : v } : v;
+    // A stray letter on the start page mustn't close the window, which is what closing no tab does.
+    if (c.cmd === "close_tab" && !S.active) return;
     if (!PAGE_ONLY.has(c.cmd)) cmd(c);
   };
   if (b[next] != null && !keys.some((k) => k !== next && k.startsWith(next))) { vimBuf = ""; e.preventDefault(); return fire(b[next]); }
