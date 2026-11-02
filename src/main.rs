@@ -637,6 +637,11 @@ fn main() -> anyhow::Result<()> {
     // The app outlives the terminal it may have started from: closing that terminal mustn't close the browser.
     #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Console::FreeConsole() };
+    // Webviews inside a window only work on X11; Wayland desktops run X11 apps through XWayland.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
     let result = app::run(config, urls);
     if let Err(e) = &result {
         log::line("app", format!("couldn't start: {e:#}"));

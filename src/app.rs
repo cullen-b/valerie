@@ -451,6 +451,16 @@ pub fn version() -> String {
     format!("{} ({})", crate::update::current(), option_env!("VALERIE_BUILD").unwrap_or("dev"))
 }
 
+/// On Linux a hidden window has no native handle until it's realized, and webviews can't be built inside it without one.
+fn realize_hidden(_window: &tao::window::Window) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+        use tao::platform::unix::WindowExtUnix;
+        _window.gtk_window().realize();
+    }
+}
+
 /// With VALERIE_TRACE set, print how long after launch each startup step happens.
 pub fn trace(step: &str) {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -1155,6 +1165,7 @@ impl App {
             builder = builder.with_position(tao::dpi::LogicalPosition::new(x, y));
         }
         let window = builder.build(elwt)?;
+        realize_hidden(&window);
         // Logins from the bare binary come along the first time Valerie runs as an app (before any page exists).
         let names: Vec<String> = config.profiles.iter().map(|p| p.name.clone()).collect();
         platform::merge_bare_logins(&config::data_dir().join("logins-merged-from-bare-binary.txt"), &names);
@@ -3242,6 +3253,7 @@ impl App {
                 return None;
             }
         };
+        realize_hidden(&window);
         let id = window.id();
         let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
         let view = self.with_profile(&profile, |app, base| {
@@ -3254,9 +3266,12 @@ impl App {
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
             .build_as_child(&window);
-        let (Ok(bar), Ok(view)) = (bar, view) else {
-            crate::log::line("little-window", "little window webviews failed");
-            return None;
+        let (bar, view) = match (bar, view) {
+            (Ok(bar), Ok(view)) => (bar, view),
+            (bar, view) => {
+                crate::log::line("little-window", format!("little window webviews failed: bar {:?}, page {:?}", bar.err().map(|e| e.to_string()), view.err().map(|e| e.to_string())));
+                return None;
+            }
         };
         Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0 })
     }

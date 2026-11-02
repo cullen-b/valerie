@@ -30,8 +30,8 @@ EOF
       ;;
     fedora) docker build -q -t valerie-linux-fedora - <<'EOF'
 FROM fedora:42
-RUN dnf install -y --setopt=install_weak_deps=False webkit2gtk4.1 gtk3 libxdo libsoup3 \
-    ca-certificates curl xdg-utils xorg-x11-server-Xvfb openbox xdotool ImageMagick xorg-x11-utils dejavu-sans-fonts dbus-x11 xterm \
+RUN dnf install -y --setopt=install_weak_deps=False webkit2gtk4.1 gtk3 libsoup3 \
+    ca-certificates curl xdg-utils xorg-x11-server-Xvfb openbox xdotool ImageMagick dejavu-sans-fonts dbus-x11 xterm \
   && useradd -m tester
 EOF
       ;;
