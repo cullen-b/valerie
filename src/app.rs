@@ -1179,7 +1179,7 @@ impl App {
             .with_accept_first_mouse(true)
             .with_devtools(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Chrome, msg: r.into_body() }))
-            .build_as_child(&window)?;
+            .child_of(&window)?;
         trace("  sidebar view");
         let p = proxy.clone();
         let overlay = WebViewBuilder::new()
@@ -1188,7 +1188,7 @@ impl App {
             .with_transparent(true)
             .with_visible(false)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
-            .build_as_child(&window)?;
+            .child_of(&window)?;
         trace("  command bar view");
         platform::install_page_dialogs(&chrome);
         trace("  state loaded");
@@ -1756,7 +1756,7 @@ impl App {
         let profile = self.site_profile(&url).unwrap_or_else(|| self.profile_for(space));
         self.view_profiles.insert(tab, profile.clone());
         self.view_agents.insert(tab, self.agent_for_url(&url));
-        let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).build_as_child(&app.window));
+        let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
         match built {
             Ok(v) => {
                 platform::allow_magnification(&v, self.config.gestures.pinch_to_zoom);
@@ -3257,7 +3257,7 @@ impl App {
         let id = window.id();
         let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
         let view = self.with_profile(&profile, |app, base| {
-            app.page_builder(base, Target::Little(id), url).with_visible(true).with_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR)).build_as_child(&window)
+            app.page_builder(base, Target::Little(id), url).with_visible(true).with_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR)).child_of(&window)
         });
         let p = self.proxy.clone();
         let bar = WebViewBuilder::new()
@@ -3265,7 +3265,7 @@ impl App {
             .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
-            .build_as_child(&window);
+            .child_of(&window);
         let (bar, view) = match (bar, view) {
             (Ok(bar), Ok(view)) => (bar, view),
             (bar, view) => {
@@ -3926,7 +3926,7 @@ impl App {
         let (x, y, w, h) = self.peek_rect();
         let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(self.state.active_space));
         let built = self.with_profile(&profile, |app, base| {
-            app.page_builder(base, Target::Peek, url).with_visible(true).with_bounds(rect(x, y, w, h)).build_as_child(&app.window)
+            app.page_builder(base, Target::Peek, url).with_visible(true).with_bounds(rect(x, y, w, h)).child_of(&app.window)
         });
         let view = match built {
             Ok(v) => v,
@@ -4502,7 +4502,8 @@ impl App {
         if let Ok(mut w) = self.md_watch.lock() {
             w.retain(|t, _| !gone.contains(t));
         }
-        if let Some(n) = config::take_fallback_note() {
+        // While the guide is open the user is still choosing an AI, so a stand-in isn't news.
+        if let Some(n) = config::take_fallback_note().filter(|_| !self.welcome_open) {
             self.toast(&n);
         }
         // Saved tabs nobody opens any more: looked for once a day, never over the welcome guide.
@@ -7684,6 +7685,56 @@ static MENU_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIs
 #[cfg(target_os = "windows")]
 static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
+/// Every webview is built through this, so each one gets what it needs on this system.
+trait ChildOf {
+    fn child_of<W: wry::raw_window_handle::HasWindowHandle>(self, parent: &W) -> wry::Result<WebView>;
+}
+
+impl ChildOf for WebViewBuilder<'_> {
+    fn child_of<W: wry::raw_window_handle::HasWindowHandle>(self, parent: &W) -> wry::Result<WebView> {
+        let view = self.build_as_child(parent)?;
+        #[cfg(target_os = "windows")]
+        menu_shortcuts_inside(&view);
+        Ok(view)
+    }
+}
+
+/// With a page focused, keys go to WebView2's own process and never reach the message loop: it reports them here instead.
+#[cfg(target_os = "windows")]
+fn menu_shortcuts_inside(view: &WebView) {
+    use webview2_com::{
+        AcceleratorKeyPressedEventHandler,
+        Microsoft::Web::WebView2::Win32::{COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN},
+    };
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{MSG, WM_KEYDOWN, WM_SYSKEYDOWN};
+    use wry::WebViewExtWindows;
+    let handler = AcceleratorKeyPressedEventHandler::create(Box::new(|_, args| {
+        let Some(args) = args else { return Ok(()) };
+        unsafe {
+            let (mut kind, mut key, mut lparam) = (COREWEBVIEW2_KEY_EVENT_KIND::default(), 0u32, 0i32);
+            args.KeyEventKind(&mut kind)?;
+            args.VirtualKey(&mut key)?;
+            args.KeyEventLParam(&mut lparam)?;
+            let message = match kind {
+                COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN => WM_KEYDOWN,
+                COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN => WM_SYSKEYDOWN,
+                _ => return Ok(()),
+            };
+            let window = HWND(MENU_WINDOW.load(std::sync::atomic::Ordering::Relaxed) as _);
+            let msg = MSG { hwnd: window, message, wParam: WPARAM(key as usize), lParam: LPARAM(lparam as isize), ..Default::default() };
+            if menu_shortcut(&msg as *const MSG as *const std::ffi::c_void) {
+                args.SetHandled(true)?;
+            }
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    if let Err(e) = unsafe { view.controller().add_AcceleratorKeyPressed(&handler, &mut token) } {
+        crate::log::line("keys", format!("couldn't listen for shortcuts in a webview: {e}"));
+    }
+}
+
 /// Windows only runs a menu's shortcuts when the message loop asks it to; true if this key was one.
 #[cfg(target_os = "windows")]
 fn menu_shortcut(msg: *const std::ffi::c_void) -> bool {
@@ -7796,7 +7847,7 @@ impl App {
                 send(&p2, UserEvent::Ipc { from: Source::Chat, msg });
                 false
             })
-            .build_as_child(&self.window);
+            .child_of(&self.window);
         match built {
             Ok(v) => self.chat_view = Some(v),
             Err(e) => crate::log::line("chats", format!("chat view: {e}")),
@@ -8413,7 +8464,7 @@ impl App {
                 .with_accept_first_mouse(true)
                 .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Answer, msg: r.into_body() }))
                 .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
-                .build_as_child(&self.window);
+                .child_of(&self.window);
             match built {
                 Ok(v) => {
                     platform::round_corners(&v, 12.0, platform::Corners::All);
@@ -8961,7 +9012,7 @@ impl App {
                     send(&p2, UserEvent::Ipc { from: Source::Market, msg: json!({ "t": "open", "url": url }).to_string() });
                     false
                 })
-                .build_as_child(&self.window);
+                .child_of(&self.window);
             match built {
                 Ok(v) => self.market_view = Some(v),
                 Err(e) => return crate::log::line("plugins", format!("plugin marketplace view: {e}")),
@@ -9177,7 +9228,7 @@ impl App {
                     send(&p2, UserEvent::Ipc { from: Source::Welcome, msg: json!({ "t": "open", "url": url }).to_string() });
                     false
                 })
-                .build_as_child(&self.window);
+                .child_of(&self.window);
             match built {
                 Ok(v) => self.welcome_view = Some(v),
                 Err(e) => return crate::log::line("welcome", format!("welcome view: {e}")),
@@ -10777,7 +10828,7 @@ impl App {
             .with_devtools(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Terminal, msg: r.into_body() }))
             .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
-            .build_as_child(&self.window);
+            .child_of(&self.window);
         match built {
             Ok(v) => {
                 self.terminal_view = Some(v);
