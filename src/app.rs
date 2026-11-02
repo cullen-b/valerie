@@ -1166,7 +1166,7 @@ impl App {
                 x + w > p.x + 40.0 && x < p.x + s.width - 40.0 && y + 20.0 > p.y && y < p.y + s.height - 40.0
             })
         };
-        let frame = saved.filter(|f| f.2 >= 200.0 && f.3 >= 150.0 && on_screen(*f)).or_else(|| {
+        let frame = test_window_frame(elwt).or(saved.filter(|f| f.2 >= 200.0 && f.3 >= 150.0 && on_screen(*f))).or_else(|| {
             let (sx, sy, sw, sh) = screen?;
             let k = config.window.screen_fraction.clamp(0.5, 1.0);
             let w = if config.window.width > 0.0 { config.window.width.min(sw) } else { (sw * k).round() };
@@ -1186,6 +1186,7 @@ impl App {
             builder = builder.with_position(tao::dpi::LogicalPosition::new(x, y));
         }
         let window = builder.build(elwt)?;
+        place_test_window(&window, elwt);
         realize_hidden(&window);
         // Logins from the bare binary come along the first time Valerie runs as an app (before any page exists).
         let names: Vec<String> = config.profiles.iter().map(|p| p.name.clone()).collect();
@@ -1709,7 +1710,7 @@ impl App {
                     let host = url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
                     crate::log::line("page", format!("opened a pop-up window for {host}"));
                     #[cfg(target_os = "macos")]
-                    if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.map(|p| (p.x, p.y))) {
+                    if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.filter(|_| platform::test_windows().is_none()).map(|p| (p.x, p.y))) {
                         return NewWindowResponse::Create { webview };
                     }
                     #[cfg(not(target_os = "macos"))]
@@ -3320,14 +3321,16 @@ impl App {
     fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
         let lw = &self.config.little_window;
         let (w, h) = size.unwrap_or((lw.width, lw.height));
-        let window = match mac_window(WindowBuilder::new())
+        let mut builder = mac_window(WindowBuilder::new())
             .with_title("Valerie")
             .with_visible(visible)
             .with_inner_size(LogicalSize::new(w, h))
-            .with_min_inner_size(LogicalSize::new(360.0, 240.0))
-            .build(elwt)
-        {
-            Ok(w) => w,
+            .with_min_inner_size(LogicalSize::new(360.0, 240.0));
+        let window = match builder.build(elwt) {
+            Ok(w) => {
+                place_test_window(&w, elwt);
+                w
+            }
             Err(e) => {
                 crate::log::line("little-window", e);
                 return None;
@@ -7928,6 +7931,22 @@ fn on_this_system(name: &str) -> bool {
     cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari")
 }
 
+/// Where a test copy's windows go (`platform::test_windows`): a display other than the main one, if there is one.
+fn test_window_frame(elwt: &EventLoopWindowTarget<UserEvent>) -> Option<(f64, f64, f64, f64)> {
+    platform::test_windows()?;
+    let main = elwt.primary_monitor()?.position();
+    let spare = elwt.available_monitors().find(|m| m.position() != main)?;
+    let (p, s) = (spare.position().to_logical::<f64>(spare.scale_factor()), spare.size().to_logical::<f64>(spare.scale_factor()));
+    Some((p.x + 20.0, p.y + 40.0, 1000.0_f64.min(s.width - 40.0), 700.0_f64.min(s.height - 80.0)))
+}
+
+/// After building: the position given to WindowBuilder is off for anything but the main display.
+fn place_test_window(window: &tao::window::Window, elwt: &EventLoopWindowTarget<UserEvent>) {
+    if let Some((x, y, _, _)) = test_window_frame(elwt) {
+        window.set_outer_position(tao::dpi::LogicalPosition::new(x, y));
+    }
+}
+
 /// The keys a shortcut really presses here, for telling whether two shortcuts are the same.
 fn accel_keys(accel: &str) -> String {
     accel.replace("CmdOrCtrl", if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" }).to_lowercase()
@@ -8181,7 +8200,13 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
         use tao::platform::windows::EventLoopBuilderExtWindows;
         builder.with_msg_hook(menu_shortcut);
     }
-    let event_loop = builder.build();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut event_loop = builder.build();
+    #[cfg(target_os = "macos")]
+    if platform::test_windows().is_some() {
+        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+        event_loop.set_activation_policy(ActivationPolicy::Prohibited);
+    }
     let proxy = event_loop.create_proxy();
     let p = proxy.clone();
     muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| send(&p, UserEvent::Menu(e.id))));

@@ -93,6 +93,12 @@ the owner reports a failure. When you add code where something can fail without 
 - Run the app as the `.app`, not the bare `target/*/valerie` binary: WebKit keeps the bare binary's logins in a
   separate store (`~/Library/WebKit/valerie` vs `~/Library/WebKit/dev.valerie.browser`).
 - UI is plain HTML/JS in `ui/`; `VALERIE_UI_DIR=ui cargo run` reloads it from disk.
+- **The owner may be using Valerie while you work, so stay out of their way.** Test with `scripts/test-copy.sh`: `up` runs a
+  copy with its own folders and profile, no window and no focus; `up window` gives it real windows on a display that isn't
+  the main one (no focus either). Real mouse and key tests use the Linux container or Windows VM, because on a Mac they
+  take over the owner's own cursor and keyboard. On the owner's real Valerie, only read: logs, settings and status. No
+  tabs (hidden ones included), clicks, page scripts or restarts unless the owner agrees, for example when a bug only shows
+  with their logins.
 - Run test instances with `VALERIE_CONFIG_DIR`/`VALERIE_DATA_DIR` pointing at a temp dir and a non-default
   `mcp.port` (e.g. 7790) so you never touch the owner's real browser. Also give the test config its own profiles
   and spaces (e.g. `profiles: [{ name: Test }]`, `spaces: [{ name: Test, profile: Test }]`): cookies and site

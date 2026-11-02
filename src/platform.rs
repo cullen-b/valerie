@@ -524,10 +524,21 @@ mod mac {
             }
             let parent_frame: NSRect = msg_send![parent, frame];
             let screen_frame: NSRect = msg_send![screen, frame];
-            let origin = match position {
+            let mut origin = match position {
                 Some((x, y)) => NSPoint::new(x, screen_frame.size.height - y - size.1),
                 None => parent_frame.origin,
             };
+            let mut test_spot = None;
+            if super::test_windows().is_some() {
+                let screens: *mut AnyObject = msg_send![class!(NSScreen), screens];
+                let count: usize = msg_send![screens, count];
+                if count > 1 {
+                    let spare: *mut AnyObject = msg_send![screens, objectAtIndex: 1usize];
+                    let frame: NSRect = msg_send![spare, frame];
+                    origin = NSPoint::new(frame.origin.x + 40.0, frame.origin.y + frame.size.height - size.1 - 80.0);
+                    test_spot = Some(origin);
+                }
+            }
             let rect = NSRect::new(origin, NSSize::new(size.0, size.1));
             let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable | NSWindowStyleMask::Resizable;
             let window: *mut AnyObject = msg_send![class!(NSWindow), alloc];
@@ -540,6 +551,10 @@ mod mac {
             let _: () = msg_send![window, setReleasedWhenClosed: true];
             let _: () = msg_send![window, setContentView: webview];
             let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
+            // Showing can move it to the display in use.
+            if let Some(spot) = test_spot {
+                let _: () = msg_send![window, setFrameOrigin: spot];
+            }
             objc2::rc::Retained::from_raw(webview.cast())
         }
     }
@@ -1925,6 +1940,13 @@ pub fn local_timestamp() -> String {
 /// Make `alert()`, `confirm()` and `prompt()` in web pages show real dialogs (pass any webview Valerie made).
 #[cfg(target_os = "macos")]
 pub use mac::popup_window;
+
+/// A test copy of Valerie keeps out of the way (`scripts/test-copy.sh`): it never takes focus, and its windows open on
+/// a display other than the main one, if there is one.
+pub fn test_windows() -> Option<String> {
+    std::env::var("VALERIE_TEST_WINDOWS").ok().filter(|v| !v.is_empty())
+}
+
 
 pub fn install_page_dialogs(wv: &WebView) {
     #[cfg(target_os = "macos")]
