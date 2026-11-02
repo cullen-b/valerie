@@ -7708,6 +7708,7 @@ fn menu_shortcut(msg: *const std::ffi::c_void) -> bool {
 
 pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     trace("launch");
+    crate::update::clean_up_previous();
     #[allow(unused_mut)]
     let mut builder = EventLoopBuilder::<UserEvent>::with_user_event();
     #[cfg(target_os = "windows")]
@@ -9441,10 +9442,7 @@ impl App {
         if self.update_busy {
             return if manual { self.toast("Already checking for updates") };
         }
-        // VALERIE_UPDATE_TEST lets a test instance update its own copy of the app.
-        let test_instance = (std::env::var_os("VALERIE_CONFIG_DIR").is_some() || std::env::var_os("VALERIE_DATA_DIR").is_some())
-            && std::env::var_os("VALERIE_UPDATE_TEST").is_none();
-        if !manual && (!self.config.updates.check || test_instance || crate::update::app_bundle().is_none() && cfg!(target_os = "macos")) {
+        if !manual && (!self.config.updates.check || crate::update::is_test_instance() || crate::update::app_bundle().is_none() && cfg!(target_os = "macos")) {
             return;
         }
         self.state.update_checked = now();
