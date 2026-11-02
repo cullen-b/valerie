@@ -314,7 +314,7 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
           <h1>The world's<br><em>last</em> browser.</h1>
           <p class="sub">Every color, shortcut, menu and site rule is a setting. Change them in one file, or ask your AI to.</p>
           <div class="ctas">
-            <a class="btn primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Download for Mac</a>
+            <a class="btn primary" id="dl" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg"> Download for Mac</a>
             <button class="btn" data-go="install">Other ways</button>
           </div>
           <p class="meta" id="ver">Free · open source · macOS 14+</p>
@@ -429,13 +429,13 @@ body.bar #scrim { opacity: 1; pointer-events: auto; } body.bar #cbar { opacity: 
           <h2>Get Valerie</h2>
           <p class="sub">Free and open source.</p>
           <div class="ways">
-            <div class="way"><span>Terminal</span><div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div></div>
-            <div class="way"><span>Homebrew</span><div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div></div>
-            <div class="way"><span>Download</span><div class="ctas"><a class="btn sm primary" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Valerie.dmg</a><a class="btn sm" href="https://github.com/cullen-b/valerie/releases/latest">Linux and Windows</a></div></div>
+            <div class="way" data-mac-only><span>Terminal</span><div class="cmd"><code>curl -fsSL https://cullen-b.github.io/valerie/install.sh | bash</code><button>Copy</button></div></div>
+            <div class="way" data-mac-only><span>Homebrew</span><div class="cmd"><code>brew install --cask cullen-b/valerie/valerie</code><button>Copy</button></div></div>
+            <div class="way"><span>Download</span><div class="ctas"><a class="btn sm primary" id="dl-file" href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Valerie.dmg</a><a class="btn sm" id="dl-others" href="https://github.com/cullen-b/valerie/releases/latest">Linux and Windows</a></div></div>
           </div>
           <p class="fine">Sign in to Claude Code, Codex or Cursor first and setup is instant. No AI? Valerie sets up a free one.</p>
           <p class="fine">Want changes the day they're made? Run Toggle Test Builds from the command bar.</p>
-          <p class="fine">The .dmg and Homebrew copies aren't notarized yet. The first time, open System Settings › Privacy &amp; Security › Open Anyway.</p>
+          <p class="fine" data-mac-only>The .dmg and Homebrew copies aren't notarized yet. The first time, open System Settings › Privacy &amp; Security › Open Anyway.</p>
         </div>
       </section>
 
@@ -1058,9 +1058,23 @@ for (const b of document.querySelectorAll(".cmd button")) b.onclick = () => {
 };
 
 // ---------- the command bar ----------
-const DMG = "https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg";
+// The download that fits this machine; phones and anything without a build keep the Mac one, and "Other ways" lists the rest.
+const BUILD = (() => {
+  const ua = navigator.userAgent;
+  if (/Windows NT/.test(ua)) return { os: "Windows", file: "valerie-windows-x86_64.zip", others: "Mac and Linux", needs: "Windows" };
+  if (/Linux x86_64/.test(ua) && !/Android/.test(ua)) return { os: "Linux", file: "valerie-linux-x86_64.tar.gz", others: "Mac and Windows", needs: "Linux with WebKitGTK 4.1" };
+  return { os: "Mac", file: "Valerie.dmg", others: "Linux and Windows", needs: "macOS 14+" };
+})();
+const DOWNLOAD = `https://github.com/cullen-b/valerie/releases/latest/download/${BUILD.file}`;
+$("#dl").href = $("#dl-file").href = DOWNLOAD;
+$("#dl").textContent = `Download for ${BUILD.os}`;
+$("#dl-file").textContent = BUILD.file;
+$("#dl-others").textContent = BUILD.others;
+$("#ver").textContent = `Free · open source · ${BUILD.needs}`;
+if (BUILD.os !== "Mac") for (const el of document.querySelectorAll("[data-mac-only]")) el.remove();
+
 const COMMANDS = [
-  ["↓", "Download Valerie", "", () => (location.href = DMG)],
+  ["↓", "Download Valerie", "", () => (location.href = DOWNLOAD)],
   ["✦", "Watch an Agent Work", "", () => agent("weather")],
   ["◎", "Close Finished Tickets", "", () => agent("tickets")],
   ["◉", "Join Next Meeting", "", () => agent("meeting")],
@@ -1174,7 +1188,7 @@ const fromHash = () => ({ try: "home", agents: "agents", tools: "tools", mcp: "t
 addEventListener("hashchange", () => fromHash() && show(fromHash()));
 if (fromHash()) M.tab = fromHash();
 fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) => (r.ok ? r.json() : null)).then((r) => {
-  if (r && r.tag_name) $("#ver").textContent = `Version ${r.tag_name.replace(/^v/, "")} · free · open source · macOS 14+`;
+  if (r && r.tag_name) $("#ver").textContent = `Version ${r.tag_name.replace(/^v/, "")} · free · open source · ${BUILD.needs}`;
 }).catch(() => {});
 render();
 </script>
