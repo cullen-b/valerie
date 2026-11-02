@@ -75,7 +75,7 @@ setInterval(async () => {
   const card = [...document.querySelectorAll('.card.agent')].find((c) => c.innerText.includes('Codex'));
   const state = { ready: !!(typeof W !== 'undefined' && W && W.agents), chip: card && card.querySelector('.chip') ? card.querySelector('.chip').innerText : null, text: card ? card.innerText : null };
   const order = await (await fetch('http://127.0.0.1:${server.address().port}/', { method: 'POST', body: JSON.stringify(state) })).text();
-  if (order === 'ai') go(STEPS.indexOf('ai'));
+  if (order === 'ai') go(visibleSteps().indexOf('ai'));
   if (order === 'click') { const b = card && [...card.querySelectorAll('button')].find((b) => b.innerText === 'Install and sign in'); if (b) b.click(); }
 }, 300);
 </script>
@@ -145,7 +145,7 @@ try {
   const shown = consoles();
   say(`console windows: ${JSON.stringify(shown)}`);
   check(shown.length === 1, `not signed in: exactly one terminal opened (${shown.length})`);
-  const procs = ps(`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'setup.codex.ps1|codex(\\.exe)?"? login' } | ForEach-Object { $_.CommandLine }`);
+  const procs = ps(`Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'setup.codex.ps1|codex(\\.exe)?"? login' } | ForEach-Object { $_.CommandLine }`);
   say(procs);
   check(/login/.test(procs), "not signed in: that terminal is running codex login");
   check(execFileSync(CODEX, ["--version"], { encoding: "utf8", windowsHide: true }).includes("codex"), "the installed Codex runs");
