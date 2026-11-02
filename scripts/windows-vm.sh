@@ -100,7 +100,9 @@ case "${1:-}" in
     zip="${2:-}"
     if [ -z "$zip" ]; then
       zip="$OUT/valerie-windows-x86_64.zip"
-      gh release download edge -R cullen-b/valerie -p valerie-windows-x86_64.zip -O "$zip" --clobber
+      # The "edge" release only holds latest.json; builds are on their own version's release.
+      tag="$(gh release list -R cullen-b/valerie --limit 1 --json tagName -q '.[0].tagName')"
+      gh release download "$tag" -R cullen-b/valerie -p valerie-windows-x86_64.zip -O "$zip" --clobber
     fi
     scp "${ssh_opts[@]}" "$zip" tester@127.0.0.1:Downloads/valerie.zip
     # Marked as from the internet like a browser download, so Windows treats it as a new user would see it.
