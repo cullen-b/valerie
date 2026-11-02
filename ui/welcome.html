@@ -169,6 +169,7 @@ const AGENT_PROVIDER = { codex: "OpenAI" };
 const AGENT_NOTE = { claude: "Claude Pro or Max", codex: "ChatGPT Plus or Pro", opencode: "Free models or your own keys", cursor: "Cursor plan", pi: "Your own keys", hermes: "Nous or your own keys" };
 function agentState(a) {
   const s = S.agents[a.id] || {}, u = S.setup[a.id];
+  if (u && u.step === "installing" && !s.works) return { chip: "Installing", cls: "wait", detail: "Installing " + a.title + ". This takes a minute or two." };
   if (u && u.step === "running" && !s.works) return { chip: "In terminal", cls: "wait", detail: "Follow the steps in the terminal window. This updates when it's done." };
   if (u && !s.works) return { chip: "Didn't finish", cls: "warn", detail: u.detail };
   if (!a.installed) return { chip: "Not installed", cls: "", detail: AGENT_NOTE[a.id] || "" };
@@ -235,6 +236,7 @@ function aiStep(root) {
     const actions = el("div", "row");
     const s = S.agents[a.id] || {};
     if (s.works) actions.append(S.chosen === a.id ? el("span", "chip ok", "✓ Valerie uses this") : btn("Use " + a.title, "small primary", () => use(a.id)));
+    else if (S.setup[a.id] && S.setup[a.id].step === "installing") { /* no second install while this one runs */ }
     else if (S.setup[a.id]) {
       actions.append(btn("Try again", "small", () => send({ t: "sign_in", id: a.id })));
       if (W.setup_help_link) actions.append(btn("Download page", "small ghost", () => send({ t: "open_setup_help", id: a.id })));
