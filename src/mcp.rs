@@ -162,8 +162,9 @@ fn handle_http(mut rq: tiny_http::Request, port: u16, token: &str, proxy: &Event
 }
 
 const INSTRUCTIONS: &str = "Valerie is the user's own web browser; these tools drive it.\n\
-Use web_search and fetch_page for every web search and page you read, before any other web tool, curl or a scraper: \
-they have no quota and see what the user sees. Keep curl for APIs and raw files.\n\
+Use web_search and fetch_page alongside any other web tools you have. Reach for them for pages that need a login or JavaScript, \
+PDFs, research across several pages, and anything another tool returned blocked, empty or thin: they have no quota and see what \
+the user sees. Keep curl for APIs and raw files.\n\
 Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
 user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
 top results). fetch_page reads pages and PDFs as Markdown; give focus (your question) to get just the sections about it, word \
@@ -472,7 +473,7 @@ pub fn tools() -> Vec<Value> {
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     let web = WEB_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
     let all = vec![
-        tool("web_search", "Use this for every web search. Get the results: title, url and snippet each, from the user's search engine in \
+        tool("web_search", "Search the web, with no quota. Get the results: title, url and snippet each, from the user's search engine in \
              a hidden tab (their tabs and history aren't touched; no rate limits). Filter by time (recent), to news or to \
              sites. With read: N it also reads the top N results and returns the parts of each about your question (focus), \
              so one call answers most research questions.", json!({
@@ -484,7 +485,7 @@ pub fn tools() -> Vec<Value> {
             "read": { "type": "integer", "description": "Also read the top this many results (up to 5)" },
             "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
             "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
-        tool("fetch_page", "Use this to read any web page, before curl or a scraper. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
+        tool("fetch_page", "Use this for a page that needs a login or JavaScript, or that another tool couldn't read. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
              logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N) and \
              local files work, with no rate limits. \
              Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
