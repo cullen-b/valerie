@@ -823,7 +823,8 @@ mod mac {
     pub fn merge_bare_logins(marker: &std::path::Path, profiles: &[String]) {
         use objc2::class;
         use objc2_foundation::NSString;
-        if marker.exists() || !bundled() {
+        // A test instance has its own marker but shares the real app's login stores: it must never write to them.
+        if marker.exists() || !bundled() || crate::update::is_test_instance() {
             return;
         }
         let Some(lib) = dirs::home_dir().map(|h| h.join("Library/WebKit")) else { return };

@@ -475,7 +475,13 @@ fn main() -> anyhow::Result<()> {
     log::set_level(&loaded.as_ref().map_or(Config::defaults().logs.level, |c| c.logs.level.clone()));
     let config = loaded.unwrap_or_else(|e| {
         log::line("config", format!("config error, using defaults: {e:#}"));
-        Config::defaults()
+        let mut defaults = Config::defaults();
+        // Logins are stored by profile name: a test instance with a broken config must not fall back to the real ones.
+        if update::is_test_instance() {
+            defaults.profiles.iter_mut().for_each(|p| p.name = format!("Test {}", p.name));
+            defaults.spaces.iter_mut().for_each(|s| s.profile = s.profile.take().map(|p| format!("Test {p}")));
+        }
+        defaults
     });
     match args.first().map(String::as_str) {
         Some("-h" | "--help" | "help") => {
