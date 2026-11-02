@@ -896,8 +896,10 @@ app:
                            # true | false (Install Command Line Tool in the command bar does it by hand)
   keep_running_when_closed: true   # macOS: closing the window leaves Valerie running in the Dock (the dot stays), so it
                            # opens again and takes links instantly; anything playing is paused; ⌘Q quits. true | false
-                           # (false = closing the window quits, unless little windows are open). Windows and Linux
-                           # have no Dock to open it from, so there closing the window always quits.
+                           # (false = closing the window quits, unless little windows are open)
+  keep_running_when_closed_without_dock: false   # the same on Windows and Linux, which have no Dock: true keeps Valerie
+                           # running out of sight, and opening Valerie again shows its window. false = closing the
+                           # window quits, unless little windows are open. true | false
   unload_when_closed_minutes: 5   # minutes after you close the window (Valerie still running) before every tab, chat and
                            # idle panel is put to sleep so Valerie takes almost no memory; they reload when you open it
                            # again. 0 = keep them loaded

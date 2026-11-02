@@ -3479,9 +3479,10 @@ impl App {
         self.main_hidden && !self.revealed
     }
 
-    /// Only macOS has a Dock to open a closed window from; elsewhere a hidden Valerie would just linger out of reach.
+    /// Only macOS has a Dock to open a closed window from, so other systems have their own setting and default.
     fn keep_running_when_closed(&self) -> bool {
-        cfg!(target_os = "macos") && self.config.app.keep_running_when_closed
+        let app = &self.config.app;
+        if cfg!(target_os = "macos") { app.keep_running_when_closed } else { app.keep_running_when_closed_without_dock }
     }
 
     /// Valerie opened only to answer an agent, and nobody has used it since: nothing is lost by quitting, and the next
