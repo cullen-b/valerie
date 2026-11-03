@@ -828,7 +828,8 @@ agents:
     customize: ""          # "! change …" requests
   jobs: []                 # the older form of `tasks` (below): { name, prompt, at: "08:30" or every: 30m, agent }; still read
   fallback: true           # when the agent a job uses isn't installed on this computer, use one that is (Claude Code,
-                           # Codex, OpenCode, Pi, Cursor, Hermes, in that order) and say so once. true | false
+                           # Codex, OpenCode, Pi, Cursor, Hermes, in that order) and say so. true | false
+  fallback_note: once      # saying so: once on each computer, or at every launch. one of: once | every_launch
 
 
 # --------------------------------------------------------------------------------------------------------------

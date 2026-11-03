@@ -4731,7 +4731,7 @@ impl App {
             w.retain(|t, _| !gone.contains(t));
         }
         // While the guide is open the user is still choosing an AI, so a stand-in isn't news.
-        if let Some(n) = config::take_fallback_note().filter(|_| !self.welcome_open) {
+        if let Some(n) = config::take_fallback_note().filter(|n| !self.welcome_open && (self.config.agents.fallback_note != "once" || config::note_is_new(n))) {
             self.toast(&n);
         }
         // Saved tabs nobody opens any more: looked for once a day, never over the welcome guide.

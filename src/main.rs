@@ -272,6 +272,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
         }
     };
     one_of(&mut p, "updates: channel".into(), &c.updates.channel, &["stable", "edge"]);
+    one_of(&mut p, "agents: fallback_note".into(), &c.agents.fallback_note, &["once", "every_launch"]);
     const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);

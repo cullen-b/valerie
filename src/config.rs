@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_YAML: &str = include_str!("../config/default.yaml");
 pub const STARTER_YAML: &str = include_str!("../config/starter.yaml");
@@ -1045,6 +1045,8 @@ pub struct AgentsConfig {
     pub instructions_for: BTreeMap<String, String>,
     /// Use an installed agent when the chosen one isn't on this computer.
     pub fallback: bool,
+    /// Say an installed agent stood in: "once" on each computer, or "every_launch".
+    pub fallback_note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1275,6 +1277,20 @@ fn note_fallback(missing: &str, using: &str) {
 /// A message to show once when an agent stood in for one that isn't installed here.
 pub fn take_fallback_note() -> Option<String> {
     FALLBACK_NOTE.lock().unwrap_or_else(|e| e.into_inner()).1.take()
+}
+
+/// Whether this computer hasn't shown this stand-in message before (and remember it has now).
+pub fn note_is_new(note: &str) -> bool {
+    note_is_new_in(&data_dir().join("stand-in-notes"), note)
+}
+
+fn note_is_new_in(file: &Path, note: &str) -> bool {
+    let seen = std::fs::read_to_string(file).unwrap_or_default();
+    if seen.lines().any(|l| l == note) {
+        return false;
+    }
+    let _ = std::fs::write(file, format!("{seen}{note}\n"));
+    true
 }
 
 /// A random name for this installation that never changes (unlike the hostname, which macOS renumbers when another
@@ -1546,6 +1562,15 @@ mod tests {
         assert!(super::take_fallback_note().is_some_and(|n| n.contains(missing.title)));
         let off = Config::parse(&format!("agents: {{ default: {}, fallback: false }}\n", missing.id)).unwrap();
         assert_eq!(off.agent_named(missing.id).0, missing.id);
+    }
+
+    #[test]
+    fn stand_in_note_shows_once() {
+        let file = std::env::temp_dir().join(format!("valerie-note-test-{}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        assert!(super::note_is_new_in(&file, "a"));
+        assert!(!super::note_is_new_in(&file, "a"));
+        assert!(super::note_is_new_in(&file, "b"));
+        let _ = std::fs::remove_file(&file);
     }
 
     /// Stable by default; edge reads the edge feed, unless the feed was pointed somewhere of its own (a fork).
