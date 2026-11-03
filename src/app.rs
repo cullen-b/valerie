@@ -2466,8 +2466,14 @@ impl App {
         let m = serde_json::to_string(&self.translate(msg)).unwrap_or_default();
         let in_page = self.state.active_tab().and_then(|t| self.views.get(&t));
         match in_page {
-            Some(v) if self.focused_little.is_none() => {
+            Some(v) if self.focused_little.is_none() && !self.chats_open => {
                 let _ = v.evaluate_script(&format!("window.__valerie ? __valerie.toast({m}) : 0"));
+            }
+            // Chats covers the page and leaves the sidebar too narrow for a message.
+            _ if self.chats_open && self.chat_view.is_some() => {
+                if let Some(v) = &self.chat_view {
+                    let _ = v.evaluate_script(&format!("window.chat && chat.toast({m}, {})", self.config.toast_seconds));
+                }
             }
             _ => {
                 let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.toast({m})"));
@@ -6423,7 +6429,13 @@ impl App {
             (Source::Page(Target::Tab(id)), "notify") => self.site_notification(id, &m),
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
-            (Source::Chat, "ready") => self.render_chat(),
+            (Source::Chat, "ready") => {
+                self.render_chat();
+                // Opening Chats the first time focuses it before its page exists, and those keys would be lost.
+                if self.chats_open || self.chat_float {
+                    self.focus_active();
+                }
+            }
             (Source::Chat, "attach") => self.chat_attach(&m),
             // Esc on a floating chat: it carries on in Chats; with Shift, the user goes there with it.
             (Source::Chat, "float_close") => self.close_chat_float(m["follow"].as_bool().unwrap_or(false)),
@@ -8401,6 +8413,7 @@ impl App {
         let data = json!({
             "chat": chat, "running": chat.is_some_and(|c| self.chat_running.contains(&c.id)),
             "started": chat.and_then(|c| self.chat_started.get(&c.id)), "agents": agents, "models": models,
+            "answers_as": chat.map(|c| self.config.agent_named(&c.agent).0),
             "default_agent": self.config.agent_for("chat").0, "default_access": self.config.chats.access,
             "default_effort": self.config.chats.effort, "suggestions": self.config.chats.suggestions,
             "plan_button": self.config.chats.plan_button, "composer_hint": self.config.chats.composer_hint,
