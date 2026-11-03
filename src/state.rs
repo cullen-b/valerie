@@ -207,6 +207,9 @@ pub struct State {
     /// Answers to "Allow this site to send notifications?" (site → allowed).
     #[serde(default)]
     pub notify_sites: BTreeMap<String, bool>,
+    /// Answers to "Allow this site to use your location?" (site → allowed).
+    #[serde(default)]
+    pub location_sites: BTreeMap<String, bool>,
     /// Pages an agent checks in the background (Watch This Page…).
     #[serde(default)]
     pub watches: Vec<Watch>,

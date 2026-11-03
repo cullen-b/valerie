@@ -104,8 +104,8 @@ for good (it's saved as a line in `boosts/<site>.css`). Plus Translate Page, Cop
 Selected Text, Close Duplicate Tabs, and dark mode: sites show their own dark look (`pages.dark_mode`); ones without one can be inverted (`pages.dark_fallback`, or per site).
 
 **Pages behave:** `alert` / `confirm` / `prompt` show as proper sheets on the window, "Sign in with Google"-style
-pop-ups open as small linked windows so sign-ins complete (`links.popups`), sites ask before using the camera or
-microphone (`permissions`), and a thin line along the top shows a page loading (`pages.loading_bar`).
+pop-ups open as small linked windows so sign-ins complete (`links.popups`), sites ask before using the camera,
+microphone or your location (`permissions`), and a thin line along the top shows a page loading (`pages.loading_bar`).
 
 ## AI: Chats, questions in find, and an agent that drives your browser
 

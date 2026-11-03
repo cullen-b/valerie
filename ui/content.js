@@ -144,6 +144,77 @@ const notifyHooks = { permission() {}, clicked() {} };
   notifyHooks.clicked = (id) => { const n = live.get(id); if (n) { window.focus(); n._fire("click"); } };
 })();
 
+// ---------- location for websites: from the computer, once you've allowed the site ----------
+// WebKit on the Mac gives apps like Valerie a navigator.geolocation that always says "denied", so pages get this one.
+const locationHooks = { fix() {} };
+(() => {
+  if (!CFG.site_location || !window.Geolocation) return;
+  const site = location.hostname.replace(/^www\./, "").toLowerCase();
+  const state = () => {
+    const l = cfg.site_location || {}, here = cfg.location_here, own = (here !== "ask" && here) || (l.sites || {})[site] || l.policy;
+    return own === "allow" || own === "granted" ? "granted" : own === "deny" || own === "denied" ? "denied" : "default";
+  };
+  // Valerie answers in the top page only, and the API is for secure pages only.
+  const refused = window !== top || !isSecureContext;
+  const once = new Set(), watches = new Map();
+  let seq = 0, asking = false, last = null, poll = 0;
+  const failure = (code, message) => ({ code, message, PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
+  const later = (f, v) => { if (typeof f === "function") setTimeout(() => f(v)); };
+  // A tab out of sight holds its question: nobody could answer it there.
+  const ask = () => { if (asking || document.visibilityState !== "visible") return; asking = true; post({ t: "location" }); };
+  document.addEventListener("visibilitychange", () => { if (once.size || watches.size) ask(); });
+  const need = (ok) => { if (typeof ok !== "function") throw new TypeError("Location needs a success callback"); };
+  const define = (name, value) => Object.defineProperty(Geolocation.prototype, name, { value, writable: true, configurable: true });
+  define("getCurrentPosition", function (ok, no, options) {
+    need(ok);
+    const o = options || {};
+    if (refused) return later(no, failure(1, "Location isn't available to this frame"));
+    if (last && o.maximumAge > 0 && Date.now() - last.timestamp <= o.maximumAge) return later(ok, last);
+    const r = { ok, no };
+    // The page's timeout counts from when it's allowed, not while you're being asked.
+    if (o.timeout >= 0 && o.timeout !== Infinity && state() === "granted") {
+      r.timer = setTimeout(() => { once.delete(r); later(no, failure(3, "Timed out finding your location")); }, o.timeout);
+    }
+    once.add(r);
+    ask();
+  });
+  define("watchPosition", function (ok, no) {
+    need(ok);
+    const id = ++seq;
+    if (refused) { later(no, failure(1, "Location isn't available to this frame")); return id; }
+    watches.set(id, { ok, no, seen: "" });
+    ask();
+    return id;
+  });
+  define("clearWatch", function (id) { watches.delete(id); });
+  if (navigator.permissions && navigator.permissions.query) {
+    const query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (d) => d && d.name === "geolocation"
+      ? Promise.resolve({ name: "geolocation", state: refused ? "denied" : state() === "default" ? "prompt" : state(), onchange: null, addEventListener() {}, removeEventListener() {} })
+      : query(d);
+  }
+  locationHooks.fix = (r) => {
+    asking = false;
+    const err = r.error ? failure(r.error, r.message || "") : null;
+    const at = err ? null : {
+      coords: { latitude: r.latitude, longitude: r.longitude, accuracy: r.accuracy, altitude: r.altitude, altitudeAccuracy: r.altitudeAccuracy, heading: r.heading, speed: r.speed },
+      timestamp: r.timestamp,
+    };
+    if (at) last = at;
+    for (const w of once) { clearTimeout(w.timer); err ? later(w.no, err) : later(w.ok, at); }
+    once.clear();
+    const here = at ? at.coords.latitude + "," + at.coords.longitude : "";
+    for (const w of watches.values()) {
+      if (err) later(w.no, err);
+      else if (w.seen !== here) { w.seen = here; later(w.ok, at); }
+    }
+    if (err && err.code === 1) watches.clear();
+    // Watching asks again every few seconds, so the computer only looks while a tab on screen wants it.
+    clearTimeout(poll);
+    if (watches.size) poll = setTimeout(ask, 5000);
+  };
+})();
+
 // ---------- tabs opened in the background don't play audio/video until you first look at them ----------
 // A tab Valerie hasn't shown yet is a hidden document. Until it becomes visible, play() is held (and resumed then);
 // after that, media behaves normally (switching away doesn't pause anything).
@@ -215,6 +286,7 @@ function withSite(c) {
   if (s.links) out.links = { ...c.links, ...s.links };
   if (s.cookie_banners) out.privacy = { ...c.privacy, cookie_banners: s.cookie_banners };
   if (s.dark_mode) out.site_dark = s.dark_mode;
+  if (s.location) out.location_here = s.location;
   return out;
 }
 
@@ -1628,7 +1700,7 @@ Object.defineProperty(window, "__valerie", {
   value: Object.freeze({
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
-    notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
+    notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },

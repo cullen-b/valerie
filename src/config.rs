@@ -160,6 +160,7 @@ pub struct NetRule {
 pub struct SiteSettings {
     pub camera: Option<String>,
     pub microphone: Option<String>,
+    pub location: Option<String>,
     pub notifications: Option<String>,
     pub user_agent: Option<String>,
     pub zoom: Option<f64>,
@@ -179,7 +180,7 @@ impl SiteSettings {
         macro_rules! take {
             ($($f:ident),*) => { $( if more.$f.is_some() { self.$f = more.$f.clone(); } )* };
         }
-        take!(camera, microphone, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
+        take!(camera, microphone, location, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
     }
 }
 
@@ -811,6 +812,7 @@ pub struct PrivacyConfig {
 pub struct PermissionsConfig {
     pub camera: String,
     pub microphone: String,
+    pub location: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,5 +7,7 @@
   <!-- Video calls in web pages (the hardened runtime blocks the camera and microphone without these). -->
   <key>com.apple.security.device.camera</key><true/>
   <key>com.apple.security.device.audio-input</key><true/>
+  <!-- Sites you allow can use your location (the hardened runtime blocks Location Services without this). -->
+  <key>com.apple.security.personal-information.location</key><true/>
 </dict>
 </plist>

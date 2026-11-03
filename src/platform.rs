@@ -658,6 +658,132 @@ mod mac {
         }
     }
 
+    // ---------------------------------------------------------------- location (CoreLocation.framework)
+
+    #[link(name = "CoreLocation", kind = "framework")]
+    extern "C" {}
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Coordinate {
+        latitude: f64,
+        longitude: f64,
+    }
+
+    unsafe impl objc2::Encode for Coordinate {
+        const ENCODING: objc2::Encoding = objc2::Encoding::Struct("CLLocationCoordinate2D", &[objc2::Encoding::Double, objc2::Encoding::Double]);
+    }
+
+    thread_local! {
+        static LOCATOR: std::cell::Cell<*mut AnyObject> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+        static LOCATED: std::cell::RefCell<Option<Box<dyn FnOnce(serde_json::Value)>>> = const { std::cell::RefCell::new(None) };
+        static LOOKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    fn located(answer: serde_json::Value) {
+        LOOKING.set(false);
+        if let Some(done) = LOCATED.with(|d| d.borrow_mut().take()) {
+            done(answer);
+        }
+    }
+
+    fn location_error(code: i64, message: &str) -> serde_json::Value {
+        serde_json::json!({ "error": code, "message": message })
+    }
+
+    /// Carry on with what the system allows now: look, keep waiting for its question to be answered, or say no.
+    unsafe fn locate_if_allowed(manager: *mut AnyObject) {
+        if LOOKING.get() || LOCATED.with(|d| d.borrow().is_none()) {
+            return;
+        }
+        let status: i32 = msg_send![manager, authorizationStatus];
+        match status {
+            0 => {
+                let _: () = msg_send![manager, requestWhenInUseAuthorization];
+            }
+            3 | 4 => {
+                LOOKING.set(true);
+                let _: () = msg_send![manager, requestLocation];
+            }
+            _ => {
+                crate::log::line("location", "the system doesn't allow Valerie to use location");
+                located(location_error(1, "Location is turned off for Valerie"));
+            }
+        }
+    }
+
+    /// Where the computer is, once; the system asks the user the first time. Call on the main thread, one at a time.
+    pub fn locate(done: Box<dyn FnOnce(serde_json::Value)>) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::{class, sel};
+        if !bundled() {
+            return done(location_error(2, "Location needs Valerie to run as an app"));
+        }
+        unsafe extern "C-unwind" fn changed(_: *mut AnyObject, _: Sel, manager: *mut AnyObject) {
+            locate_if_allowed(manager);
+        }
+        unsafe extern "C-unwind" fn updated(_: *mut AnyObject, _: Sel, _: *mut AnyObject, places: *mut AnyObject) {
+            let place: *mut AnyObject = msg_send![places, lastObject];
+            if place.is_null() {
+                return located(location_error(2, "The computer couldn't find its location"));
+            }
+            let at: Coordinate = msg_send![place, coordinate];
+            let accuracy: f64 = msg_send![place, horizontalAccuracy];
+            let altitude: f64 = msg_send![place, altitude];
+            let altitude_accuracy: f64 = msg_send![place, verticalAccuracy];
+            let heading: f64 = msg_send![place, course];
+            let speed: f64 = msg_send![place, speed];
+            let time: *mut AnyObject = msg_send![place, timestamp];
+            let seconds: f64 = msg_send![time, timeIntervalSince1970];
+            // Negative means the computer doesn't know, which pages read as null.
+            let known = |v: f64| (v >= 0.0).then_some(v);
+            located(serde_json::json!({
+                "latitude": at.latitude, "longitude": at.longitude, "accuracy": accuracy,
+                "altitude": known(altitude_accuracy).map(|_| altitude), "altitudeAccuracy": known(altitude_accuracy),
+                "heading": known(heading), "speed": known(speed), "timestamp": (seconds * 1000.0).round(),
+            }));
+        }
+        unsafe extern "C-unwind" fn failed(_: *mut AnyObject, _: Sel, _: *mut AnyObject, error: *mut AnyObject) {
+            let code: isize = msg_send![error, code];
+            let text: *mut objc2_foundation::NSString = msg_send![error, localizedDescription];
+            let text = if text.is_null() { String::new() } else { (*text).to_string() };
+            crate::log::line("location", format!("the computer couldn't find its location: {text}"));
+            // kCLErrorDenied is 1.
+            located(if code == 1 { location_error(1, "Location is turned off for Valerie") } else { location_error(2, "The computer couldn't find its location") });
+        }
+        LOCATED.with(|d| *d.borrow_mut() = Some(done));
+        unsafe {
+            let mut manager = LOCATOR.get();
+            if manager.is_null() {
+                let name = c"ValerieLocationDelegate";
+                let cls: *const AnyClass = match AnyClass::get(name) {
+                    Some(c) => c,
+                    None => {
+                        let c = objc2::ffi::objc_allocateClassPair(class!(NSObject), name.as_ptr(), 0);
+                        if c.is_null() {
+                            return located(location_error(2, "The computer couldn't find its location"));
+                        }
+                        let add = |s: Sel, f: *const (), types: &std::ffi::CStr| {
+                            objc2::ffi::class_addMethod(c, s, std::mem::transmute::<*const (), Imp>(f), types.as_ptr());
+                        };
+                        add(sel!(locationManagerDidChangeAuthorization:), changed as *const (), c"v@:@");
+                        add(sel!(locationManager:didUpdateLocations:), updated as *const (), c"v@:@@");
+                        add(sel!(locationManager:didFailWithError:), failed as *const (), c"v@:@@");
+                        objc2::ffi::objc_registerClassPair(c);
+                        c
+                    }
+                };
+                // The manager holds its delegate weakly; both live for the app's life.
+                let delegate: *mut AnyObject = msg_send![cls, new];
+                manager = msg_send![class!(CLLocationManager), new];
+                let _: () = msg_send![manager, setDelegate: delegate];
+                let _: () = msg_send![manager, setDesiredAccuracy: 100.0f64];
+                LOCATOR.set(manager);
+            }
+            locate_if_allowed(manager);
+        }
+    }
+
     // ---------------------------------------------------------------- notifications (UserNotifications.framework)
 
     #[link(name = "UserNotifications", kind = "framework")]
@@ -2070,6 +2196,14 @@ pub fn pick_folder(message: &str) -> Option<std::path::PathBuf> {
         let _ = message;
         None
     }
+}
+
+/// Where the computer is, for a site's navigator.geolocation; other systems' web views have their own, so only the Mac uses this.
+pub fn locate(done: impl FnOnce(serde_json::Value) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::locate(Box::new(done));
+    #[cfg(not(target_os = "macos"))]
+    done(serde_json::json!({ "error": 2, "message": "Location isn't available" }));
 }
 
 /// Ask a yes/no question on a webview's window (a sheet); `done(true)` for yes. Elsewhere it answers no.
