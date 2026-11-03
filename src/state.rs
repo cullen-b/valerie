@@ -182,6 +182,9 @@ pub struct State {
     /// Where the window was last (x, y, width, height in points), to reopen it there.
     #[serde(default)]
     pub window_frame: Option<(f64, f64, f64, f64)>,
+    /// The size a little window was last resized to (width, height in points), for the next one.
+    #[serde(default)]
+    pub little_size: Option<(f64, f64)>,
     #[serde(default)]
     pub favorites_modified: u64,
     #[serde(default)]

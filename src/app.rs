@@ -180,6 +180,8 @@ struct Little {
     title: String,
     space: usize,
     zoom: f64,
+    /// Resizing it sets the size of the next little window (not for a window opened at a size of its own).
+    usual_size: bool,
 }
 
 pub struct App {
@@ -3317,6 +3319,11 @@ impl App {
         let l = match self.take_ready_little(url, space, size) {
             Some(l) => {
                 let _ = l.view.load_url(url);
+                // Made a while ago: the usual size may have changed since.
+                let (w, h) = self.little_size();
+                l.window.set_inner_size(LogicalSize::new(w, h));
+                let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
+                let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR));
                 l.window.set_visible(true);
                 l
             }
@@ -3343,8 +3350,7 @@ impl App {
 
     /// The window and its two views; the page's view first, so the page starts loading as early as it can.
     fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
-        let lw = &self.config.little_window;
-        let (w, h) = size.unwrap_or((lw.width, lw.height));
+        let (w, h) = size.unwrap_or_else(|| self.little_size());
         let mut builder = mac_window(WindowBuilder::new())
             .with_title("Valerie")
             .with_visible(visible)
@@ -3380,7 +3386,32 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0 })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() })
+    }
+
+    /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
+    fn little_size(&self) -> (f64, f64) {
+        let lw = &self.config.little_window;
+        let fits = |(w, h): &(f64, f64)| {
+            self.window.available_monitors().any(|m| {
+                let s = m.size().to_logical::<f64>(m.scale_factor());
+                *w <= s.width && *h <= s.height
+            })
+        };
+        self.state.little_size.filter(|s| lw.remember_size && fits(s)).unwrap_or((lw.width, lw.height))
+    }
+
+    /// Keep a little window's size for the next one (not while it's full screen, maximized or minimized).
+    fn remember_little_size(&mut self, id: WindowId) {
+        let Some(l) = self.littles.get(&id).filter(|l| l.usual_size) else { return };
+        if !self.config.little_window.remember_size || l.window.fullscreen().is_some() || l.window.is_maximized() || l.window.is_minimized() {
+            return;
+        }
+        let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+        if self.state.little_size != Some((s.width, s.height)) {
+            self.state.little_size = Some((s.width, s.height));
+            self.dirty = true;
+        }
     }
 
     /// Content blocking for a little window's page (the blocklist can arrive after a ready one was made).
@@ -7699,7 +7730,8 @@ impl App {
                     self.layout();
                     self.remember_frame();
                 } else {
-                    self.layout_little(id)
+                    self.layout_little(id);
+                    self.remember_little_size(id);
                 }
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),

@@ -463,8 +463,10 @@ little_window:
                            # window opens as well)
   keep_one_ready: true     # a hidden little window waits ready, so a link opens in it at once (costs a little
                            # memory). true | false (false = each little window is made when a link arrives)
-  width: 960
-  height: 700
+  remember_size: true      # a new little window opens at the size you last resized one to. true | false (false =
+                           # always width and height below)
+  width: 960               # pixels, until you've resized one (or always, with remember_size off)
+  height: 700              # pixels, same
 
 
 # --------------------------------------------------------------------------------------------------------------
