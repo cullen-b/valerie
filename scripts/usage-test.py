@@ -286,7 +286,7 @@ def t_settings():
 
 def t_chat():
     # The owner's default is Claude; a machine without it should use what it has. Needs free AI set up first.
-    install = "curl -fsSL https://opencode.ai/install | bash" if MACHINE == "linux" else "irm https://opencode.ai/install.ps1 | iex; if (-not (Test-Path $HOME\\.opencode\\bin\\opencode.exe)) { npm i -g opencode-ai }"
+    install = "curl -fsSL https://opencode.ai/install | bash" if MACHINE == "linux" else "$d = \"$HOME\\.opencode\\bin\"; New-Item -ItemType Directory -Force $d | Out-Null; irm https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip -OutFile $env:TEMP\\oc.zip; Expand-Archive -Force $env:TEMP\\oc.zip $d"
     machine_sh(install, 300)
     time.sleep(35)  # Valerie looks again at most every 30 seconds
     # Agents may not start chats themselves, so this goes through the keyboard as a person would.
@@ -301,7 +301,7 @@ def t_chat():
         chats = call("list_chats", {})[1]
         ids = re.findall(r'"id":\s*"?([\w-]+)', chats)
         if ids:
-            found = call("read_chat", {"chat": ids[0]})[1]
+            found = call("read_chat", {"id": ids[0]})[1]
             if "PINEAPPLE" in found.replace("exactly the word PINEAPPLE", ""):
                 break
     check("the chat answers (Claude missing, so another AI stands in)", "PINEAPPLE" in found.replace("exactly the word PINEAPPLE", ""), found[-300:] + logs("chat", 6)[-300:])
