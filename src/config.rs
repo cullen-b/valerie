@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_YAML: &str = include_str!("../config/default.yaml");
 pub const STARTER_YAML: &str = include_str!("../config/starter.yaml");
@@ -160,6 +160,7 @@ pub struct NetRule {
 pub struct SiteSettings {
     pub camera: Option<String>,
     pub microphone: Option<String>,
+    pub location: Option<String>,
     pub notifications: Option<String>,
     pub user_agent: Option<String>,
     pub zoom: Option<f64>,
@@ -179,7 +180,7 @@ impl SiteSettings {
         macro_rules! take {
             ($($f:ident),*) => { $( if more.$f.is_some() { self.$f = more.$f.clone(); } )* };
         }
-        take!(camera, microphone, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
+        take!(camera, microphone, location, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
     }
 }
 
@@ -811,6 +812,7 @@ pub struct PrivacyConfig {
 pub struct PermissionsConfig {
     pub camera: String,
     pub microphone: String,
+    pub location: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -847,6 +849,7 @@ pub struct LittleWindowConfig {
     pub keep_open_when_main_closes: bool,
     pub open_links_alone: bool,
     pub keep_one_ready: bool,
+    pub remember_size: bool,
     pub width: f64,
     pub height: f64,
 }
@@ -1042,6 +1045,8 @@ pub struct AgentsConfig {
     pub instructions_for: BTreeMap<String, String>,
     /// Use an installed agent when the chosen one isn't on this computer.
     pub fallback: bool,
+    /// Say an installed agent stood in: "once" on each computer, or "every_launch".
+    pub fallback_note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1272,6 +1277,20 @@ fn note_fallback(missing: &str, using: &str) {
 /// A message to show once when an agent stood in for one that isn't installed here.
 pub fn take_fallback_note() -> Option<String> {
     FALLBACK_NOTE.lock().unwrap_or_else(|e| e.into_inner()).1.take()
+}
+
+/// Whether this computer hasn't shown this stand-in message before (and remember it has now).
+pub fn note_is_new(note: &str) -> bool {
+    note_is_new_in(&data_dir().join("stand-in-notes"), note)
+}
+
+fn note_is_new_in(file: &Path, note: &str) -> bool {
+    let seen = std::fs::read_to_string(file).unwrap_or_default();
+    if seen.lines().any(|l| l == note) {
+        return false;
+    }
+    let _ = std::fs::write(file, format!("{seen}{note}\n"));
+    true
 }
 
 /// A random name for this installation that never changes (unlike the hostname, which macOS renumbers when another
@@ -1543,6 +1562,15 @@ mod tests {
         assert!(super::take_fallback_note().is_some_and(|n| n.contains(missing.title)));
         let off = Config::parse(&format!("agents: {{ default: {}, fallback: false }}\n", missing.id)).unwrap();
         assert_eq!(off.agent_named(missing.id).0, missing.id);
+    }
+
+    #[test]
+    fn stand_in_note_shows_once() {
+        let file = std::env::temp_dir().join(format!("valerie-note-test-{}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        assert!(super::note_is_new_in(&file, "a"));
+        assert!(!super::note_is_new_in(&file, "a"));
+        assert!(super::note_is_new_in(&file, "b"));
+        let _ = std::fs::remove_file(&file);
     }
 
     /// Stable by default; edge reads the edge feed, unless the feed was pointed somewhere of its own (a fork).

@@ -115,6 +115,8 @@ pub enum UserEvent {
     ModelsFound { cli: String, models: Vec<Value> },
     /// The answer to "Allow this site to send notifications?".
     NotifyPermission { tab: TabId, site: String, allowed: bool },
+    LocationAnswer { site: String, allowed: bool },
+    LocationFound(Value),
     /// "Sign in with Safari": the user came back (bring the login over) or cancelled.
     SafariSignedIn { tab: TabId, bring: bool },
     /// "Sign In with Safari" was picked from a site's passkey offer.
@@ -178,6 +180,8 @@ struct Little {
     title: String,
     space: usize,
     zoom: f64,
+    /// Resizing it sets the size of the next little window (not for a window opened at a size of its own).
+    usual_size: bool,
 }
 
 pub struct App {
@@ -284,6 +288,14 @@ pub struct App {
     window_focused: bool,
     /// Sites asked about notifications this session (a site gets asked once).
     notify_asked: std::collections::HashSet<String>,
+    /// Tabs waiting to hear where the computer is.
+    location_waiting: Vec<TabId>,
+    /// Sites being asked about location right now.
+    location_asking: std::collections::HashSet<String>,
+    /// The computer is finding its location.
+    locating: bool,
+    /// Already said that the system has location off for Valerie (this session).
+    location_off_said: bool,
     /// Sites already offered "Sign in with Safari" this session.
     passkey_offered: std::collections::HashSet<String>,
     /// Recent notifications per site, so one site can't flood you.
@@ -1298,6 +1310,10 @@ impl App {
             crashed: Default::default(),
             window_focused: true,
             notify_asked: Default::default(),
+            location_waiting: Vec::new(),
+            location_asking: Default::default(),
+            locating: false,
+            location_off_said: false,
             passkey_offered: Default::default(),
             notify_times: HashMap::new(),
             sync_gen: 0,
@@ -1449,6 +1465,7 @@ impl App {
             "hide_rules": self.config.rules.iter().filter(|r| !r.hide.trim().is_empty()).map(|r| json!({ "selector": r.hide, "site": r.site })).collect::<Vec<_>>(),
             "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "pages": self.config.pages,
             "notifications": { "policy": self.config.notifications.websites, "sites": self.notify_states() },
+            "site_location": cfg!(target_os = "macos").then(|| json!({ "policy": self.config.permissions.location, "sites": self.state.location_sites.iter().map(|(s, a)| (s.clone(), json!(if *a { "granted" } else { "denied" }))).collect::<serde_json::Map<_, _>>() })),
             "ai": { "ask_in_find": self.config.chats.ask_in_find, "find_question_words": self.config.chats.find_question_words,
                     "page_text_limit": self.config.chats.page_text_limit, "find_agent": self.config.agent_for("find").0 } })
     }
@@ -1664,6 +1681,7 @@ impl App {
         let (page_key, page_theme) = (self.page_key.clone(), self.page_theme.clone());
         let popup_windows = self.config.links.popups == "window";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
+        let location = self.config.permissions.location.clone();
         // The page's address right now, for `sites:` settings decided as the page asks (camera, pop-ups).
         let current = std::sync::Arc::new(std::sync::Mutex::new(url.to_string()));
         let (current2, current3, current4) = (current.clone(), current.clone(), current.clone());
@@ -1745,6 +1763,8 @@ impl App {
                 let choice = match kind {
                     wry::PermissionKind::Camera => site.camera.unwrap_or_else(|| camera.clone()),
                     wry::PermissionKind::Microphone => site.microphone.unwrap_or_else(|| microphone.clone()),
+                    // Windows and Linux; on the Mac WebKit never asks, and ui/content.js answers pages instead.
+                    wry::PermissionKind::Geolocation => site.location.unwrap_or_else(|| location.clone()),
                     _ => "ask".into(),
                 };
                 match choice.as_str() {
@@ -3299,6 +3319,11 @@ impl App {
         let l = match self.take_ready_little(url, space, size) {
             Some(l) => {
                 let _ = l.view.load_url(url);
+                // Made a while ago: the usual size may have changed since.
+                let (w, h) = self.little_size();
+                l.window.set_inner_size(LogicalSize::new(w, h));
+                let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
+                let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR));
                 l.window.set_visible(true);
                 l
             }
@@ -3325,8 +3350,7 @@ impl App {
 
     /// The window and its two views; the page's view first, so the page starts loading as early as it can.
     fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
-        let lw = &self.config.little_window;
-        let (w, h) = size.unwrap_or((lw.width, lw.height));
+        let (w, h) = size.unwrap_or_else(|| self.little_size());
         let mut builder = mac_window(WindowBuilder::new())
             .with_title("Valerie")
             .with_visible(visible)
@@ -3362,7 +3386,32 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0 })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() })
+    }
+
+    /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
+    fn little_size(&self) -> (f64, f64) {
+        let lw = &self.config.little_window;
+        let fits = |(w, h): &(f64, f64)| {
+            self.window.available_monitors().any(|m| {
+                let s = m.size().to_logical::<f64>(m.scale_factor());
+                *w <= s.width && *h <= s.height
+            })
+        };
+        self.state.little_size.filter(|s| lw.remember_size && fits(s)).unwrap_or((lw.width, lw.height))
+    }
+
+    /// Keep a little window's size for the next one (not while it's full screen, maximized or minimized).
+    fn remember_little_size(&mut self, id: WindowId) {
+        let Some(l) = self.littles.get(&id).filter(|l| l.usual_size) else { return };
+        if !self.config.little_window.remember_size || l.window.fullscreen().is_some() || l.window.is_maximized() || l.window.is_minimized() {
+            return;
+        }
+        let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+        if self.state.little_size != Some((s.width, s.height)) {
+            self.state.little_size = Some((s.width, s.height));
+            self.dirty = true;
+        }
     }
 
     /// Content blocking for a little window's page (the blocklist can arrive after a ready one was made).
@@ -4682,7 +4731,7 @@ impl App {
             w.retain(|t, _| !gone.contains(t));
         }
         // While the guide is open the user is still choosing an AI, so a stand-in isn't news.
-        if let Some(n) = config::take_fallback_note().filter(|_| !self.welcome_open) {
+        if let Some(n) = config::take_fallback_note().filter(|n| !self.welcome_open && (self.config.agents.fallback_note != "once" || config::note_is_new(n))) {
             self.toast(&n);
         }
         // Saved tabs nobody opens any more: looked for once a day, never over the welcome guide.
@@ -5533,6 +5582,17 @@ impl App {
                 self.dirty = true;
                 self.refresh_content_config();
                 self.toast(&format!("Notifications from {site}: {}", if allow { "allowed" } else { "blocked" }));
+            }
+            Command::ToggleSiteLocation => {
+                let Some(site) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)) else { return };
+                let allow = self.location_state(&site) != "granted";
+                self.state.location_sites.insert(site.clone(), allow);
+                if let Some(v) = self.site_settings(&format!("https://{site}/")).location {
+                    self.toast(&format!("Your config says {site}: {v}, which wins over this"));
+                }
+                self.dirty = true;
+                self.refresh_content_config();
+                self.toast(&format!("Location for {site}: {}", if allow { "allowed" } else { "blocked" }));
             }
             Command::OpenChats => self.open_chats(),
             Command::ToggleTerminal => self.toggle_terminal(),
@@ -6428,6 +6488,7 @@ impl App {
             (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
             (Source::Page(Target::Tab(id)), "notify") => self.site_notification(id, &m),
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
+            (Source::Page(Target::Tab(id)), "location") => self.location_wanted(id),
             (Source::Page(Target::Tab(id)), "passkey_wanted") => self.passkey_wanted(id),
             (Source::Chat, "ready") => {
                 self.render_chat();
@@ -7152,6 +7213,23 @@ impl App {
                     let _ = v.evaluate_script(&format!("window.__valerie && __valerie.notificationPermission({state:?})"));
                 }
             }
+            UserEvent::LocationAnswer { site, allowed } => {
+                self.location_asking.remove(&site);
+                self.state.location_sites.insert(site, allowed);
+                self.dirty = true;
+                self.refresh_content_config();
+                self.location_tell_tabs(None);
+                if allowed {
+                    self.locate();
+                }
+            }
+            UserEvent::LocationFound(answer) => {
+                self.locating = false;
+                if cfg!(target_os = "macos") && answer["error"] == 1 && !std::mem::replace(&mut self.location_off_said, true) {
+                    self.toast("Valerie can't use your location: turn it on in System Settings > Privacy & Security > Location Services");
+                }
+                self.location_tell_tabs(Some(&answer));
+            }
             UserEvent::TaskDone { name, agent, text, error } => self.task_done(name, agent, text, error),
             UserEvent::TaskRequested { slug } => {
                 if let Some(t) = self.config.all_tasks().into_iter().find(|t| t.slug() == slug) {
@@ -7612,6 +7690,7 @@ impl App {
             "zoom": self.state.site_zoom.get(site).map(|z| (z * 100.0).round()),
             "dark_mode": self.state.dark_sites.get(site),
             "notifications": self.notify_state(site),
+            "location": self.location_state(site),
             "ad_blocking_off": self.state.blocking_allow.iter().any(|h| h == site) || self.config.content_blocking.allow.iter().any(|h| h == site),
             "hidden_elements": hidden,
             "boost_css": boost("css").exists(),
@@ -7651,7 +7730,8 @@ impl App {
                     self.layout();
                     self.remember_frame();
                 } else {
-                    self.layout_little(id)
+                    self.layout_little(id);
+                    self.remember_little_size(id);
                 }
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),
@@ -7940,7 +8020,7 @@ static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsiz
 
 /// Commands that only mean something on one system.
 fn on_this_system(name: &str) -> bool {
-    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari")
+    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location")
 }
 
 /// Where a test copy's windows go (`platform::test_windows`): a display other than the main one, if there is one.
@@ -9444,6 +9524,76 @@ impl App {
         platform::ask(v, &format!("Allow {site} to send notifications?"), &body, "Allow", "Don't Allow", move |allowed| {
             send(&p, UserEvent::NotifyPermission { tab, site: s, allowed });
         });
+    }
+
+    /// "granted" | "denied" | "default" for a site: the config's `sites:`, then the user's answers, then the policy.
+    fn location_state(&self, site: &str) -> &'static str {
+        let per_site = self.site_settings(&format!("https://{site}/")).location;
+        let answered = self.state.location_sites.get(site).map(|a| if *a { "allow" } else { "deny" });
+        match per_site.as_deref().filter(|v| *v != "ask").or(answered).unwrap_or(&self.config.permissions.location) {
+            "allow" => "granted",
+            "deny" => "denied",
+            _ => "default",
+        }
+    }
+
+    /// The site a tab may ask about location as: secure pages only, like the real API, so a plain-http page on a network
+    /// that rewrites it can't use what its https address was allowed.
+    fn location_site(&self, tab: TabId) -> Option<String> {
+        let url = url::Url::parse(&self.state.tabs.get(&tab)?.url).ok()?;
+        let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        (url.scheme() == "https" || local).then(|| site_of(url.as_str())).flatten()
+    }
+
+    /// A page called navigator.geolocation.
+    fn location_wanted(&mut self, tab: TabId) {
+        let Some(site) = self.location_site(tab) else {
+            return self.location_tell_tab(tab, &json!({ "error": 1, "message": "Location is only for secure pages" }));
+        };
+        match self.location_state(&site) {
+            "denied" => self.location_tell_tab(tab, &json!({ "error": 1, "message": "You blocked location for this site" })),
+            state => {
+                if !self.location_waiting.contains(&tab) {
+                    self.location_waiting.push(tab);
+                }
+                if state == "granted" {
+                    self.locate();
+                } else if self.location_asking.insert(site.clone()) {
+                    let Some(v) = self.views.get(&tab) else { return };
+                    let p = self.proxy.clone();
+                    let body = "It'll know roughly where you are whenever it asks. You can change this later with \"Location for This Site\".";
+                    let s = site.clone();
+                    platform::ask(v, &format!("Allow {site} to use your location?"), body, "Allow", "Don't Allow", move |allowed| {
+                        send(&p, UserEvent::LocationAnswer { site: s, allowed });
+                    });
+                }
+            }
+        }
+    }
+
+    fn locate(&mut self) {
+        if !std::mem::replace(&mut self.locating, true) {
+            let p = self.proxy.clone();
+            platform::locate(move |answer| send(&p, UserEvent::LocationFound(answer)));
+        }
+    }
+
+    /// Answer the waiting tabs that can be answered. Checked again here: a tab may have gone to another site meanwhile.
+    fn location_tell_tabs(&mut self, found: Option<&Value>) {
+        for tab in std::mem::take(&mut self.location_waiting) {
+            let state = self.location_site(tab).map_or("denied", |s| self.location_state(&s));
+            match (state, found) {
+                ("denied", _) => self.location_tell_tab(tab, &json!({ "error": 1, "message": "You blocked location for this site" })),
+                ("granted", Some(answer)) => self.location_tell_tab(tab, answer),
+                _ => self.location_waiting.push(tab),
+            }
+        }
+    }
+
+    fn location_tell_tab(&self, tab: TabId, answer: &Value) {
+        if let Some(v) = self.views.get(&tab) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.locationFix({answer})"));
+        }
     }
 
     // ---------------------------------------------------------------- plugin marketplace

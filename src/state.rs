@@ -182,6 +182,9 @@ pub struct State {
     /// Where the window was last (x, y, width, height in points), to reopen it there.
     #[serde(default)]
     pub window_frame: Option<(f64, f64, f64, f64)>,
+    /// The size a little window was last resized to (width, height in points), for the next one.
+    #[serde(default)]
+    pub little_size: Option<(f64, f64)>,
     #[serde(default)]
     pub favorites_modified: u64,
     #[serde(default)]
@@ -207,6 +210,9 @@ pub struct State {
     /// Answers to "Allow this site to send notifications?" (site → allowed).
     #[serde(default)]
     pub notify_sites: BTreeMap<String, bool>,
+    /// Answers to "Allow this site to use your location?" (site → allowed).
+    #[serde(default)]
+    pub location_sites: BTreeMap<String, bool>,
     /// Pages an agent checks in the background (Watch This Page…).
     #[serde(default)]
     pub watches: Vec<Watch>,

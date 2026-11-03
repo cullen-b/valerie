@@ -402,6 +402,8 @@ privacy:
 permissions:
   camera: ask
   microphone: ask
+  location: ask            # sites that want to know where you are (maps, "near me"). Your answer is remembered per site;
+                           # toggle_site_location flips the site you're on. On Linux, ask means no
 
 # How web pages look
 pages:
@@ -461,8 +463,10 @@ little_window:
                            # window opens as well)
   keep_one_ready: true     # a hidden little window waits ready, so a link opens in it at once (costs a little
                            # memory). true | false (false = each little window is made when a link arrives)
-  width: 960
-  height: 700
+  remember_size: true      # a new little window opens at the size you last resized one to. true | false (false =
+                           # always width and height below)
+  width: 960               # pixels, until you've resized one (or always, with remember_size off)
+  height: 700              # pixels, same
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -474,7 +478,7 @@ little_window:
 #     meet.google.com: { camera: allow, microphone: allow }
 #     youtube.com: { autoplay: false, zoom: 110, unload: false }
 #     news.ycombinator.com: { dark_mode: always }
-# Each site can set: camera, microphone, notifications (ask | allow | deny) · user_agent (text) · zoom (percent) ·
+# Each site can set: camera, microphone, location, notifications (ask | allow | deny) · user_agent (text) · zoom (percent) ·
 # autoplay (true | false: video in tabs opened in the background) · dark_mode (off | always) · vim (true | false) ·
 # links ({ cmd_click: new_tab, … } like `links`) · unload (false keeps its tabs in memory) · ad_blocking (true | false)
 # · popups (window | tab) · cookie_banners (reject | hide | off)
@@ -824,7 +828,8 @@ agents:
     customize: ""          # "! change …" requests
   jobs: []                 # the older form of `tasks` (below): { name, prompt, at: "08:30" or every: 30m, agent }; still read
   fallback: true           # when the agent a job uses isn't installed on this computer, use one that is (Claude Code,
-                           # Codex, OpenCode, Pi, Cursor, Hermes, in that order) and say so once. true | false
+                           # Codex, OpenCode, Pi, Cursor, Hermes, in that order) and say so. true | false
+  fallback_note: once      # saying so: once on each computer, or at every launch. one of: once | every_launch
 
 
 # --------------------------------------------------------------------------------------------------------------

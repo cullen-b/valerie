@@ -135,7 +135,7 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["none", "invert"].contains(&c.pages.dark_fallback.as_str()) {
                 problems.push(format!("pages: dark_fallback is {:?}; use none or invert", c.pages.dark_fallback));
             }
-            for (name, v) in [("camera", &c.permissions.camera), ("microphone", &c.permissions.microphone)] {
+            for (name, v) in [("camera", &c.permissions.camera), ("microphone", &c.permissions.microphone), ("location", &c.permissions.location)] {
                 if !["ask", "allow", "deny"].contains(&v.as_str()) {
                     problems.push(format!("permissions: {name} is {v:?}; use ask, allow or deny"));
                 }
@@ -272,6 +272,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
         }
     };
     one_of(&mut p, "updates: channel".into(), &c.updates.channel, &["stable", "edge"]);
+    one_of(&mut p, "agents: fallback_note".into(), &c.agents.fallback_note, &["once", "every_launch"]);
     const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);
@@ -339,7 +340,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     const LINK_KEYS: &[&str] = &["middle_click", "cmd_click", "shift_click", "option_click", "cmd_shift_click", "option_shift_click"];
     const LINK_ACTIONS: &[&str] = &["background_tab", "new_tab", "split", "peek", "little_window", "default"];
     for (site, s) in c.sites.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))) {
-        for (k, v) in [("camera", &s.camera), ("microphone", &s.microphone), ("notifications", &s.notifications)] {
+        for (k, v) in [("camera", &s.camera), ("microphone", &s.microphone), ("location", &s.location), ("notifications", &s.notifications)] {
             if let Some(v) = v {
                 one_of(&mut p, format!("sites.{site}: {k}"), v, &["ask", "allow", "deny"]);
             }

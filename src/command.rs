@@ -475,6 +475,8 @@ pub enum Command {
     UpdateInstalled,
     /// Allow or stop notifications from the site you're on.
     ToggleSiteNotifications,
+    /// Allow or stop the site you're on from knowing your location.
+    ToggleSiteLocation,
     /// Install (if needed) and sign in to an agent CLI in one step.
     SetUpAgent {
         agent: String,
@@ -757,6 +759,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("plugin_marketplace", "Plugins (marketplace: browse, install and share plugins and extensions)"),
     ("share_plugin", "Share Plugin (put one of your plugins or extensions in the marketplace)"),
     ("toggle_site_notifications", "Notifications from This Site: Allow / Block"),
+    ("toggle_site_location", "Location for This Site: Allow / Block"),
     ("new_task", "Create Task… (an agent does something for you: a morning brief, joining meetings, opening pages…)"),
     ("toggle_dark_page", "Dark Mode for This Site"),
     ("capture_page", "Capture Page (screenshot)"),

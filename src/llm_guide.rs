@@ -99,6 +99,7 @@ changed in plain words. Some translations:
 | "Hide the Tools menu" / "rename Spaces to Desks" / "don't quit with ⌘Q" | `menu.hide: [Tools]`, `menu.rename: {{ Spaces: Desks }}`, `menu.quit_shortcut: ""` or `menu.confirm_quit: true` |
 | "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
 | "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
+| "Let this map use my location" / "no site may ask where I am" | `sites: {{ maps.example.com: {{ location: allow }} }}`, `permissions.location: deny` (the `toggle_site_location` command flips the site you're on) |
 | "Use old Reddit" | `rules: [{{ redirect: "https://www.reddit.com/*", to: "https://old.reddit.com/*" }}]` |
 | "Block this tracker" / "use EasyList" | `rules: [{{ block: "||tracker.example^" }}]`; add the list's address to `content_blocking.lists` |
 | "Hide comments on this site" | `rules: [{{ hide: '#comments', site: example.com }}]` (or `boosts/<host>.css`) |
