@@ -47,6 +47,7 @@ pub enum UserEvent {
     PageLoad { target: Target, url: String, finished: bool },
     /// The system ended a page's process (often to free memory while it was hidden); it's blank until reloaded.
     PageCrashed { target: Target },
+    GraphicsBuffers { pid: i32, count: u64 },
     Title { target: Target, title: String },
     NewWindow { target: Target, url: String },
     ExternalScheme(String),
@@ -267,6 +268,10 @@ pub struct App {
     /// Pages put to sleep while the window was closed, most recently used first: loaded again one at a time after it
     /// opens (app.reload_when_reopened).
     restore_queue: Vec<TabId>,
+    /// Callers already logged for trying to load a page behind this closed window.
+    stopped_loads: std::collections::HashSet<&'static std::panic::Location<'static>>,
+    graphics_checked: u64,
+    graphics_restarted: u64,
     /// When the last of them started loading (a page that never finishes holds the rest up only this long).
     restore_started: u64,
     /// Set while handling an event that should show the window (done once the borrow ends).
@@ -1299,6 +1304,9 @@ impl App {
             started_for_agent: false,
             closed_since: None,
             restore_queue: Vec::new(),
+            stopped_loads: Default::default(),
+            graphics_checked: 0,
+            graphics_restarted: 0,
             restore_started: 0,
             pending_reveal: None,
             reveal_when_chrome_ready: false,
@@ -1821,7 +1829,27 @@ impl App {
         plugin_scripts.into_iter().fold(built, |b, (script, main_only)| b.with_initialization_script_for_main_only(script, main_only))
     }
 
+    #[track_caller]
     fn ensure_view(&mut self, tab: TabId) {
+        // A sleeping page stays asleep behind a closed window: each reload costs power and graphics buffers.
+        if self.asleep_behind_closed_window() && !self.views.contains_key(&tab) && !self.agent_tabs.contains_key(&tab) && !self.state.web_tabs.contains(&tab) {
+            let from = std::panic::Location::caller();
+            if self.stopped_loads.insert(from) {
+                let site = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)).unwrap_or_default();
+                crate::log::line("memory", format!("kept tab {tab} {site} asleep behind the closed window (asked by {from})"));
+            }
+            return;
+        }
+        self.load_view(tab);
+    }
+
+    fn asleep_behind_closed_window(&self) -> bool {
+        let secs = (self.config.app.unload_when_closed_minutes * 60.0) as u64;
+        self.main_hidden && secs > 0 && self.closed_since.is_some_and(|since| now().saturating_sub(since) >= secs)
+    }
+
+    /// Loads the page whatever the window is doing: for agents, who can work with it closed.
+    fn load_view(&mut self, tab: TabId) {
         if self.views.contains_key(&tab) {
             return;
         }
@@ -4696,6 +4724,7 @@ impl App {
             .views
             .keys()
             .copied()
+            .filter(|id| !self.agent_tabs.contains_key(id))
             .filter(|id| self.state.tabs.get(id).is_none_or(|tab| self.site_settings(&tab.url).unload != Some(false)))
             .collect();
         let freed = tabs.len() + [self.chat_view.is_some(), self.answer_view.is_some()].iter().filter(|b| **b).count();
@@ -4723,6 +4752,74 @@ impl App {
         }
     }
 
+    /// Once a minute, off the main thread: how many graphics buffers WebKit's graphics process holds.
+    fn check_graphics_buffers(&mut self, t: u64) {
+        if !self.config.app.refresh_graphics || t.saturating_sub(self.graphics_checked) < 60 {
+            return;
+        }
+        self.graphics_checked = t;
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            if let Some((pid, count)) = platform::graphics_buffers() {
+                send(&p, UserEvent::GraphicsBuffers { pid, count });
+            }
+        });
+    }
+
+    /// macOS gives a process 16384 buffers; past that, pages and video stop drawing (YouTube shows "An error occurred").
+    /// Stay well under it: restart the process when nothing is on screen, sleep unused tabs, restart anyway as a last resort.
+    fn tend_graphics_buffers(&mut self, pid: i32, count: u64) {
+        if !self.config.app.refresh_graphics {
+            return;
+        }
+        let budget = self.config.app.graphics_buffers_budget;
+        let t = now();
+        let nothing_on_screen = self.asleep_behind_closed_window() && self.views.is_empty() && self.littles.is_empty();
+        if nothing_on_screen {
+            if count >= budget / 8 {
+                self.restart_graphics(pid, count, t, "the window is closed");
+            }
+            return;
+        }
+        if count < budget {
+            return;
+        }
+        let panes = self.panes();
+        let mut idle: Vec<TabId> = self
+            .views
+            .keys()
+            .copied()
+            .filter(|id| !panes.contains(id) && !self.agent_tabs.contains_key(id))
+            .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && self.site_settings(&tab.url).unload != Some(false)))
+            .collect();
+        idle.sort_by_key(|id| self.state.tabs.get(id).map_or(0, |tab| tab.last_active));
+        let keep = idle.len() / 2;
+        let slept = idle.len() - keep;
+        for id in idle.into_iter().take(slept) {
+            self.unload(id);
+        }
+        if slept > 0 {
+            crate::log::line("memory", format!("{count} graphics buffers in use (budget {budget}): put {slept} unused tabs to sleep"));
+            return self.render();
+        }
+        let playing = !self.littles.is_empty() || self.views.keys().any(|id| self.state.tabs.get(id).is_some_and(|tab| tab.playing));
+        if count >= budget + budget * 7 / 8 {
+            self.restart_graphics(pid, count, t, "nearly out of buffers");
+        } else if count >= budget + budget / 2 && !playing {
+            self.restart_graphics(pid, count, t, "nothing is playing");
+        }
+    }
+
+    fn restart_graphics(&mut self, pid: i32, count: u64, t: u64, why: &str) {
+        // WebKit gives up on every page if this process dies more than twice in 30 seconds.
+        if t.saturating_sub(self.graphics_restarted) < 600 {
+            return;
+        }
+        self.graphics_restarted = t;
+        crate::log::line("memory", format!("restarted the graphics process with {count} buffers in use ({why})"));
+        platform::stop_process(pid);
+    }
+
     fn tick(&mut self) {
         self.close_idle_agent_tabs();
         let shown: Vec<(Target, PathBuf)> = self.md_watch.lock().map(|w| w.iter().map(|(t, f)| (*t, f.clone())).collect()).unwrap_or_default();
@@ -4746,6 +4843,7 @@ impl App {
         self.touch_panes();
         let t = now();
         self.free_memory_when_closed(t);
+        self.check_graphics_buffers(t);
         self.quit_if_unused_by_anyone(t);
         self.restore_next();
         let panes = self.panes();
@@ -7020,6 +7118,7 @@ impl App {
             UserEvent::PasswordToFill { target, origin, username, read } => self.fill_password(target, &origin, &username, read),
             UserEvent::CredentialChecked { target, origin, username, password, known } => self.credential_checked(target, origin, username, password, known),
             UserEvent::PasswordStoreWaiting => self.explain_keychain_prompt(),
+            UserEvent::GraphicsBuffers { pid, count } => self.tend_graphics_buffers(pid, count),
             UserEvent::PageCrashed { target } => {
                 trace(&format!("page process ended: {target:?}"));
                 let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
@@ -7500,7 +7599,7 @@ impl App {
             },
             "ensure_loaded" => match self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) {
                 Some(t) => {
-                    self.ensure_view(t);
+                    self.load_view(t);
                     self.layout();
                     Ok(json!({ "tab": t }))
                 }
@@ -7511,7 +7610,7 @@ impl App {
                     let _ = reply.send(Err("no tab".into()));
                     return;
                 };
-                self.ensure_view(t);
+                self.load_view(t);
                 let Some(v) = self.views.get(&t) else {
                     let _ = reply.send(Err("tab has no page".into()));
                     return;
@@ -7531,7 +7630,7 @@ impl App {
                     let _ = reply.send(Err("no tab".into()));
                     return;
                 };
-                self.ensure_view(t);
+                self.load_view(t);
                 let Some(v) = self.views.get(&t) else {
                     let _ = reply.send(Err("tab has no page".into()));
                     return;
@@ -7833,6 +7932,7 @@ impl App {
     /// archiving them, and (app.reload_when_reopened) the rest load after the page on screen, most recent first.
     fn wake_after_closed(&mut self) {
         let Some(since) = self.closed_since.take() else { return };
+        self.stopped_loads.clear();
         let closed = now().saturating_sub(since);
         let mut queue = std::mem::take(&mut self.restore_queue);
         queue.retain(|id| self.state.tabs.contains_key(id));

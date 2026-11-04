@@ -113,6 +113,7 @@ changed in plain words. Some translations:
 | "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits) on macOS; on Windows and Linux `app.keep_running_when_closed_without_dock` (`false` quits, the default; `true` stays, and opening Valerie again shows it) |
 | "Don't leave Valerie running after an agent opened it" / "keep it running" | `mcp.quit_when_unused_minutes: 10` (minutes with no agent calls) / `0` (stays) |
 | "Use less memory when the window is closed" | `app.unload_when_closed_minutes: 1` (sooner) / `0` (keep pages loaded); `app.reload_when_reopened: false` (pages load only when clicked after reopening) |
+| "Video stops playing after Valerie has been open a long time" | `app.refresh_graphics: true` (on by default), `app.graphics_buffers_budget` (lower reacts sooner) |
 | "An icon in the menu bar" / "things in the Dock menu" / "a different Dock icon" | `app.menu_bar_icon: "✦"`, `app.dock_menu: [new_tab, new_window]`, `app.icon: "~/Pictures/icon.png"` |
 | "Answer me in French" / "always be brief" (the AI) | `agents.instructions: "Answer in French."` (or `agents.instructions_for.chat`) |
 | "⌘K then ⌘S" style shortcuts | a key sequence in `keybindings`: `"CmdOrCtrl+K CmdOrCtrl+S": sync` |
