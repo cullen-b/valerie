@@ -1538,6 +1538,70 @@ mod mac {
     }
 }
 
+/// This app's WebKit graphics process and how many IOSurfaces it holds. None off macOS, or if macOS won't say.
+#[cfg(target_os = "macos")]
+pub fn graphics_buffers() -> Option<(i32, u64)> {
+    extern "C" {
+        fn proc_listallpids(buffer: *mut std::ffi::c_void, size: i32) -> i32;
+        fn proc_name(pid: i32, buffer: *mut std::ffi::c_void, size: u32) -> i32;
+        fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+    }
+    const RTLD_DEFAULT: *mut std::ffi::c_void = -2isize as *mut std::ffi::c_void;
+    // Private but long-standing, so looked up: if a macOS removes it, this just reports nothing.
+    let symbol = unsafe { dlsym(RTLD_DEFAULT, c"responsibility_get_pid_responsible_for_pid".as_ptr()) };
+    if symbol.is_null() {
+        return None;
+    }
+    let responsible: extern "C" fn(i32) -> i32 = unsafe { std::mem::transmute(symbol) };
+    let mut pids = vec![0i32; 8192];
+    let found = unsafe { proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
+    // The process answers to whatever started us: ourselves for an app, the terminal for a program run from one.
+    let me = responsible(std::process::id() as i32);
+    let pid = pids.into_iter().take(found.max(0) as usize).find(|&pid| {
+        let mut name = [0u8; 64];
+        let n = unsafe { proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+        n > 0 && &name[..n as usize] == b"com.apple.WebKit.GPU" && responsible(pid) == me
+    })?;
+    let out = command("/usr/bin/footprint").args(["-p", &pid.to_string()]).output().ok()?;
+    Some((pid, surfaces_in_footprint(&String::from_utf8_lossy(&out.stdout))?))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn graphics_buffers() -> Option<(i32, u64)> {
+    None
+}
+
+/// The count on `footprint`'s IOSurface row: "113 MB  0 B  2846 MB  3290  IOSurface".
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn surfaces_in_footprint(report: &str) -> Option<u64> {
+    let row = report.lines().find(|l| l.trim_end().ends_with(" IOSurface"))?;
+    row.split_whitespace().rev().nth(1)?.parse().ok()
+}
+
+/// Ends a helper process of ours; WebKit starts a new one by itself.
+pub fn stop_process(pid: i32) {
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
+        const SIGKILL: i32 = 9;
+        unsafe { kill(pid, SIGKILL) };
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+#[cfg(test)]
+mod graphics_tests {
+    #[test]
+    fn reads_the_surface_count() {
+        let report = "   Dirty  Clean  Reclaimable  Regions  Category\n 113 MB  0 B  2846 MB  3290    IOSurface\n";
+        assert_eq!(super::surfaces_in_footprint(report), Some(3290));
+        assert_eq!(super::surfaces_in_footprint("no such row"), None);
+    }
+}
+
 /// Seconds since the keyboard or mouse was last used (0 where that can't be known).
 pub fn idle_seconds() -> f64 {
     #[cfg(target_os = "macos")]

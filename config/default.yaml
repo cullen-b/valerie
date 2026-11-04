@@ -913,6 +913,11 @@ app:
   reload_when_reopened: true   # when you open the window after that, the page you were on loads first, then every other
                            # page that was open loads again in the background, most recently used first. true | false
                            # (false = they load when you click them)
+  refresh_graphics: true   # keep video and pages drawing in long sessions (macOS; other systems ignore it): watch the
+                           # graphics buffers WebKit uses, restart its graphics process when the window is closed, and
+                           # put unused tabs to sleep when they run high. true | false (false = never step in)
+  graphics_buffers_budget: 8000   # buffers in use before that sleeping starts; restarts follow at 1.5 times this if
+                           # nothing is playing and 1.875 times it regardless. macOS's own limit is 16384. A number
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
