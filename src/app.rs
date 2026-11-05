@@ -7467,6 +7467,15 @@ impl App {
                     }
                 });
             }
+            // Why YouTube expected a bad connection (pages.youtube_sharp_start). Only numbers reach the log: any page can send this.
+            (Source::Page(target), "youtube_stall") => {
+                let host = self.view_for(target).and_then(platform::page_url).and_then(|u| url::Url::parse(&u).ok()).and_then(|u| u.host_str().map(str::to_string));
+                if m["stall"].as_f64().is_some_and(|s| s > 0.0) && host.is_some_and(|h| h == "youtube.com" || h.ends_with(".youtube.com")) {
+                    let n = |k: &str| m[k].as_f64().unwrap_or(0.0);
+                    let age = (now() as f64 - n("saved") / 1000.0).max(0.0) as u64;
+                    crate::log::line("video", format!("YouTube page started with a bad stall number, capped it: stall {:.2e}, longest recent gap {:.0} ms, speed {:.0} Mbps, saved {age}s ago", n("stall"), n("gap_ms"), n("byterate") / 125_000.0));
+                }
+            }
             (Source::Page(target), "keyed") => {
                 if m["on"].as_bool() == Some(true) {
                     self.keyed.insert(target, now());

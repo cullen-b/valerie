@@ -23,18 +23,6 @@ const consoleKept = [];
   addEventListener("unhandledrejection", (e) => keep("error", ["Unhandled promise rejection:", e.reason]));
 })();
 
-// ---------- YouTube starts sharp: a bad "stall" it saved earlier mustn't hold new videos at 240p ----------
-// The player divides its speed estimate by this (seconds lost per byte); above the cap it would cost more than the connection's own speed.
-if (CFG.pages && CFG.pages.youtube_sharp_start && /(^|\.)youtube\.com$/.test(location.hostname)) {
-  try {
-    const key = "yt-player-bandwidth", saved = JSON.parse(localStorage.getItem(key)), estimate = JSON.parse(saved.data);
-    if (estimate.stall > 1e-7) {
-      estimate.stall = 1e-7; saved.data = JSON.stringify(estimate);
-      localStorage.setItem(key, JSON.stringify(saved));
-    }
-  } catch (_) {}
-}
-
 // ---------- the page's requests, kept for an agent debugging it (read_network) ----------
 // Recording bodies, once an agent asks, lasts through reloads in that tab.
 const netKept = [], net = { bodies: (() => { try { return sessionStorage.getItem("valerie-net-bodies") === "1"; } catch (_) { return false; } })() };
@@ -282,6 +270,21 @@ function toJson(v, depth = 0) {
   return s + "}";
 }
 const post = (o) => { try { (ipcPost || ((m) => window.ipc.postMessage(m)))(toJson(o)); } catch (_) {} };
+
+// ---------- YouTube starts sharp: a bad "stall" it saved earlier mustn't hold new videos at 240p ----------
+// The player divides its speed estimate by this (seconds lost per byte); above the cap it would cost more than the connection's own speed.
+if (CFG.pages && CFG.pages.youtube_sharp_start && /(^|\.)youtube\.com$/.test(location.hostname)) {
+  try {
+    const key = "yt-player-bandwidth", saved = JSON.parse(localStorage.getItem(key)), estimate = JSON.parse(saved.data);
+    if (estimate.stall > 1e-7) {
+      const gaps = (estimate.interruptions || []).map((i) => i.max || 0);
+      post({ t: "youtube_stall", stall: estimate.stall, gap_ms: Math.max(0, ...gaps), byterate: estimate.byterate, saved: saved.creation });
+      estimate.stall = 1e-7; saved.data = JSON.stringify(estimate);
+      localStorage.setItem(key, JSON.stringify(saved));
+    }
+  } catch (_) {}
+}
+
 const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
 const PAGE_ACTIONS = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find"]);
 let cfg = withSite(CFG), mode = "normal", buffer = "", bufferTimer = 0;
