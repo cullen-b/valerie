@@ -895,6 +895,13 @@ updates:
   feed: "https://github.com/cullen-b/valerie/releases/latest/download/latest.json"   # where stable releases are
                            # described (a fork can point this at its own releases)
 
+# Every change to your settings, plugins, styles and layouts, whether you, an AI or another app made it. "Change History"
+# in the command bar lists them and goes back to any of them exactly; going back deletes nothing, so it can be undone the
+# same way. Kept on this computer only, in the `changes` folder inside Valerie's data folder (`valerie changes` from a terminal).
+change_history:
+  enabled: true            # record changes. true | false (false = stop recording; what's already saved stays and still works)
+  keep: 1000               # how many changes to keep, oldest forgotten first. 0 = keep them all
+
 # Valerie's log: what went wrong and what happened (sync, updates, plugins, commands, agents' tool calls, …), one file
 # a day in the `logs` folder inside Valerie's data folder (`valerie paths` shows where). Read it, or ask your AI to
 # (agents read it with the read_logs tool), when something fails. Passwords, tokens and keys are never written to it.

@@ -5,6 +5,7 @@ mod agents;
 mod app;
 mod blocking;
 mod command;
+mod history;
 mod config;
 mod connect;
 mod crypt;
@@ -52,7 +53,18 @@ USAGE:
   valerie screenshot [--full] [--tab N] [file.png]  save a picture of a tab (the active one; --full for the whole
                           page), to file.png or a Valerie Capture <time>.png here
   valerie paths           show config and data locations
+  valerie changes         list every change to your settings and looks
+  valerie changes back <id>   put them back exactly as they were at that change
   valerie triage          something's wrong: your AI (Claude Code or Codex) helps find why, even if Valerie won't open";
+
+/// How long ago, in plain words, for `valerie changes`.
+fn ago(at: u64) -> String {
+    match state::now().saturating_sub(at) {
+        s if s < 3600 => format!("{}m ago", s / 60),
+        s if s < 86400 => format!("{}h ago", s / 3600),
+        s => format!("{}d ago", s / 86400),
+    }
+}
 
 fn check_config() -> anyhow::Result<()> {
     let (problems, plugins) = config_problems();
@@ -657,6 +669,21 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("triage") => return triage::run_cli(),
+        Some("changes") => {
+            match (args.get(1).map(String::as_str), args.get(2)) {
+                (None, _) => {
+                    for e in history::entries().iter().rev() {
+                        println!("{}  {}  {} ({} changed)", e.id, ago(e.at), e.why, e.changed.len());
+                    }
+                }
+                (Some("back"), Some(id)) => match history::go_back(id) {
+                    Ok(e) => println!("{}", e.why),
+                    Err(e) => anyhow::bail!(e),
+                },
+                _ => anyhow::bail!("use: valerie changes  |  valerie changes back <id>"),
+            }
+            return Ok(());
+        }
         Some("paths") => {
             println!("config: {}\ndata:   {}\nlogs:   {}", config::config_path().display(), config::data_dir().display(), log::dir().display());
             return Ok(());
