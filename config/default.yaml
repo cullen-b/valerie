@@ -128,6 +128,10 @@ sidebar:
   drop_to_split: true      # drop a tab on the middle of another to open the two side by side in split view. true | false
   split_rows: true         # tabs in split view show as one row (one wide tile among pinned icons) that you drag, pin
                            # and keep as one. false = separate rows, marked with a bar. true | false
+  scroll_long_titles: true # a tab title too long for its row scrolls sideways like a stock ticker. true | false
+  title_scroll_speed: 30   # how fast those titles scroll, pixels per second (5 slow … 200 fast)
+  title_scroll_style: loop # one of: loop (runs off one side and comes back on the other) | bounce (slides to the end,
+                           # pauses, slides back)
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank | plugin:<name> (that plugin's
                            # start.html, which can open sites and run the plugin's commands)
