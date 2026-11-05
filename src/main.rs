@@ -567,7 +567,7 @@ fn main() -> anyhow::Result<()> {
             use anyhow::Context;
             let index = || market::fetch(&config.plugin_marketplace.index);
             let ext_dir = extensions::dir(&config.extensions);
-            let tag = |e: &market::Entry| if e.is_extension() { "  [extension]" } else { "" };
+            let tag = |e: &market::Entry| if e.is_extension() { "  [extension]" } else if e.is_layout() { "  [layout]" } else { "" };
             match args.get(1).map(String::as_str) {
                 Some("search") => {
                     let q = args[2..].join(" ");
@@ -587,6 +587,9 @@ fn main() -> anyhow::Result<()> {
                     let e = market::find(&all, name, kind).with_context(|| format!("nothing called {name} in the marketplace"))?;
                     if !e.programs.is_empty() {
                         println!("{name} runs these on your computer:\n{}", e.programs.join("\n---\n"));
+                    }
+                    if !e.replaces.is_empty() {
+                        println!("{name} replaces these windows of Valerie's (it asks before it does): {}", e.replaces.join(", "));
                     }
                     let dir = market::install(e, &plugins::plugins_dir(), &ext_dir)?;
                     let next = if e.is_extension() { "Valerie asks once before loading it; needs macOS 15.4 or later" } else { "Valerie picks it up by itself" };
@@ -608,6 +611,8 @@ fn main() -> anyhow::Result<()> {
                 Some("share") => {
                     let name = args.get(2).context("usage: valerie plugins share <name> [--extension]")?;
                     let kind = args.iter().any(|a| a == "--extension").then_some(market::EXTENSION);
+                    // A layout of the user's own becomes a plugin with its panels, so it stands on its own.
+                    let _ = window_layout::package(name, &config::config_dir().join("layouts"), &plugins::plugins_dir());
                     let (dir, _) = market::local(name, kind, &plugins::plugins_dir(), &ext_dir)
                         .with_context(|| format!("no plugin or extension called {name} in {} or {}", plugins::plugins_dir().display(), ext_dir.display()))?;
                     let token = github::token().context("sign in to GitHub first: run Set Up Sync in Valerie, or `gh auth login`")?;

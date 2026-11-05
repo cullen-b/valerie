@@ -137,6 +137,8 @@ welcome: true              # the welcome guide (AI, sync, describe your browser,
                            # "Welcome Tour" in the command bar shows it again. true | false
 
 command_bar:
+  hide_commands: []        # commands to leave out of the command bar, by name or words, e.g. [next_layout, "Print"];
+                           # their shortcuts keep working
   site_search: true        # type a site's name (e.g. "youtube"), press Tab, and search that site directly
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
@@ -390,6 +392,8 @@ notifications:
   sites: {}                # your choice per site, e.g. { mail.google.com: allow, news.example.com: deny }; this wins
                            # over the answers you gave when asked (toggle_site_notifications flips the site you're on)
   sound: true              # play the notification sound
+  sound_file: ""           # Valerie's own notifications play this sound file instead of the system's (a path, ~ allowed;
+                           # .wav works everywhere). empty = the system's sound
 
 # Watch This Page…: describe what to wait for ("the price drops below $500", "checks pass on this PR"); an agent looks
 # in the background and tells you once it happens.
@@ -626,6 +630,10 @@ menu:
 
 # Valerie's right-click menus (on links, tabs and folders). Plugins add their own entries (`context_menu` on a command).
 context_menu:
+  panels:                  # draw a right-click menu with a plugin's panel instead of the system's (<plugin>/<file>; it gets
+    tab: ""                # what was clicked as valerie.props). empty = the usual menu. tab: on a tab in the sidebar
+    page: ""               # on a web page
+    folder: ""             # on a folder in the sidebar
   hide: []                 # entries to leave out, by their words, e.g. ["Open in Little Window", "Peek", "New Folder…"]
 
 # Mouse buttons. Each is a command (like under keybindings) or null for nothing.
