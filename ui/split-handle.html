@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- A see-through strip over one split-view gap. It alone draws the grab pill, so the pill is always one shape. -->
+<style>
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; cursor: col-resize; user-select: none; -webkit-user-select: none; }
+#pill { position: absolute; left: 0; right: 0; top: 0; height: 72px; transform-origin: center; will-change: transform; }
+#pill > div { position: absolute; inset: 0; border-radius: 999px; background: var(--accent, #9d8cff); transform: scale(.3, .15); opacity: 0;
+  transition: transform 200ms cubic-bezier(.5, 0, .75, 0), opacity 180ms ease-in; }
+#pill.on > div { transform: none; opacity: 1; transition: transform 600ms var(--pop, cubic-bezier(.34, 1.56, .64, 1)), opacity 120ms ease-out; }
+</style>
+</head>
+<body>
+<div id="pill"><div></div></div>
+<script>
+const send = (o) => { try { window.ipc.postMessage(JSON.stringify(o)); } catch (_) {} };
+const pill = document.getElementById("pill");
+let H = 72, pos = 0, v = 0, target = 0, raf = 0, on = false, hideT = 0, drag = null, dragX = 0, dragRaf = 0;
+
+// A bouncy spring as a CSS easing for popping open (a plain overshoot where linear() isn't supported).
+(() => {
+  const z = 0.42, w = 18, wd = w * Math.sqrt(1 - z * z), pts = [];
+  for (let i = 0; i < 40; i++) { const t = (i / 40) * 0.6; pts.push((1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t))).toFixed(3)); }
+  const e = `linear(${pts.join(", ")}, 1)`;
+  if (CSS.supports("transition-timing-function", e)) document.documentElement.style.setProperty("--pop", e);
+})();
+
+window.handle = {
+  set(c) {
+    H = +c.h || 72; pill.style.height = H + "px";
+    if (c.accent) document.documentElement.style.setProperty("--accent", c.accent);
+    place(0);
+  },
+};
+
+function place(stretch) { pill.style.transform = `translateY(${pos - H / 2}px) scale(${1 - stretch * 0.4}, ${1 + stretch})`; }
+// A lively spring after the mouse, stretching taller and thinner while it moves fast, like a drop of liquid.
+function run() {
+  if (raf) return;
+  let last = performance.now();
+  const step = (now) => {
+    let dt = Math.min(0.05, (now - last) / 1000); last = now;
+    while (dt > 0) { const h = Math.min(dt, 1 / 240); v += (520 * (target - pos) - 27 * v) * h; pos += v * h; dt -= h; }
+    const done = Math.abs(target - pos) < 0.2 && Math.abs(v) < 5;
+    if (done) { pos = target; v = 0; }
+    place(Math.min(0.45, Math.abs(v) / 1800));
+    raf = done ? 0 : requestAnimationFrame(step);
+  };
+  raf = requestAnimationFrame(step);
+}
+function show(y) {
+  clearTimeout(hideT);
+  if (!on) { pos = y; v = 0; place(0); on = true; pill.classList.add("on"); }
+  target = y; run();
+}
+// A short wait so a mouse wobbling on the strip's edge doesn't flicker it.
+function hide() { clearTimeout(hideT); hideT = setTimeout(() => { on = false; pill.classList.remove("on"); }, 80); }
+
+addEventListener("mousemove", (e) => {
+  show(e.clientY);
+  if (!drag) return;
+  dragX = e.screenX;
+  if (!dragRaf) dragRaf = requestAnimationFrame(() => { dragRaf = 0; if (drag) send({ t: "split_drag", dx: dragX - drag.x0 }); });
+});
+document.documentElement.addEventListener("mouseleave", () => { if (!drag) hide(); });
+addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  if (e.detail === 2) return send({ t: "reset_split" });
+  drag = { x0: e.screenX }; dragX = e.screenX;
+  send({ t: "split_drag_start" });
+});
+addEventListener("mouseup", (e) => {
+  if (!drag) return;
+  if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+  send({ t: "split_drag", dx: dragX - drag.x0 });
+  drag = null;
+  if (e.clientX < 0 || e.clientX >= innerWidth || e.clientY < 0 || e.clientY >= innerHeight) hide();
+});
+send({ t: "ready" });
+</script>
+</body>
+</html>

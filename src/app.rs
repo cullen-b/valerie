@@ -42,6 +42,7 @@ pub enum Source {
     Market,
     LittleBar(WindowId),
     Page(Target),
+    SplitHandle(usize),
 }
 
 pub enum UserEvent {
@@ -383,8 +384,10 @@ pub struct App {
     sidebar_peek: bool,
     /// The split-view gap the mouse is on, widened to `layout.split_grab_width` so it's easy to grab.
     split_grab: Option<usize>,
-    /// Where the split-view gap a page started dragging was (window points); the page sends how far the mouse moved.
+    /// Where the split-view gap being dragged by its handle was (window points); the handle sends how far the mouse moved.
     split_drag_from: Option<(usize, f64)>,
+    /// One see-through strip over each split-view gap that draws the grab pill (layout.split_grab_height).
+    split_handles: Vec<WebView>,
     /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
     /// When each page last clicked or submitted by keyboard: the page it leads to puts the cursor in its text box.
@@ -1142,6 +1145,7 @@ pub fn ui(name: &str) -> String {
         "vendor/xterm.css" => include_str!("../ui/vendor/xterm.css"),
         "vendor/addon-fit.js" => include_str!("../ui/vendor/addon-fit.js"),
         "answer.html" => include_str!("../ui/answer.html"),
+        "split-handle.html" => include_str!("../ui/split-handle.html"),
         "welcome.html" => include_str!("../ui/welcome.html"),
         "plugins.html" => include_str!("../ui/plugins.html"),
         "brief.html" => include_str!("../ui/brief.html"),
@@ -1517,6 +1521,7 @@ impl App {
             sidebar_peek: false,
             split_grab: None,
             split_drag_from: None,
+            split_handles: Vec::new(),
             fill_offers: HashMap::new(),
             keyed: HashMap::new(),
             pending_save: None,
@@ -1669,10 +1674,6 @@ impl App {
         c["space"] = json!(self.space_name(space));
         // Its own space's accent, so switching spaces doesn't have to tell every page.
         c["accent"] = json!(self.theme_for(space).accent);
-        c["split_grip"] = match target {
-            Target::Tab(id) => self.split_grip_for(id),
-            _ => Value::Null,
-        };
         c
     }
 
@@ -2136,30 +2137,41 @@ impl App {
         l.split_resize && l.split_grab_height > 0.0 && l.split_grab_width > l.split_gap && self.peek.is_none()
     }
 
-    /// Which of a split-view page's edges are gaps it draws the widened bit of, sized for the page's script.
-    fn split_grip_for(&self, id: TabId) -> Value {
-        let panes = self.panes();
-        let Some(i) = panes.iter().position(|t| *t == id).filter(|_| panes.len() > 1 && self.split_grip_on()) else {
-            return Value::Null;
-        };
-        let l = &self.config.layout;
-        json!({ "left": i > 0, "right": i + 1 < panes.len(), "w": l.split_grab_width, "h": l.split_grab_height, "gap": l.split_gap.max(0.0) })
+    fn split_handle_settings(&self) -> Value {
+        json!({ "h": self.config.layout.split_grab_height, "accent": self.theme_for(self.state.active_space).accent })
     }
 
-    /// Show the widened bit of gap `i` at `y` (content-area points; None hides it) in the chrome and the pages beside it,
-    /// except `from`, which already drew its own.
-    fn split_grip(&self, i: usize, y: Option<f64>, from: Option<TabId>) {
-        let panes = self.panes();
-        if i + 1 >= panes.len() {
-            return;
+    /// Put a handle over each gap between the panes laid out at `rects`: one view draws the whole pill, so it's always one shape.
+    fn layout_split_handles(&mut self, rects: &[(f64, f64)], y: f64, h: f64) {
+        let want = if self.split_grip_on() && rects.len() > 1 && !self.views.values().any(platform::in_page_fullscreen) { rects.len() - 1 } else { 0 };
+        while self.split_handles.len() < want {
+            let p = self.proxy.clone();
+            let i = self.split_handles.len();
+            let built = WebViewBuilder::new()
+                .with_html(ui_page("split-handle.html", &self.config))
+                .with_visible(false)
+                .with_transparent(true)
+                .with_accept_first_mouse(true)
+                .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::SplitHandle(i), msg: r.into_body() }))
+                .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
+                .child_of(&self.window);
+            match built {
+                Ok(v) => self.split_handles.push(v),
+                Err(e) => return crate::log::line("layout", format!("split handle: {e}")),
+            }
         }
-        let y = json!(y.filter(|y| y.is_finite()));
-        let _ = self.chrome.evaluate_script(&format!("window.splitGrip && splitGrip({i}, {y})"));
-        for (t, side) in [(panes[i], "right"), (panes[i + 1], "left")] {
-            if Some(t) != from {
-                if let Some(v) = self.views.get(&t) {
-                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.splitGrip({side:?}, {y})"));
-                }
+        let l = &self.config.layout;
+        let (w, gap) = (l.split_grab_width.max(1.0), l.split_gap.max(0.0));
+        let set = self.split_handle_settings();
+        for (i, v) in self.split_handles.iter().enumerate() {
+            if i < want {
+                let at = rects[i].0 + rects[i].1 + gap / 2.0;
+                let _ = v.set_bounds(rect(at - w / 2.0, y, w, h));
+                let _ = v.set_visible(true);
+                platform::bring_to_front(v);
+                let _ = v.evaluate_script(&format!("window.handle && handle.set({set})"));
+            } else {
+                let _ = v.set_visible(false);
             }
         }
     }
@@ -2369,12 +2381,8 @@ impl App {
                 let _ = v.set_visible(!self.waiting_draw.contains(id));
             }
         }
-        let shown: Vec<TabId> = panes.iter().copied().filter(|id| self.views.contains_key(id) && !self.waiting_draw.contains(id)).collect();
-        if shown != self.shown_panes {
-            // Pages joining or leaving a split learn which of their edges are gaps.
-            self.shown_panes = shown;
-            self.refresh_pane_config();
-        }
+        self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id) && !self.waiting_draw.contains(id)).collect();
+        self.layout_split_handles(&rects, y, h);
         self.layout_panels(size.width, size.height);
         if let Some(av) = &self.answer_view {
             match self.answer_tab.filter(|t| panes.contains(t)) {
@@ -7798,6 +7806,7 @@ impl App {
                         }
                     }
                     Source::Chrome | Source::Chat | Source::Terminal | Source::Answer | Source::Welcome | Source::Market | Source::Panel(_) => self.focused_little = None,
+                    Source::SplitHandle(_) => return,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -8020,36 +8029,26 @@ impl App {
                     self.refresh_pane_config();
                 }
             }
-            (Source::Chrome, "split_grip") => {
-                if let Some(i) = m["i"].as_u64().filter(|_| self.split_grip_on()) {
-                    self.split_grip(i as usize, m["y"].as_f64(), None);
+            (Source::SplitHandle(i), "ready") => {
+                if let Some(v) = self.split_handles.get(i) {
+                    let _ = v.evaluate_script(&format!("handle.set({})", self.split_handle_settings()));
                 }
             }
-            (Source::Page(Target::Tab(t)), "split_grip" | "split_drag_start" | "split_drag") => {
+            (Source::SplitHandle(i), "split_drag_start") => {
                 let panes = self.panes();
-                let gap = panes.iter().position(|p| *p == t).and_then(|p| match m["side"].as_str() {
-                    Some("left") => p.checked_sub(1),
-                    Some("right") => Some(p),
-                    _ => None,
-                });
-                if let Some(i) = gap.filter(|i| i + 1 < panes.len() && self.split_grip_on()) {
-                    match kind {
-                        "split_grip" => self.split_grip(i, m["y"].as_f64(), Some(t)),
-                        "split_drag_start" => {
-                            let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-                            let (x, _, w, _) = self.content_area(size.width, size.height);
-                            let r = self.pane_rects(&panes, x, w);
-                            self.split_drag_from = Some((i, r[i].0 + r[i].1 + self.config.layout.split_gap.max(0.0) / 2.0));
-                        }
-                        _ => {
-                            if let (Some((from_i, at)), Some(dx)) = (self.split_drag_from.filter(|f| f.0 == i), m["dx"].as_f64()) {
-                                self.resize_split(from_i, at + dx);
-                            }
-                        }
-                    }
+                if i + 1 < panes.len() {
+                    let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                    let (x, _, w, _) = self.content_area(size.width, size.height);
+                    let r = self.pane_rects(&panes, x, w);
+                    self.split_drag_from = Some((i, r[i].0 + r[i].1 + self.config.layout.split_gap.max(0.0) / 2.0));
                 }
             }
-            (Source::Page(Target::Tab(_)), "reset_split") | (Source::Chrome, "reset_split") => {
+            (Source::SplitHandle(i), "split_drag") => {
+                if let (Some((_, at)), Some(dx)) = (self.split_drag_from.filter(|f| f.0 == i), m["dx"].as_f64()) {
+                    self.resize_split(i, at + dx);
+                }
+            }
+            (Source::SplitHandle(_), "reset_split") | (Source::Chrome, "reset_split") => {
                 for t in self.panes() {
                     self.state.split_widths.remove(&t);
                 }
