@@ -1623,7 +1623,7 @@ impl App {
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
-            "network_log": self.config.mcp.enabled && self.config.mcp.network_log,
+            "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
             "sites": self.config.sites, "mouse": self.config.mouse, "plugin_contexts": self.plugin_contexts(),
             "redirects": self.config.rules.iter().filter(|r| !r.redirect.is_empty() && !r.to.is_empty()).map(|r| json!({ "from": r.redirect, "to": r.to, "site": r.site })).collect::<Vec<_>>(),
@@ -1769,7 +1769,8 @@ impl App {
             let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
             for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
                 let once = format!("(!window.__valerie || __valerie.once({}))", json!(format!("boost:{}", b.host)));
-                let _ = view.evaluate_script(&format!("if {once} try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }}", b.js, b.host));
+                // In a function of its own, so its names can't clash with the page's globals.
+                let _ = view.evaluate_script(&format!("if {once} (function () {{ try {{\n{}\n}} catch (e) {{ console.error('valerie boost {}', e) }} }})();", b.js, b.host));
             }
         }
         for p in self.plugins.iter().filter(|p| p.active_in(&space)) {
