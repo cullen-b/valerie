@@ -93,8 +93,8 @@ writes the marks into the PDF itself (pdf-lib) and saves `<name> (marked up).pdf
 left alone. `pages.pdf_viewer: false` goes back to macOS's own PDF view.
 
 **Media:** tabs opened in the background wait to play until you look at them; a playing video pops out into
-picture-in-picture when you switch away; a mini player above the space icons pauses, mutes or jumps back to whatever
-is playing in another tab; click a tab's ♪ to mute it. **Downloads** go to your Downloads folder and show up in the
+picture-in-picture when you switch away; a mini player above the space icons pauses, skips 10 seconds, mutes or jumps back to
+whatever is playing in another tab; click a tab's ♪ to mute it. **Downloads** go to your Downloads folder and show up in the
 command bar (type the file name).
 
 **Little things:** the command bar is a calculator and unit converter (`12*7`, `15% of 80`, `5 km in mi`, `70 f to c`;

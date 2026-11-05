@@ -250,6 +250,7 @@ pub struct SidebarConfig {
     pub order: Vec<String>,
     pub tab_height: f64,
     pub now_playing: bool,
+    pub now_playing_skip: f64,
     pub compact_width: f64,
     pub medium_width: f64,
     pub max_width: f64,

@@ -4961,6 +4961,7 @@ impl App {
                 Command::Stop => return drop(l.view.evaluate_script("window.stop()")),
                 Command::ToggleMute { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"mute\")")),
                 Command::ToggleMedia { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"toggle\")")),
+                Command::SkipMedia { tab: None, seconds } => return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.media(\"skip\", {seconds})"))),
                 Command::ReaderView => return drop(l.view.evaluate_script("window.__valerie && __valerie.reader()")),
                 Command::Print => return platform::print(&l.view),
                 Command::FindInPage { query } => {
@@ -5505,6 +5506,11 @@ impl App {
                 let action = if matches!(cmd, Command::ToggleMute { .. }) { "mute" } else { "toggle" };
                 if let Some(v) = self.target_tab(tab).and_then(|t| self.views.get(&t)) {
                     let _ = v.evaluate_script(&format!("window.__valerie && __valerie.media({action:?})"));
+                }
+            }
+            Command::SkipMedia { tab, seconds } => {
+                if let Some(v) = self.target_tab(tab).and_then(|t| self.views.get(&t)) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.media(\"skip\", {seconds})"));
                 }
             }
             Command::ReaderView => {
