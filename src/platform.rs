@@ -501,6 +501,87 @@ mod mac {
         }
     }
 
+    /// WebKit moves a page into its own window for full screen. `f` hears when it's back in Valerie's window.
+    pub fn on_page_fullscreen(wv: &WebView, f: Box<dyn Fn() + Send + Sync>) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::sel;
+        static BACK: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+        // WebKit has just moved the page and nothing animates yet: rounded corners would stay on the video.
+        unsafe extern "C-unwind" fn will_enter(_: *mut AnyObject, _: Sel, wv: *mut AnyObject) {
+            crate::log::line("fullscreen", "page entering full screen");
+            let layer: *mut AnyObject = msg_send![wv, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setCornerRadius: 0.0f64];
+                let _: () = msg_send![layer, setMasksToBounds: false];
+            }
+        }
+        unsafe extern "C-unwind" fn did_exit(_: *mut AnyObject, _: Sel, _wv: *mut AnyObject) {
+            crate::log::line("fullscreen", "page back in the window");
+            if let Some(f) = BACK.get() {
+                f();
+            }
+        }
+        if BACK.set(f).is_err() {
+            return;
+        }
+        unsafe {
+            let view_class = (*ptr(wv)).class() as *const AnyClass as *mut AnyClass;
+            objc2::ffi::class_addMethod(view_class, sel!(convertRect:toView:), std::mem::transmute::<*const (), Imp>(convert_rect as *const ()), c"{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}@".as_ptr());
+            let delegate: *mut AnyObject = msg_send![ptr(wv), UIDelegate];
+            if delegate.is_null() {
+                return;
+            }
+            let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
+            let add = |name: Sel, imp: Imp| objc2::ffi::class_addMethod(cls, name, imp, c"v@:@".as_ptr());
+            add(sel!(_webViewWillEnterFullscreen:), std::mem::transmute::<*const (), Imp>(will_enter as *const ()));
+            add(sel!(_webViewDidExitFullscreen:), std::mem::transmute::<*const (), Imp>(did_exit as *const ()));
+        }
+    }
+
+    /// WebKit photographs the page before full screen by converting the view's frame as if it were in the view's own
+    /// coordinates, which is off by the page's position: beside a sidebar the picture came out shifted, half of it blank.
+    unsafe extern "C-unwind" fn convert_rect(this: *mut AnyObject, sel: objc2::runtime::Sel, rect: objc2_foundation::NSRect, to: *mut AnyObject) -> objc2_foundation::NSRect {
+        use objc2::class;
+        use objc2_foundation::NSRect;
+        let frame: NSRect = msg_send![this, frame];
+        let is_own_frame = to.is_null() && rect.origin == frame.origin && rect.size == frame.size;
+        let rect = if is_own_frame { msg_send![this, bounds] } else { rect };
+        let inherited = class!(NSView).instance_method(sel).expect("NSView converts rects").implementation();
+        let inherited: unsafe extern "C-unwind" fn(*mut AnyObject, objc2::runtime::Sel, NSRect, *mut AnyObject) -> NSRect = std::mem::transmute(inherited);
+        inherited(this, sel, rect, to)
+    }
+
+    /// Every page reports its own full screen changes to the delegate `on_page_fullscreen` set up.
+    pub fn watch_page_fullscreen(wv: &WebView) {
+        use objc2::sel;
+        unsafe {
+            let v = ptr(wv);
+            let delegate: *mut AnyObject = msg_send![v, UIDelegate];
+            let can: bool = msg_send![v, respondsToSelector: sel!(_setFullscreenDelegate:)];
+            if can && !delegate.is_null() {
+                let _: () = msg_send![v, _setFullscreenDelegate: delegate];
+            }
+            // Otherwise WebKit keeps a title bar's height free at the top of the page until the animation ends, then the video jumps.
+            if msg_send![v, respondsToSelector: sel!(_setAutomaticallyAdjustsContentInsets:)] {
+                let _: () = msg_send![v, _setAutomaticallyAdjustsContentInsets: false];
+            }
+        }
+    }
+
+    /// True while WebKit holds this page in its full screen window, where Valerie's layout means nothing.
+    pub fn in_page_fullscreen(wv: &WebView) -> bool {
+        use objc2::sel;
+        unsafe {
+            let v = ptr(wv);
+            let can: bool = msg_send![v, respondsToSelector: sel!(fullscreenState)];
+            if !can {
+                return false;
+            }
+            let state: isize = msg_send![v, fullscreenState];
+            state != 0
+        }
+    }
+
     pub fn is_webview(wv: &WebView, id: usize) -> bool {
         ptr(wv) as usize == id
     }
@@ -2160,6 +2241,28 @@ pub struct Note<'a> {
     pub body: &'a str,
     pub action: Option<String>,
     pub sound: bool,
+}
+
+/// `f` runs when a page that went full screen is back in Valerie's window.
+#[allow(unused_variables)]
+pub fn on_page_fullscreen(wv: &WebView, f: impl Fn() + Send + Sync + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::on_page_fullscreen(wv, Box::new(f));
+}
+
+#[allow(unused_variables)]
+pub fn watch_page_fullscreen(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::watch_page_fullscreen(wv);
+}
+
+/// A page in the system's own full screen window: Valerie mustn't move or hide it.
+#[allow(unused_variables)]
+pub fn in_page_fullscreen(wv: &WebView) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::in_page_fullscreen(wv);
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// `f` gets the webview whose floating video's return button was pressed (see `is_webview`).
