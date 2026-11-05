@@ -169,6 +169,10 @@ body.pointer .np-btn:hover, body.pointer #nowplaying .np-tab:hover { background:
 .np-btn svg { width: 14px; height: 14px; }
 .np-btn svg.fill { fill: currentColor; stroke: none; }
 .np-btn svg.line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.np-skip > * { grid-area: 1 / 1; }
+.np-btn.np-skip svg { width: 22px; height: 22px; stroke-width: 1.5; }
+.np-skip span { font-size: 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
+body.size-medium #nowplaying:has(.np-skip) .title { display: none; }
 body.size-compact #nowplaying { flex-direction: column; }
 body.size-compact #nowplaying .title { display: none; }
 /* the Chats space */
@@ -671,6 +675,7 @@ const PIN = "M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1
 const STAR = "M11.53 2.3a.53.53 0 0 1 .95 0l2.31 4.68a2.12 2.12 0 0 0 1.6 1.16l5.16.76a.53.53 0 0 1 .3.9l-3.74 3.64a2.12 2.12 0 0 0-.61 1.88l.88 5.14a.53.53 0 0 1-.77.56l-4.62-2.43a2.12 2.12 0 0 0-1.97 0L6.4 21.01a.53.53 0 0 1-.77-.56l.88-5.14a2.12 2.12 0 0 0-.61-1.88L2.16 9.8a.53.53 0 0 1 .29-.91l5.17-.75a2.12 2.12 0 0 0 1.6-1.16z";
 const PLAY = "M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z", PAUSE = "M6 4h4v16H6zM14 4h4v16h-4z";
 const SPEAKER = "M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z";
+const SKIP_BACK = "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5", SKIP_FORWARD = "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5";
 const VOLUME = SPEAKER + "M16 9a5 5 0 0 1 0 6M19.4 18.4a9 9 0 0 0 0-12.8", MUTED = SPEAKER + "M22 9l-6 6M16 9l6 6";
 function glyph(d, cls = "glyph") {
   const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg"), p = document.createElementNS(ns, "path");
@@ -694,7 +699,13 @@ function renderNowPlaying() {
   pp.onclick = () => cmd({ cmd: "toggle_media", tab: P.id });
   const mu = el("div", "np-btn"); mu.append(glyph(P.muted ? MUTED : VOLUME, "line")); mu.title = P.muted ? "Unmute" : "Mute";
   mu.onclick = () => cmd({ cmd: "toggle_mute", tab: P.id });
-  np.append(go, pp, mu);
+  const by = S.sidebar.now_playing_skip;
+  const skip = (d, sign, word) => {
+    const b = el("div", "np-btn np-skip"); b.append(glyph(d, "line"), el("span", "", String(by))); b.title = `${word} ${by} sec`;
+    b.onclick = () => cmd({ cmd: "skip_media", tab: P.id, seconds: sign * by });
+    return b;
+  };
+  np.append(...(by > 0 ? [go, skip(SKIP_BACK, -1, "Back"), pp, skip(SKIP_FORWARD, 1, "Forward"), mu] : [go, pp, mu]));
 }
 function pinFolder(tabs) {
   const f = el("div", "tile pinfolder" + (tabs.some(isActive) ? " active" : "")), look = S.sidebar.pinned_folder_icon;

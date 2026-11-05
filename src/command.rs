@@ -267,6 +267,12 @@ pub enum Command {
         #[serde(default)]
         tab: Option<TabId>,
     },
+    /// Jump a tab's video/audio (the one it played last) by this many seconds; negative goes back.
+    SkipMedia {
+        seconds: f64,
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
     /// Show the page's article as clean, readable text (again to go back).
     ReaderView,
     /// Pick an element on the page (hover, ↑ for its parent, click) to hide it on this site for good.
@@ -681,6 +687,7 @@ impl Command {
                 | LastTab
                 | ToggleMute { tab: None }
                 | ToggleMedia { tab: None }
+                | SkipMedia { tab: None, .. }
                 | ReaderView
                 | HideElement
                 | CopyMarkdownLink
@@ -844,6 +851,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("stop_watching", "{ id }"),
     ("set_up_agent", "{ agent: claude | codex | opencode | pi | cursor | hermes }  (install if needed, then sign in)"),
     ("toggle_media", "{ tab? }  (play / pause)"),
+    ("skip_media", "{ seconds, tab? }  (jump the video or audio by this many seconds; negative goes back)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("new_window", "{ url? }  (a separate window for one page)"),

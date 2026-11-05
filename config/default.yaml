@@ -104,6 +104,7 @@ sidebar:
                            # pinned, kept and today scroll together. Parts left out keep their place at the end.
   tab_height: 38           # height of each tab in the list, in pixels (16 tiny … 120 huge); text and icons scale with it
   now_playing: true        # a mini player above the space icons for video/audio playing in another tab
+  now_playing_skip: 10     # seconds the mini player's back and forward buttons jump (1 to 99); 0 hides those buttons
   compact_width: 78        # sidebar width in its icons-only size, pixels (leave room for the window buttons)
   medium_width: 180        # sidebar width in its icon + domain size, pixels
   max_width: 520           # widest you can drag the sidebar, pixels

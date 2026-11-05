@@ -1138,13 +1138,17 @@ document.addEventListener("play", (e) => {
   pausedByUs = null;
 }, true);
 document.addEventListener("volumechange", (e) => { if (tabMuted && e.target instanceof HTMLMediaElement && !e.target.muted) tabMuted = false; }, true);
-function media(action) {
+function media(action, seconds) {
   const all = [...document.querySelectorAll("video, audio")];
+  const current = () => lastMedia && lastMedia.isConnected ? lastMedia : all.find((x) => !x.paused);
   if (action === "mute") { tabMuted = !tabMuted; for (const m of all) m.muted = tabMuted; }
   else if (action === "toggle") {
-    const m = lastMedia && lastMedia.isConnected ? lastMedia : all.find((x) => !x.paused);
+    const m = current();
     if (m && m.paused) m.play().catch(() => {});
     else if (m) { pausedByUs = m; m.pause(); }
+  } else if (action === "skip") {
+    const m = current();
+    if (m) m.currentTime = Math.max(0, Math.min(isFinite(m.duration) ? m.duration : Infinity, m.currentTime + seconds));
   } else if (action === "pause") {
     for (const m of all) if (!m.paused) { pausedByUs = m; m.pause(); }
   }
