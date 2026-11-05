@@ -26,6 +26,29 @@ const LOOK_SECTIONS: &[&str] = &["layout", "sidebar", "window", "command_bar", "
 /// The CSS a layout may bring, one entry per window (see `ui/*.css` in the guide).
 const CSS_WINDOWS: &[&str] = &["chrome", "palette", "chat", "terminal", "little", "answer", "welcome", "plugins", "page"];
 
+/// Valerie's own windows a layout can replace: what people call each one, and the file that draws it.
+pub const WINDOWS: &[(&str, &str)] = &[
+    ("sidebar", "chrome.html"),
+    ("command_bar", "palette.html"),
+    ("chats", "chat.html"),
+    ("terminal", "terminal.html"),
+    ("little_window", "little.html"),
+    ("answer", "answer.html"),
+    ("welcome", "welcome.html"),
+    ("plugins", "plugins.html"),
+];
+
+/// What each window can reach, for the question asked before it's replaced.
+pub fn window_powers(window: &str) -> &'static str {
+    match window {
+        "terminal" => "It can run any program on your computer, in your shells.",
+        "chats" => "It can talk to your AI agents and read your chats.",
+        "sidebar" | "command_bar" => "It can run every Valerie command and see your tabs and history.",
+        "plugins" => "It can install and remove plugins.",
+        _ => "It can run Valerie commands.",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
@@ -36,7 +59,7 @@ pub struct Node {
     pub row: Option<Vec<Node>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column: Option<Vec<Node>>,
-    /// One of Valerie's own parts: pages | sidebar | top_bar.
+    /// One of Valerie's own parts: pages | sidebar | top_bar | terminal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
     /// `<plugin>` (its panel.html) or `<plugin>/<file>` (its <file>.html).
@@ -144,6 +167,9 @@ pub struct Layout {
     pub window: Option<Node>,
     #[serde(default)]
     pub floating: Vec<Floating>,
+    /// Valerie's own windows drawn by a plugin's HTML instead: window name → `<plugin>/<file>`.
+    #[serde(default)]
+    pub replace: BTreeMap<String, String>,
 }
 
 impl Layout {
@@ -197,6 +223,12 @@ impl Layout {
         if self.settings.as_ref().is_some_and(|s| s.get("layout").is_some_and(|l| l.get("arrangement").is_some())) {
             bail!("settings: a layout can't choose the layout");
         }
+        for (window, panel) in &self.replace {
+            if !WINDOWS.iter().any(|(w, _)| w == window) {
+                bail!("replace: {window:?} isn't one of Valerie's windows; use {}", WINDOWS.iter().map(|(w, _)| *w).collect::<Vec<_>>().join(", "));
+            }
+            panel_parts(panel)?;
+        }
         for k in self.css.keys() {
             if !CSS_WINDOWS.contains(&k.as_str()) {
                 bail!("css: {k:?} isn't one of Valerie's windows; use {}", CSS_WINDOWS.join(", "));
@@ -220,8 +252,8 @@ impl Layout {
                                 bail!("window: the pages block can't be hidden");
                             }
                         }
-                        "sidebar" | "top_bar" => {}
-                        other => bail!("window: part {other:?} isn't one of pages, sidebar, top_bar"),
+                        "sidebar" | "top_bar" | "terminal" => {}
+                        other => bail!("window: part {other:?} isn't one of pages, sidebar, top_bar, terminal"),
                     }
                 }
                 if let Some(p) = &n.panel {
@@ -452,6 +484,7 @@ pub struct Arranged {
     pub pages: Rect,
     pub sidebar: Option<Rect>,
     pub top_bar: Option<Rect>,
+    pub terminal: Option<Rect>,
     pub panels: Vec<Placed>,
     pub dividers: Vec<Divider>,
 }
@@ -461,6 +494,8 @@ pub struct Inputs<'a> {
     pub sidebar_width: f64,
     pub sidebar_visible: bool,
     pub top_bar_height: f64,
+    /// The terminal's block only takes room while the terminal is open.
+    pub terminal_open: bool,
     /// Sizes dragged to and blocks shown or hidden, by block name.
     pub sizes: &'a HashMap<String, f64>,
     pub shown: &'a HashMap<String, bool>,
@@ -473,6 +508,9 @@ fn visible(n: &Node, i: &Inputs) -> bool {
         return true;
     }
     if n.part.as_deref() == Some("sidebar") && !i.sidebar_visible {
+        return false;
+    }
+    if n.part.as_deref() == Some("terminal") && !i.terminal_open {
         return false;
     }
     if n.panel.as_ref().is_some_and(|p| i.unavailable.contains(p)) {
@@ -503,6 +541,7 @@ fn place(n: &Node, r: Rect, i: &Inputs, out: &mut Arranged) {
         match p {
             "pages" => out.pages = r,
             "sidebar" => out.sidebar = Some(r),
+            "terminal" => out.terminal = Some(r),
             _ => out.top_bar = Some(r),
         }
         return;
@@ -580,6 +619,171 @@ pub fn arrange(layout: &Layout, width: f64, height: f64, i: &Inputs) -> Option<A
     Some(out)
 }
 
+/// Every layout as the gallery shows it: its name, words, tree and where it comes from.
+pub fn gallery() -> Vec<Json> {
+    names().into_iter().map(|name| {
+        if name == CLASSIC {
+            let tree = serde_json::json!({ "row": [{ "part": "sidebar", "size": 248 }, { "part": "pages" }] });
+            return serde_json::json!({ "name": name, "title": "Classic", "description": "The usual window, arranged by your settings.", "tree": tree, "from": "valerie" });
+        }
+        let from = if dir().join(format!("{name}.yaml")).exists() {
+            "yours"
+        } else if BUILT_IN.iter().any(|(n, _)| *n == name) {
+            "valerie"
+        } else {
+            "plugin"
+        };
+        match source(&name).map(|t| parse(&t)) {
+            Some(Ok(l)) => serde_json::json!({
+                "name": name, "title": if l.title.is_empty() { name.replace(['-', '_'], " ") } else { l.title.clone() }, "description": l.description,
+                "tree": l.window, "floating": l.floating, "replaces": l.replace.keys().collect::<Vec<_>>(), "from": from,
+            }),
+            Some(Err(e)) => serde_json::json!({ "name": name, "title": name, "error": format!("{e:#}"), "from": from }),
+            None => serde_json::json!({ "name": name, "title": name, "error": "can't read it", "from": from }),
+        }
+    }).collect()
+}
+
+/// Turn the user's `layouts/<name>.yaml` into a plugin that can be shared on its own: `plugins/<name>/` with the layout
+/// and a copy of every panel it uses, except Valerie's own `window-panels`, which everyone has.
+pub fn package(name: &str, layouts: &std::path::Path, plugins: &std::path::Path) -> Result<PathBuf> {
+    let dest = plugins.join(name);
+    let file = format!("{name}.yaml");
+    if dest.join("layouts").join(&file).exists() {
+        return Ok(dest);
+    }
+    let path = layouts.join(&file);
+    let text = std::fs::read_to_string(&path).with_context(|| format!("there's no layout called {name} of your own to share"))?;
+    let parsed = parse(&text)?;
+    if dest.exists() {
+        bail!("a plugin called {name} already exists; rename the layout to share it");
+    }
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&text)?;
+    let mut permissions: Vec<String> = Vec::new();
+    let mut copies: Vec<(String, String)> = Vec::new();
+    let used: Vec<String> = parsed.panels().into_iter().chain(parsed.replace.values().cloned()).collect();
+    let mut renames: HashMap<String, String> = HashMap::new();
+    for panel in used {
+        let (plugin, html) = panel_parts(&panel)?;
+        if plugin == "window-panels" || renames.contains_key(&panel) {
+            continue;
+        }
+        let from = plugins.join(plugin);
+        let body = std::fs::read_to_string(from.join(format!("{html}.html"))).with_context(|| format!("panel {panel} isn't there"))?;
+        let own = format!("{plugin}-{html}");
+        let manifest: serde_yaml::Value = std::fs::read_to_string(from.join("plugin.yaml")).ok().and_then(|t| serde_yaml::from_str(&t).ok()).unwrap_or_default();
+        permissions.extend(manifest.get("permissions").and_then(|p| p.as_sequence()).into_iter().flatten().filter_map(|t| t.as_str().map(str::to_string)));
+        copies.push((format!("{own}.html"), body));
+        renames.insert(panel.clone(), format!("{name}/{own}"));
+    }
+    rename_panels(&mut value, &renames, None);
+    permissions.sort();
+    permissions.dedup();
+    let description = if parsed.description.is_empty() { format!("The {} layout.", name.replace('-', " ")) } else { parsed.description.clone() };
+    let manifest = serde_yaml::to_string(&serde_json::json!({ "description": description, "permissions": permissions }))?;
+    std::fs::create_dir_all(dest.join("layouts"))?;
+    std::fs::write(dest.join("plugin.yaml"), manifest)?;
+    for (file, body) in copies {
+        std::fs::write(dest.join(file), body)?;
+    }
+    std::fs::write(dest.join("layouts").join(&file), serde_yaml::to_string(&value)?)?;
+    std::fs::remove_file(&path)?;
+    Ok(dest)
+}
+
+/// `panel:` values anywhere in a layout's tree, and the values of its `replace:` map.
+fn rename_panels(v: &mut serde_yaml::Value, renames: &HashMap<String, String>, key: Option<&str>) {
+    match v {
+        serde_yaml::Value::String(s) if matches!(key, Some("panel") | Some("replaced")) => {
+            if let Some(new) = renames.get(s.as_str()) {
+                *s = new.clone();
+            }
+        }
+        serde_yaml::Value::Sequence(items) => items.iter_mut().for_each(|i| rename_panels(i, renames, None)),
+        serde_yaml::Value::Mapping(map) => {
+            let inside_replace = key == Some("replace");
+            for (k, val) in map.iter_mut() {
+                let k = k.as_str().map(str::to_string);
+                let key = if inside_replace { Some("replaced") } else { k.as_deref() };
+                rename_panels(val, renames, key);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A window drawn by a plugin instead of Valerie, with what it takes to allow that.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replacement {
+    pub window: String,
+    pub page: &'static str,
+    pub plugin: String,
+    pub html: String,
+    /// Where the user's yes is kept. One from the marketplace is asked about again when its file changes; one of the
+    /// user's own stays allowed while they (or their AI) work on it.
+    pub grant: String,
+    pub print: String,
+}
+
+/// The windows this layout replaces with files that exist in plugins that are on.
+pub fn replacements(layout: &Layout, plugins: &[crate::plugins::Plugin]) -> Vec<Replacement> {
+    let mut out = Vec::new();
+    for (window, panel) in &layout.replace {
+        let (Some((_, page)), Ok((plugin, file))) = (WINDOWS.iter().find(|(w, _)| w == window), panel_parts(panel)) else { continue };
+        let Some(p) = plugins.iter().find(|p| p.name == plugin && p.manifest.enabled) else { continue };
+        let Ok(html) = std::fs::read_to_string(p.dir.join(format!("{file}.html"))) else { continue };
+        let print = if p.dir.join(crate::market::STAMP).exists() { crate::blocking::hash(&html) } else { "own".to_string() };
+        out.push(Replacement { window: window.clone(), page, plugin: plugin.to_string(), html, grant: format!("replace:{plugin}:{window}"), print });
+    }
+    out
+}
+
+/// The windows being drawn by plugins right now (file name → HTML), which `ui_page` serves instead of Valerie's own.
+static REPLACED: Mutex<Option<HashMap<&'static str, String>>> = Mutex::new(None);
+/// Replaced windows built but not yet heard from: they get a few seconds to say they're ready.
+static WAITING: Mutex<Option<HashMap<String, std::time::Instant>>> = Mutex::new(None);
+
+pub fn set_replaced(now: HashMap<&'static str, String>) -> Vec<&'static str> {
+    let Ok(mut r) = REPLACED.lock() else { return Vec::new() };
+    let was = r.take().unwrap_or_default();
+    let changed = WINDOWS.iter().map(|(_, page)| *page).filter(|page| was.get(page) != now.get(page)).collect();
+    *r = Some(now);
+    changed
+}
+
+/// A replaced window's HTML, starting its clock.
+pub fn replaced(page: &str) -> Option<String> {
+    let html = REPLACED.lock().ok()?.as_ref()?.get(page).cloned()?;
+    if let Ok(mut w) = WAITING.lock() {
+        w.get_or_insert_with(HashMap::new).insert(page.to_string(), std::time::Instant::now());
+    }
+    Some(html)
+}
+
+pub fn is_replaced(page: &str) -> bool {
+    REPLACED.lock().ok().is_some_and(|r| r.as_ref().is_some_and(|m| m.contains_key(page)))
+}
+
+/// The window said it's ready, so it works.
+pub fn heard_from(page: &str) {
+    if let Ok(mut w) = WAITING.lock() {
+        if let Some(w) = w.as_mut() {
+            w.remove(page);
+        }
+    }
+}
+
+/// Is this window still within the time a replacement has to prove it starts?
+pub fn starting(page: &str) -> bool {
+    WAITING.lock().ok().is_some_and(|w| w.as_ref().is_some_and(|w| w.contains_key(page)))
+}
+
+/// Replaced windows that never said they were ready.
+pub fn overdue() -> Vec<String> {
+    let Ok(w) = WAITING.lock() else { return Vec::new() };
+    w.as_ref().map(|w| w.iter().filter(|(_, t)| t.elapsed() > std::time::Duration::from_secs(8)).map(|(p, _)| p.clone()).collect()).unwrap_or_default()
+}
+
 /// A block's name in the saved sizes: per layout, so each keeps its own.
 pub fn block_key(layout: &str, block: &str) -> String {
     format!("{layout}/{block}")
@@ -605,7 +809,7 @@ mod tests {
     use super::*;
 
     fn inputs<'a>(sizes: &'a HashMap<String, f64>, shown: &'a HashMap<String, bool>, none: &'a HashSet<String>) -> Inputs<'a> {
-        Inputs { sidebar_width: 200.0, sidebar_visible: true, top_bar_height: 40.0, sizes, shown, unavailable: none }
+        Inputs { sidebar_width: 200.0, sidebar_visible: true, top_bar_height: 40.0, terminal_open: false, sizes, shown, unavailable: none }
     }
 
     const BASIC: &str = "
@@ -712,6 +916,46 @@ window:
             let e = format!("{:#}", parse(text).unwrap_err());
             assert!(e.contains(says), "{text}: {e}");
         }
+    }
+
+    #[test]
+    fn sharing_gathers_a_layouts_panels_into_one_plugin() {
+        let root = std::env::temp_dir().join(format!("valerie-package-{}", std::process::id()));
+        let (layouts, plugins) = (root.join("layouts"), root.join("plugins"));
+        std::fs::create_dir_all(&layouts).unwrap();
+        std::fs::create_dir_all(plugins.join("mine")).unwrap();
+        std::fs::write(plugins.join("mine/plugin.yaml"), "description: x\npermissions: [run_command]\n").unwrap();
+        std::fs::write(plugins.join("mine/board.html"), "<b>board</b>").unwrap();
+        std::fs::write(plugins.join("mine/bar.html"), "<b>bar</b>").unwrap();
+        std::fs::write(layouts.join("cool.yaml"), "description: Cool.\nreplace: { command_bar: mine/bar }\nwindow: { row: [ { part: pages }, { panel: mine/board }, { panel: window-panels/outline } ] }\n").unwrap();
+        let dest = package("cool", &layouts, &plugins).unwrap();
+        let l = parse(&std::fs::read_to_string(dest.join("layouts/cool.yaml")).unwrap()).unwrap();
+        assert_eq!(l.panels(), vec!["cool/mine-board".to_string(), "window-panels/outline".to_string()]);
+        assert_eq!(l.replace["command_bar"], "cool/mine-bar");
+        assert!(dest.join("mine-board.html").exists() && dest.join("mine-bar.html").exists());
+        assert!(std::fs::read_to_string(dest.join("plugin.yaml")).unwrap().contains("run_command"));
+        assert!(!layouts.join("cool.yaml").exists());
+        assert_eq!(package("cool", &layouts, &plugins).unwrap(), dest);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn replace_names_real_windows_only() {
+        assert!(parse("replace: { command_bar: a/b, terminal: a/c }").is_ok());
+        assert!(format!("{:#}", parse("replace: { nope: a/b }").unwrap_err()).contains("isn't one of Valerie's windows"));
+        assert!(parse("replace: { sidebar: '../../etc/x' }").is_err());
+    }
+
+    #[test]
+    fn the_terminal_block_only_takes_room_while_open() {
+        let l = parse("window: { column: [ { part: pages }, { part: terminal, size: 200 } ] }").unwrap();
+        let (a, b, c) = (HashMap::new(), HashMap::new(), HashSet::new());
+        let closed = arrange(&l, 1000.0, 600.0, &inputs(&a, &b, &c)).unwrap();
+        assert_eq!((closed.terminal, closed.pages.h), (None, 600.0));
+        let mut open = inputs(&a, &b, &c);
+        open.terminal_open = true;
+        let o = arrange(&l, 1000.0, 600.0, &open).unwrap();
+        assert_eq!((o.terminal.unwrap().h, o.pages.h), (200.0, 400.0));
     }
 
     #[test]

@@ -242,6 +242,28 @@ Saving a panel's file rebuilds it. Its folder is a normal plugin, so `enabled: f
 take the room), and it's shared and installed like any plugin. **A plugin can bring a whole layout**: put
 `layouts/<name>.yaml` in its folder and every panel that layout uses, and whoever installs it can pick it.
 
+**Replacing Valerie's own windows.** Nothing is special: every window Valerie draws can be drawn by a file of yours.
+
+```yaml
+replace:                     # in a layout: window name → <plugin>/<file>
+  command_bar: my-plugin/bar # also: sidebar (the sidebar, top bar, start page and toasts), chats, terminal,
+                             # little_window, answer, welcome, plugins
+```
+
+`"{exe}" call run_command '{{"command": {{"cmd": "duplicate_window", "window": "command_bar"}}}}'` copies Valerie's own into
+`plugins/my-windows/command_bar.html`, adds it to a layout of the user's and shows that. **Start there and edit the copy.**
+A replacement speaks that window's own language: it isn't given `valerie.call`, it uses `window.ipc.postMessage` and the
+functions Valerie calls on it, exactly as in its original in `reference/windows/<window>.html`, so read that file and keep
+what you don't change. Each one must send `{{ t: "ready" }}` when it starts.
+
+The user is asked once before a plugin replaces a window, because it can do all that window can (a terminal can run any
+program); you can't answer for them. Plugins from the marketplace are asked about again when their file changes. A
+replacement with a script error as it starts, or that doesn't say ready within 8 seconds, gives way to Valerie's own, with
+the reason in `layouts/<name>.error` and `read_logs` (area `layout`); saving a fixed file tries it again. Web pages' own find bar, link hints and menus, and the native right-click menus and menu bar, aren't windows:
+restyle the first with `page` CSS, extend the others with plugin `context_menu` and `menu`.
+
+**The terminal as a block.** `part: terminal` puts the terminal panel where you say; it takes room only while open.
+
 **Check your work, every time:**
 1. `"{exe}" check-config` finds mistakes in every layout. Fix them until it passes.
 2. `"{exe}" call run_command '{{"command": {{"cmd": "switch_layout", "name": "<name>"}}}}'` shows it, and
@@ -407,6 +429,11 @@ People share plugins and browser extensions in a public marketplace ("Plugins" i
 `cullen-b/valerie-plugins`, folders `plugins/` and `extensions/`). The `plugins` commands below cover both; search
 results mark extensions `[extension]`.
 
+- **Layouts and panels are there too:** the "Layouts" tab of "Plugins" shows every layout on this computer and everyone's,
+  with a picture of each. `plugins search` finds them (marked `[layout]`), `plugins install <name>` installs one, then show
+  it with `switch_layout`. `plugins share <name>` shares a layout of the user's: it first becomes `plugins/<name>/` with
+  copies of the panels it uses (`window-panels` stays as it is, everyone has it). Add `preview.svg` to that folder for the
+  gallery's picture; without one the gallery draws its blocks. Only with the user's yes, as for anything shared.
 - **Before you make a plugin or extension, look there first:** `"{exe}" plugins search <a few words about what it
   does>`. If one already does it (or nearly), tell the user and offer to install it instead: `"{exe}" plugins install
   <name>` (it goes into `plugins/` or `extensions/` by itself; add `--extension` when a plugin has the same name).
@@ -553,6 +580,12 @@ pub fn install() {
     let _ = std::fs::create_dir_all(&layouts);
     for (name, text) in crate::window_layout::built_ins() {
         let _ = std::fs::write(layouts.join(format!("{name}.yaml")), text);
+    }
+    // Valerie's own windows, to read and copy (`duplicate_window`).
+    let windows = reference.join("windows");
+    let _ = std::fs::create_dir_all(&windows);
+    for (window, page) in crate::window_layout::WINDOWS {
+        let _ = std::fs::write(windows.join(format!("{window}.html")), crate::app::ui(page));
     }
     crate::plugins::install_bundled();
     let example = crate::plugins::plugins_dir().join("_example");

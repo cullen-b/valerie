@@ -40,7 +40,8 @@ layout:
   arrangement: classic     # the layout that arranges the whole window. one of: classic (the settings below) | workbench |
                            # tab-strip | valerie-98 | any layouts/<name>.yaml in this folder or a plugin's layouts/ folder.
                            # A layout's file says where the sidebar, pages and plugins' panels go, and can bring its own
-                           # look. "Next Layout" in the command bar switches; "Back to the Classic Layout" (Ctrl+Alt+Shift+0,
+                           # look, even replace Valerie's own windows. The Layouts tab in "Plugins" shows them and
+                           # everyone's. "Next Layout" in the command bar switches; "Back to the Classic Layout" (Ctrl+Alt+Shift+0,
                            # Cmd+Option+Shift+0 on a Mac) always returns here
   tab_bar: side            # where tabs live. one of: side | top
   sidebar_visible: true    # show the sidebar at launch (⌘S or `s` toggles it)

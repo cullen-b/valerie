@@ -283,6 +283,10 @@ pub enum Command {
         #[serde(default, rename = "as")]
         copy_as: Option<String>,
     },
+    /// Copy one of Valerie's own windows into a plugin to edit, and draw it from there.
+    DuplicateWindow {
+        window: String,
+    },
     /// Show or hide a block of the layout on screen.
     ToggleBlock {
         id: String,
@@ -880,6 +884,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("toggle_media", "{ tab? }  (play / pause)"),
     ("switch_layout", "{ name? }  (show this layout; no name: the next one)"),
     ("duplicate_layout", "{ name?, as? }  (copy a layout into layouts/ to edit, and show the copy)"),
+    ("duplicate_window", "{ window: sidebar | command_bar | chats | terminal | little_window | answer | welcome | plugins }  (copy that window into plugins/my-windows to edit, and draw it from there)"),
     ("toggle_block", "{ id }  (show or hide a block of the layout on screen)"),
     ("resize_block", "{ id, px }  (a block's size in the layout on screen)"),
     ("skip_media", "{ seconds, tab? }  (jump the video or audio by this many seconds; negative goes back)"),
