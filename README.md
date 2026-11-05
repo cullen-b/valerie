@@ -49,7 +49,8 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌃⇧=` / `⌃⇧-` / `⌃⇧→` | Split view / close split / focus next pane |
 | `⌘O` | Move a little window into the main window |
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom (remembered per site), dev tools |
-| `⌘⇧R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
+| `⌘R` / `⌘⇧R` | Reload / hard reload (skips the cache) |
+| `⌘⌥R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
 | `⌘⌥⇧2` | Capture the whole page, top to bottom (Capture Full Page) |
 | `⌘⇧V` / `⌘⌥⇧C` | Paste and go / copy the page as a Markdown link |
 | `⌘P` | Print |

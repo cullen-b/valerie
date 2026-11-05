@@ -1347,6 +1347,43 @@ mod mac {
         }
     }
 
+    /// Reload from the server, skipping anything cached.
+    pub fn hard_reload(wv: &WebView) {
+        let _: *mut AnyObject = unsafe { msg_send![ptr(wv), reloadFromOrigin] };
+    }
+
+    /// Remove every site's cache (and with `cookies`, cookies and storage too) from this webview's profile.
+    pub fn clear_browsing_data(wv: &WebView, cookies: bool, done: impl FnOnce(bool) + 'static) {
+        use objc2::class;
+        use objc2_foundation::NSString;
+        let v = ptr(wv);
+        unsafe {
+            let config: *mut AnyObject = msg_send![v, configuration];
+            let store: *mut AnyObject = msg_send![config, websiteDataStore];
+            let _: *mut AnyObject = msg_send![store, retain];
+            let types: *mut AnyObject = if cookies {
+                msg_send![class!(WKWebsiteDataStore), allWebsiteDataTypes]
+            } else {
+                // The WKWebsiteDataType… constants are these same strings.
+                let set: *mut AnyObject = msg_send![class!(NSMutableSet), set];
+                for t in ["WKWebsiteDataTypeDiskCache", "WKWebsiteDataTypeMemoryCache", "WKWebsiteDataTypeFetchCache", "WKWebsiteDataTypeOfflineWebApplicationCache"] {
+                    let t = NSString::from_str(t);
+                    let _: () = msg_send![set, addObject: &*t];
+                }
+                set
+            };
+            let since: *mut AnyObject = msg_send![class!(NSDate), distantPast];
+            let done = std::cell::RefCell::new(Some(done));
+            let finished = block2::RcBlock::new(move || {
+                let _: () = msg_send![store, release];
+                if let Some(d) = done.borrow_mut().take() {
+                    d(true)
+                }
+            });
+            let _: () = msg_send![store, removeDataOfTypes: types, modifiedSince: since, completionHandler: &*finished];
+        }
+    }
+
     /// Opaque CoreGraphics colour, declared so objc2 can check the `^{CGColor=}` encoding.
     #[repr(C)]
     pub struct CGColor {
@@ -2150,6 +2187,82 @@ pub fn clear_site_data(wv: &WebView, host: &str, done: impl FnOnce(usize) + 'sta
     {
         let _ = (wv, host);
         done(0);
+    }
+}
+
+/// Reload the page from the server, skipping the cache (a hard reload).
+pub fn hard_reload(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::hard_reload(wv);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        wv.webview().reload_bypass_cache();
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+        use windows::core::w;
+        use wry::WebViewExtWindows;
+        let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+        let sent = wv.controller().CoreWebView2().and_then(|p| p.CallDevToolsProtocolMethod(w!("Page.reload"), w!("{\"ignoreCache\":true}"), &handler));
+        if let Err(e) = sent {
+            crate::log::line("reload", format!("hard reload failed, reloading normally: {e}"));
+            let _ = wv.reload();
+        }
+    }
+}
+
+/// Clear every site's cache from the webview's profile, and with `cookies` its cookies and storage as well (signs
+/// you out everywhere). `done` gets whether it worked.
+pub fn clear_browsing_data(wv: &WebView, cookies: bool, done: impl FnOnce(bool) + Send + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::clear_browsing_data(wv, cookies, done);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::{WebViewExt, WebsiteDataManagerExtManual, WebsiteDataTypes};
+        use wry::WebViewExtUnix;
+        let types = if cookies {
+            WebsiteDataTypes::ALL
+        } else {
+            WebsiteDataTypes::DISK_CACHE | WebsiteDataTypes::MEMORY_CACHE | WebsiteDataTypes::OFFLINE_APPLICATION_CACHE
+        };
+        match wv.webview().website_data_manager() {
+            Some(m) => m.clear(types, webkit2gtk::glib::TimeSpan(0), None::<&webkit2gtk::gio::Cancellable>, move |r| done(r.is_ok())),
+            None => done(false),
+        }
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use webview2_com::ClearBrowsingDataCompletedHandler;
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2Profile2, ICoreWebView2_13, COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE, COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE,
+        };
+        use windows::core::Interface;
+        use wry::WebViewExtWindows;
+        let done = std::sync::Arc::new(std::sync::Mutex::new(Some(done)));
+        let later = done.clone();
+        let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |hr| {
+            if let Some(d) = later.lock().ok().and_then(|mut d| d.take()) {
+                d(hr.is_ok());
+            }
+            Ok(())
+        }));
+        let profile = wv.controller().CoreWebView2().and_then(|p| p.cast::<ICoreWebView2_13>()).and_then(|p| p.Profile()).and_then(|p| p.cast::<ICoreWebView2Profile2>());
+        let sent = profile.and_then(|p| {
+            if cookies {
+                p.ClearBrowsingDataAll(&handler)
+            } else {
+                p.ClearBrowsingData(COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE | COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE, &handler)
+            }
+        });
+        if let Err(e) = sent {
+            crate::log::line("privacy", format!("couldn't clear browsing data: {e}"));
+            if let Some(d) = done.lock().ok().and_then(|mut d| d.take()) {
+                d(false);
+            }
+        }
     }
 }
 

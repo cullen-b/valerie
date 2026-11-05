@@ -566,6 +566,7 @@ keybindings:
   "CmdOrCtrl+S": toggle_sidebar
   "CmdOrCtrl+Shift+D": toggle_pin
   "CmdOrCtrl+R": reload
+  "CmdOrCtrl+Shift+R": hard_reload   # reload from the server, skipping the cache
   "CmdOrCtrl+[": back
   "CmdOrCtrl+]": forward
   "CmdOrCtrl+Alt+Down": next_tab
@@ -601,7 +602,7 @@ keybindings:
   "CmdOrCtrl+O": move_to_main_window
   "CmdOrCtrl+Shift+O": move_to_little_window   # the tab you're on moves out into a little window
   "CmdOrCtrl+F": find_in_page
-  "CmdOrCtrl+Shift+R": reader_view
+  "CmdOrCtrl+Alt+R": reader_view   # was CmdOrCtrl+Shift+R, which is now hard_reload as in other browsers
   "CmdOrCtrl+Shift+2": capture_page
   "CmdOrCtrl+Alt+Shift+2": capture_full_page   # the whole page, top to bottom
   "CmdOrCtrl+Shift+M": toggle_mute
@@ -687,6 +688,7 @@ vim:
     "H": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
     "L": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
     "r": reload
+    "R": hard_reload
     "x": close_tab
     "X": reopen_closed_tab
     "J": next_tab            # J down the sidebar, K up (like j/k)

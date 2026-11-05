@@ -136,6 +136,11 @@ pub enum Command {
         #[serde(default)]
         tab: Option<TabId>,
     },
+    /// Reload from the server, skipping the cache.
+    HardReload {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
     Stop,
     CopyUrl {
         #[serde(default)]
@@ -594,6 +599,10 @@ pub enum Command {
     /// Make Valerie the app Markdown files (.md) open in (macOS).
     SetDefaultMarkdownApp,
     /// Run a command defined by a plugin in `<config dir>/plugins/<plugin>/plugin.yaml`.
+    /// Clear every site's cache in the current tab's profile (keeps you signed in).
+    ClearCache,
+    /// Clear every site's cache, cookies and storage in the current tab's profile, after asking (signs you out everywhere).
+    ClearCacheAndCookies,
     Plugin {
         plugin: String,
         command: String,
@@ -749,6 +758,7 @@ impl Command {
                 | ZoomReset
                 | LastTab
                 | ToggleMute { tab: None }
+                | HardReload { tab: None }
                 | ToggleMedia { tab: None }
                 | SkipMedia { tab: None, .. }
                 | ReaderView
@@ -793,6 +803,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("zoom_in", "Zoom In"),
     ("zoom_out", "Zoom Out"),
     ("zoom_reset", "Actual Size"),
+    ("hard_reload", "Hard Reload (skip the cache)"),
     ("dev_tools", "Developer Tools"),
     ("new_little_window", "New Little Window"),
     ("close_window", "Close Window"),
@@ -866,6 +877,8 @@ pub const CATALOG: &[(&str, &str)] = &[
 /// Commands that take options, with their shapes (shared by the MCP tool description and the LLM guide).
 pub const WITH_ARGS: &[(&str, &str)] = &[
     ("share_plugin", "{ name? }  (a folder in plugins/, else in extensions/; without one, the marketplace opens on yours)"),
+    ("clear_cache", "Clear Cache (keeps you signed in)"),
+    ("clear_cache_and_cookies", "Clear Cache and Cookies… (signs you out of every site)"),
     ("open_command_bar", "{ mode: new_tab | current }"),
     ("new_tab", "{ url?, space?, background? }"),
     ("go", "{ input, new_tab? }  (URL or search terms, like typing in the command bar)"),

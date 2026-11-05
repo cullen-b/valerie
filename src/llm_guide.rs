@@ -575,7 +575,8 @@ can use Valerie's commands and settings. Both can be shared in the marketplace.
 - Passwords can't be read by agents, plugins or `valerie call`.
 - Page-side `script.js` only reaches the browser through `valerie.call`, with the tools in its plugin's `permissions`
   (which the user approves); pages themselves can't use a plugin's key.
-- Clearing a site's data (`clear_site_data`) always asks the user.
+- Clearing a site's data (`clear_site_data`) or every site's cookies (`clear_cache_and_cookies`) always asks the user.
+  `clear_cache` (keeps logins) and `hard_reload` (reload skipping the cache) don't.
 - Data (tabs, history) lives in `{data}`; don't edit it by hand while Valerie is running.
 - When something fails (sync, updates, plugins, hooks, a page), read Valerie's log: the `read_logs` tool (filter by
   `area`, `contains`, `since_minutes`) or the newest `valerie-<date>.log` in `{logs}`. It has errors, messages shown to

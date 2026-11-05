@@ -147,6 +147,8 @@ pub enum UserEvent {
     AgentDone(agents::Finished),
     PluginDone { plugin: String, title: String, output: String, result: Result<String, String> },
     SiteDataCleared { message: String, reload: bool },
+    /// Clear every site's cache (and with `cookies`, cookies and storage) in the current tab's profile.
+    ClearBrowsingData { cookies: bool },
     /// Blocklist JSON ready to compile (None = unchanged since last compile, so reuse WebKit's cached copy).
     BlocklistBuilt { json: Option<String>, hash: String, fallback: Option<String> },
     #[cfg(target_os = "macos")]
@@ -4685,7 +4687,7 @@ impl App {
             let usual = match &cmd {
                 Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => "Spaces",
                 Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit { .. } | Command::FocusNextPane | Command::ZoomIn
-                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::FindInPage { .. } | Command::ToggleTerminal
+                | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::HardReload { .. } | Command::FindInPage { .. } | Command::ToggleTerminal
                 | Command::NewTerminal { .. } => "View",
                 Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => "Tools",
                 _ => "Tabs",
@@ -5770,11 +5772,12 @@ impl App {
                     return;
                 }
                 Command::CloseTab { tab: None } | Command::ClosePeek => return self.close_peek(),
-                Command::Back { tab: None } | Command::Forward { tab: None } | Command::Reload { tab: None } => {
+                Command::Back { tab: None } | Command::Forward { tab: None } | Command::Reload { tab: None } | Command::HardReload { tab: None } => {
                     if let Some(p) = &self.peek {
                         let _ = match cmd {
                             Command::Back { .. } => p.view.go_back(),
                             Command::Forward { .. } => p.view.go_forward(),
+                            Command::HardReload { .. } => Ok(platform::hard_reload(&p.view)),
                             _ => p.view.reload(),
                         };
                     }
@@ -5811,6 +5814,7 @@ impl App {
                 Command::Back { tab: None } => return drop(l.view.go_back()),
                 Command::Forward { tab: None } => return drop(l.view.go_forward()),
                 Command::Reload { tab: None } => return drop(l.view.reload()),
+                Command::HardReload { tab: None } => return platform::hard_reload(&l.view),
                 Command::DevTools => return l.view.open_devtools(),
                 Command::Stop => return drop(l.view.evaluate_script("window.stop()")),
                 Command::ToggleMute { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"mute\")")),
@@ -6126,11 +6130,12 @@ impl App {
                     self.open_tab(&a.url, self.state.space_index(&a.space), true);
                 }
             }
-            Command::Back { tab } | Command::Forward { tab } | Command::Reload { tab } => {
+            Command::Back { tab } | Command::Forward { tab } | Command::Reload { tab } | Command::HardReload { tab } => {
                 if let Some(v) = self.target_tab(tab).and_then(|t| self.views.get(&t)) {
                     let _ = match cmd {
                         Command::Back { .. } => v.go_back(),
                         Command::Forward { .. } => v.go_forward(),
+                        Command::HardReload { .. } => Ok(platform::hard_reload(v)),
                         _ => v.reload(),
                     };
                 } else if let Some(t) = self.target_tab(tab) {
@@ -7084,6 +7089,19 @@ impl App {
                 platform::clear_site_data(v, &host, move |n| {
                     let msg = if n == 0 { format!("No saved data for {h}") } else { format!("Cleared data for {h}: reloading") };
                     send(&p, UserEvent::SiteDataCleared { message: msg, reload: n > 0 });
+                });
+            }
+            Command::ClearCache => {
+                self.close_bar();
+                self.clear_browsing_data(false);
+            }
+            Command::ClearCacheAndCookies => {
+                self.close_bar();
+                let p = self.proxy.clone();
+                platform::ask(&self.chrome, "Clear cache and cookies?", "Every site's cache, cookies and storage in this profile will be removed. You'll be signed out of every site.", "Clear", "Don't Clear", move |ok| {
+                    if ok {
+                        send(&p, UserEvent::ClearBrowsingData { cookies: true });
+                    }
                 });
             }
             Command::SignInWithSafari => {
@@ -8167,6 +8185,7 @@ impl App {
                     self.bring_login_from_safari(tab);
                 }
             }
+            UserEvent::ClearBrowsingData { cookies } => self.clear_browsing_data(cookies),
             UserEvent::SiteDataCleared { message, reload } => {
                 self.toast(&message);
                 if reload {
@@ -8789,6 +8808,21 @@ impl App {
             "settings": self.site_settings(&url),
             "open_tabs": self.state.tabs.values().filter(|t| site_of(&t.url).as_deref() == Some(site)).count(),
         })
+    }
+
+    /// Clear the cache (and with `cookies`, cookies and storage) of the current tab's profile, then say so.
+    fn clear_browsing_data(&mut self, cookies: bool) {
+        let view = self.state.active_tab().and_then(|t| self.views.get(&t)).or_else(|| self.views.values().next());
+        let Some(view) = view else { return self.toast("Open a tab first") };
+        let p = self.proxy.clone();
+        platform::clear_browsing_data(view, cookies, move |ok| {
+            let message = match (ok, cookies) {
+                (false, _) => "Couldn't clear browsing data (the log says why)",
+                (true, false) => "Cleared the cache",
+                (true, true) => "Cleared cache and cookies: reloading",
+            };
+            send(&p, UserEvent::SiteDataCleared { message: message.into(), reload: ok && cookies });
+        });
     }
 
     /// Clear a site's data after asking the user (agents and plugins can't do it quietly).
