@@ -1313,20 +1313,31 @@ addEventListener("mouseup", () => {
 let splitDrag = null, splitRaf = 0, splitX = 0;
 function splitGaps(list) {
   if (splitDrag) return;
-  document.querySelectorAll(".split-gap").forEach((g) => g.remove());
-  for (const d of list || []) {
-    const g = document.createElement("div");
-    g.className = "block-gap across split-gap";
+  list = list || [];
+  const old = [...document.querySelectorAll(".split-gap")];
+  old.slice(list.length).forEach((g) => g.remove());
+  const ms = (S && S.layout.animation_ms) || 0;
+  list.forEach((d, n) => {
+    let g = old[n];
+    if (!g) {
+      g = document.createElement("div");
+      g.className = "block-gap across split-gap";
+      g.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        splitDrag = g.gap;
+        document.body.classList.add("resizing");
+      });
+      g.addEventListener("mouseenter", () => send({ t: "split_hover", i: g.gap.i }));
+      g.addEventListener("mouseleave", () => { if (!splitDrag) send({ t: "split_unhover" }); });
+      g.addEventListener("dblclick", () => send({ t: "reset_split" }));
+      document.body.append(g);
+    }
+    g.gap = d;
+    // The gap widens under the mouse (layout.split_grab_width) and glides with the panes beside it.
+    g.style.transition = old[n] ? `left ${ms}ms var(--ease), width ${ms}ms var(--ease), background .12s` : "none";
     Object.assign(g.style, { left: d.rect.x + "px", top: d.rect.y + "px", width: d.rect.w + "px", height: d.rect.h + "px" });
-    g.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      splitDrag = d;
-      document.body.classList.add("resizing");
-    });
-    g.addEventListener("dblclick", () => send({ t: "reset_split" }));
-    document.body.append(g);
-  }
+  });
 }
 addEventListener("mousemove", (e) => {
   if (!splitDrag) return;
