@@ -156,9 +156,9 @@ body.resizing-down, body.resizing-down * { cursor: row-resize !important; user-s
 /* layout.split_grab_height: only a bit of the gap, under the mouse, lights up (the pages beside it draw their share) */
 .split-gap.grip-mode, .split-gap.grip-mode:hover { background: transparent; border-radius: 0; }
 .split-grip { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
-.split-grip > div { position: absolute; inset: 0; background: var(--accent); transform: scale(1, .35); opacity: 0;
-  transition: transform 260ms cubic-bezier(.34, 1.56, .64, 1), opacity 140ms ease-out; }
-.split-grip.on > div { transform: none; opacity: 1; }
+.split-grip > div { position: absolute; inset: 0; background: var(--accent); transform: scale(.3, .15); opacity: 0;
+  transition: transform 200ms cubic-bezier(.5, 0, .75, 0), opacity 180ms ease-in; }
+.split-grip.on > div { transform: none; opacity: 1; transition: transform 600ms var(--grip-pop, cubic-bezier(.34, 1.56, .64, 1)), opacity 120ms ease-out; }
 /* medium: icon + domain; tiles three across */
 body.size-medium .grid { grid-template-columns: repeat(3, 1fr); }
 body.size-medium #url .path { display: none; }
@@ -1317,6 +1317,13 @@ addEventListener("mouseup", () => {
 
 // ---------- drag the gap between split-view panes to resize them (layout.split_resize); double-click for equal widths ----------
 let splitDrag = null, splitRaf = 0, splitX = 0, splitY = null;
+// The same bouncy spring the pages use for the pill popping open (content.js gripPop).
+(() => {
+  const z = 0.42, w = 18, wd = w * Math.sqrt(1 - z * z), pts = [];
+  for (let i = 0; i < 40; i++) { const t = (i / 40) * 0.6; pts.push((1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t))).toFixed(3)); }
+  const e = `linear(${pts.join(", ")}, 1)`;
+  if (CSS.supports("transition-timing-function", e)) document.documentElement.style.setProperty("--grip-pop", e);
+})();
 const gripMode = () => !!(S && S.layout.split_grab_height > 0 && S.layout.split_grab_width > S.layout.split_gap);
 // The middle of the widened bit of gap `i`, at `y` in the content area (null hides it); see splitGrip in content.js.
 function splitGrip(i, y) {
@@ -1324,22 +1331,26 @@ function splitGrip(i, y) {
   if (!g || !gripMode()) return;
   let k = g.grip;
   if (!k) {
-    k = g.grip = { el: document.createElement("div"), pos: 0, target: 0, raf: 0, hideT: 0 };
+    k = g.grip = { el: document.createElement("div"), pos: 0, v: 0, target: 0, raf: 0, hideT: 0 };
     k.el.className = "split-grip"; k.el.append(document.createElement("div")); g.append(k.el);
   }
   const h = S.layout.split_grab_height;
   k.el.style.height = h + "px";
   clearTimeout(k.hideT);
   if (y == null) { k.hideT = setTimeout(() => k.el.classList.remove("on"), 90); return; }
-  if (!k.el.classList.contains("on")) { k.pos = y; k.el.style.transform = `translateY(${y - h / 2}px)`; }
+  if (!k.el.classList.contains("on")) { k.pos = y; k.v = 0; k.el.style.transform = `translateY(${y - h / 2}px)`; }
   k.target = y; k.el.classList.add("on");
   if (k.raf) return;
   let last = performance.now();
+  // A lively spring after the mouse, stretching taller while it moves fast (as in content.js gripMove).
   const step = (now) => {
-    k.pos += (k.target - k.pos) * (1 - Math.exp(-(now - last) / 55)); last = now;
-    if (Math.abs(k.target - k.pos) < 0.3) k.pos = k.target;
-    k.el.style.transform = `translateY(${k.pos - S.layout.split_grab_height / 2}px)`;
-    k.raf = k.pos === k.target ? 0 : requestAnimationFrame(step);
+    let dt = Math.min(0.05, (now - last) / 1000); last = now;
+    while (dt > 0) { const h = Math.min(dt, 1 / 240); k.v += (520 * (k.target - k.pos) - 27 * k.v) * h; k.pos += k.v * h; dt -= h; }
+    const done = Math.abs(k.target - k.pos) < 0.2 && Math.abs(k.v) < 5;
+    if (done) { k.pos = k.target; k.v = 0; }
+    const st = Math.min(0.45, Math.abs(k.v) / 1800);
+    k.el.style.transform = `translateY(${k.pos - S.layout.split_grab_height / 2}px) scale(${1 - st * 0.4}, ${1 + st})`;
+    k.raf = done ? 0 : requestAnimationFrame(step);
   };
   k.raf = requestAnimationFrame(step);
 }
@@ -1377,6 +1388,7 @@ function splitGaps(list) {
       g.addEventListener("mouseleave", () => {
         if (splitDrag) return;
         if (!gripMode()) return send({ t: "split_unhover" });
+        if (splitRaf) { cancelAnimationFrame(splitRaf); splitRaf = 0; }
         splitGrip(g.gap.i, null); send({ t: "split_grip", i: g.gap.i, y: null });
       });
       g.addEventListener("dblclick", () => send({ t: "reset_split" }));

@@ -1073,8 +1073,16 @@ document.addEventListener("mousemove", (e) => {
 // ---------- the widened bit of a split-view gap, following the mouse (layout.split_grab_width / split_grab_height) ----------
 // This page draws its share at its own edge; Valerie tells the page across the gap, and the chrome draws the middle.
 const grips = {}, gripHere = { left: false, right: false };
-let gripDrag = null, gripSendRaf = 0, gripSendY = null, gripSendSide = null, gripDragX = 0, gripSwallowClick = false;
+let gripDrag = null, gripSendRaf = 0, gripSendY = null, gripSendSide = null, gripDragX = 0, gripSwallowClick = false, gripMouseIn = false;
 const gripReach = () => { const G = cfg.split_grip; return G ? Math.max(1, (G.w - G.gap) / 2) + 4 : 0; };
+// A bouncy spring as a CSS easing for the pill popping open (a plain overshoot where linear() isn't supported).
+const gripPop = (() => {
+  const z = 0.42, w = 18, wd = w * Math.sqrt(1 - z * z), pts = [];
+  for (let i = 0; i < 40; i++) { const t = (i / 40) * 0.6; pts.push((1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t))).toFixed(3)); }
+  const e = `linear(${pts.join(", ")}, 1)`;
+  return window.CSS && CSS.supports("transition-timing-function", e) ? e : "cubic-bezier(.34, 1.56, .64, 1)";
+})();
+const GRIP_OPEN = `transform 600ms ${gripPop}, opacity 120ms ease-out`, GRIP_CLOSE = "transform 200ms cubic-bezier(.5, 0, .75, 0), opacity 180ms ease-in";
 function grip(side) {
   const G = cfg.split_grip;
   if (!G) return null;
@@ -1082,33 +1090,37 @@ function grip(side) {
   if (!g || !g.el.isConnected) {
     const el = document.createElement("div"), bar = document.createElement("div");
     el.appendChild(bar); ui().appendChild(el);
-    g = grips[side] = { el, bar, pos: 0, target: 0, on: false, raf: 0, hideT: 0 };
+    g = grips[side] = { el, bar, pos: 0, v: 0, target: 0, on: false, leaving: false, raf: 0, hideT: 0 };
   }
-  const bw = Math.max(1, (G.w - G.gap) / 2), reach = gripReach();
+  const bw = Math.max(1, (G.w - G.gap) / 2);
   g.h = G.h;
-  g.el.style.cssText = `position: fixed; top: 0; ${side}: 0; width: ${reach}px; height: ${G.h}px; cursor: col-resize; pointer-events: ${g.on ? "auto" : "none"}; transform: translateY(${g.pos - G.h / 2}px);`;
+  g.el.style.cssText = `position: fixed; top: 0; ${side}: 0; width: ${gripReach()}px; height: ${G.h}px; cursor: col-resize; pointer-events: ${g.on ? "auto" : "none"};
+    transform-origin: ${side} center; transform: translateY(${g.pos - G.h / 2}px);`;
   g.bar.style.cssText = `position: absolute; top: 0; bottom: 0; ${side}: 0; width: ${bw}px; background: ${cfg.accent || "#9d8cff"};
     border-radius: ${side === "left" ? `0 ${bw}px ${bw}px 0` : `${bw}px 0 0 ${bw}px`}; transform-origin: ${side} center;
-    transform: ${g.on ? "none" : "scale(0, .35)"}; opacity: ${g.on ? 1 : 0};
-    transition: transform 260ms cubic-bezier(.34, 1.56, .64, 1), opacity 140ms ease-out;`;
+    transform: ${g.on ? "none" : "scale(.3, .15)"}; opacity: ${g.on ? 1 : 0}; transition: ${g.on ? GRIP_OPEN : GRIP_CLOSE};`;
   return g;
 }
 function gripShow(g, on) {
   if (g.on === on) return;
   g.on = on;
   g.el.style.pointerEvents = on ? "auto" : "none";
-  g.bar.style.transform = on ? "none" : "scale(0, .35)";
+  g.bar.style.transition = on ? GRIP_OPEN : GRIP_CLOSE;
+  g.bar.style.transform = on ? "none" : "scale(.3, .15)";
   g.bar.style.opacity = on ? "1" : "0";
 }
-// Glides toward the mouse with a little lag, the same on both sides of the gap whichever page the mouse is over.
+// A lively spring after the mouse, stretching taller and thinner while it moves fast, like a drop of liquid.
 function gripMove(g) {
   if (g.raf) return;
   let last = performance.now();
   const step = (now) => {
-    g.pos += (g.target - g.pos) * (1 - Math.exp(-(now - last) / 55)); last = now;
-    if (Math.abs(g.target - g.pos) < 0.3) g.pos = g.target;
-    g.el.style.transform = `translateY(${g.pos - g.h / 2}px)`;
-    g.raf = g.pos === g.target ? 0 : requestAnimationFrame(step);
+    let dt = Math.min(0.05, (now - last) / 1000); last = now;
+    while (dt > 0) { const h = Math.min(dt, 1 / 240); g.v += (520 * (g.target - g.pos) - 27 * g.v) * h; g.pos += g.v * h; dt -= h; }
+    const done = Math.abs(g.target - g.pos) < 0.2 && Math.abs(g.v) < 5;
+    if (done) { g.pos = g.target; g.v = 0; }
+    const s = Math.min(0.45, Math.abs(g.v) / 1800);
+    g.el.style.transform = `translateY(${g.pos - g.h / 2}px) scale(${1 - s * 0.4}, ${1 + s})`;
+    g.raf = done ? 0 : requestAnimationFrame(step);
   };
   g.raf = requestAnimationFrame(step);
 }
@@ -1117,9 +1129,9 @@ function gripTo(side, y) {
   if (!g) return;
   clearTimeout(g.hideT);
   // Hiding waits a moment: the mouse is often just crossing the gap to the chrome or the page beyond.
-  if (y == null) { g.hideT = setTimeout(() => gripShow(g, false), 90); return; }
-  if (!g.on) { g.pos = y; g.el.style.transform = `translateY(${y - g.h / 2}px)`; }
-  g.target = y; gripShow(g, true); gripMove(g);
+  if (y == null) { g.leaving = true; g.hideT = setTimeout(() => gripShow(g, false), 90); return; }
+  if (!g.on) { g.pos = y; g.v = 0; g.el.style.transform = `translateY(${y - g.h / 2}px)`; }
+  g.leaving = false; g.target = y; gripShow(g, true); gripMove(g);
 }
 function gripSend(side, y) {
   gripSendSide = side; gripSendY = y;
@@ -1129,8 +1141,10 @@ function gripSend(side, y) {
     if (gripDrag) post({ t: "split_drag", side: gripDrag.side, dx: gripDragX - gripDrag.x0 });
   });
 }
+// The page under the mouse decides: away from an edge, that edge's pill goes, whoever showed it.
 function gripLeave(side) {
-  if (!gripHere[side]) return;
+  const g = grips[side];
+  if (!gripHere[side] && !(g && g.on && !g.leaving)) return;
   gripHere[side] = false; gripTo(side, null);
   if (gripSendRaf && gripSendSide === side) { cancelAnimationFrame(gripSendRaf); gripSendRaf = 0; }
   post({ t: "split_grip", side, y: null });
@@ -1142,14 +1156,20 @@ function gripsTidy() {
 }
 document.addEventListener("mousemove", (e) => {
   const G = cfg.split_grip;
+  const entered = !gripMouseIn;
+  gripMouseIn = true;
   if (gripDrag) { gripDragX = e.screenX; gripTo(gripDrag.side, e.clientY); gripSend(gripDrag.side, e.clientY); return; }
   if (!G) return;
   const reach = gripReach();
   const side = G.left && e.clientX < reach ? "left" : G.right && e.clientX >= innerWidth - reach ? "right" : null;
-  for (const s of ["left", "right"]) if (s !== side) gripLeave(s);
+  for (const s of ["left", "right"]) {
+    if (s === side) continue;
+    // Just arrived from the gap: clear its pill even if this page never drew its share.
+    if (entered && G[s]) { gripHere[s] = false; if (grips[s]) gripTo(s, null); post({ t: "split_grip", side: s, y: null }); } else gripLeave(s);
+  }
   if (side) { gripHere[side] = true; gripTo(side, e.clientY); gripSend(side, e.clientY); }
 }, { passive: true });
-document.addEventListener("mouseout", (e) => { if (!e.relatedTarget && !gripDrag) { gripLeave("left"); gripLeave("right"); } });
+document.addEventListener("mouseout", (e) => { if (!e.relatedTarget && !gripDrag) { gripMouseIn = false; gripLeave("left"); gripLeave("right"); } });
 addEventListener("mousedown", (e) => {
   gripSwallowClick = false;
   const side = gripHere.left ? "left" : gripHere.right ? "right" : null;
@@ -1873,7 +1893,7 @@ Object.defineProperty(window, "__valerie", {
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); gripsTidy(); }, toast,
-    splitGrip: (side, y) => { if ((side === "left" || side === "right") && !gripHere[side] && !gripDrag) gripTo(side, typeof y === "number" ? y : null); }, find: openFind, findStep, hints: startHints,
+    splitGrip: (side, y) => { if ((side === "left" || side === "right") && !gripHere[side] && !gripDrag) gripTo(side, typeof y === "number" && !gripMouseIn ? y : null); }, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave,
