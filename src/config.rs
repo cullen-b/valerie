@@ -256,6 +256,7 @@ pub struct Layout {
     pub split_border_width: f64,
     pub split_resize: bool,
     pub split_grab_width: f64,
+    pub split_grab_height: f64,
 }
 
 /// Which bits of sidebar text and chrome are shown.

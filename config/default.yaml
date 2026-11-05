@@ -62,8 +62,10 @@ layout:
   split_unfocused_opacity: 0.72   # how see-through the other panes get when split_focus is dim or both (0–1)
   split_border_width: 2    # thickness of the focused pane's border when split_focus is border or both, pixels
   split_resize: true       # drag the gap between split-view panes to resize them (double-click it for equal widths). true | false
-  split_grab_width: 6      # pixels the gap between split-view panes widens to while the mouse is on it, so it's easy to grab;
-                           # it glides back to split_gap when the mouse leaves (animation_ms). At or below split_gap = never widens
+  split_grab_width: 6      # pixels the gap between split-view panes widens to near the mouse, so it's easy to grab;
+                           # at or below split_gap = never widens
+  split_grab_height: 72    # how tall the widened part of that gap is, pixels; it follows the mouse up and down.
+                           # 0 = the whole gap widens instead, nudging the pages aside, and glides back when the mouse leaves
 
 # Your own look for Valerie's windows: CSS files in the `ui` folder next to this file, applied after Valerie's own
 # styles and updated the moment you save them:
