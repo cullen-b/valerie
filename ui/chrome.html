@@ -59,7 +59,8 @@ body.pointer .tile:hover { background: var(--active); }
 #scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin: 0 -4px; padding: 0 4px; will-change: transform; }
 #scroll::-webkit-scrollbar { width: 0; }
 .space-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 8px; font-weight: 600; font-size: 13px; }
-.space-title .icon { color: var(--accent); }
+.space-title .icon { color: var(--accent); flex: none; }
+.space-title span:last-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* tab rows: sidebar.tab_height sets --tab-h; text, icon and corners scale with it */
 :root { --tab-h: 38px; --tab-icon: 16px; --tab-font: 13px; }
 .row {
@@ -121,11 +122,18 @@ body.pointer .divider:hover .hover { max-width: 80px; padding: 0 8px; opacity: 1
 .newtab { color: var(--fg-dim); }
 .newtab .plus { width: 16px; text-align: center; font-size: 16px; }
 .empty-pinned { color: var(--fg-dim); font-size: 11.5px; padding: 10px; border-radius: 10px; border: 1.5px dashed var(--line); text-align: center; margin-bottom: 4px; }
-#bottom { flex: none; display: flex; align-items: center; justify-content: center; gap: 4px; padding-top: 8px; position: relative; }
-.sp { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--fg-dim); font-size: 13px; transition: background .15s, color .15s; }
+/* footer: agents on the left, space buttons centred; the buttons wrap and the agents label drops to a dot rather than overlap */
+#bottom { flex: none; display: flex; align-items: center; padding-top: 8px; }
+#bottom::after, #bottom:not(.has-agents)::before { content: ""; flex: 1 1 0; }
+#bottom.has-agents::after { min-width: 12px; }
+.sps { flex: 0 1 auto; display: flex; justify-content: center; gap: 4px; min-width: 0; }
+.sps.wrap { flex-wrap: wrap; }
+.sp { flex: 0 1 auto; width: 28px; min-width: 20px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--fg-dim); font-size: 13px; transition: background .15s, color .15s; }
 body.pointer .sp:hover { background: var(--hover); color: var(--fg); }
 .sp.active { color: var(--fg); background: var(--hover); }
-.agents { position: absolute; left: 4px; display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
+.agents { flex: 1 1 0; min-width: 12px; display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; font-size: 11px; color: var(--fg-dim); }
+.agents i { flex: none; margin-left: 4px; }
+#bottom.tight .agents span { display: none; }
 .agents i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 /* drag and drop */
 /* kept section: a list under the pinned icons */
@@ -163,14 +171,22 @@ body.size-compact .splittile { grid-column: auto !important; }
 body.size-compact .row img.ico, body.size-compact .row .letter { width: calc(var(--tab-icon) + 2px); height: calc(var(--tab-icon) + 2px); }
 body.size-compact .folder .kids { padding-left: 0; }
 body.size-compact .folder.open > .kids { border-left: 2px solid var(--line); margin-left: 4px; }
-body.size-compact #bottom { flex-direction: column; gap: 4px; }
+body.size-compact #bottom, body.size-compact .sps { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 body.size-compact .agents span { display: none; }
-body.size-compact .agents { position: static; }
+body.size-compact .agents { flex: none; min-width: 0; }
+body.size-compact .agents i { margin: 0; }
+body.size-compact #bottom::before, body.size-compact #bottom::after { display: none; }
+body.size-compact .sp { flex: none; width: 28px; }
 .audio { cursor: pointer; }
 .audio.muted { opacity: .5; text-decoration: line-through; }
 /* mini player for media playing in another tab */
 #nowplaying { display: flex; align-items: center; gap: 2px; margin: 6px 0 4px; padding: 4px; border-radius: 11px; background: var(--tile); flex: none; }
-#nowplaying .np-tab { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 4px 6px; border-radius: 8px; }
+#nowplaying .np-tab { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow: hidden; padding: 4px 6px; border-radius: 8px; }
+#nowplaying .np-tab .ico { flex: none; }
+/* narrow sidebars drop the title, then the skip buttons, rather than squash them together */
+#nowplaying.no-title .title, #nowplaying.no-skip .np-skip { display: none; }
+#nowplaying.no-title .np-tab { flex: none; }
+#nowplaying.no-title { justify-content: space-between; }
 #nowplaying .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .np-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--fg-dim); flex: none; }
 body.pointer .np-btn:hover, body.pointer #nowplaying .np-tab:hover { background: var(--hover); color: var(--fg); }
@@ -732,7 +748,16 @@ function renderNowPlaying() {
     return b;
   };
   np.append(...(by > 0 ? [go, skip(SKIP_BACK, -1, "Back"), pp, skip(SKIP_FORWARD, 1, "Forward"), mu] : [go, pp, mu]));
+  fitNowPlaying();
 }
+function fitNowPlaying() {
+  const np = $("#nowplaying"), go = np.querySelector(".np-tab");
+  np.classList.remove("no-title", "no-skip");
+  if (!go || document.body.classList.contains("size-compact")) return;
+  if (go.clientWidth < 72) np.classList.add("no-title");
+  if (np.scrollWidth > np.clientWidth) np.classList.add("no-skip");
+}
+new ResizeObserver(() => fitNowPlaying()).observe($("#nowplaying"));
 function pinFolder(tabs) {
   const f = el("div", "tile pinfolder" + (tabs.some(isActive) ? " active" : "")), look = S.sidebar.pinned_folder_icon;
   if (look === "favicons") { const mini = el("div", "mini"); tabs.slice(0, 4).forEach((t) => mini.append(icon(t))); f.append(mini); }
@@ -1019,27 +1044,32 @@ function render(state) {
   sc.scrollTop = top;
 
   const bottom = $("#bottom"); bottom.innerHTML = "";
-  if (S.agents && S.agents.length) {
+  const hasAgents = !!(S.agents && S.agents.length);
+  bottom.classList.toggle("has-agents", hasAgents);
+  if (hasAgents) {
     const a = el("div", "agents"); a.append(el("i"), el("span", null, S.agents.length + " agent" + (S.agents.length > 1 ? "s" : "")));
     a.title = "Running: " + S.agents.join(", "); bottom.append(a);
   }
+  const sps = el("div", "sps"); bottom.append(sps);
   if (O.space_switcher && S.chats && S.chats.enabled) {
     const d = el("div", "sp chats-sp" + (chatsOpen ? " active" : ""), "✦"); d.title = "Chats";
     d.onclick = () => cmd({ cmd: "open_chats" });
-    bottom.append(d);
+    sps.append(d);
   }
   if (O.space_switcher) S.spaces.forEach((s, i) => {
     const d = el("div", "sp" + (i === S.active_space && !chatsOpen ? " active" : ""), s.icon || s.name[0]);
     d.title = s.name; d.onclick = () => cmd({ cmd: "switch_space", index: i });
     d.oncontextmenu = (e) => { e.preventDefault(); send({ t: "space_menu", space: i, x: e.clientX, y: e.clientY }); };
     zone(d, { kind: "into", payload: { space: s.name } });
-    bottom.append(d);
+    sps.append(d);
   });
   if (O.space_switcher) {
     const add = el("div", "sp", "+"); add.title = "New Space";
     add.onclick = () => prompt_("New space name", "", { cmd: "new_space" }, "name");
-    bottom.append(add);
+    sps.append(add);
   }
+
+  fitBottom();
 
   // Chats count as the space before the first one, so sliding in and out of them goes the right way.
   const where = chatsOpen ? -1 : S.active_space;
@@ -1056,6 +1086,15 @@ function render(state) {
   if (picked.size) { const live = new Set(pickKeys()); picked = new Set([...picked].filter((k) => live.has(k))); showPicked(); }
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }
+
+// Agents label only when it fits (else just its dot); space buttons wrap only once they can't shrink further.
+function fitBottom() {
+  const bottom = $("#bottom"), a = bottom.querySelector(".agents"), sps = bottom.querySelector(".sps");
+  bottom.classList.remove("tight");
+  if (sps) { sps.classList.remove("wrap"); sps.classList.toggle("wrap", sps.scrollWidth > sps.clientWidth + 1); }
+  if (a) bottom.classList.toggle("tight", a.scrollWidth > a.clientWidth);
+}
+new ResizeObserver(() => fitBottom()).observe($("#bottom"));
 
 // Parts of the sidebar, in their default order (sidebar.order rearranges them).
 const SIDEBAR_PARTS = ["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
