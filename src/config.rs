@@ -286,6 +286,9 @@ pub struct SidebarConfig {
     pub multi_select: bool,
     pub drop_to_split: bool,
     pub split_rows: bool,
+    pub scroll_long_titles: bool,
+    pub title_scroll_speed: f64,
+    pub title_scroll_style: String,
 }
 
 /// What modified clicks on links do; values are link actions (see config/default.yaml).

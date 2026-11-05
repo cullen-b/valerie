@@ -71,6 +71,10 @@ body.pointer .row:hover { background: var(--hover); }
 :root.light .row.active { box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .row .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .row.unloaded .title { color: var(--fg-dim); }
+.title.ticking { text-overflow: clip; mask-image: linear-gradient(90deg, transparent, #000 8px, #000 calc(100% - 14px), transparent); }
+.title .tick { display: inline-block; will-change: transform; animation: var(--tick-name) var(--tick-dur) var(--tick-delay) infinite; }
+@keyframes tick-loop { from { transform: none; } to { transform: translateX(calc(-1 * var(--tick-d))); } }
+@keyframes tick-bounce { 0%, 15% { transform: none; } 85%, 100% { transform: translateX(calc(-1 * var(--tick-d))); } }
 .row img.ico, .row .letter { width: var(--tab-icon); height: var(--tab-icon); border-radius: calc(var(--tab-icon) * .25); }
 .row .letter { font-size: calc(var(--tab-icon) * .62); }
 .row .x { width: min(22px, calc(var(--tab-h) * .65)); height: min(22px, calc(var(--tab-h) * .65)); border-radius: 6px; display: none; place-items: center; color: var(--fg-dim); font-size: 14px; }
@@ -593,6 +597,24 @@ function tabRow(t, list, index) {
   preloadOnHover(r, t);
   return r;
 }
+// sidebar.scroll_long_titles: a title too long for its row scrolls (title_scroll_style loop or bounce, title_scroll_speed px/s).
+// The phase comes from the clock, so re-rendering the sidebar doesn't restart it.
+function tickTitles() {
+  const O = S.sidebar;
+  if (O.scroll_long_titles === false) return;
+  const speed = Math.min(200, Math.max(5, +O.title_scroll_speed || 30)), bounce = O.title_scroll_style === "bounce";
+  for (const t of document.querySelectorAll("#sidebar .row .title")) {
+    if (t.scrollWidth <= t.clientWidth + 1) continue;
+    const text = t.textContent, gap = 36, tick = el("span", "tick", text);
+    t.textContent = ""; t.append(tick); t.classList.add("ticking");
+    const tw = tick.offsetWidth, d = bounce ? tw - t.clientWidth + 14 : tw + gap;
+    if (!bounce) { const sp = el("span"); sp.style.cssText = `display:inline-block;width:${gap}px`; tick.append(sp, text); }
+    const dur = bounce ? d / speed / .7 : d / speed, period = bounce ? 2 * dur : dur;
+    tick.style.cssText = `--tick-name:${bounce ? "tick-bounce" : "tick-loop"};--tick-d:${d}px;--tick-dur:${dur}s;` +
+      `--tick-delay:${-(performance.now() / 1000 % period)}s;animation-timing-function:${bounce ? "ease-in-out" : "linear"};` +
+      (bounce ? "animation-direction:alternate;" : "");
+  }
+}
 const tabTitle = (t) => S.layout.sidebar_size === "medium" ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab";
 // One side of a split-view group's row or tile: clicking it shows the split with that page focused.
 function splitHalf(t, key, label) {
@@ -1027,6 +1049,7 @@ function render(state) {
   }
   pendingDir = 0;
   prevSpace = where;
+  tickTitles();
   renderNowPlaying();
   renderTop();
   keepDrag();
