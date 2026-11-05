@@ -1530,27 +1530,40 @@ document.addEventListener("keydown", (e) => { if (readerHost && e.key === "Escap
 // ---------- passwords: offer saved logins on focus, offer to save after submit ----------
 let accounts = [], fillNonce = null, lastField = null, reportedForm = false, menu = null;
 const visible = (e) => e && e.getClientRects().length > 0;
-const pwFields = () => [...document.querySelectorAll("input[type=password]")].filter(visible);
-function userFieldFor(pw) {
-  const scope = (pw && pw.form) || document;
-  let best = null;
-  for (const i of scope.querySelectorAll("input")) {
-    if (!/^(text|email|tel|)$/i.test(i.type) || !visible(i)) continue;
-    if (!pw || i.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) best = i;
-  }
-  return best || document.querySelector("input[autocomplete=username], input[type=email]");
+// Sign-ins built from web components (Reddit) keep their inputs in shadow roots; look there once one gets focus.
+let shadowLogin = false;
+function allInputs() {
+  if (!shadowLogin) return [...document.querySelectorAll("input")];
+  const out = [];
+  const walk = (root) => { for (const el of root.querySelectorAll("*")) { if (el instanceof HTMLInputElement) out.push(el); if (el.shadowRoot) walk(el.shadowRoot); } };
+  walk(document);
+  return out;
 }
+const pwFields = () => allInputs().filter((i) => i.type === "password" && visible(i));
+function userFieldFor(pw) {
+  const list = pw && pw.form ? [...pw.form.querySelectorAll("input")] : allInputs();
+  let best = null;
+  for (const i of list) {
+    if (i === pw) break;
+    if (/^(text|email|tel|)$/i.test(i.type) && visible(i)) best = i;
+  }
+  return best || allInputs().find((i) => i.autocomplete === "username" || i.type === "email") || null;
+}
+const deepTarget = (e) => (e.composedPath ? e.composedPath()[0] : e.target);
 function checkLogin() {
   if (reportedForm || document.hidden) return;
   if (pwFields().length || document.querySelector("input[autocomplete~=username], input[type=email]")) { reportedForm = true; loginWatch.disconnect(); post({ t: "login_form" }); }
 }
-function hideMenu() { if (menu) { menu.remove(); menu = null; } }
+let menuFor = null;
+function hideMenu() { if (menu) { menu.remove(); menu = null; } menuFor = null; }
+// Strong signs on their own; a plain text box counts when it sits before a password or is named like a login.
+const strongLogin = (f) => f.type === "password" || f.type === "email" || /username|email/.test(f.autocomplete);
+const loginField = (f) => f instanceof HTMLInputElement && (strongLogin(f) || f === userFieldFor(pwFields()[0])
+  || (/^(text|tel|)$/i.test(f.type) && /user|email|login|account|identifier/i.test(f.name + " " + f.id)));
 function showAccounts(field) {
   hideMenu();
   if (!accounts.length) return;
-  const r = field.getBoundingClientRect();
-  menu = document.createElement("div"); menu.className = "menu";
-  menu.style.left = Math.max(r.left, 4) + "px"; menu.style.top = r.bottom + 4 + "px";
+  menu = document.createElement("div"); menu.className = "menu"; menuFor = field;
   accounts.forEach((a, i) => {
     const d = document.createElement("div"); d.textContent = a.username || "(no username)";
     const sm = document.createElement("small"); sm.textContent = "Valerie · " + a.vault; d.append(sm);
@@ -1558,17 +1571,38 @@ function showAccounts(field) {
     menu.append(d);
   });
   ui().appendChild(menu);
-  // No room under the field: above it instead.
-  if (menu.getBoundingClientRect().bottom > innerHeight && r.top > menu.offsetHeight + 4) menu.style.top = r.top - menu.offsetHeight - 4 + "px";
+  // Follow the field while the page slides it into place (Google's password step) or scrolls.
+  const m = menu;
+  const place = () => {
+    if (menu !== m) return;
+    if (!field.isConnected) return hideMenu();
+    // Still zero-size while it animates in: wait for it instead of closing.
+    m.style.display = visible(field) ? "" : "none";
+    const r = field.getBoundingClientRect();
+    m.style.left = Math.max(r.left, 4) + "px"; m.style.top = r.bottom + 4 + "px";
+    // No room under the field: above it instead.
+    if (r.bottom + 4 + m.offsetHeight > innerHeight && r.top > m.offsetHeight + 4) m.style.top = r.top - m.offsetHeight - 4 + "px";
+    requestAnimationFrame(place);
+  };
+  place();
 }
 document.addEventListener("focusin", (e) => {
-  const f = e.target;
+  const f = deepTarget(e);
   if (!(f instanceof HTMLInputElement)) return;
   lastField = f;
-  if (!e.isTrusted || !accounts.length) return;
-  if (f.type === "password" || f === userFieldFor(pwFields()[0]) || /username|email/.test(f.autocomplete) || f.type === "email") showAccounts(f);
+  if (f.getRootNode() !== document) shadowLogin = true;
+  if (!e.isTrusted) return;
+  // A login the page-wide check can't see (inside a web component): ask for its accounts now.
+  if (!reportedForm && strongLogin(f)) { reportedForm = true; loginWatch.disconnect(); post({ t: "login_form" }); }
+  if (accounts.length && loginField(f)) showAccounts(f);
 }, true);
-document.addEventListener("focusout", () => setTimeout(hideMenu, 150), true);
+// Only hide if focus really left: a step change blurs the old field and focuses the new one within this delay.
+document.addEventListener("focusout", () => setTimeout(() => { if (deepActive() !== menuFor) hideMenu(); }, 150), true);
+// Clicking a field that already has focus (no focusin) still brings the list back.
+document.addEventListener("mousedown", (e) => {
+  const f = deepTarget(e);
+  if (e.isTrusted && accounts.length && !menu && f === deepActive() && loginField(f)) showAccounts(f);
+}, true);
 function setVal(el, v) {
   if (!el || v == null) return;
   el.focus(); valueSetter.call(el, v);
@@ -1582,14 +1616,14 @@ function fill(user, pw) {
 }
 // Multi-step logins ask for the username on one page and the password on the next.
 document.addEventListener("input", (e) => {
-  const f = e.target;
-  if (e.isTrusted && f instanceof HTMLInputElement && f.type !== "password" && (f === userFieldFor(pwFields()[0]) || /username|email/.test(f.autocomplete) || f.type === "email")) {
+  const f = deepTarget(e);
+  if (e.isTrusted && f instanceof HTMLInputElement && f.type !== "password" && loginField(f)) {
     try { sessionStorage.setItem("__valerie_user", f.value); } catch (_) {}
   }
 }, true);
 let lastSent = "";
 function captureCredential(scope) {
-  const pw = [...((scope && scope.querySelectorAll) ? scope.querySelectorAll("input[type=password]") : pwFields())].find((p) => p.value);
+  const pw = [...((scope && scope !== document && scope.querySelectorAll) ? scope.querySelectorAll("input[type=password]") : pwFields())].find((p) => p.value);
   if (!pw) return;
   const uf = userFieldFor(pw);
   let username = uf && uf.value;
@@ -1606,7 +1640,7 @@ document.addEventListener("click", (e) => {
   if (b && pwFields().some((p) => p.value)) captureCredential(b.form || document);
 }, true);
 document.addEventListener("keydown", (e) => {
-  const t = e.target;
+  const t = deepTarget(e);
   if (e.key === "Enter" && t instanceof HTMLInputElement && t.type === "password" && t.value) captureCredential(t.form || document);
 }, true);
 let offered = null;
@@ -1736,7 +1770,7 @@ Object.defineProperty(window, "__valerie", {
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, findStep, hints: startHints,
     nextKey,
-    accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
+    accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave,
     consoleLines: () => consoleKept.slice(),
     network: (o) => {
