@@ -241,7 +241,7 @@ function compute() {
     // Something that reads like a question or a request goes to the top: Enter asks the agent.
     const ask = { kind: "agent", title: "Ask " + D.agent + ": " + raw, sub: "Opens in Chats · can use your browser", icon: "✦", cmd: { cmd: "new_chat", prompt: raw } };
     if (wantsAgent(raw)) results.unshift(ask); else results.push(ask);
-    results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
+    if ((D.options || {}).customize_row) results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
   }
   // Results plugins sent for this text go just under what you typed (they arrive a moment after typing).
   const fromPlugins = Object.values(extra).filter((m) => m.query === raw).flatMap((m) => m.items.slice(0, 8));
