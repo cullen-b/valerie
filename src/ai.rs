@@ -680,8 +680,21 @@ pub fn control_note(def: &AgentDef) -> String {
     }
 }
 
+/// Where and when the agent is running and what the chat's access lets it do, for both chat preambles.
+fn situation(access: &str) -> String {
+    let os = if cfg!(target_os = "macos") { "macOS" } else if cfg!(windows) { "Windows" } else { "Linux" };
+    let (date, _, day, time) = crate::platform::local_day();
+    let access = match access {
+        "read" => " This chat is read-only: you can look (pages, tabs, settings, files) but not click, type, open tabs, edit \
+                   files or change anything else, so say what you'd do instead.",
+        "ask" => " The user approves each action you take in this chat, so do only what the request needs.",
+        _ => "",
+    };
+    format!(" The computer runs {os}; it's {day} ({date}), {time} local time when this chat started.{access}")
+}
+
 /// The prompt preamble for an agent with browser control.
-pub fn browser_preamble(def: &AgentDef, context: &str, offer_share: bool) -> String {
+pub fn browser_preamble(def: &AgentDef, context: &str, offer_share: bool, scratch: &Path, access: &str) -> String {
     let how = control_note(def);
     let guide = crate::config::config_dir().join("AGENTS.md");
     let share = if offer_share {
@@ -697,13 +710,25 @@ pub fn browser_preamble(def: &AgentDef, context: &str, offer_share: bool) -> Str
          instead. When something in Valerie didn't work, read its log with read_logs; to change one of Valerie's settings, \
          use get_settings and set_setting. To add something no setting covers (like changing how a site behaves), make a \
          Valerie plugin (it works on every platform; a browser extension only on macOS 15.4+): read the guide at {} \
-         first, and search the marketplace before making a new one.{share} Answer in plain, short Markdown.\n\n{context}",
-        guide.display()
+         first, and search the marketplace before making a new one.{share}{situation} Your working folder, {}, is a scratch \
+         folder the user never looks in: save files they should keep in their Downloads folder (or where they say) and give \
+         the full path. Answer in plain, short Markdown.{context}",
+        guide.display(),
+        scratch.display(),
+        situation = situation(access),
+        context = if context.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\n{context}\"This page\" or \"this tab\" means the active one. The list is from when the chat started; \
+                 call list_tabs for the tabs as they are now."
+            )
+        }
     )
 }
 
 /// The prompt preamble for a chat working in a project folder: a coding agent that can also use the browser.
-pub fn coding_preamble(def: &AgentDef, folder: &Path) -> String {
+pub fn coding_preamble(def: &AgentDef, folder: &Path, access: &str) -> String {
     let how = control_note(def);
     format!(
         "You are a coding agent working in the project folder {}. The user talks to you from the chat built into their \
@@ -711,8 +736,10 @@ pub fn coding_preamble(def: &AgentDef, folder: &Path) -> String {
          the code, make the change, run the tests or the build, and say plainly what you did and what's left. You can also \
          see and control the browser ({how}): use it to check what you build (open the dev server in a background tab, \
          take a screenshot, read the page, read_console for its errors). Don't close or change the user's own tabs unless \
-         they ask. Answer in plain, short Markdown.",
-        folder.display()
+         they ask, and never submit purchases, payments or other irreversible forms without the user saying so here. \
+         \"This page\" means the user's active tab (marked in list_tabs).{} Answer in plain, short Markdown.",
+        folder.display(),
+        situation(access)
     )
 }
 
@@ -1474,6 +1501,15 @@ pub fn close_chat(dir: &Path, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_prompts_say_where_and_what_the_agent_may_do() {
+        let def = AgentDef { cli: "claude".into(), ..Default::default() };
+        let b = browser_preamble(&def, "Tabs:\n- [active] Mail\n", false, Path::new("/scratch"), "read");
+        assert!(b.contains("/scratch") && b.contains("read-only") && b.contains("list_tabs for the tabs as they are now"), "{b}");
+        let c = coding_preamble(&def, Path::new("/proj"), "ask");
+        assert!(c.contains("/proj") && c.contains("approves each action") && c.contains("irreversible"), "{c}");
+    }
 
     /// Runs the real set-up script for this OS with a made-up app, and returns what it wrote to its status file and printed.
     fn quiet_kind(install: &'static str) -> Kind {

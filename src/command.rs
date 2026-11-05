@@ -136,7 +136,22 @@ pub enum Command {
         #[serde(default)]
         tab: Option<TabId>,
     },
+    /// Reload from the server, skipping the cache.
+    HardReload {
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
     Stop,
+    /// Pick files on this computer and open each in a new tab.
+    OpenFile,
+    /// Save the page's HTML to the downloads folder.
+    SavePage,
+    /// Start an email with the page's title and address.
+    EmailLink,
+    /// The page's HTML source, in a new tab.
+    ViewSource,
+    /// The system's share menu for the page (macOS): Mail, Messages, AirDrop, Notes…
+    SharePage,
     CopyUrl {
         #[serde(default)]
         tab: Option<TabId>,
@@ -586,6 +601,10 @@ pub enum Command {
     },
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
+    /// Clear every site's cache in the current tab's profile (keeps you signed in).
+    ClearCache,
+    /// Clear every site's cache, cookies and storage in the current tab's profile, after asking (signs you out everywhere).
+    ClearCacheAndCookies,
     /// Open this page in Safari, where passkeys work, then offer to bring the login back.
     SignInWithSafari,
     /// Copy this site's login (its cookies) from Safari into this tab's profile, then reload.
@@ -620,6 +639,9 @@ pub enum Command {
         #[serde(default)]
         query: Option<String>,
     },
+    /// The next match of the last find (the bar opens again if it was closed).
+    FindNext,
+    FindPrevious,
     /// Open a link the way Valerie's link menu does: new_tab | background_tab | split | peek | little_window.
     OpenLink {
         url: String,
@@ -634,6 +656,11 @@ pub enum Command {
     },
     /// A window of its own for a page (or the command bar's new tab page when there's none).
     NewWindow {
+        #[serde(default)]
+        url: Option<String>,
+    },
+    /// A private window: its cookies and storage last only while it's open, and it records no history.
+    NewPrivateWindow {
         #[serde(default)]
         url: Option<String>,
     },
@@ -690,6 +717,7 @@ impl Command {
             Command::CopyPassword { .. }
                 | Command::DeletePassword { .. }
                 | Command::OpenDownload { .. }
+                | Command::OpenFile
                 | Command::BringLoginFromSafari
                 // An agent starting agents could loop forever; setting one up installs software.
                 | Command::NewChat { .. }
@@ -737,6 +765,7 @@ impl Command {
                 | Back { tab: None }
                 | Forward { tab: None }
                 | Reload { tab: None }
+                | HardReload { tab: None }
                 | CopyUrl { tab: None }
                 | ToggleSidebar
                 | NextSpace
@@ -752,6 +781,8 @@ impl Command {
                 | ToggleMedia { tab: None }
                 | SkipMedia { tab: None, .. }
                 | ReaderView
+                | FindNext
+                | FindPrevious
                 | HideElement
                 | CopyMarkdownLink
                 | CopyLinkToHighlight
@@ -779,6 +810,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("prev_tab", "Previous Tab"),
     ("copy_url", "Copy URL"),
     ("reload", "Reload Page"),
+    ("hard_reload", "Hard Reload (skip the cache)"),
     ("back", "Back"),
     ("forward", "Forward"),
     ("toggle_sidebar", "Toggle Sidebar"),
@@ -799,6 +831,14 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("move_to_little_window", "Move Tab to Little Window"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
+    ("find_next", "Find Next"),
+    ("find_previous", "Find Previous"),
+    ("stop", "Stop Loading"),
+    ("open_file", "Open File…"),
+    ("save_page", "Save Page to Downloads"),
+    ("email_link", "Email Link to This Page"),
+    ("view_source", "View Page Source"),
+    ("share_page", "Share… (send the page with Mail, Messages, AirDrop…)"),
     ("last_tab", "Switch to Last Tab"),
     ("toggle_mute", "Mute / Unmute Tab"),
     ("toggle_media", "Play / Pause Media"),
@@ -845,6 +885,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
+    ("clear_cache", "Clear Cache (keeps you signed in)"),
+    ("clear_cache_and_cookies", "Clear Cache and Cookies… (signs you out of every site)"),
     ("sign_in_with_safari", "Sign In with Safari (for passkeys)"),
     ("bring_login_from_safari", "Bring Login from Safari"),
     ("set_default_browser", "Make Valerie the Default Browser"),
@@ -856,7 +898,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("sync_passphrase", "Sync Passphrase (set, enter or change the one that encrypts your synced tabs, chats and passwords)"),
     ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
-    ("report_problem", "Report a Problem… (your AI helps find what went wrong, fixes it or writes the bug report)"),
+    ("new_private_window", "New Private Window"),
+    ("report_problem", "Triage: Report a Problem… (your AI finds what went wrong, fixes your setup or files the bug for review)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("change_history", "Change History (every change to your settings and looks; go back to any of them)"),
     ("extensions", "Extensions"),
@@ -932,6 +975,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("new_window", "{ url? }  (a separate window for one page)"),
+    ("new_private_window", "{ url? }  (a window whose cookies and storage last only while it's open; no history)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
     ("toggle_plugin", "{ name, on?, extension? }  (turn a plugin or browser extension on or off; without `on`, switch it; `extension: true` when a plugin has the same name)"),
     ("go_back_to_change", "{ id }  (put the settings, plugins and looks back exactly as they were at a change; `valerie changes` lists the ids; undoable the same way)"),

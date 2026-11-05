@@ -56,6 +56,7 @@ pub struct Config {
     pub sync: SyncConfig,
     pub updates: UpdatesConfig,
     pub plugin_marketplace: MarketplaceConfig,
+    pub triage: TriageConfig,
     pub agents: AgentsConfig,
     pub content_blocking: BlockingConfig,
     pub passwords: PasswordsConfig,
@@ -109,6 +110,12 @@ pub struct MenuConfig {
     pub commands: BTreeMap<String, Option<String>>,
     pub quit_shortcut: String,
     pub confirm_quit: bool,
+    /// File, Edit, View, History, Window and Help menus laid out like other browsers; false = the older Tabs / View / Tools menus.
+    pub browser_menus: bool,
+    /// How many recently visited pages the History menu lists (0 = none).
+    pub recent_pages: usize,
+    /// A Bookmarks menu listing your favorites and pinned tabs.
+    pub bookmarks: bool,
 }
 
 /// Valerie's right-click menus.
@@ -979,7 +986,9 @@ pub struct McpConfig {
     pub hidden_tabs_close_after: u64,
     pub hidden_tabs_max: usize,
     pub ask_user: bool,
-    pub network_log: bool,
+    /// "when_asked" | "always" | "never" (true and false from older settings files mean always and never).
+    #[serde(deserialize_with = "network_log_mode")]
+    pub network_log: String,
     pub ask_before_paying: bool,
     pub paying_words: Vec<String>,
     pub answer_in_background: bool,
@@ -987,11 +996,31 @@ pub struct McpConfig {
     pub quit_when_unused_minutes: f64,
 }
 
+fn network_log_mode<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Mode {
+        Old(bool),
+        New(String),
+    }
+    Ok(match Mode::deserialize(d)? {
+        Mode::Old(true) => "always".into(),
+        Mode::Old(false) => "never".into(),
+        Mode::New(s) => s,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketplaceConfig {
     pub index: String,
     pub repo: String,
     pub offer_to_share: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriageConfig {
+    pub file_issues: bool,
+    pub repo: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

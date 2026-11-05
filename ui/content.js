@@ -24,9 +24,13 @@ const consoleKept = [];
 })();
 
 // ---------- the page's requests, kept for an agent debugging it (read_network) ----------
-// Recording bodies, once an agent asks, lasts through reloads in that tab.
-const netKept = [], net = { bodies: (() => { try { return sessionStorage.getItem("valerie-net-bodies") === "1"; } catch (_) { return false; } })() };
-if (CFG.network_log) (() => {
+// Recording bodies, once an agent asks, lasts through reloads in that tab. With network_log: when_asked, fetch and XHR
+// are left as the page's own until an agent first reads the tab (some sites and bot checks notice them replaced).
+const tabFlag = (k) => { try { return sessionStorage.getItem(k) === "1"; } catch (_) { return false; } };
+const netKept = [], net = { on: false, bodies: tabFlag("valerie-net-bodies") };
+function startNetwork(late) {
+  if (net.on) return;
+  net.on = true;
   const add = (e) => { netKept.push(e); if (netKept.length > 500) netKept.shift(); return e; };
   const clip = (v, n) => (typeof v === "string" ? v.slice(0, n) : undefined);
   const textual = (ct) => /json|text|xml|javascript|graphql|form-urlencoded/.test(ct || "");
@@ -64,15 +68,18 @@ if (CFG.network_log) (() => {
   // Scripts, styles, images and the like (fetch and XHR are covered above, with their status).
   try {
     const t0 = performance.timeOrigin || Date.now();
-    new PerformanceObserver((list) => {
-      for (const r of list.getEntries()) {
-        if (r.initiatorType === "fetch" || r.initiatorType === "xmlhttprequest") continue;
+    const seen = (entries, all) => {
+      for (const r of entries) {
+        if (!all && (r.initiatorType === "fetch" || r.initiatorType === "xmlhttprequest")) continue;
         const broke = netKept.find((e) => e.url === r.name && e.error && e.ms == null);
         if (broke) { broke.ms = Math.round(r.duration); continue; }
         add({ kind: r.initiatorType || "other", method: "GET", url: r.name, at: Math.round(t0 + r.startTime), ms: Math.round(r.duration),
               status: r.responseStatus || null, size: r.transferSize || undefined });
       }
-    }).observe({ type: "resource", buffered: true });
+    };
+    // Started after the page loaded: what it fetched before is only in the browser's timing list (fetch and XHR too).
+    if (late) seen(performance.getEntriesByType("resource"), true);
+    new PerformanceObserver((list) => seen(list.getEntries(), false)).observe({ type: "resource", buffered: !late });
   } catch (_) {}
   // WebKit gives files no status, so ones that didn't load are marked from their error event.
   addEventListener("error", (ev) => {
@@ -81,7 +88,8 @@ if (CFG.network_log) (() => {
     const e = netKept.find((x) => x.url === u && !x.error && x.kind !== "fetch" && x.kind !== "xhr");
     if (e) e.error = "didn't load"; else add({ kind: (t.tagName || "other").toLowerCase(), method: "GET", url: abs(u), at: Date.now(), status: null, error: "didn't load" });
   }, true);
-})();
+}
+if (CFG.network_log === "always" || (CFG.network_log === "when_asked" && tabFlag("valerie-net-log"))) startNetwork(false);
 function networkRows(o) {
   o = o || {};
   if (o.bodies && !net.bodies) { net.bodies = true; try { sessionStorage.setItem("valerie-net-bodies", "1"); } catch (_) {} }
@@ -774,7 +782,7 @@ addEventListener("wheel", kbCancel, { capture: true, passive: true });
 if (cfg.vim.enabled && cfg.vim.jump_to_text_box !== false) post({ t: "arrived" });
 
 // ---------- find: every match highlighted, a count, and a minimap of the whole page ----------
-const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0 };
+const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0, last: "" };
 const canHighlight = typeof Highlight !== "undefined" && typeof CSS !== "undefined" && CSS.highlights;
 function findScroller() { const s = scroller(); return s === document.body ? document.scrollingElement : s; }
 function docY(rect, s) { return s === document.scrollingElement ? rect.top + s.scrollTop : rect.top - s.getBoundingClientRect().top + s.scrollTop; }
@@ -827,6 +835,7 @@ function goToMatch(i) {
 }
 function runSearch() {
   fnd.query = fnd.input.value;
+  if (fnd.query) fnd.last = fnd.query;
   fnd.items = searchPage(fnd.query);
   // Start from the first match at or below the top of the screen, like other browsers.
   const s = findScroller(), top = s.scrollTop;
@@ -925,6 +934,11 @@ function openFind(initial) {
   fnd.bar.classList.toggle("question", isQuestion(fnd.input.value));
   if (fnd.input.value) runSearch(); else drawMinimap();
   setTimeout(() => { fnd.input.focus(); fnd.input.select(); }, 0);
+}
+// Find Next / Find Previous: step through the matches, or bring back the last search (or the selected text).
+function findStep(d) {
+  if (fnd.bar && fnd.items.length) return goToMatch(fnd.cur + d);
+  openFind(fnd.last || String(getSelection()).trim());
 }
 function closeFind() {
   if (!fnd.bar) return;
@@ -1720,12 +1734,16 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,
     consoleLines: () => consoleKept.slice(),
-    network: (o) => { const had = net.bodies; return { on: !!CFG.network_log, had_bodies: had, requests: networkRows(o) }; },
+    network: (o) => {
+      const had = net.bodies, was = net.on;
+      if (!was && CFG.network_log === "when_asked") { try { sessionStorage.setItem("valerie-net-log", "1"); } catch (_) {} startNetwork(true); }
+      return { on: net.on, started_now: net.on && !was, had_bodies: had, requests: networkRows(o) };
+    },
     helpBar, helpBarClose,
     markdownUpdate: (text) => mdUpdate(String(text)),
     markdownText: () => mdEditorText(),

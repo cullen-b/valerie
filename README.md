@@ -49,7 +49,8 @@ switch there (`sidebar:`, `start_page`, `command_bar:`). `valerie paths` shows w
 | `⌃⇧=` / `⌃⇧-` / `⌃⇧→` | Split view / close split / focus next pane |
 | `⌘O` | Move a little window into the main window |
 | `⌘F`, `⌘=` `⌘-` `⌘0`, `⌘⌥I` | Find, zoom (remembered per site), dev tools |
-| `⌘⇧R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
+| `⌘R` / `⌘⇧R` | Reload / hard reload (skips the cache) |
+| `⌘⌥R` / `⌘⇧2` / `⌘⇧M` | Reader view / capture the page (clipboard + Downloads) / mute the tab |
 | `⌘⌥⇧2` | Capture the whole page, top to bottom (Capture Full Page) |
 | `⌘⇧V` / `⌘⌥⇧C` | Paste and go / copy the page as a Markdown link |
 | `⌘P` | Print |
@@ -145,8 +146,8 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   the selection, Key facts and dates, Tidy my tabs, Triage my tabs (a plan for every open tab, done only when you say
   go), Short tab titles, Find related reading, and anything you add in YAML (`{title}`, `{url}`, `{selection}`,
   `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use the browser).
-- **Report a Problem…:** your AI reads Valerie's log, works out what went wrong, and fixes the setting or writes the
-  bug report for you.
+- **Report a Problem… (type "triage"):** your AI reads Valerie's log, works out what went wrong, and fixes the
+  setting, or writes the bug report and, once you've read it and said yes, files it as a GitHub issue from your account.
 - **Tasks:** "Create Task…" in the command bar asks two things in plain words: what ("go through my Jira and tell
   me what's on my plate today", "join my Google Meet calls when they start", "open my dashboards side by side") and
   when ("weekdays at 8am", "every 2 minutes", "when Valerie starts", "only when I ask"). An agent with your signed-in

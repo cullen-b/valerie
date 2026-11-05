@@ -1105,6 +1105,64 @@ mod mac {
         }
     }
 
+    /// The share menu (NSSharingServicePicker) for a page's address, pointing at the top right of the page.
+    pub fn share(wv: &WebView, url: &str) {
+        use objc2::class;
+        unsafe {
+            let v = ptr(wv);
+            let s = objc2_foundation::NSString::from_str(url);
+            let nsurl: *mut AnyObject = msg_send![class!(NSURL), URLWithString: &*s];
+            if nsurl.is_null() {
+                return;
+            }
+            let items: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: nsurl];
+            let picker: *mut AnyObject = msg_send![class!(NSSharingServicePicker), alloc];
+            let picker: *mut AnyObject = msg_send![picker, initWithItems: items];
+            if picker.is_null() {
+                return;
+            }
+            let b: objc2_foundation::NSRect = msg_send![v, bounds];
+            let flipped: bool = msg_send![v, isFlipped];
+            // Just under the top edge, near the right; the menu opens downward.
+            let x = (b.size.width - 80.0).max(0.0);
+            let (y, edge) = if flipped { (6.0, 3usize) } else { (b.size.height - 6.0, 1usize) };
+            let at = objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(x, y), objc2_foundation::NSSize::new(1.0, 1.0));
+            let _: () = msg_send![picker, showRelativeToRect: at, ofView: v, preferredEdge: edge];
+        }
+    }
+
+    /// A file window (NSOpenPanel) for opening files; the chosen files, empty if cancelled.
+    pub fn pick_files(message: &str) -> Vec<std::path::PathBuf> {
+        use objc2::class;
+        unsafe {
+            let panel: *mut AnyObject = msg_send![class!(NSOpenPanel), openPanel];
+            if panel.is_null() {
+                return Vec::new();
+            }
+            let _: () = msg_send![panel, setCanChooseDirectories: false];
+            let _: () = msg_send![panel, setCanChooseFiles: true];
+            let _: () = msg_send![panel, setAllowsMultipleSelection: true];
+            let m = objc2_foundation::NSString::from_str(message);
+            let _: () = msg_send![panel, setMessage: &*m];
+            let r: isize = msg_send![panel, runModal];
+            if r != 1 {
+                return Vec::new();
+            }
+            let urls: *mut AnyObject = msg_send![panel, URLs];
+            if urls.is_null() {
+                return Vec::new();
+            }
+            let n: usize = msg_send![urls, count];
+            (0..n)
+                .filter_map(|i| {
+                    let url: *mut AnyObject = msg_send![urls, objectAtIndex: i];
+                    let path: *mut objc2_foundation::NSString = msg_send![url, path];
+                    path.as_ref().map(|p| std::path::PathBuf::from(p.to_string()))
+                })
+                .collect()
+        }
+    }
+
     pub fn has_entitlement(name: &str) -> bool {
         use std::ffi::{c_char, c_void, CString};
         #[link(name = "Security", kind = "framework")]
@@ -1344,6 +1402,43 @@ mod mac {
                 let _: () = msg_send![store, release];
             });
             let _: () = msg_send![store, fetchDataRecordsOfTypes: types, completionHandler: &*fetched];
+        }
+    }
+
+    /// Reload from the server, skipping anything cached.
+    pub fn hard_reload(wv: &WebView) {
+        let _: *mut AnyObject = unsafe { msg_send![ptr(wv), reloadFromOrigin] };
+    }
+
+    /// Remove every site's cache (and with `cookies`, cookies and storage too) from this webview's profile.
+    pub fn clear_browsing_data(wv: &WebView, cookies: bool, done: impl FnOnce(bool) + 'static) {
+        use objc2::class;
+        use objc2_foundation::NSString;
+        let v = ptr(wv);
+        unsafe {
+            let config: *mut AnyObject = msg_send![v, configuration];
+            let store: *mut AnyObject = msg_send![config, websiteDataStore];
+            let _: *mut AnyObject = msg_send![store, retain];
+            let types: *mut AnyObject = if cookies {
+                msg_send![class!(WKWebsiteDataStore), allWebsiteDataTypes]
+            } else {
+                // The WKWebsiteDataType… constants are these same strings.
+                let set: *mut AnyObject = msg_send![class!(NSMutableSet), set];
+                for t in ["WKWebsiteDataTypeDiskCache", "WKWebsiteDataTypeMemoryCache", "WKWebsiteDataTypeFetchCache", "WKWebsiteDataTypeOfflineWebApplicationCache"] {
+                    let t = NSString::from_str(t);
+                    let _: () = msg_send![set, addObject: &*t];
+                }
+                set
+            };
+            let since: *mut AnyObject = msg_send![class!(NSDate), distantPast];
+            let done = std::cell::RefCell::new(Some(done));
+            let finished = block2::RcBlock::new(move || {
+                let _: () = msg_send![store, release];
+                if let Some(d) = done.borrow_mut().take() {
+                    d(true)
+                }
+            });
+            let _: () = msg_send![store, removeDataOfTypes: types, modifiedSince: since, completionHandler: &*finished];
         }
     }
 
@@ -2153,6 +2248,82 @@ pub fn clear_site_data(wv: &WebView, host: &str, done: impl FnOnce(usize) + 'sta
     }
 }
 
+/// Reload the page from the server, skipping the cache (a hard reload).
+pub fn hard_reload(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::hard_reload(wv);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        wv.webview().reload_bypass_cache();
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+        use windows::core::w;
+        use wry::WebViewExtWindows;
+        let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+        let sent = wv.controller().CoreWebView2().and_then(|p| p.CallDevToolsProtocolMethod(w!("Page.reload"), w!("{\"ignoreCache\":true}"), &handler));
+        if let Err(e) = sent {
+            crate::log::line("reload", format!("hard reload failed, reloading normally: {e}"));
+            let _ = wv.reload();
+        }
+    }
+}
+
+/// Clear every site's cache from the webview's profile, and with `cookies` its cookies and storage as well (signs
+/// you out everywhere). `done` gets whether it worked.
+pub fn clear_browsing_data(wv: &WebView, cookies: bool, done: impl FnOnce(bool) + Send + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::clear_browsing_data(wv, cookies, done);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::{WebViewExt, WebsiteDataManagerExtManual, WebsiteDataTypes};
+        use wry::WebViewExtUnix;
+        let types = if cookies {
+            WebsiteDataTypes::ALL
+        } else {
+            WebsiteDataTypes::DISK_CACHE | WebsiteDataTypes::MEMORY_CACHE | WebsiteDataTypes::OFFLINE_APPLICATION_CACHE
+        };
+        match wv.webview().website_data_manager() {
+            Some(m) => m.clear(types, webkit2gtk::glib::TimeSpan(0), None::<&webkit2gtk::gio::Cancellable>, move |r| done(r.is_ok())),
+            None => done(false),
+        }
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use webview2_com::ClearBrowsingDataCompletedHandler;
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2Profile2, ICoreWebView2_13, COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE, COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE,
+        };
+        use windows::core::Interface;
+        use wry::WebViewExtWindows;
+        let done = std::sync::Arc::new(std::sync::Mutex::new(Some(done)));
+        let later = done.clone();
+        let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |hr| {
+            if let Some(d) = later.lock().ok().and_then(|mut d| d.take()) {
+                d(hr.is_ok());
+            }
+            Ok(())
+        }));
+        let profile = wv.controller().CoreWebView2().and_then(|p| p.cast::<ICoreWebView2_13>()).and_then(|p| p.Profile()).and_then(|p| p.cast::<ICoreWebView2Profile2>());
+        let sent = profile.and_then(|p| {
+            if cookies {
+                p.ClearBrowsingDataAll(&handler)
+            } else {
+                p.ClearBrowsingData(COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE | COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE, &handler)
+            }
+        });
+        if let Err(e) = sent {
+            crate::log::line("privacy", format!("couldn't clear browsing data: {e}"));
+            if let Some(d) = done.lock().ok().and_then(|mut d| d.take()) {
+                d(false);
+            }
+        }
+    }
+}
+
 /// Make Valerie the app that opens Markdown files. Needs the bundled Valerie.app, which says it can open them.
 pub fn set_default_markdown_app() -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -2461,6 +2632,65 @@ pub fn pick_folder(message: &str) -> Option<std::path::PathBuf> {
     {
         let _ = message;
         None
+    }
+}
+
+/// The system's share menu for a page (macOS only; `share_page` is hidden elsewhere).
+pub fn share(wv: &WebView, url: &str) {
+    #[cfg(target_os = "macos")]
+    mac::share(wv, url);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, url);
+}
+
+/// Pick files to open in the system's file window; empty when cancelled.
+pub fn pick_files(message: &str) -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    return mac::pick_files(message);
+    #[cfg(target_os = "windows")]
+    return windows_pick_files(message);
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        let d = gtk::FileChooserDialog::with_buttons(
+            Some(message),
+            None::<&gtk::Window>,
+            gtk::FileChooserAction::Open,
+            &[("_Cancel", gtk::ResponseType::Cancel), ("_Open", gtk::ResponseType::Accept)],
+        );
+        d.set_select_multiple(true);
+        let files = if d.run() == gtk::ResponseType::Accept { d.filenames() } else { Vec::new() };
+        d.close();
+        files
+    }
+}
+
+/// The Windows file window (IFileOpenDialog), several files allowed.
+#[cfg(target_os = "windows")]
+fn windows_pick_files(message: &str) -> Vec<std::path::PathBuf> {
+    use windows::core::HSTRING;
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, SIGDN_FILESYSPATH};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let Ok(d) = CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) else { return Vec::new() };
+        if let Ok(o) = d.GetOptions() {
+            let _ = d.SetOptions(o | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST);
+        }
+        let _ = d.SetTitle(&HSTRING::from(message));
+        if d.Show(None).is_err() {
+            return Vec::new();
+        }
+        let Ok(items) = d.GetResults() else { return Vec::new() };
+        let n = items.GetCount().unwrap_or(0);
+        (0..n)
+            .filter_map(|i| {
+                let p = items.GetItemAt(i).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+                let path = p.to_string().ok();
+                CoTaskMemFree(Some(p.0 as _));
+                path.map(std::path::PathBuf::from)
+            })
+            .collect()
     }
 }
 

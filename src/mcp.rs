@@ -346,6 +346,21 @@ fn ask_each_time(what: &str, name: &str, args: &Value, chat: &str, proxy: &Event
     }
 }
 
+/// A bug report goes out publicly under the user's name: they always see the exact text and say yes first.
+fn confirm_report(args: &Value, chat: &str, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
+    let title = args["title"].as_str().unwrap_or("").trim();
+    let what = match args["issue"].as_u64() {
+        Some(n) => format!("add this to issue #{n} on GitHub, from your account"),
+        None => format!("post this bug report on GitHub, from your account: “{}”", title.chars().take(120).collect::<String>()),
+    };
+    let content = format!("{title}\n\n{}", args["body"].as_str().unwrap_or("").trim());
+    let answer = call_wait(proxy, "confirm", json!({ "chat": chat, "tool": ASK_EACH_TIME, "args": { "what": what, "content": content } }), 600)?;
+    match answer["allowed"].as_bool() {
+        Some(true) => Ok(()),
+        _ => Err("The user said no to sending the report. Ask what they'd like changed, or show them the text to post themselves.".into()),
+    }
+}
+
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
 fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
     if LOOKING.contains(&name) || name == "approve" {
@@ -356,6 +371,12 @@ fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEv
     }
     if let Some(what) = risky_action(name, args, proxy)? {
         return ask_each_time(&what, name, args, &who.chat, proxy);
+    }
+    if name == "report_issue" {
+        if who.chat.is_empty() {
+            return Err("report_issue only works in a Valerie chat, where the user sees the report first. Show them the text instead.".into());
+        }
+        return confirm_report(args, &who.chat, proxy);
     }
     if who.access == "full" {
         return Ok(());
@@ -646,7 +667,8 @@ pub fn tools() -> Vec<Value> {
                      "save_to": { "type": "string", "description": "Save the PNG to this file (or folder) and return its path instead of the image" } }), &[]),
         tool("read_network", "List the page's requests since it loaded, oldest first: API calls (fetch, XHR) with method and \
              status, and scripts, styles and images with timing. failed_only shows what broke (status 400+ or no answer). \
-             Reload the tab (history reload) to see its loading from the start.", json!({
+             The first read of a tab starts its recording (earlier requests come without status); reload the tab (history \
+             reload) to see its loading from the start.", json!({
             "tab": tab_prop(),
             "filter": { "type": "string", "description": "Only addresses (or response bodies) containing this, e.g. /api/" },
             "failed_only": { "type": "boolean" },
@@ -721,6 +743,12 @@ pub fn tools() -> Vec<Value> {
             "key": { "type": "string", "description": "e.g. sidebar.tab_height (see get_settings)" },
             "value": { "type": "string", "description": "The new value as you'd write it in the YAML file: 32, true, bottom, [a, b] or { x: 1 }" },
             "this_computer": { "type": "boolean", "description": "Only on this computer (this-mac.yaml), not synced to the others" } }), &["key", "value"]),
+        tool("report_issue", "Send a bug report about Valerie to its GitHub issues (the triage.repo setting) from the user's GitHub \
+             account, signing them in first if needed. The user sees the exact text and says yes before it's posted. Remove \
+             anything private first. Returns the issue's address.", json!({
+            "title": { "type": "string", "description": "Short title of the problem (not needed with issue)" },
+            "body": { "type": "string", "description": "Markdown: what happened, steps to make it happen, what they expected, version and computer, the log lines that matter" },
+            "issue": { "type": "integer", "description": "An existing issue's number: add the report there as a comment instead" } }), &["body"]),
         tool("screenshot_ui", "Capture Valerie's own interface as a PNG (to check a change to its look).",
              json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins or panel:<block id> for a layout's panel" },
                      "width": { "type": "integer" } }), &[]),
@@ -743,6 +771,10 @@ pub fn run_tool(name: &str, args: Value, proxy: &EventLoopProxy<UserEvent>) -> R
     }
     if let Some(what) = risky_action(name, &args, proxy)? {
         ask_each_time(&what, name, &args, "", proxy)?;
+    }
+    // Only a chat can show the user the report before it goes out.
+    if name == "report_issue" {
+        return Err("report_issue only works from a chat".into());
     }
     call_tool(name, args, proxy)
 }
@@ -1734,6 +1766,32 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
         | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
         "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
+        "report_issue" => {
+            let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
+            if !config.triage.file_issues {
+                return Err("Sending reports is off (the triage.file_issues setting). Show the user the text to post themselves.".into());
+            }
+            let notify = |s: crate::github::Step| {
+                if let crate::github::Step::Code { code, url } = s {
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(code.clone()));
+                    let _ = proxy.send_event(UserEvent::Toast(format!("Paste the code {code} on GitHub (it's on your clipboard) to sign in")));
+                    let _ = call(proxy, "open_tab", json!({ "url": url }));
+                }
+            };
+            let sent = crate::github::sign_in(&config.sync.github_client_id, &notify).and_then(|token| {
+                crate::triage::file_issue(&token, &config.triage.repo, a["title"].as_str().unwrap_or(""), a["body"].as_str().unwrap_or(""), a["issue"].as_u64())
+            });
+            match sent {
+                Ok(url) => {
+                    crate::log::event("triage", format!("bug report sent: {url}"));
+                    Ok(json!({ "url": url }))
+                }
+                Err(e) => {
+                    crate::log::line("triage", format!("couldn't send the bug report: {e:#}"));
+                    Err(format!("Couldn't send it: {e:#}. Show the user the text to post themselves."))
+                }
+            }
+        }
         "screenshot_ui" | "get_settings" | "list_pages" | "list_layouts" | "check_panel" => call(proxy, name, a),
         "show_page" => {
             let page = a["name"].as_str().unwrap_or("").trim().to_string();
@@ -1837,12 +1895,14 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 return Err("this page keeps no network log (one of Valerie's own pages, or still loading)".into());
             }
             if v["on"] != Value::Bool(true) {
-                return Err("the network log is off (the mcp.network_log setting); turn it on and reload the tab".into());
+                return Err("the network log is off (the mcp.network_log setting is never); set it to when_asked and reload the tab".into());
             }
             let rows = v["requests"].as_array().cloned().unwrap_or_default();
             let failed = rows.iter().filter(|r| r["error"].is_string() || r["status"].as_u64().is_some_and(|s| s >= 400)).count();
             let mut out = json!({ "requests": rows, "shown": rows.len(), "failed": failed });
-            if a["bodies"].as_bool() == Some(true) && v["had_bodies"] != Value::Bool(true) {
+            if v["started_now"] == Value::Bool(true) {
+                out["note"] = json!("Recording started now: earlier requests are listed without status or method. Reload the tab (or repeat the action) and read again for full detail; it keeps recording through reloads.");
+            } else if a["bodies"].as_bool() == Some(true) && v["had_bodies"] != Value::Bool(true) {
                 out["note"] = json!("Bodies are recorded from now on: repeat the action (or reload the tab) and read again.");
             }
             Ok(out)

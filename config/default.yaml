@@ -561,11 +561,13 @@ keybindings:
   "CmdOrCtrl+L": { cmd: open_command_bar, mode: current }
   "CmdOrCtrl+W": close_tab
   "CmdOrCtrl+Shift+W": close_window
+  "CmdOrCtrl+Shift+N": new_private_window   # its cookies and storage are forgotten when it closes; no history
   "CmdOrCtrl+Shift+T": reopen_closed_tab
   "CmdOrCtrl+Shift+C": copy_url
   "CmdOrCtrl+S": toggle_sidebar
   "CmdOrCtrl+Shift+D": toggle_pin
   "CmdOrCtrl+R": reload
+  "CmdOrCtrl+Shift+R": hard_reload   # reload from the server, skipping the cache
   "CmdOrCtrl+[": back
   "CmdOrCtrl+]": forward
   "CmdOrCtrl+Alt+Down": next_tab
@@ -598,10 +600,13 @@ keybindings:
   "CmdOrCtrl+Minus": zoom_out
   "CmdOrCtrl+0": zoom_reset
   "CmdOrCtrl+Alt+I": dev_tools
+  "CmdOrCtrl+Alt+U": view_source   # the page's HTML in a new tab
   "CmdOrCtrl+O": move_to_main_window
   "CmdOrCtrl+Shift+O": move_to_little_window   # the tab you're on moves out into a little window
   "CmdOrCtrl+F": find_in_page
-  "CmdOrCtrl+Shift+R": reader_view
+  "CmdOrCtrl+G": find_next
+  "CmdOrCtrl+Shift+G": find_previous
+  "CmdOrCtrl+Alt+R": reader_view   # was CmdOrCtrl+Shift+R, which is now hard_reload as in other browsers
   "CmdOrCtrl+Shift+2": capture_page
   "CmdOrCtrl+Alt+Shift+2": capture_full_page   # the whole page, top to bottom
   "CmdOrCtrl+Shift+M": toggle_mute
@@ -622,7 +627,7 @@ keybindings:
 global_keybindings:
   "Ctrl+Semicolon": new_little_window   # Ctrl+; a new little window from any app, asking where to go
 
-# The menu bar at the top of the screen. Its menus: Valerie, Edit, Tabs, Spaces, View, Tools, Plugins, Window.
+# The menu bar at the top of the screen. Its menus: Valerie, File, Edit, View, History, Bookmarks, Tabs, Spaces, Tools, Plugins, Window, Help.
 menu:
   hide: []                 # menus to leave out of the bar, e.g. [Tools, Plugins]; their shortcuts keep working (the menu
                            # moves inside the Valerie menu)
@@ -631,6 +636,11 @@ menu:
                            # name makes a new menu; null takes a command without a shortcut out of the menus
   quit_shortcut: "CmdOrCtrl+Q"   # the shortcut for Quit; "" = none (Quit stays in the Valerie menu)
   confirm_quit: false      # ask "Quit Valerie?" before quitting. true | false
+  browser_menus: true      # File, Edit, View, History, Window and Help menus laid out like other browsers (History has Recently
+                           # Closed; on a Mac, Help has the search box that finds any menu item). false = the older Edit, Tabs,
+                           # Spaces, View, Tools and Window menus. true | false
+  recent_pages: 10         # how many recently visited pages the History menu lists; 0 = none
+  bookmarks: true          # a Bookmarks menu listing your favorites and pinned tabs (folders as submenus, other spaces too). true | false
 
 # Valerie's right-click menus (on links, tabs and folders). Plugins add their own entries (`context_menu` on a command).
 context_menu:
@@ -687,6 +697,7 @@ vim:
     "H": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
     "L": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
     "r": reload
+    "R": hard_reload
     "x": close_tab
     "X": reopen_closed_tab
     "J": next_tab            # J down the sidebar, K up (like j/k)
@@ -765,8 +776,10 @@ mcp:
   ask_user: true           # let agents hand you a page for what only you can do (make an account, sign in, a CAPTCHA,
                            # pay, pick an option): it opens in your sidebar with their note and a Done button or their
                            # choices. true | false
-  network_log: true        # keep a list of each page's requests (address, status, time) for agents debugging a page
-                           # (read_network). Stays in the page; nothing is saved. true | false
+  network_log: when_asked  # keep a list of each page's requests (address, status, time) for agents debugging a page
+                           # (read_network). Stays in the page; nothing is saved. One of: when_asked (a tab starts
+                           # recording the first time an agent reads it, and keeps recording through reloads; other
+                           # pages are left untouched) | always (every page, from the moment it loads) | never
   answer_in_background: true # keep answering agents at full speed while Valerie is in the background. Off lets macOS slow
                            # it down to save battery, and a busy Mac can then leave agents waiting for minutes. macOS only;
                            # takes effect at the next start. true | false
@@ -920,6 +933,11 @@ plugin_marketplace:
   index: "https://raw.githubusercontent.com/cullen-b/valerie-plugins/main/index.json"   # where the list of plugins and extensions comes from
   repo: cullen-b/valerie-plugins   # where "Share Plugin" sends your plugins and extensions (as a pull request the maintainers review)
   offer_to_share: true     # when your AI makes a new plugin or extension, Valerie and the AI offer to share it in the marketplace. true | false
+
+# "Report a Problem" (type "triage" in the command bar): your AI finds what went wrong and, if it's Valerie's bug, files it.
+triage:
+  file_issues: true        # the AI can send the bug report as a GitHub issue from your GitHub account (you see the text and say yes first); false = it only shows you the text to post. true | false
+  repo: cullen-b/valerie   # where bug reports go: a GitHub repo, owner/name
 
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}

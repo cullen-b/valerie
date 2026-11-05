@@ -31,7 +31,7 @@ Everything is plain files in this folder and Valerie reloads them the moment you
 | `reference/default-config.yaml` | Every option with its default and a comment (read-only reference, regenerated each launch). |
 | `plugins/<name>/plugin.yaml` | A plugin: commands, shortcuts, page scripts/styles, hooks. See `plugins/_example/`. |
 | `plugins/<name>/style.css`, `script.js` | Applied to the sites listed in that plugin's `matches`. |
-| `boosts/<host>.css`, `boosts/<host>.js` | Quick per-site CSS/JS without a plugin (e.g. `boosts/github.com.css`). |
+| `boosts/<host>.css`, `boosts/<host>.js` | Quick per-site CSS/JS without a plugin (e.g. `boosts/github.com.css`). The JS runs once per page load in a function of its own, so give anything the page must reach a `window.` name (`window.myHelper = ...`). |
 | `ui/chrome.css`, `ui/palette.css`, `ui/chat.css`, `ui/terminal.css`, `ui/little.css`, `ui/answer.css`, `ui/welcome.css`, `ui/plugins.css` | The user's own CSS for Valerie's windows (sidebar, command bar, Chats…). Live; see "Restyling Valerie itself". |
 | `ui/page.css` | CSS for what Valerie draws inside web pages: find bar, link hints, menus, toasts, reader view. |
 | `strings/<language>.yaml` | Valerie's words in another language (`language: es`). `"{exe}" strings` prints every word to translate. |
@@ -100,6 +100,8 @@ changed in plain words. Some translations:
 | "Put Valerie in Spanish" | `language: es` plus `strings/es.yaml` (translate the output of `"{exe}" strings`) |
 | "Keep Valerie on top" / "see-through window" / "frosted sidebar" | `window.always_on_top: true`, `window.opacity: 0.9`, `window.vibrancy: sidebar` |
 | "Hide the Tools menu" / "rename Spaces to Desks" / "don't quit with ⌘Q" | `menu.hide: [Tools]`, `menu.rename: {{ Spaces: Desks }}`, `menu.quit_shortcut: ""` or `menu.confirm_quit: true` |
+| "Put the menus back the old way" / "no File, History or Help menus" | `menu.browser_menus: false` (Edit, Tabs, Spaces, View, Tools, Window only) |
+| "No recent pages in the History menu" / "no Bookmarks menu" | `menu.recent_pages: 0`, `menu.bookmarks: false` |
 | "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
 | "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
 | "Let this map use my location" / "no site may ask where I am" | `sites: {{ maps.example.com: {{ location: allow }} }}`, `permissions.location: deny` (the `toggle_site_location` command flips the site you're on) |
@@ -532,7 +534,8 @@ hidden tabs with the user's logins; `map_site` lists (and reads) a site's pages.
 hand the user a page for anything only a person can do, such as making an account, signing in, paying, creating an API key
 or picking an option (`ask_user` with a `url` or `tab`, a note, and a Done button or `choices`; off with
 `mcp.ask_user: false`), and read
-a page's requests (`read_network`; off with `mcp.network_log: false`). A `click`, Enter or form submit on a button that
+a page's requests (`read_network`: a tab starts recording when first read; `mcp.network_log: always` records every page
+from its load, `never` turns it off). A `click`, Enter or form submit on a button that
 looks like spending money (`mcp.paying_words`), or any of those on a page that takes payment (card fields, a payment form or
 a pay button), waits for the user's yes every time, even with full access, and so does typing into a card field. An `eval_js`
 script is stopped if it clicks, submits or sends anything like that, and told to use `click` instead; scripts that only read
@@ -575,7 +578,8 @@ can use Valerie's commands and settings. Both can be shared in the marketplace.
 - Passwords can't be read by agents, plugins or `valerie call`.
 - Page-side `script.js` only reaches the browser through `valerie.call`, with the tools in its plugin's `permissions`
   (which the user approves); pages themselves can't use a plugin's key.
-- Clearing a site's data (`clear_site_data`) always asks the user.
+- Clearing a site's data (`clear_site_data`) or every site's cookies (`clear_cache_and_cookies`) always asks the user.
+  `clear_cache` (keeps logins) and `hard_reload` (reload skipping the cache) don't.
 - Data (tabs, history) lives in `{data}`; don't edit it by hand while Valerie is running.
 - When something fails (sync, updates, plugins, hooks, a page), read Valerie's log: the `read_logs` tool (filter by
   `area`, `contains`, `since_minutes`) or the newest `valerie-<date>.log` in `{logs}`. It has errors, messages shown to

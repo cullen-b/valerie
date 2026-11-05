@@ -18,6 +18,6 @@ bug report if it's Valerie's fault. Use plain words; they may not be technical.
    happen, what they expected, Valerie's version and the computer (from the facts below), and only the log lines that
    matter. Before showing it, remove anything private: tokens, keys, passwords, email addresses, names, private
    addresses, and the part of any URL after "?". Prefer adding a comment to an existing issue over opening a new one.
-   Show them the text and let them send it themselves (never post anything for them).
+   Show them the text first and send it only once they're happy with it (how you send it is described below).
 
 Keep each reply short. Don't invent features or settings: check them first.
