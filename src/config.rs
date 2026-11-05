@@ -567,6 +567,8 @@ pub struct NotificationsConfig {
     pub websites: String,
     pub sites: BTreeMap<String, String>,
     pub sound: bool,
+    #[serde(default)]
+    pub sound_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

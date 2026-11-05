@@ -55,6 +55,8 @@ pub enum UserEvent {
     ExternalScheme(String),
     /// The floating video's return button was pressed, in this webview (see `platform::is_webview`).
     VideoReturn(usize),
+    /// A page's full screen changed what layout has to do (see platform::on_page_fullscreen).
+    PageFullscreen,
     /// Time to make the hidden little window that waits for the next link (`little_window.keep_one_ready`).
     PrepareLittle,
     Menu(MenuId),
@@ -153,6 +155,8 @@ pub enum UserEvent {
     PluginReply { target: Target, id: String, result: Result<Value, String> },
     /// The user answered "Let this plugin use …?".
     PluginGrant { plugin: String, allowed: bool },
+    ReplaceGrant { grant: String, print: String, allowed: bool },
+    PanelCheckDone(u32),
     /// The user said yes to a plugin command's `confirm` question.
     PluginConfirmed { plugin: String, title: String, context: std::collections::BTreeMap<String, String> },
     /// A plugin's command-bar search answered.
@@ -293,6 +297,8 @@ pub struct App {
     crashed: std::collections::HashSet<TabId>,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
+    /// Windows and Linux: a page is filling the window, and whether the window was full screen before it did.
+    page_filling_window: Option<bool>,
     /// Sites asked about notifications this session (a site gets asked once).
     notify_asked: std::collections::HashSet<String>,
     /// Tabs waiting to hear where the computer is.
@@ -381,12 +387,22 @@ pub struct App {
     panel_count: u32,
     /// Panels to build or rebuild at the next layout pass (a file or the layout changed).
     panels_stale: bool,
+    /// Panels being tried out of sight (the check_panel tool): the view, what went wrong, tools it called, who's waiting.
+    panel_checks: HashMap<u32, PanelCheck>,
+    panel_checks_done: Vec<WebView>,
     /// Panels the layout names that can't show (their plugin is off, missing or waiting to be allowed).
     panels_unavailable: HashSet<String>,
     /// What panels were last told, and where the chrome was last told things go.
     panel_state: std::cell::RefCell<String>,
     last_arrangement: std::cell::RefCell<String>,
     layout_error_shown: Option<String>,
+    /// Replacements asked about, said no to or that broke this session ("<grant> <print>"): not tried or asked again.
+    replace_asked: HashSet<String>,
+    /// Panels opened as pop-ups, on top of what the layout places.
+    popups: Vec<window_layout::Placed>,
+    /// The tab the Plugins window opens at when it's next ready.
+    market_start_tab: Option<&'static str>,
+    replace_refused: HashSet<String>,
     #[cfg(not(target_os = "macos"))]
     contexts: HashMap<String, wry::WebContext>,
     /// The profile's context a view is being built in already has the valerie:// protocol.
@@ -667,27 +683,46 @@ fn dress_page(html: &str, name: &str, key: &str, theme: &str, props: &str, state
 const PAGE_BRIDGE: &str = r#"(function () {
   const key = "__KEY__", post = window.ipc.postMessage.bind(window.ipc), waits = new Map(); let n = 0, state = __STATE__;
   const text = (v) => v instanceof Error ? String(v.stack || v.message) : typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch (_) { return String(v); } })();
+  const ask = (m) => new Promise((resolve, reject) => {
+    const id = "p" + (++n); waits.set(id, [resolve, reject]);
+    post(JSON.stringify({ t: "panel_store", key, id, ...m }));
+  });
+  const keeper = (shared) => Object.freeze({
+    get: (k) => ask({ op: "get", k: k == null ? "" : String(k), shared }),
+    set: (k, value) => ask({ op: "set", k: String(k), value, shared }),
+    delete: (k) => ask({ op: "delete", k: String(k), shared }),
+  });
   const valerie = Object.freeze({
     page: "__NAME__",
     props: __PROPS__,
     get state() { return state; },
     dragWindow: () => post(JSON.stringify({ t: "panel_drag", key })),
+    run: (title) => post(JSON.stringify({ t: "panel_run", key, title: String(title) })),
+    place: (where) => post(JSON.stringify({ t: "panel_place", key, ...where })),
+    close: () => post(JSON.stringify({ t: "panel_close", key })),
+    store: keeper(false),
+    shared: keeper(true),
     call: (tool, args) => new Promise((resolve, reject) => {
       const id = "p" + (++n); waits.set(id, [resolve, reject]);
       post(JSON.stringify({ t: "page_call", key, id, tool: String(tool), args: args || {} }));
     }),
     log: (...parts) => post(JSON.stringify({ t: "page_log", key, text: parts.map(text).join(" ").slice(0, 2000) })),
-    on: (what, fn) => addEventListener("valerie:changed", (e) => { if (!what || e.detail === what) fn(e.detail); }),
+    on: (what, fn) => what === "command" ? addEventListener("valerie:command", (e) => fn(e.detail))
+      : addEventListener("valerie:changed", (e) => { if (!what || e.detail === what) fn(e.detail); }),
   });
   Object.defineProperty(window, "valerie", { value: valerie, writable: false, configurable: false });
   Object.defineProperty(window, "__valeriePage", { value: Object.freeze({ reply(id, ok, v) {
     const w = waits.get(id); if (!w) return; waits.delete(id); ok ? w[0](v) : w[1](new Error(String(v)));
+  }, command(name) {
+    dispatchEvent(new CustomEvent("valerie:command", { detail: name }));
   }, state(s, css) {
     state = s;
     const theme = document.getElementById("valerie-theme");
     if (theme && theme.textContent !== css) theme.textContent = css;
     dispatchEvent(new CustomEvent("valerie:changed", { detail: "state" }));
   } }), writable: false, configurable: false });
+  // A pop-up goes away when the user clicks elsewhere.
+  if (valerie.props && valerie.props.popup) addEventListener("blur", () => valerie.close());
   addEventListener("error", (e) => valerie.log("error:", e.message, (e.filename || "").split("/").pop() + ":" + e.lineno));
   addEventListener("unhandledrejection", (e) => valerie.log("error: unhandled", text(e.reason)));
 })();"#;
@@ -700,6 +735,27 @@ fn legacy_device_name() -> String {
 /// Chats live on this machine; with chats.sync they also travel, encrypted, through the sync repo.
 fn chats_dir(_config: &Config) -> PathBuf {
     config::data_dir().join("chats")
+}
+
+/// `valerie.store` and `valerie.shared`: what a panel or page keeps between runs.
+fn panel_store(who: &str, m: &Value) -> Result<Value, String> {
+    window_layout::store(&config::data_dir(), who, m["op"].as_str().unwrap_or(""), m["k"].as_str().unwrap_or(""), m.get("value"))
+}
+
+fn dirs_home() -> PathBuf {
+    std::env::var_os(if cfg!(target_os = "windows") { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).unwrap_or_default()
+}
+
+fn xterm_assets() -> String {
+    format!("<style>{}</style><script>{}\n{}</script>", ui("vendor/xterm.css"), ui("vendor/xterm.js"), ui("vendor/addon-fit.js"))
+}
+
+/// A panel loaded out of sight to see whether it works.
+struct PanelCheck {
+    view: WebView,
+    errors: Vec<String>,
+    tools: Vec<String>,
+    reply: std::sync::mpsc::Sender<Result<Value, String>>,
 }
 
 /// A plugin's panel placed in the window by the layout on screen.
@@ -1048,7 +1104,7 @@ fn cannot_write(dir: &Path) -> Option<std::io::Error> {
 }
 
 /// UI files are compiled in; set VALERIE_UI_DIR to load them from disk while iterating on the design.
-fn ui(name: &str) -> String {
+pub fn ui(name: &str) -> String {
     if let Ok(dir) = std::env::var("VALERIE_UI_DIR") {
         if let Ok(s) = std::fs::read_to_string(PathBuf::from(dir).join(name)) {
             return s;
@@ -1120,7 +1176,19 @@ fn ui_custom(page: &str, config: &Config) -> Value {
 fn ui_page(page: &str, config: &Config) -> String {
     // "</" would end the <script> early if someone's CSS or words contain it.
     let data = ui_custom(page, config).to_string().replace("</", "<\\/");
-    format!("{}\n<script>{}\n__valerieUi.apply({data});</script>", ui(page), ui("custom.js"))
+    let html = match window_layout::replaced(page) {
+        Some(html) => watch_replacement(&html),
+        None => ui(page),
+    };
+    format!("{html}\n<script>{}\n__valerieUi.apply({data});</script>", ui("custom.js"))
+}
+
+/// A replaced window with a watcher that runs before its own scripts and reports what goes wrong.
+fn watch_replacement(html: &str) -> String {
+    const WATCH: &str = r#"<script>addEventListener("error", (e) => { try { window.ipc.postMessage(JSON.stringify({ t: "replacement_error", message: String(e.message), at: (e.lineno || 0) })); } catch (_) {} });</script>"#;
+    let lower = html.to_lowercase();
+    let at = lower.find("<head").and_then(|h| lower[h..].find('>').map(|e| h + e + 1)).or_else(|| lower.starts_with("<!doctype").then(|| lower.find('>').map(|e| e + 1)).flatten()).unwrap_or(0);
+    format!("{}{WATCH}{}", &html[..at], &html[at..])
 }
 
 /// wry hands back the JS result JSON-encoded; our scripts return JSON strings, so unwrap up to twice.
@@ -1263,6 +1331,13 @@ impl App {
         let size = window.inner_size().to_logical::<f64>(window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         let p = proxy.clone();
+        // Windows a layout replaces (already allowed) are drawn that way from the first frame.
+        if let Some(layout) = window_layout::active(&config.layout.arrangement) {
+            let allowed: HashMap<&'static str, String> = window_layout::replacements(&layout, &plugins::load_all().0).into_iter()
+                .filter(|r| state.plugin_grants.get(&r.grant).is_some_and(|g| g.iter().any(|x| *x == r.print)))
+                .map(|r| (r.page, r.html)).collect();
+            window_layout::set_replaced(allowed);
+        }
         let chrome = WebViewBuilder::new()
             .with_html(ui_page("chrome.html", &config))
             .with_bounds(full)
@@ -1292,6 +1367,10 @@ impl App {
         {
             let p = proxy.clone();
             platform::on_video_return(&chrome, move |id| send(&p, UserEvent::VideoReturn(id)));
+        }
+        {
+            let p = proxy.clone();
+            platform::on_page_fullscreen(&chrome, move || send(&p, UserEvent::PageFullscreen));
         }
         trace("  state loaded");
         state.limits = crate::state::Limits { history: config.history.max_pages, archive: config.history.max_archived_tabs, closed: config.history.max_closed_tabs };
@@ -1368,6 +1447,7 @@ impl App {
             preload_seq: 0,
             crashed: Default::default(),
             window_focused: true,
+            page_filling_window: None,
             notify_asked: Default::default(),
             location_waiting: Vec::new(),
             location_asking: Default::default(),
@@ -1426,10 +1506,16 @@ impl App {
             panels: HashMap::new(),
             panel_count: 0,
             panels_stale: true,
+            panel_checks: HashMap::new(),
+            panel_checks_done: Vec::new(),
             panels_unavailable: HashSet::new(),
             panel_state: Default::default(),
             last_arrangement: Default::default(),
             layout_error_shown: None,
+            replace_asked: HashSet::new(),
+            popups: Vec::new(),
+            market_start_tab: None,
+            replace_refused: HashSet::new(),
             #[cfg(not(target_os = "macos"))]
             contexts: HashMap::new(),
             protocol_taken: std::cell::Cell::new(false),
@@ -1478,6 +1564,9 @@ impl App {
     }
 
     fn theme_for(&self, i: usize) -> Theme {
+        if let Some(t) = self.win_layout.as_ref().and_then(|l| l.theme.clone()) {
+            return t;
+        }
         if let Some(n) = self.state.spaces.get(i).and_then(|s| s.theme.clone()) {
             return self.config.theme(Some(&ThemeRef::Named(n)));
         }
@@ -1993,6 +2082,10 @@ impl App {
     /// Where pages and chats go: the content area less the terminal panel when it's open.
     fn content_area(&self, w: f64, h: f64) -> (f64, f64, f64, f64) {
         let (x, y, cw, ch) = self.content_area_full(w, h);
+        // A layout with its own terminal block has already made room for it.
+        if self.arranged(w, h).is_some_and(|a| a.terminal.is_some()) {
+            return (x, y, cw, ch);
+        }
         match self.terminal_height(ch) {
             Some(th) if !self.terminal_max => (x, y, cw, ch - th - self.config.layout.split_gap.max(0.0)),
             _ => (x, y, cw, ch),
@@ -2010,9 +2103,20 @@ impl App {
 
     fn terminal_rect(&self) -> Option<(f64, f64, f64, f64)> {
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        if !self.terminal_max && self.terminal_open && self.terminal_view.is_some() {
+            if let Some(r) = self.arranged(size.width, size.height).and_then(|a| a.terminal) {
+                return Some((r.x, r.y, r.w, r.h));
+            }
+        }
         let (x, y, w, h) = self.content_area_full(size.width, size.height);
         let th = self.terminal_height(h)?;
         Some(if self.terminal_max { (x, y, w, h) } else { (x, y + h - th, w, th) })
+    }
+
+    /// Where a layout's chats block is, when it's showing.
+    fn chats_block_rect(&self) -> Option<window_layout::Rect> {
+        let z = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        self.arranged(z.width, z.height)?.chats
     }
 
     /// Where everything goes in a window this big, when a layout with a tree is on screen.
@@ -2020,12 +2124,18 @@ impl App {
         let layout = self.win_layout.as_ref()?;
         let sizes = window_layout::for_layout(&self.state.layout_sizes, &self.win_layout_name);
         let shown = window_layout::for_layout(&self.state.layout_shown, &self.win_layout_name);
+        let selected = window_layout::for_layout(&self.state.layout_selected, &self.win_layout_name);
+        let spots = window_layout::for_layout(&self.state.layout_spots, &self.win_layout_name);
         window_layout::arrange(layout, w, h, &window_layout::Inputs {
             sidebar_width: self.sidebar_width(),
             sidebar_visible: self.config.layout.sidebar_visible || self.sidebar_peek,
             top_bar_height: self.config.layout.top_bar_height,
+            terminal_open: self.terminal_open && self.terminal_view.is_some(),
+            chats_block: self.config.chats.enabled && !self.chats_open,
             sizes: &sizes,
             shown: &shown,
+            selected: &selected,
+            spots: &spots,
             unavailable: &self.panels_unavailable,
         })
     }
@@ -2052,6 +2162,26 @@ impl App {
 
     fn layout(&mut self) {
         self.layout_anim(0.0)
+    }
+
+    fn page_fullscreen_changed(&mut self) {
+        if !cfg!(target_os = "macos") {
+            let filling = self.views.values().any(platform::in_page_fullscreen);
+            match (filling, self.page_filling_window) {
+                (true, None) => {
+                    self.page_filling_window = Some(self.window.fullscreen().is_some());
+                    self.window.set_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
+                }
+                (false, Some(was_full_screen)) => {
+                    self.page_filling_window = None;
+                    if !was_full_screen {
+                        self.window.set_fullscreen(None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.layout();
     }
 
     /// Where the command bar's view goes: the whole window, so the page dims behind the bar. On Linux a view inside a
@@ -2081,7 +2211,7 @@ impl App {
         let gap = self.config.layout.split_gap.max(0.0);
         let pw = (w - gap * (n - 1.0)) / n;
         for (id, v) in &self.views {
-            if !panes.contains(id) {
+            if !panes.contains(id) && !platform::in_page_fullscreen(v) {
                 let _ = v.set_visible(false);
             }
         }
@@ -2092,7 +2222,7 @@ impl App {
             }
         }
         for (i, id) in panes.iter().enumerate() {
-            if let Some(v) = self.views.get(id) {
+            if let Some(v) = self.views.get(id).filter(|v| !platform::in_page_fullscreen(v)) {
                 platform::round_corners(v, self.config.layout.corner_radius, self.pane_corners(i, panes.len()));
                 let px = x + i as f64 * (pw + gap);
                 // Only a page already on screen glides; one appearing would glide in from wherever it was last.
@@ -2119,11 +2249,20 @@ impl App {
                 }
             }
         }
+        // A layout with a chats block shows a chat all the time, so it's built as soon as the block is there.
+        if self.chats_block_rect().is_some() && self.chat_view.is_none() {
+            self.ensure_chat_view();
+        }
         if let Some(cv) = &self.chat_view {
             if self.chats_open {
                 platform::round_corners(cv, self.config.layout.corner_radius, self.pane_corners(0, 1));
                 let _ = cv.set_bounds(rect(x, y, w, h));
                 platform::follow_window(cv, platform::Follow::Fill);
+                let _ = cv.set_visible(true);
+            } else if let Some(r) = self.chats_block_rect() {
+                let radius = self.config.layout.corner_radius;
+                platform::round_corners(cv, radius, if radius > 0.0 { platform::Corners::All } else { platform::Corners::None });
+                let _ = cv.set_bounds(rect(r.x, r.y, r.w, r.h));
                 let _ = cv.set_visible(true);
             } else if self.chat_float {
                 // The whole window: the page dims behind the chat's card, like behind the command bar.
@@ -2172,6 +2311,16 @@ impl App {
                 let _ = wv.set_visible(false);
             }
         }
+        // Off the Mac a page's full screen stays in its own view, so that view goes over everything else.
+        if !cfg!(target_os = "macos") {
+            for v in self.views.values().filter(|v| platform::in_page_fullscreen(v)) {
+                platform::round_corners(v, 0.0, platform::Corners::None);
+                let _ = v.set_bounds(full);
+                platform::follow_window(v, platform::Follow::Fill);
+                let _ = v.set_visible(true);
+                platform::bring_to_front(v);
+            }
+        }
         self.highlight_panes();
         let hide_lights = match self.config.window.traffic_lights.as_str() {
             "show" => false,
@@ -2218,7 +2367,8 @@ impl App {
 
     /// Read the chosen layout again: its file may have changed, or the plugins its panels come from.
     fn refresh_win_layout(&mut self) {
-        let name = self.base_config.get("layout").and_then(|l| l.get("arrangement")).and_then(|a| a.as_str()).unwrap_or(window_layout::CLASSIC).to_string();
+        // self.config, not base_config: a space can have its own layout.
+        let name = self.config.layout.arrangement.clone();
         let layout = window_layout::active(&name);
         self.panels_unavailable = layout.iter().flat_map(|l| l.panels()).filter(|p| !self.panel_available(p)).collect();
         for p in &self.panels_unavailable {
@@ -2232,6 +2382,89 @@ impl App {
         self.win_layout = layout;
         self.win_layout_name = name;
         self.panels_stale = true;
+        self.apply_replacements();
+        if self.market_view.is_some() {
+            self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
+        }
+    }
+
+    /// Draw each window the way the layout says: the ones it replaces and the user allowed from their plugin's file,
+    /// the rest as Valerie's own. Asks once about any it hasn't been allowed.
+    fn apply_replacements(&mut self) {
+        let wanted = self.win_layout.as_ref().map(|l| window_layout::replacements(l, &self.plugins)).unwrap_or_default();
+        let mut now: HashMap<&'static str, String> = HashMap::new();
+        for r in wanted {
+            let id = format!("{} {}", r.grant, r.print);
+            // Broken ones are remembered by their content, so saving a fixed file tries again.
+            if self.replace_refused.contains(&id) || self.replace_refused.contains(&crate::blocking::hash(&r.html)) {
+                continue;
+            }
+            if self.state.plugin_grants.get(&r.grant).is_some_and(|g| g.contains(&r.print)) {
+                now.insert(r.page, r.html);
+            } else if self.replace_asked.insert(id) {
+                let (px, grant, print) = (self.proxy.clone(), r.grant.clone(), r.print.clone());
+                let what = r.window.replace('_', " ");
+                platform::ask(&self.chrome, &format!("Let “{}” replace your {what}?", r.plugin), &format!("{} It runs with everything that window can do, so only allow plugins you trust. You can go back at any time with Back to the Classic Layout.", window_layout::window_powers(&r.window)), "Allow", "Don't Allow", move |yes| {
+                    send(&px, UserEvent::ReplaceGrant { grant, print, allowed: yes });
+                });
+            }
+        }
+        for page in window_layout::set_replaced(now) {
+            self.redraw_window(page);
+        }
+    }
+
+    /// Load a window again from whichever file draws it now. Ones Valerie builds when they open are built again.
+    fn redraw_window(&mut self, page: &'static str) {
+        let html = || ui_page(page, &self.config);
+        match page {
+            "chrome.html" => {
+                let _ = self.chrome.load_html(&html());
+            }
+            "palette.html" => {
+                let _ = self.overlay.load_html(&html());
+            }
+            "little.html" => {
+                for l in self.littles.values() {
+                    let _ = l.bar.load_html(&html());
+                }
+            }
+            "terminal.html" => {
+                if let Some(v) = &self.terminal_view {
+                    let page = ui_page(page, &self.config).replacen("<!--XTERM-->", &xterm_assets(), 1);
+                    self.terminal_ready = false;
+                    let _ = v.load_html(&page);
+                }
+            }
+            "chat.html" => {
+                if let Some(v) = &self.chat_view {
+                    let _ = v.load_html(&html());
+                }
+            }
+            "answer.html" => self.answer_view = None,
+            "plugins.html" => {
+                if let Some(v) = &self.market_view {
+                    let _ = v.load_html(&html());
+                }
+            }
+            _ => {
+                if let Some(v) = &self.welcome_view {
+                    let _ = v.load_html(&html());
+                }
+            }
+        }
+    }
+
+    /// A replaced window broke or never started: back to Valerie's own, saying why, until its file changes.
+    fn replacement_failed(&mut self, page: &str, why: &str) {
+        window_layout::heard_from(page);
+        let wanted = self.win_layout.as_ref().map(|l| window_layout::replacements(l, &self.plugins)).unwrap_or_default();
+        let Some(r) = wanted.into_iter().find(|r| r.page == page) else { return };
+        crate::log::line("layout", format!("{} from {}: {why}", r.window, r.plugin));
+        self.toast(&format!("{} from {} didn't work, so Valerie's own is back: {why}", r.window.replace('_', " "), r.plugin));
+        let _ = std::fs::write(config::config_dir().join("layouts").join(format!("{}.error", self.win_layout_name)), format!("replace: {}: {why}", r.window));
+        self.replace_refused.insert(crate::blocking::hash(&r.html));
+        self.apply_replacements();
     }
 
     /// The file a panel is drawn from, in a plugin that's on.
@@ -2247,7 +2480,8 @@ impl App {
 
     /// Put the layout's panels where they go, building or dropping them as needed, and tell the chrome what moved.
     fn layout_panels(&mut self, width: f64, height: f64) {
-        let placed = self.arranged(width, height).map(|a| a.panels).unwrap_or_default();
+        let mut placed = self.arranged(width, height).map(|a| a.panels).unwrap_or_default();
+        placed.extend(self.popups.iter().cloned());
         if std::mem::take(&mut self.panels_stale) && !self.main_hidden {
             self.build_panels(&placed);
         }
@@ -2341,6 +2575,25 @@ impl App {
     /// A message from a panel: a tool call, a log line or a request to move the window. Tools that only look work at
     /// once; others must be in the plugin's `permissions`, and the user is asked once (as for its page scripts).
     fn panel_message(&mut self, num: u32, kind: &str, m: &Value) {
+        if let Some(check) = self.panel_checks.get_mut(&num) {
+            match kind {
+                "page_log" => {
+                    if let Some(text) = m["text"].as_str().filter(|t| t.starts_with("error")) {
+                        check.errors.push(text.to_string());
+                    }
+                }
+                // Nothing a panel asks for happens while it's being checked; it gets an empty answer and carries on.
+                "page_call" | "panel_store" => {
+                    let what = if kind == "page_call" { m["tool"].as_str().unwrap_or("") } else { "store" };
+                    if !check.tools.iter().any(|t| t == what) {
+                        check.tools.push(what.to_string());
+                    }
+                    let _ = check.view.evaluate_script(&format!("__valeriePage.reply({}, true, null)", m["id"]));
+                }
+                _ => {}
+            }
+            return;
+        }
         if kind == "open" {
             if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("http://") || u.starts_with("https://")) {
                 self.open_tab(url, None, true);
@@ -2363,6 +2616,50 @@ impl App {
         match kind {
             "panel_drag" => {
                 let _ = self.window.drag_window();
+            }
+            "panel_run" => {
+                let title = m["title"].as_str().unwrap_or("");
+                let known = self.plugins.iter().any(|p| p.name == plugin && p.manifest.enabled && p.manifest.commands.iter().any(|c| c.title == title));
+                if known {
+                    self.event_queue_cmds.push(Command::Plugin { plugin: plugin.clone(), command: title.to_string(), context: Default::default() });
+                } else {
+                    crate::log::line(&who, format!("asked to run {title:?}, which isn't one of its commands"));
+                }
+            }
+            "panel_store" => {
+                let id = m["id"].as_str().unwrap_or("").to_string();
+                let shared = m["shared"].as_bool().unwrap_or(false);
+                let result = panel_store(if shared { "shared" } else { &plugin }, m);
+                if shared && m["op"].as_str() != Some("get") {
+                    for p in self.panels.values() {
+                        let _ = p.view.evaluate_script("dispatchEvent(new CustomEvent('valerie:changed', { detail: 'shared' }))");
+                    }
+                }
+                self.plugin_reply(target, &id, result);
+            }
+            "panel_place" => {
+                let Some(block) = self.panels.iter().find(|(_, p)| p.num == num && p.floating).map(|(id, _)| id.clone()) else { return };
+                let spot = window_layout::Spot { x: m["x"].as_f64(), y: m["y"].as_f64(), w: m["width"].as_f64(), h: m["height"].as_f64() };
+                if let Some(popup) = self.popups.iter_mut().find(|p| p.id == block) {
+                    let r = &mut popup.rect;
+                    (r.x, r.y, r.w, r.h) = (spot.x.unwrap_or(r.x), spot.y.unwrap_or(r.y), spot.w.unwrap_or(r.w).max(1.0), spot.h.unwrap_or(r.h).max(1.0));
+                } else {
+                    let key = window_layout::block_key(&self.win_layout_name, &block);
+                    let was = self.state.layout_spots.get(&key).copied().unwrap_or_default();
+                    self.state.layout_spots.insert(key, window_layout::Spot { x: spot.x.or(was.x), y: spot.y.or(was.y), w: spot.w.or(was.w), h: spot.h.or(was.h) });
+                    self.dirty = true;
+                }
+                self.layout();
+            }
+            "panel_close" => {
+                let before = self.popups.len();
+                let block = self.panels.iter().find(|(_, p)| p.num == num).map(|(id, _)| id.clone());
+                self.popups.retain(|p| Some(&p.id) != block.as_ref());
+                if self.popups.len() != before {
+                    self.panels_stale = true;
+                    self.layout();
+                    self.focus_active();
+                }
             }
             "page_log" => {
                 let text = m["text"].as_str().unwrap_or("");
@@ -2396,6 +2693,115 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Load a panel out of sight for a moment and report what went wrong: the check_panel tool.
+    fn check_panel(&mut self, args: &Value, reply: std::sync::mpsc::Sender<Result<Value, String>>) {
+        let panel = args["panel"].as_str().unwrap_or("");
+        let Some((_, file)) = self.panel_file(panel) else {
+            let _ = reply.send(Err(format!("no panel {panel:?} in a plugin that's on: write <plugin> or <plugin>/<file>")));
+            return;
+        };
+        let html = match std::fs::read_to_string(&file) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = reply.send(Err(format!("{}: {e}", file.display())));
+                return;
+            }
+        };
+        let theme = self.page_theme.read().map(|t| t.clone()).unwrap_or_default();
+        let state = self.panel_state.borrow().clone();
+        let props = args.get("props").cloned().unwrap_or(Value::Null).to_string();
+        let (page, _) = dress_page(&html, panel, &self.page_key, &theme, &props, if state.is_empty() { "null" } else { &state });
+        self.panel_count += 1;
+        let num = self.panel_count;
+        let p = self.proxy.clone();
+        let built = WebViewBuilder::new()
+            .with_html(page)
+            .with_visible(false)
+            .with_bounds(rect(0.0, 0.0, 400.0, 300.0))
+            .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Panel(num), msg: r.into_body() }))
+            .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
+            .child_of(&self.window);
+        match built {
+            Ok(view) => {
+                self.panel_checks.insert(num, PanelCheck { view, errors: Vec::new(), tools: Vec::new(), reply });
+                let p = self.proxy.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    send(&p, UserEvent::PanelCheckDone(num));
+                });
+            }
+            Err(e) => {
+                let _ = reply.send(Err(e.to_string()));
+            }
+        }
+    }
+
+    fn panel_check_done(&mut self, num: u32) {
+        let Some(check) = self.panel_checks.remove(&num) else { return };
+        let (errors, tools, reply) = (check.errors, check.tools, check.reply);
+        let answer = json!({ "works": errors.is_empty(), "errors": errors, "tools_it_called": tools });
+        let (r, fallback) = (reply.clone(), answer.clone());
+        let view = check.view;
+        let asked = view.evaluate_script_with_callback(READ_UI_JS, move |out| {
+            let mut a = fallback.clone();
+            let shown = decode_js(&out);
+            a["text"] = shown["text"].clone();
+            a["outline"] = shown["outline"].clone();
+            let _ = r.send(Ok(a));
+        });
+        if asked.is_err() {
+            let _ = reply.send(Ok(answer));
+        }
+        // It lives until the page has answered; a moment later it goes.
+        self.panel_checks_done.push(view);
+    }
+
+    /// A plugin's panel as a pop-up over the window, inside it wherever it's asked for. Opening it again closes it.
+    fn open_panel(&mut self, panel: &str, props: Option<Value>, at: (Option<f64>, Option<f64>), size: (Option<f64>, Option<f64>)) {
+        if !self.panel_available(panel) {
+            return self.toast(&format!("There's no panel {panel} in a plugin that's on"));
+        }
+        let id = format!("popup-{}", panel.replace('/', "-"));
+        let open = self.popups.iter().any(|p| p.id == id);
+        self.popups.retain(|p| p.id != id);
+        if !open {
+            let z = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+            let (w, h) = (size.0.unwrap_or(280.0).clamp(40.0, z.width), size.1.unwrap_or(320.0).clamp(30.0, z.height));
+            let (x, y) = (at.0.unwrap_or((z.width - w) / 2.0).clamp(0.0, z.width - w), at.1.unwrap_or((z.height - h) / 3.0).clamp(0.0, z.height - h));
+            let mut told = props.filter(|p| p.is_object()).unwrap_or_else(|| json!({}));
+            told["popup"] = json!(true);
+            self.popups.push(window_layout::Placed { id: id.clone(), panel: panel.to_string(), props: told, rect: window_layout::Rect { x, y, w, h }, radius: None, floating: true });
+        }
+        self.panels_stale = true;
+        self.layout();
+        match self.panels.get(&id).filter(|_| !open) {
+            Some(p) => {
+                let _ = focus_view(&p.view);
+            }
+            None => self.focus_active(),
+        }
+    }
+
+    /// The panel that draws this right-click menu, if the user chose one, opened where they clicked.
+    fn menu_panel(&mut self, which: &str, x: f64, y: f64, props: Value) -> bool {
+        let m = &self.config.context_menu.panels;
+        let panel = match which {
+            "tab" => &m.tab,
+            "page" => &m.page,
+            _ => &m.folder,
+        }
+        .trim()
+        .to_string();
+        if panel.is_empty() || !self.panel_available(&panel) {
+            return false;
+        }
+        let mut props = props;
+        props["menu"] = json!(which);
+        self.popups.retain(|p| p.panel != panel);
+        self.open_panel(&panel, Some(props), (Some(x), Some(y)), (None, None));
+        true
     }
 
     /// Show a layout by saving the choice, the way any setting changes.
@@ -2444,6 +2850,50 @@ impl App {
         }
     }
 
+    /// Copy one of Valerie's own windows into plugins/my-windows, point a layout of the user's at it, and show that.
+    fn duplicate_window(&mut self, window: &str) {
+        let Some((_, page)) = window_layout::WINDOWS.iter().find(|(w, _)| *w == window) else {
+            return self.toast(&format!("Valerie has no window called {window}"));
+        };
+        let folder = plugins::plugins_dir().join("my-windows");
+        let file = folder.join(format!("{window}.html"));
+        let written = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&folder)?;
+            if !folder.join("plugin.yaml").exists() {
+                std::fs::write(folder.join("plugin.yaml"), "description: Valerie's own windows, changed to taste.\n")?;
+            }
+            if !file.exists() {
+                std::fs::write(&file, ui(page))?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = written {
+            return self.toast(&format!("Couldn't copy the {window}: {e}"));
+        }
+        let dir = config::config_dir().join("layouts");
+        let on_screen = self.win_layout_name.clone();
+        let mine = dir.join(format!("{on_screen}.yaml")).exists();
+        let name = if mine { on_screen.clone() } else if on_screen == window_layout::CLASSIC { "my-window".to_string() } else { format!("{on_screen}-copy") };
+        let path = dir.join(format!("{name}.yaml"));
+        let text = std::fs::read_to_string(&path).ok().or_else(|| window_layout::text_of(&on_screen)).unwrap_or_else(|| "title: My Window\n".to_string());
+        let Ok(mut value) = serde_yaml::from_str::<serde_yaml::Value>(&text) else { return self.toast("That layout's file has a mistake; fix it first") };
+        let Some(map) = value.as_mapping_mut() else { return };
+        let replace = map.entry("replace".into()).or_insert(serde_yaml::Value::Mapping(Default::default()));
+        if let Some(r) = replace.as_mapping_mut() {
+            r.insert(window.into(), format!("my-windows/{window}").into());
+        }
+        let saved = serde_yaml::to_string(&value).map_err(|e| e.to_string()).and_then(|t| {
+            std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, t)).map_err(|e| e.to_string())
+        });
+        match saved {
+            Ok(()) => {
+                self.set_layout(&name);
+                self.toast(&format!("Your {} is in {}", window.replace('_', " "), file.display()));
+            }
+            Err(e) => self.toast(&format!("Couldn't save the layout: {e}")),
+        }
+    }
+
     fn toggle_block(&mut self, id: &str) {
         if id == "sidebar" {
             self.event_queue_cmds.push(Command::ToggleSidebar);
@@ -2456,7 +2906,7 @@ impl App {
         let key = window_layout::block_key(&self.win_layout_name, id);
         let shown = window_layout::for_layout(&self.state.layout_shown, &self.win_layout_name);
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-        let now = shown.get(id).copied().unwrap_or_else(|| self.arranged(size.width, size.height).is_some_and(|a| a.panels.iter().any(|p| p.id == id) || (id == "top_bar" && a.top_bar.is_some())));
+        let now = shown.get(id).copied().unwrap_or_else(|| self.arranged(size.width, size.height).is_some_and(|a| a.panels.iter().any(|p| p.id == id) || (id == "top_bar" && a.top_bar.is_some()) || (id == "chats" && a.chats.is_some()) || (id == "terminal" && a.terminal.is_some())));
         self.state.layout_shown.insert(key, !now);
         self.dirty = true;
         self.panels_stale = true;
@@ -3357,8 +3807,14 @@ impl App {
                                "sub": space.map(|s| self.state.spaces[s].name.clone()) }));
             rank += 1;
         }
-        for (name, title) in CATALOG.iter().filter(|(name, _)| on_this_system(name)) {
+        let hide = &self.config.command_bar.hide_commands;
+        for (name, title) in CATALOG.iter().filter(|(name, _)| on_this_system(name)).filter(|(name, title)| !hide.iter().any(|h| h == name || h == title)) {
             items.push(json!({ "kind": "command", "title": self.translate(title), "cmd": { "cmd": name } }));
+        }
+        if !hide.iter().any(|h| h == "duplicate_window") {
+            for (window, _) in window_layout::WINDOWS {
+                items.push(json!({ "kind": "command", "title": format!("Make Your Own: {}", window.replace('_', " ")), "sub": "Copy this window of Valerie's to edit", "cmd": { "cmd": "duplicate_window", "window": window } }));
+            }
         }
         for (i, s) in self.state.spaces.iter().enumerate() {
             items.push(json!({ "kind": "space", "title": format!("Switch to {}", s.name), "cmd": { "cmd": "switch_space", "index": i } }));
@@ -3537,6 +3993,9 @@ impl App {
 
     fn tab_menu(&mut self, tab: TabId, x: f64, y: f64) {
         let Some(t) = self.state.tabs.get(&tab).cloned() else { return };
+        if self.menu_panel("tab", x, y, json!({ "tab": tab, "url": t.url, "title": t.title })) {
+            return;
+        }
         let section = self.state.section_of(tab).unwrap_or("today");
         let keeps = matches!(section, "pinned" | "kept" | "favorites");
         let mut e: Vec<Option<(String, Value)>> = Vec::new();
@@ -3611,6 +4070,12 @@ impl App {
             return;
         }
         self.page_menu_at = Some(std::time::Instant::now());
+        let z = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (ax, ay, _, _) = self.content_area(z.width, z.height);
+        let told = json!({ "tab": id, "link": m["link"], "selection": m["selection"], "image": m["image"] });
+        if self.menu_panel("page", ax + m["x"].as_f64().unwrap_or(0.0), ay + m["y"].as_f64().unwrap_or(0.0), told) {
+            return;
+        }
         let Some(v) = self.views.get(&id) else { return };
         let k = self.window.scale_factor();
         let origin = v.bounds().ok().map(|b| b.position.to_logical::<f64>(k)).map(|p| (p.x, p.y)).unwrap_or((0.0, 0.0));
@@ -3670,6 +4135,9 @@ impl App {
             Some(Node::Folder { name, .. }) => name.clone(),
             _ => return,
         };
+        if self.menu_panel("folder", x, y, json!({ "folder": folder, "name": name })) {
+            return;
+        }
         let e = vec![
             Some(("Rename…".to_string(), json!({ "cmd": "prompt", "label": "Rename folder", "value": name, "then": { "cmd": "rename_folder", "folder": folder }, "field": "name" }))),
             Some(("Delete Folder (keep tabs)".to_string(), json!({ "cmd": "delete_folder", "folder": folder }))),
@@ -4073,6 +4541,10 @@ impl App {
             Some(Ok(mut sc)) => {
                 let over = c.spaces.iter().find(|s| s.name == space).and_then(|s| s.settings.clone()).unwrap_or_default();
                 let sets = |k: &str| over.get("layout").and_then(|l| l.get(k)).is_some();
+                // A different layout decides these itself.
+                if sc.layout.arrangement != self.config.layout.arrangement {
+                    return sc;
+                }
                 if !sets("sidebar_visible") {
                     sc.layout.sidebar_visible = self.config.layout.sidebar_visible;
                 }
@@ -4104,8 +4576,14 @@ impl App {
         }
         let Ok(base) = serde_yaml::from_value::<Config>(self.base_config.clone()) else { return false };
         let mut c = self.with_space_settings(base);
-        c.layout.sidebar_visible = self.config.layout.sidebar_visible;
+        let same_layout = c.layout.arrangement == self.config.layout.arrangement;
+        if same_layout {
+            c.layout.sidebar_visible = self.config.layout.sidebar_visible;
+        }
         self.config = c;
+        if !same_layout {
+            self.refresh_win_layout();
+        }
         self.load_strings();
         self.push_ui_custom();
         self.apply_app_settings();
@@ -4339,6 +4817,7 @@ impl App {
 
     /// Window, Dock and system-wide settings that apply to the app as a whole (window.*, app.*, global_keybindings).
     fn apply_app_settings(&mut self) {
+        platform::QUICK_FULLSCREEN.store(self.config.pages.quick_full_screen, std::sync::atomic::Ordering::Relaxed);
         crate::mcp::set_web_tools(self.config.mcp.web_tools);
         crate::mcp::set_ask_user(self.config.mcp.ask_user);
         let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();
@@ -5191,6 +5670,10 @@ impl App {
     }
 
     fn tick(&mut self) {
+        self.panel_checks_done.clear();
+        for page in window_layout::overdue() {
+            self.replacement_failed(&page, "it never said it was ready");
+        }
         self.close_idle_agent_tabs();
         let shown: Vec<(Target, PathBuf)> = self.md_watch.lock().map(|w| w.iter().map(|(t, f)| (*t, f.clone())).collect()).unwrap_or_default();
         let gone: Vec<Target> = shown.into_iter().filter(|(t, f)| self.markdown_file(*t).as_ref() != Some(f)).map(|(t, _)| t).collect();
@@ -6074,6 +6557,32 @@ impl App {
             Command::SwitchLayout { name: None } | Command::NextLayout => self.next_layout(),
             Command::ResetLayout => self.set_layout(window_layout::CLASSIC),
             Command::DuplicateLayout { name, copy_as } => self.duplicate_layout(name, copy_as),
+            Command::DuplicateWindow { window } => self.duplicate_window(&window),
+            Command::LayoutGallery => {
+                self.close_bar();
+                self.market_start_tab = Some("layouts");
+                self.open_market();
+                self.market_send(&json!({ "type": "tab", "tab": "layouts" }));
+            }
+            Command::SelectBlock { stack, child } => {
+                self.state.layout_selected.insert(window_layout::block_key(&self.win_layout_name, &stack), child);
+                self.dirty = true;
+                self.panels_stale = true;
+                self.layout();
+            }
+            Command::PanelCommand { panel, command } => {
+                if let Some(p) = self.panels.get(&panel) {
+                    let _ = p.view.evaluate_script(&format!("window.__valeriePage && __valeriePage.command({})", json!(command)));
+                }
+            }
+            Command::OpenPanel { panel, props, x, y, width, height } => self.open_panel(&panel, props, (x, y), (width, height)),
+            Command::ClosePanel { panel } => {
+                let id = format!("popup-{}", panel.replace('/', "-"));
+                self.popups.retain(|p| p.id != id);
+                self.panels_stale = true;
+                self.layout();
+                self.focus_active();
+            }
             Command::ToggleBlock { id } => self.toggle_block(&id),
             Command::ResizeBlock { id, px } => self.resize_block(&id, px),
             Command::NewTerminal { folder } => {
@@ -6672,6 +7181,32 @@ impl App {
         }
         let Ok(m) = serde_json::from_str::<Value>(&msg) else { return };
         let kind = m["t"].as_str().unwrap_or("");
+        let own_page = match from {
+            Source::Chrome => Some("chrome.html"),
+            Source::Overlay => Some("palette.html"),
+            Source::Chat => Some("chat.html"),
+            Source::Terminal => Some("terminal.html"),
+            Source::Answer => Some("answer.html"),
+            Source::Welcome => Some("welcome.html"),
+            Source::Market => Some("plugins.html"),
+            Source::LittleBar(_) => Some("little.html"),
+            _ => None,
+        };
+        if let Some(page) = own_page.filter(|p| window_layout::is_replaced(p)) {
+            if kind == "replacement_error" {
+                let why = format!("{} (line {})", m["message"].as_str().unwrap_or("a script error"), m["at"]);
+                // After it has started, an error is only logged: the window may well still work.
+                if window_layout::starting(page) {
+                    self.replacement_failed(page, &why);
+                } else {
+                    crate::log::line("layout", format!("{page}: {why}"));
+                }
+                return;
+            }
+            if kind == "ready" {
+                window_layout::heard_from(page);
+            }
+        }
         match (from, kind) {
             (Source::Chrome, "ready") => {
                 self.last_render.borrow_mut().clear();
@@ -6702,7 +7237,9 @@ impl App {
             (Source::Page(Target::Tab(_)), "edge") => {
                 // Mouse hit the screen edge with the sidebar hidden: slide it in until the mouse leaves it.
                 let settled = self.sidebar_hidden_at.elapsed() > std::time::Duration::from_millis(800);
+                let page_fullscreen = self.views.values().any(platform::in_page_fullscreen);
                 if settled
+                    && !page_fullscreen
                     && self.config.layout.reveal_sidebar_on_edge
                     && !self.config.layout.sidebar_visible
                     && !self.sidebar_peek
@@ -6948,7 +7485,7 @@ impl App {
                 let k = k.to_string();
                 self.plugin_message(target, &k, &m);
             }
-            (Source::Page(target), k @ ("page_call" | "page_log")) => {
+            (Source::Page(target), k @ ("page_call" | "page_log" | "panel_store")) => {
                 let k = k.to_string();
                 self.page_message(target, &k, &m);
             }
@@ -7186,6 +7723,7 @@ impl App {
                 self.open_tab(&url, space, true);
                 self.show_main();
             }
+            UserEvent::PageFullscreen => self.page_fullscreen_changed(),
             UserEvent::VideoReturn(id) => {
                 let tab = self.views.iter().find(|(_, v)| platform::is_webview(v, id)).map(|(t, _)| *t);
                 crate::log::line("video", &format!("floating video's return button: tab {tab:?}"));
@@ -7410,6 +7948,16 @@ impl App {
             UserEvent::PluginDone { plugin, title, output, result } => self.plugin_output(&plugin, &title, &output, result),
             UserEvent::PluginReply { target, id, result } => self.plugin_reply(target, &id, result),
             UserEvent::PluginGrant { plugin, allowed } => self.plugin_grant(plugin, allowed),
+            UserEvent::PanelCheckDone(num) => self.panel_check_done(num),
+            UserEvent::ReplaceGrant { grant, print, allowed } => {
+                if allowed {
+                    self.state.plugin_grants.insert(grant, vec![print]);
+                    self.dirty = true;
+                } else {
+                    self.replace_refused.insert(format!("{grant} {print}"));
+                }
+                self.apply_replacements();
+            }
             UserEvent::PluginConfirmed { plugin, title, context } => self.run_plugin_command(&plugin, &title, context, true, elwt),
             UserEvent::SearchResults { query, plugin, title, items } => {
                 if self.bar_open && !items.is_empty() {
@@ -7433,7 +7981,7 @@ impl App {
                     self.ext_denied.insert(name);
                 }
                 self.load_extensions(true);
-                self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
+                self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
             }
             UserEvent::ExtensionLoaded { name, result, announce } => {
                 self.ext_loading = self.ext_loading.saturating_sub(1);
@@ -7449,7 +7997,7 @@ impl App {
                 }
                 // Turned off while it was still loading.
                 self.unload_unwanted_extensions();
-                self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
+                self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
             }
             UserEvent::ClearSiteAnswered { site, ok, reply } => {
                 if !ok {
@@ -7801,7 +8349,8 @@ impl App {
                         let body: String = a.chars().take(160).collect();
                         let action = json!({ "answer": tab }).to_string();
                         if self.config.notifications.from_valerie {
-                            platform::notify(&platform::Note { title: &format!("✦ {title}"), subtitle: "", body: &body, action: Some(action), sound: self.config.notifications.sound });
+                            self.play_notification_sound();
+                            platform::notify(&platform::Note { title: &format!("✦ {title}"), subtitle: "", body: &body, action: Some(action), sound: self.config.notifications.sound && self.config.notifications.sound_file.trim().is_empty() });
                         }
                     }
                 }
@@ -7833,6 +8382,9 @@ impl App {
         }
         if op == "ask_user" {
             return self.ask_user(&args, reply);
+        }
+        if op == "check_panel" {
+            return self.check_panel(&args, reply);
         }
         if let Some(a) = tab_arg.and_then(|t| self.agent_tabs.get_mut(&t)) {
             a.used = std::time::Instant::now();
@@ -8089,6 +8641,8 @@ impl App {
                         let mut b = vec![json!({ "id": "pages", "rect": a.pages })];
                         b.extend(a.sidebar.map(|r| json!({ "id": "sidebar", "rect": r })));
                         b.extend(a.top_bar.map(|r| json!({ "id": "top_bar", "rect": r })));
+                        b.extend(a.terminal.map(|r| json!({ "id": "terminal", "rect": r })));
+                        b.extend(a.chats.map(|r| json!({ "id": "chats", "rect": r })));
                         b.extend(a.panels.iter().map(|p| json!({ "id": p.id, "panel": p.panel, "rect": p.rect, "floating": p.floating, "built": self.panels.contains_key(&p.id) })));
                         b
                     }),
@@ -8582,6 +9136,7 @@ trait ChildOf {
 impl ChildOf for WebViewBuilder<'_> {
     fn child_of<W: wry::raw_window_handle::HasWindowHandle>(self, parent: &W) -> wry::Result<WebView> {
         let view = self.build_as_child(parent)?;
+        platform::watch_page_fullscreen(&view);
         #[cfg(target_os = "windows")]
         menu_shortcuts_inside(&view);
         // wry hides a hidden view before it knows the X11 window around it, which stays up as a black sheet over everything.
@@ -8937,6 +9492,25 @@ impl App {
 
     /// Show the open chat where the user is: floating over their space (chats.from_space: float), else in Chats.
     fn show_chat_here(&mut self) {
+        // With a chats block the chat is already beside the page: no need to float it.
+        if self.chats_block_rect().is_some() {
+            self.close_bar();
+            self.close_peek();
+            self.ensure_chat_view();
+            if self.active_chat.as_ref().is_none_or(|id| !self.chats.iter().any(|c| &c.id == id)) {
+                self.active_chat = self.chats.first().map(|c| c.id.clone());
+            }
+            self.layout();
+            self.render();
+            self.render_chat();
+            if let Some(v) = &self.chat_view {
+                let _ = focus_view(v);
+            }
+            if let Some(id) = self.active_chat.clone() {
+                self.refresh_changes(&id);
+            }
+            return;
+        }
         if self.chats_open || self.config.chats.from_space != "float" || !self.config.chats.enabled {
             return self.open_chats();
         }
@@ -8972,7 +9546,7 @@ impl App {
 
     /// The user can see this chat right now (in Chats, or floating over a space).
     fn chat_shown(&self, chat: &str) -> bool {
-        (self.chats_open || self.chat_float) && self.active_chat.as_deref() == Some(chat)
+        (self.chats_open || self.chat_float || self.chats_block_rect().is_some()) && self.active_chat.as_deref() == Some(chat)
     }
 
     /// The effort to ask for, if the model has it: models say which levels they take (OpenCode's DeepSeek has no
@@ -9996,12 +10570,38 @@ fn append_task(task: &config::TaskConfig) -> anyhow::Result<()> {
 
 impl App {
     /// One of Valerie's own notifications (when notifications.from_valerie is on). `command` runs when it's clicked.
+    /// The user's own notification sound, if they chose one.
+    fn play_notification_sound(&self) {
+        let file = self.config.notifications.sound_file.trim();
+        if !self.config.notifications.sound || file.is_empty() {
+            return;
+        }
+        let path = if let Some(rest) = file.strip_prefix("~/") { dirs_home().join(rest) } else { PathBuf::from(file) };
+        if !path.is_file() {
+            return crate::log::line("notifications", format!("notifications.sound_file: {} isn't there", path.display()));
+        }
+        std::thread::spawn(move || {
+            let played = if cfg!(target_os = "macos") {
+                platform::command("afplay").arg(&path).status()
+            } else if cfg!(target_os = "windows") {
+                let script = format!("(New-Object Media.SoundPlayer '{}').PlaySync()", path.display().to_string().replace('\'', "''"));
+                platform::command("powershell").args(["-NoProfile", "-Command", &script]).status()
+            } else {
+                platform::command("paplay").arg(&path).status().or_else(|_| platform::command("aplay").arg(&path).status())
+            };
+            if !played.is_ok_and(|s| s.success()) {
+                crate::log::line("notifications", format!("couldn't play {}", path.display()));
+            }
+        });
+    }
+
     fn notify_valerie(&self, title: &str, body: &str, command: Option<Value>) {
         if !self.config.notifications.from_valerie {
             return;
         }
+        self.play_notification_sound();
         let action = command.map(|c| json!({ "command": c }).to_string());
-        platform::notify(&platform::Note { title, subtitle: "", body, action, sound: self.config.notifications.sound });
+        platform::notify(&platform::Note { title, subtitle: "", body, action, sound: self.config.notifications.sound && self.config.notifications.sound_file.trim().is_empty() });
     }
 
     /// "granted" | "denied" | "default" for a site: the config's sites list, then the user's answers, then the policy.
@@ -10143,7 +10743,7 @@ impl App {
                 Err(e) => return crate::log::line("plugins", format!("plugin marketplace view: {e}")),
             }
         } else {
-            self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
+            self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
             self.fetch_market();
         }
         self.market_open = true;
@@ -10194,7 +10794,7 @@ impl App {
         match m["t"].as_str().unwrap_or("") {
             "ready" => {
                 let accent = self.theme_for(self.state.active_space).accent;
-                let data = json!({ "plugins": self.market_installed(), "accent": accent, "font": self.config.layout.font, "repo": self.config.plugin_marketplace.repo });
+                let data = json!({ "tab": self.market_start_tab.take(), "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name, "accent": accent, "font": self.config.layout.font, "repo": self.config.plugin_marketplace.repo });
                 if let Some(v) = &self.market_view {
                     let _ = v.evaluate_script(&format!("window.market && market.init({data})"));
                 }
@@ -10213,12 +10813,15 @@ impl App {
                     });
                 };
                 let entry = crate::market::find(&self.market_index, &name, kind.or(Some("plugin")));
-                let risky = entry.is_some_and(|e| !e.is_extension() && (!e.programs.is_empty() || e.matches.is_empty()));
+                let risky = entry.is_some_and(|e| !e.is_extension() && (!e.programs.is_empty() || e.on_every_site() || !e.replaces.is_empty()));
                 match (entry, self.market_view.as_ref()) {
                     (Some(e), Some(v)) if risky => {
                         let mut body = String::new();
-                        if e.matches.is_empty() {
+                        if e.on_every_site() {
                             body.push_str("It works on every site you visit.\n\n");
+                        }
+                        if !e.replaces.is_empty() {
+                            body.push_str(&format!("It replaces these windows of Valerie's, and Valerie asks again before they change: {}.\n\n", e.replaces.join(", ").replace('_', " ")));
                         }
                         if !e.programs.is_empty() {
                             body.push_str("It can run these on your computer:\n\n");
@@ -10253,9 +10856,37 @@ impl App {
             }
             "toggle" => {
                 self.toggle_plugin(&name, m["enabled"].as_bool(), kind.is_some());
-                self.market_send(&json!({ "type": "local", "plugins": self.market_installed() }));
+                self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
             }
             "share" => self.share_plugin(name, kind.or(Some("plugin"))),
+            "use_layout" => {
+                self.close_market();
+                self.set_layout(&name);
+            }
+            "duplicate_layout" => {
+                self.close_market();
+                self.duplicate_layout(Some(name), None);
+            }
+            "share_layout" => {
+                match window_layout::package(&name, &config::config_dir().join("layouts"), &plugins::plugins_dir()) {
+                    Ok(_) => {
+                        self.reload_config();
+                        self.share_plugin(name, Some("plugin"));
+                    }
+                    Err(e) => self.market_send(&json!({ "type": "shared", "kind": crate::market::LAYOUT, "name": name, "detail": format!("{e:#}") })),
+                }
+            }
+            "remove_layout" => {
+                let path = config::config_dir().join("layouts").join(format!("{name}.yaml"));
+                let Some(v) = self.market_view.as_ref().filter(|_| page_name_ok(&name) && path.exists()) else { return };
+                let px = self.proxy.clone();
+                platform::ask(v, &format!("Remove the layout {name}?"), "Its file is deleted from your layouts.", "Remove", "Cancel", move |yes| {
+                    if yes {
+                        let _ = std::fs::remove_file(&path);
+                        send(&px, UserEvent::ToMarket(json!({ "type": "removed", "kind": crate::market::LAYOUT, "name": name, "ok": true })));
+                    }
+                });
+            }
             "open" => {
                 if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("https://")) {
                     self.close_market();
@@ -10394,6 +11025,7 @@ impl App {
             }
         }
         json!({
+            "layouts": window_layout::gallery(), "on_screen": self.win_layout_name,
             "version": crate::update::current(), "agents": agents, "default_agent": self.config.agents.default,
             "models": self.agent_models(), "free_models": crate::ai::FREE_MODELS, "effort": self.config.chats.effort,
             "sync": self.config.sync.repo, "imports": crate::import::found(), "keys": keys,
@@ -10445,6 +11077,12 @@ impl App {
     fn welcome_message(&mut self, m: &Value, elwt: &EventLoopWindowTarget<UserEvent>) {
         trace(&format!("welcome: {}", m["t"].as_str().unwrap_or("")));
         match m["t"].as_str().unwrap_or("") {
+            "use_layout" => {
+                if let Some(name) = m["name"].as_str().map(str::to_string) {
+                    self.set_layout(&name);
+                    self.welcome_send(&json!({ "type": "layout", "name": name }));
+                }
+            }
             "ready" => {
                 let data = self.welcome_data();
                 if let Some(v) = &self.welcome_view {
@@ -10940,7 +11578,7 @@ impl App {
         let mut changed = false;
         let mut woke = Vec::new();
         let mut to_close = Vec::new();
-        let shown = if self.chats_open || self.chat_float { self.active_chat.clone() } else { None };
+        let shown = if self.chats_open || self.chat_float || self.chats_block_rect().is_some() { self.active_chat.clone() } else { None };
         for c in self.chats.iter_mut() {
             if c.snoozed_until > 0 && t >= c.snoozed_until {
                 c.snoozed_until = 0;
@@ -11705,6 +12343,11 @@ impl App {
             let text = m["text"].as_str().unwrap_or("");
             return if text.starts_with("error") { crate::log::line(&who, text) } else { crate::log::event(&who, text) };
         }
+        if kind == "panel_store" {
+            let own = format!("page-{name}");
+            let result = panel_store(if m["shared"].as_bool() == Some(true) { "shared" } else { &own }, m);
+            return self.plugin_reply(target, m["id"].as_str().unwrap_or(""), result);
+        }
         let (id, tool, args) = (m["id"].as_str().unwrap_or("").to_string(), m["tool"].as_str().unwrap_or("").to_string(), m["args"].clone());
         let Some((html, built_in)) = page_source(&name) else { return };
         let wanted = page_tools(&html);
@@ -12003,11 +12646,7 @@ impl App {
             return true;
         }
         // xterm.js is built in, so the panel works offline and loads nothing from the web.
-        let html = ui_page("terminal.html", &self.config).replacen(
-            "<!--XTERM-->",
-            &format!("<style>{}</style><script>{}\n{}</script>", ui("vendor/xterm.css"), ui("vendor/xterm.js"), ui("vendor/addon-fit.js")),
-            1,
-        );
+        let html = ui_page("terminal.html", &self.config).replacen("<!--XTERM-->", &xterm_assets(), 1);
         let p = self.proxy.clone();
         let built = WebViewBuilder::new()
             .with_html(html)
