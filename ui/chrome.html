@@ -892,8 +892,9 @@ function render(state) {
   const sw = S.layout.tab_bar === "side" && !hidden ? S.layout.sidebar_width : 0;
   empty.style.left = S.layout.sidebar_position === "left" ? sw + "px" : "0";
   empty.style.right = S.layout.sidebar_position === "right" ? sw + "px" : "0";
-  empty.style.top = S.layout.tab_bar === "top" ? "40px" : "0";
+  empty.style.top = S.layout.tab_bar === "top" ? S.layout.top_bar_height + "px" : "0";
   arrange(S.arrangement);
+  if (!S.arrangement) $("#topbar").style.height = S.layout.top_bar_height + "px";
 
   for (const id of ["#back", "#fwd", "#reload"]) $(id).style.display = O.nav_buttons ? "" : "none";
   $("#url").style.display = O.url_bar && !(S.chats && S.chats.open) ? "" : "none";

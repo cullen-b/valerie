@@ -113,6 +113,10 @@ function wireNode(n) {
     e.style.flex = size ? `0 0 ${Math.max(15, size * WIRE_SCALE)}px` : `${grow} 1 0`;
     return e;
   };
+  if (n.stack) {
+    const shown = n.stack.find((k) => (k.id || k.part || (k.panel || "").replace(/\//g, "-")) === n.active) || n.stack[0];
+    return sized(shown ? wireNode({ ...shown, size: undefined, weight: undefined }) : el("div", "leaf"));
+  }
   if (kids) {
     const box = sized(el("div", "box " + (n.row ? "row" : "column")));
     kids.forEach((k) => box.append(wireNode(k)));
@@ -294,7 +298,7 @@ document.addEventListener("click", (e) => { const a = e.target.closest && e.targ
 
 window.market = {
   init(d) {
-    S.local = d.plugins || []; S.repo = d.repo || ""; S.layouts = d.layouts || []; S.onScreen = d.on_screen || "classic";
+    S.local = d.plugins || []; S.repo = d.repo || ""; S.layouts = d.layouts || []; S.onScreen = d.on_screen || "classic"; if (d.tab) S.tab = d.tab;
     if (d.accent) document.documentElement.style.setProperty("--accent", d.accent);
     if (d.font) document.body.style.fontFamily = `${d.font}, -apple-system, system-ui, sans-serif`;
     draw(); $("#q").focus();

@@ -185,6 +185,12 @@ pub struct State {
     /// Blocks people showed or hid in layouts ("<layout>/<block>": shown).
     #[serde(default)]
     pub layout_shown: std::collections::HashMap<String, bool>,
+    /// The child each stack shows ("<layout>/<stack>": child).
+    #[serde(default)]
+    pub layout_selected: std::collections::HashMap<String, String>,
+    /// Where floating panels moved themselves ("<layout>/<block>").
+    #[serde(default)]
+    pub layout_spots: std::collections::HashMap<String, crate::window_layout::Spot>,
     /// Where the window was last (x, y, width, height in points), to reopen it there.
     #[serde(default)]
     pub window_frame: Option<(f64, f64, f64, f64)>,

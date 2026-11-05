@@ -21,7 +21,16 @@ const BUILT_IN: &[(&str, &str)] = &[
 
 /// The settings sections a layout may bring: how the window looks, never what Valerie is allowed to do. Layouts arrive
 /// through sync and from other people, so anything that runs programs or reaches data stays out of reach.
-const LOOK_SECTIONS: &[&str] = &["layout", "sidebar", "window", "command_bar", "start_page", "toast_seconds"];
+const LOOK_SECTIONS: &[&str] = &["layout", "sidebar", "window", "command_bar", "context_menu", "start_page", "toast_seconds"];
+
+/// The shortcut back to the classic window: no layout can take it.
+pub const RESET_KEY: &str = "CmdOrCtrl+Alt+Shift+0";
+
+/// What a layout's `keys` may do: move around the window, nothing that reaches data, programs or agents.
+const KEY_COMMANDS: &[&str] = &[
+    "toggle_block", "select_block", "resize_block", "panel_command", "open_panel", "close_panel", "switch_layout", "next_layout", "toggle_sidebar",
+    "toggle_terminal", "open_command_bar", "new_tab", "next_tab", "prev_tab", "back", "forward", "reload", "close_tab",
+];
 
 /// The CSS a layout may bring, one entry per window (see `ui/*.css` in the guide).
 const CSS_WINDOWS: &[&str] = &["chrome", "palette", "chat", "terminal", "little", "answer", "welcome", "plugins", "page"];
@@ -59,6 +68,11 @@ pub struct Node {
     pub row: Option<Vec<Node>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column: Option<Vec<Node>>,
+    /// Blocks in the same place, one showing at a time (`select_block` picks; `active` is the first).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<Vec<Node>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
     /// One of Valerie's own parts: pages | sidebar | top_bar | terminal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
@@ -93,7 +107,7 @@ pub struct Node {
 
 impl Node {
     fn children(&self) -> Option<&Vec<Node>> {
-        self.row.as_ref().or(self.column.as_ref())
+        self.row.as_ref().or(self.column.as_ref()).or(self.stack.as_ref())
     }
 
     /// What commands call it.
@@ -170,6 +184,12 @@ pub struct Layout {
     /// Valerie's own windows drawn by a plugin's HTML instead: window name → `<plugin>/<file>`.
     #[serde(default)]
     pub replace: BTreeMap<String, String>,
+    /// Colours while it shows, instead of the space's.
+    #[serde(default)]
+    pub theme: Option<crate::config::Theme>,
+    /// Shortcuts while it shows, like `keybindings`, limited to moving around the window.
+    #[serde(default)]
+    pub keys: BTreeMap<String, Json>,
 }
 
 impl Layout {
@@ -193,8 +213,11 @@ impl Layout {
     /// The settings to lay over the user's while this layout shows: its own, plus what its tree implies.
     pub fn overlay(&self) -> Option<serde_yaml::Value> {
         let mut over = self.settings.clone().unwrap_or(serde_yaml::Value::Mapping(Default::default()));
-        let Some(root) = &self.window else { return self.settings.clone() };
         let map = over.as_mapping_mut()?;
+        if !self.keys.is_empty() {
+            map.insert("keybindings".into(), serde_yaml::to_value(&self.keys).ok()?);
+        }
+        let Some(root) = &self.window else { return (self.settings.is_some() || !self.keys.is_empty()).then_some(over) };
         let section = map.entry("layout".into()).or_insert(serde_yaml::Value::Mapping(Default::default()));
         let section = section.as_mapping_mut()?;
         section.insert("tab_bar".into(), if self.has_part("top_bar") { "top".into() } else { "side".into() });
@@ -229,6 +252,18 @@ impl Layout {
             }
             panel_parts(panel)?;
         }
+        for (key, command) in &self.keys {
+            if key.split_whitespace().next().is_none() || key.split_whitespace().any(|k| k.parse::<muda::accelerator::Accelerator>().is_err()) {
+                bail!("keys: {key:?} isn't a shortcut");
+            }
+            if key == RESET_KEY {
+                bail!("keys: {RESET_KEY} always goes back to the classic window");
+            }
+            let name = command.as_str().or_else(|| command.get("cmd").and_then(|c| c.as_str())).unwrap_or("");
+            if !KEY_COMMANDS.contains(&name) {
+                bail!("keys: {key:?} runs {name:?}; a layout's keys can only use {}", KEY_COMMANDS.join(", "));
+            }
+        }
         for k in self.css.keys() {
             if !CSS_WINDOWS.contains(&k.as_str()) {
                 bail!("css: {k:?} isn't one of Valerie's windows; use {}", CSS_WINDOWS.join(", "));
@@ -240,9 +275,24 @@ impl Layout {
             w.walk(&mut all);
             let mut pages = 0;
             for n in &all {
-                let what = [n.row.is_some(), n.column.is_some(), n.part.is_some(), n.panel.is_some()].iter().filter(|b| **b).count();
+                let what = [n.row.is_some(), n.column.is_some(), n.stack.is_some(), n.part.is_some(), n.panel.is_some()].iter().filter(|b| **b).count();
                 if what != 1 {
-                    bail!("window: each block needs exactly one of row, column, part or panel ({})", describe(n));
+                    bail!("window: each block needs exactly one of row, column, stack, part or panel ({})", describe(n));
+                }
+                if let Some(kids) = &n.stack {
+                    if n.id.is_none() {
+                        bail!("window: a stack needs an `id`, so select_block can find it");
+                    }
+                    let mut inside = Vec::new();
+                    kids.iter().for_each(|k| k.walk(&mut inside));
+                    if inside.iter().any(|k| k.part.as_deref() == Some("pages")) {
+                        bail!("window: the pages block can't be in a stack, or it could be out of sight");
+                    }
+                    if let Some(active) = &n.active {
+                        if !kids.iter().any(|k| k.name().as_deref() == Some(active)) {
+                            bail!("window: stack {:?} has no block called {active:?}", n.id.as_deref().unwrap_or(""));
+                        }
+                    }
                 }
                 if let Some(p) = &n.part {
                     match p.as_str() {
@@ -301,7 +351,7 @@ impl Layout {
 }
 
 fn describe(n: &Node) -> String {
-    n.name().unwrap_or_else(|| if n.row.is_some() { "a row".into() } else if n.column.is_some() { "a column".into() } else { "a block with nothing in it".into() })
+    n.name().unwrap_or_else(|| if n.row.is_some() { "a row".into() } else if n.column.is_some() { "a column".into() } else if n.stack.is_some() { "a stack".into() } else { "a block with nothing in it".into() })
 }
 
 fn name_ok(name: &str) -> bool {
@@ -429,7 +479,7 @@ pub fn problems(plugin_panels: impl Fn(&str, &str) -> bool) -> Vec<String> {
     for name in names().iter().filter(|n| *n != CLASSIC) {
         match source(name).map(|t| parse(&t)) {
             Some(Ok(l)) => {
-                for p in l.panels() {
+                for p in l.panels().into_iter().chain(l.replace.values().cloned()) {
                     match panel_parts(&p) {
                         Ok((plugin, file)) if !plugin_panels(plugin, file) => {
                             out.push(format!("layout {name}: panel {p:?} needs the file plugins/{plugin}/{file}.html"));
@@ -489,6 +539,19 @@ pub struct Arranged {
     pub dividers: Vec<Divider>,
 }
 
+/// A floating panel's own place and size, when it set them (`valerie.place`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct Spot {
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub w: Option<f64>,
+    #[serde(default)]
+    pub h: Option<f64>,
+}
+
 /// What people changed by hand and what the app knows about its own parts.
 pub struct Inputs<'a> {
     pub sidebar_width: f64,
@@ -499,6 +562,10 @@ pub struct Inputs<'a> {
     /// Sizes dragged to and blocks shown or hidden, by block name.
     pub sizes: &'a HashMap<String, f64>,
     pub shown: &'a HashMap<String, bool>,
+    /// Which child each stack shows, by the stack's name.
+    pub selected: &'a HashMap<String, String>,
+    /// Where floating panels moved themselves, by block name.
+    pub spots: &'a HashMap<String, Spot>,
     /// Panels that can't show (their plugin is off, missing or waiting to be allowed): their block folds away.
     pub unavailable: &'a HashSet<String>,
 }
@@ -548,6 +615,15 @@ fn place(n: &Node, r: Rect, i: &Inputs, out: &mut Arranged) {
     }
     if let Some(p) = &n.panel {
         out.panels.push(Placed { id: n.name().unwrap_or_default(), panel: p.clone(), props: n.props.clone().unwrap_or(Json::Null), rect: r, radius: n.radius, floating: false });
+        return;
+    }
+    if let Some(kids) = &n.stack {
+        let up: Vec<&Node> = kids.iter().filter(|k| visible(k, i)).collect();
+        let wanted = n.name().and_then(|name| i.selected.get(&name).cloned()).or_else(|| n.active.clone());
+        let shown = up.iter().find(|k| k.name() == wanted).or(up.first());
+        if let Some(k) = shown {
+            place(k, r, i, out);
+        }
         return;
     }
     let across = n.row.is_some();
@@ -602,7 +678,8 @@ pub fn arrange(layout: &Layout, width: f64, height: f64, i: &Inputs) -> Option<A
         if !i.shown.get(&name).copied().unwrap_or(!f.hidden) || i.unavailable.contains(&f.panel) {
             continue;
         }
-        let (w, h) = (f.width.min(width - 2.0 * f.margin).max(1.0), f.height.min(height - 2.0 * f.margin).max(1.0));
+        let spot = i.spots.get(&name).copied().unwrap_or_default();
+        let (w, h) = (spot.w.unwrap_or(f.width).min(width - 2.0 * f.margin).max(1.0), spot.h.unwrap_or(f.height).min(height - 2.0 * f.margin).max(1.0));
         let along = |space: f64, own: f64| match f.align.as_str() {
             "start" => f.margin,
             "end" => space - own - f.margin,
@@ -614,6 +691,8 @@ pub fn arrange(layout: &Layout, width: f64, height: f64, i: &Inputs) -> Option<A
             "left" => (f.margin, along(height, h)),
             _ => (width - w - f.margin, along(height, h)),
         };
+        // Wherever it moved itself, it stays on screen.
+        let (x, y) = (spot.x.unwrap_or(x).clamp(0.0, (width - w).max(0.0)), spot.y.unwrap_or(y).clamp(0.0, (height - h).max(0.0)));
         out.panels.push(Placed { id: name, panel: f.panel.clone(), props: f.props.clone().unwrap_or(Json::Null), rect: Rect { x, y, w, h }, radius: f.radius, floating: true });
     }
     Some(out)
@@ -784,6 +863,35 @@ pub fn overdue() -> Vec<String> {
     w.as_ref().map(|w| w.iter().filter(|(_, t)| t.elapsed() > std::time::Duration::from_secs(8)).map(|(p, _)| p.clone()).collect()).unwrap_or_default()
 }
 
+/// What a panel or page keeps between runs: `<folder>/panels/<who>.json`. `key` empty with `get` returns all of it.
+pub fn store(folder: &std::path::Path, who: &str, op: &str, key: &str, value: Option<&Json>) -> Result<Json, String> {
+    const MOST: usize = 2_000_000;
+    if !name_ok(who) {
+        return Err(format!("{who:?} can't keep data"));
+    }
+    let path = folder.join("panels").join(format!("{who}.json"));
+    let mut all: serde_json::Map<String, Json> = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    match op {
+        "get" if key.is_empty() => Ok(Json::Object(all)),
+        "get" => Ok(all.get(key).cloned().unwrap_or(Json::Null)),
+        "set" | "delete" => {
+            if op == "set" {
+                all.insert(key.to_string(), value.cloned().unwrap_or(Json::Null));
+            } else {
+                all.remove(key);
+            }
+            let text = Json::Object(all).to_string();
+            if text.len() > MOST {
+                return Err("that's more than the 2 MB a panel can keep".into());
+            }
+            let tmp = path.with_extension("tmp");
+            std::fs::create_dir_all(folder.join("panels")).and_then(|_| std::fs::write(&tmp, text)).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())?;
+            Ok(Json::Bool(true))
+        }
+        other => Err(format!("unknown store operation {other}")),
+    }
+}
+
 /// A block's name in the saved sizes: per layout, so each keeps its own.
 pub fn block_key(layout: &str, block: &str) -> String {
     format!("{layout}/{block}")
@@ -808,8 +916,16 @@ pub fn blocks(layout: &Layout) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn none_selected() -> &'static HashMap<String, String> {
+        Box::leak(Box::default())
+    }
+
+    fn no_spots() -> &'static HashMap<String, Spot> {
+        Box::leak(Box::default())
+    }
+
     fn inputs<'a>(sizes: &'a HashMap<String, f64>, shown: &'a HashMap<String, bool>, none: &'a HashSet<String>) -> Inputs<'a> {
-        Inputs { sidebar_width: 200.0, sidebar_visible: true, top_bar_height: 40.0, terminal_open: false, sizes, shown, unavailable: none }
+        Inputs { sidebar_width: 200.0, sidebar_visible: true, top_bar_height: 40.0, terminal_open: false, sizes, shown, selected: none_selected(), spots: no_spots(), unavailable: none }
     }
 
     const BASIC: &str = "
@@ -936,6 +1052,59 @@ window:
         assert!(std::fs::read_to_string(dest.join("plugin.yaml")).unwrap().contains("run_command"));
         assert!(!layouts.join("cool.yaml").exists());
         assert_eq!(package("cool", &layouts, &plugins).unwrap(), dest);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_stack_shows_one_block_and_never_hides_pages() {
+        let l = parse("window: { row: [ { part: pages }, { id: side, size: 200, active: b, stack: [ { panel: a }, { panel: b } ] } ] }").unwrap();
+        let (a, b, c) = (HashMap::new(), HashMap::new(), HashSet::new());
+        let o = arrange(&l, 1000.0, 600.0, &inputs(&a, &b, &c)).unwrap();
+        assert_eq!(o.panels.iter().map(|p| p.panel.as_str()).collect::<Vec<_>>(), vec!["b"]);
+        assert_eq!((o.pages.w, o.panels[0].rect.w), (800.0, 200.0));
+        let picked: HashMap<String, String> = [("side".to_string(), "a".to_string())].into();
+        let mut i = inputs(&a, &b, &c);
+        i.selected = &picked;
+        assert_eq!(arrange(&l, 1000.0, 600.0, &i).unwrap().panels[0].panel, "a");
+        assert!(format!("{:#}", parse("window: { id: s, stack: [ { part: pages } ] }").unwrap_err()).contains("can't be in a stack"));
+        assert!(format!("{:#}", parse("window: { row: [ { part: pages }, { stack: [ { panel: a } ] } ] }").unwrap_err()).contains("needs an `id`"));
+    }
+
+    #[test]
+    fn a_floating_panel_can_move_itself_but_not_off_screen() {
+        let l = parse("window: { part: pages }\nfloating: [ { panel: a, edge: right, width: 100, height: 50 } ]").unwrap();
+        let (a, b, c) = (HashMap::new(), HashMap::new(), HashSet::new());
+        let spots: HashMap<String, Spot> = [("a".to_string(), Spot { x: Some(5000.0), y: Some(10.0), w: Some(300.0), h: None })].into();
+        let mut i = inputs(&a, &b, &c);
+        i.spots = &spots;
+        assert_eq!(arrange(&l, 1000.0, 600.0, &i).unwrap().panels[0].rect, Rect { x: 700.0, y: 10.0, w: 300.0, h: 50.0 });
+    }
+
+    #[test]
+    fn a_layouts_keys_only_move_around_the_window() {
+        let l = parse("keys: { 'CmdOrCtrl+Shift+B': { cmd: toggle_block, id: side } }").unwrap();
+        assert!(l.overlay().unwrap()["keybindings"]["CmdOrCtrl+Shift+B"]["cmd"].as_str() == Some("toggle_block"));
+        for (text, says) in [
+            ("keys: { 'CmdOrCtrl+Shift+B': { cmd: customize, request: x } }", "can only use"),
+            ("keys: { 'CmdOrCtrl+Shift+B': quit }", "can only use"),
+            ("keys: { 'CmdOrCtrl+Alt+Shift+0': next_layout }", "always goes back"),
+            ("keys: { 'nonsense+key': next_layout }", "isn't a shortcut"),
+        ] {
+            assert!(format!("{:#}", parse(text).unwrap_err()).contains(says), "{text}");
+        }
+    }
+
+    #[test]
+    fn panels_keep_their_own_data() {
+        let root = std::env::temp_dir().join(format!("valerie-store-{}", std::process::id()));
+        assert_eq!(store(&root, "a", "get", "k", None).unwrap(), Json::Null);
+        store(&root, "a", "set", "k", Some(&serde_json::json!({ "n": 1 }))).unwrap();
+        assert_eq!(store(&root, "a", "get", "k", None).unwrap()["n"], 1);
+        assert_eq!(store(&root, "b", "get", "k", None).unwrap(), Json::Null);
+        store(&root, "a", "delete", "k", None).unwrap();
+        assert_eq!(store(&root, "a", "get", "", None).unwrap(), serde_json::json!({}));
+        assert!(store(&root, "../x", "get", "k", None).is_err());
+        assert!(store(&root, "a", "set", "big", Some(&Json::String("x".repeat(2_100_000)))).is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

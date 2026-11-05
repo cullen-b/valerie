@@ -236,7 +236,30 @@ A layout with `sidebar` shows Valerie's sidebar, `top_bar` its tab bar. With nei
   the plugin's `permissions:` and the user is asked once.
 - `valerie.props`, `valerie.dragWindow()` (call it on mousedown in a bar you draw, so it moves the window),
   `valerie.log("…", data)` (read it back with `read_logs`, area `panel:<plugin>`; the panel's errors go there too).
+- `await valerie.store.get(key)`, `.set(key, value)`, `.delete(key)`: what it keeps between runs (up to 2 MB, JSON; `get()` is
+  all of it). `valerie.shared` is the same, shared between all panels; `valerie.on("shared", fn)` runs when it changes.
+- `valerie.run("<title of a command in this plugin>")` runs that command, including its `run:` program: that's how a panel
+  runs programs. Reply by having the program call `"{exe}" call`, or by writing a file the panel reads.
+- `valerie.on("command", fn)` hears `panel_command {{ panel, command }}`, so a shortcut can reach it.
+- `valerie.place({{ x?, y?, width?, height? }})` moves or resizes a floating panel or pop-up (kept on screen, remembered per
+  layout). A draggable panel calls it on mousemove; a drawer calls it with a bigger `width` on mouseenter and a small one on
+  mouseleave. `valerie.close()` closes a pop-up; one also closes by itself when the user clicks elsewhere (`valerie.props.popup`).
 - Colours: `var(--v-bg)`, `--v-fg`, `--v-dim`, `--v-line`, `--v-card`, `--v-accent`. Links open as tabs.
+
+**Pop-ups and menus.** `open_panel {{ panel, props?, x?, y?, width?, height? }}` shows a panel over the window (a dropdown, a
+dialog); again closes it. `context_menu.panels` in config.yaml (`tab`, `page`, `folder`) draws those right-click menus with a
+panel, which gets what was clicked in `valerie.props` (`tab`, `url`, `link`, `selection`, `image`) and acts on it with
+`run_command`. Valerie's questions that protect the user (allow this plugin, replace this window) are always the system's.
+
+**More in a layout file:**
+- `stack: [...]` with an `id` and optional `active`: blocks in one place, one showing; `select_block {{ stack, child }}` picks.
+  A panel can draw the tabs for it. The pages block can't be in a stack.
+- `theme: {{ mode: dark, background: ['#112233'], accent: '#ff8800', foreground: '#eeeeee' }}`: colours while it shows, over
+  the space's. Panels get them as `--v-*`.
+- `keys: {{ "CmdOrCtrl+Shift+B": {{ cmd: toggle_block, id: outline }} }}`: shortcuts while it shows, limited to moving around
+  the window. `check-config` says which commands. Other shortcuts belong in `keybindings`.
+- **A layout per space:** `spaces: [{{ name: Work, settings: {{ layout: {{ arrangement: workbench }} }} }}]`. Then that space wins
+  over "Next Layout".
 
 Saving a panel's file rebuilds it. Its folder is a normal plugin, so `enabled: false` folds its blocks away (the pages
 take the room), and it's shared and installed like any plugin. **A plugin can bring a whole layout**: put
@@ -263,6 +286,10 @@ the reason in `layouts/<name>.error` and `read_logs` (area `layout`); saving a f
 restyle the first with `page` CSS, extend the others with plugin `context_menu` and `menu`.
 
 **The terminal as a block.** `part: terminal` puts the terminal panel where you say; it takes room only while open.
+
+`command_bar.hide_commands` takes commands out of the command bar. What can't be replaced, on purpose or for now: what
+Valerie draws inside web pages (find bar, link hints, link menus, save-password prompt: restyle with `page` CSS, change with
+`find` and other settings), Valerie's system questions, and the menu bar (`menu` settings and plugins' `menu`).
 
 **Check your work, every time:**
 1. `"{exe}" check-config` finds mistakes in every layout. Fix them until it passes.
