@@ -637,6 +637,12 @@ pub enum Command {
         #[serde(default)]
         url: Option<String>,
     },
+    /// The Change History page: every state of the settings, plugins and looks (valerie://page/changes).
+    ChangeHistory,
+    /// Put the settings, plugins and looks back exactly as they were at a change in the history.
+    GoBackToChange {
+        id: String,
+    },
     /// Put Valerie's settings, plugins and styles back the way they were before the last change an AI made.
     UndoCustomization,
     /// A chat where the user's AI helps find out what went wrong (the triage playbook).
@@ -852,6 +858,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("new_window", "New Window"),
     ("report_problem", "Report a Problem… (your AI helps find what went wrong, fixes it or writes the bug report)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
+    ("change_history", "Change History (every change to your settings and looks; go back to any of them)"),
     ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),
 ];
@@ -927,6 +934,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_window", "{ url? }  (a separate window for one page)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
     ("toggle_plugin", "{ name, on?, extension? }  (turn a plugin or browser extension on or off; without `on`, switch it; `extension: true` when a plugin has the same name)"),
+    ("go_back_to_change", "{ id }  (put the settings, plugins and looks back exactly as they were at a change; `valerie changes` lists the ids; undoable the same way)"),
     ("open_page", "{ name }  (a page from the config folder's pages/, e.g. one an agent made with show_page; or downloads, history)"),
     ("plugin", "{ plugin, command, context? }  (run a plugin command by its title; context: { link?, selection?, image?, page? })"),
 ];

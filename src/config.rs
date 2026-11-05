@@ -72,6 +72,14 @@ pub struct Config {
     pub language: String,
     pub extensions: ExtensionsConfig,
     pub logs: LogsConfig,
+    pub change_history: ChangeHistoryConfig,
+}
+
+/// The history of changes to the settings, plugins and looks (`src/history.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeHistoryConfig {
+    pub enabled: bool,
+    pub keep: usize,
 }
 
 /// Valerie's log files (what went wrong, for you and your AI to read).

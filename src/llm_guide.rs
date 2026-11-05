@@ -57,7 +57,10 @@ Valerie's binary: `{exe}`
    a plugin's own messages and errors are under `"area": "plugin:<name>"`). Fix and try again until the log is clean.
 6. Tell the user what changed and which setting turns it back off. Every AI change can be undone: "Undo Last
    Customization" in the command bar (or `"{exe}" call run_command '{{"command": {{"cmd": "undo_customization"}}}}'`)
-   puts the settings, plugins, boosts, ui/ and strings/ back as they were before the last change (again goes further back).
+   puts the settings, plugins, boosts, ui/, strings/ and layouts/ back as they were before the last change (again goes
+   further back). Every change, by anyone, is also in the "Change History" page (the `change_history` command, or
+   `"{exe}" changes`): `go_back_to_change` with an id, or `"{exe}" changes back <id>`, restores that state exactly and
+   deletes nothing, so it can be undone the same way.
 
 House rules from the owner:
 - When asked to add or remove something, do it **and** make it a setting so it can be switched back.
@@ -118,6 +121,7 @@ changed in plain words. Some translations:
 | "Answer me in French" / "always be brief" (the AI) | `agents.instructions: "Answer in French."` (or `agents.instructions_for.chat`) |
 | "⌘K then ⌘S" style shortcuts | a key sequence in `keybindings`: `"CmdOrCtrl+K CmdOrCtrl+S": sync` |
 | "Put that back" / "undo what you just did" | the `undo_customization` command |
+| "Make it look like it did last week" / "go back to before that redesign" | find it with `"{exe}" changes`, then the `go_back_to_change` command |
 
 Example: "I'm 82, my eyes aren't great, I only use email and the news, and the keyboard tricks confuse me" becomes:
 

@@ -574,10 +574,10 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
 }
 
 /// Built-in pages: what Valerie shows at valerie://page/<name> unless the config folder's pages/ has one by that name.
-const BUILT_IN_PAGES: &[&str] = &["downloads", "history"];
+const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes"];
 
 /// Tools only built-in pages (and pages that list them) can use: they act on files Valerie downloaded.
-const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download"];
+const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change"];
 
 fn pages_dir() -> PathBuf {
     config::config_dir().join("pages")
@@ -1133,6 +1133,7 @@ pub fn ui(name: &str) -> String {
         "hide-passkeys.js" => include_str!("../ui/hide-passkeys.js"),
         "pages/downloads.html" => include_str!("../ui/pages/downloads.html"),
         "pages/history.html" => include_str!("../ui/pages/history.html"),
+        "pages/changes.html" => include_str!("../ui/pages/changes.html"),
         _ => "",
     }
     .to_string()
@@ -6402,10 +6403,11 @@ impl App {
                     None => self.toast("That file is no longer there"),
                 }
             }
-            Command::Downloads | Command::History | Command::OpenPage { .. } => {
+            Command::Downloads | Command::History | Command::ChangeHistory | Command::OpenPage { .. } => {
                 let name = match &cmd {
                     Command::Downloads => "downloads".to_string(),
                     Command::History => "history".to_string(),
+                    Command::ChangeHistory => "changes".to_string(),
                     Command::OpenPage { name } => name.trim().to_string(),
                     _ => unreachable!(),
                 };
@@ -7154,6 +7156,12 @@ impl App {
                 self.close_bar();
                 self.undo_customization();
             }
+            Command::GoBackToChange { id } => {
+                self.close_bar();
+                if let Err(e) = self.go_back_to_change(&id) {
+                    self.toast(&format!("Couldn't go back: {e}"));
+                }
+            }
             Command::Extensions => {
                 self.close_bar();
                 self.show_extensions();
@@ -7791,6 +7799,8 @@ impl App {
                 self.ready_little = None;
                 self.prepare_little_later();
                 self.reload_config();
+                crate::history::configure(self.config.change_history.enabled, self.config.change_history.keep);
+                record_changes_soon();
                 self.schedule_sync();
                 self.unload_unwanted_extensions();
                 // A new extension folder (installed, or made by an agent) is asked about and loaded without a restart.
@@ -9062,6 +9072,16 @@ fn set_window_closed(closed: bool) {
     WINDOW_CLOSED.store(closed, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Add how the settings are now to the change history, after a moment so files saved together land together.
+fn record_changes_soon() {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        if let Err(e) = crate::history::record() {
+            crate::log::line("changes", format!("couldn't record the change history: {e}"));
+        }
+    });
+}
+
 fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let path = config::config_path();
@@ -9076,7 +9096,7 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
                 .chain(plugin_dirs.iter().filter_map(|d| m(d)))
                 .chain(plugin_dirs.iter().flat_map(|d| std::fs::read_dir(d.join("layouts")).into_iter().flatten().flatten().filter_map(|e| m(&e.path()))))
                 .collect();
-            let more: Vec<std::time::SystemTime> = ["ui", "strings", "extensions", "layouts"]
+            let more: Vec<std::time::SystemTime> = ["ui", "strings", "extensions", "layouts", "pages"]
                 .iter()
                 .map(|d| config::config_dir().join(d))
                 .flat_map(|d| std::fs::read_dir(&d).into_iter().flatten().flatten().filter_map(|e| m(&e.path())).chain(m(&d)))
@@ -9403,7 +9423,10 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
         send(&p, UserEvent::WidgetTick);
     });
     watch_config(proxy.clone());
+    crate::history::configure(config.change_history.enabled, config.change_history.keep);
     let mut app = App::new(&event_loop, config, proxy)?;
+    // After App::new, which installs the bundled plugins: those aren't a change anyone made.
+    record_changes_soon();
     app.refresh_win_layout();
     app.layout();
     trace("window and sidebar created");
@@ -11764,7 +11787,7 @@ impl App {
 // ---------------------------------------------------------------- customising: key sequences, language, undo
 
 /// Folders and files in the config folder that "Undo Last Customization" restores.
-const UNDO_ITEMS: &[&str] = &["config.yaml", "NOTES.md", "plugins", "boosts", "ui", "strings", "pages"];
+const UNDO_ITEMS: &[&str] = &["config.yaml", "NOTES.md", "plugins", "boosts", "ui", "strings", "pages", "layouts"];
 
 fn undo_dir() -> PathBuf {
     config::data_dir().join("undo")
@@ -11787,6 +11810,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
 
 /// Save the config folder's settings, plugins and styles so an AI's change can be undone (the last 10 are kept).
 pub fn snapshot_config(why: &str) {
+    crate::history::before_change(why);
     let dir = undo_dir().join(format!("{}-{}", now(), why.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').take(40).collect::<String>().trim().replace(' ', "-")));
     let _ = std::fs::create_dir_all(&dir);
     // What didn't exist yet: undoing removes those again (anything else missing from the snapshot is left alone).
@@ -11963,6 +11987,16 @@ impl App {
         for l in self.littles.values() {
             apply(&l.bar, "little.html");
         }
+    }
+
+    /// Put the settings, plugins and looks back exactly as they were at a change in the history.
+    fn go_back_to_change(&mut self, id: &str) -> Result<String, String> {
+        let entry = crate::history::go_back(id)?;
+        self.reload_config();
+        self.build_menu();
+        self.pages_changed("changes");
+        self.toast(&entry.why);
+        Ok(entry.why)
     }
 
     fn undo_customization(&mut self) {
@@ -12402,6 +12436,8 @@ impl App {
                 platform::reveal(path);
                 Ok(json!("shown"))
             }
+            "list_changes" => Ok(json!(crate::history::entries().into_iter().rev().take(500).collect::<Vec<_>>())),
+            "go_back_to_change" => self.go_back_to_change(args["id"].as_str().unwrap_or("")).map(|why| json!(why)),
             "forget_download" => {
                 let before = self.state.downloads.len();
                 self.state.downloads.retain(|d| if path.is_empty() { d.state == "downloading" } else { d.path != path });
