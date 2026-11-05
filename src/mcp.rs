@@ -238,7 +238,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "list_layouts", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
+    "list_pages", "list_layouts", "check_panel", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
 ];
 
 /// The confirm tool that always reaches a person: "Always Allow" can't cover it.
@@ -701,6 +701,9 @@ pub fn tools() -> Vec<Value> {
             "activate": { "type": "boolean", "description": "Switch to it (default true)" } }), &["name", "html"]),
         tool("list_layouts", "The layout on screen (layouts/<name>.yaml arranges the whole window), any mistake in its file, where \
              each of its blocks is, and every layout there is. Show one with run_command switch_layout { name }.", json!({}), &[]),
+        tool("check_panel", "Load a plugin's panel out of sight for a moment: whether it works, its script errors, the tools it \
+             called (none of them run) and what it shows. Use it after writing or changing a panel.",
+             json!({ "panel": { "type": "string", "description": "<plugin> or <plugin>/<file>" }, "props": { "type": "object" } }), &["panel"]),
         tool("list_pages", "List the pages at valerie://page/<name>: ones agents or the user made (pages/ in the config folder) and \
              the built-in downloads and history pages (a pages/downloads.html or history.html replaces those).", json!({}), &[]),
         tool("read_logs", "Read Valerie's log, oldest first: failures, messages the user saw, commands run, agents' tool calls with \
@@ -1731,7 +1734,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
         | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
         "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
-        "screenshot_ui" | "get_settings" | "list_pages" | "list_layouts" => call(proxy, name, a),
+        "screenshot_ui" | "get_settings" | "list_pages" | "list_layouts" | "check_panel" => call(proxy, name, a),
         "show_page" => {
             let page = a["name"].as_str().unwrap_or("").trim().to_string();
             let html = a["html"].as_str().unwrap_or("");

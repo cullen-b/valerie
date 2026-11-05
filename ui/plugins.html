@@ -104,11 +104,11 @@ function hits(text, q) { const w = words(q); return !w.length || w.every((x) => 
 
 // A layout's picture: its own preview.svg if it has one (an image, so nothing in it runs), else its blocks drawn to scale.
 const WIRE_SCALE = 0.13;
-const PART_NAMES = { pages: "Pages", sidebar: "Sidebar", top_bar: "Tabs", terminal: "Terminal" };
+const PART_NAMES = { pages: "Pages", sidebar: "Sidebar", top_bar: "Tabs", terminal: "Terminal", chats: "Chats" };
 function wireNode(n) {
   const kids = n.row || n.column, grow = n.weight || 1;
   // Valerie's own bars have their usual sizes unless the layout says otherwise.
-  const size = n.size || { sidebar: 248, top_bar: 40 }[n.part];
+  const size = n.size || { sidebar: 248, top_bar: 40, chats: 380 }[n.part];
   const sized = (e) => {
     e.style.flex = size ? `0 0 ${Math.max(15, size * WIRE_SCALE)}px` : `${grow} 1 0`;
     return e;

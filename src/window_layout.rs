@@ -73,7 +73,7 @@ pub struct Node {
     pub stack: Option<Vec<Node>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
-    /// One of Valerie's own parts: pages | sidebar | top_bar | terminal.
+    /// One of Valerie's own parts: pages | sidebar | top_bar | terminal | chats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
     /// `<plugin>` (its panel.html) or `<plugin>/<file>` (its <file>.html).
@@ -302,8 +302,8 @@ impl Layout {
                                 bail!("window: the pages block can't be hidden");
                             }
                         }
-                        "sidebar" | "top_bar" | "terminal" => {}
-                        other => bail!("window: part {other:?} isn't one of pages, sidebar, top_bar, terminal"),
+                        "sidebar" | "top_bar" | "terminal" | "chats" => {}
+                        other => bail!("window: part {other:?} isn't one of pages, sidebar, top_bar, terminal, chats"),
                     }
                 }
                 if let Some(p) = &n.panel {
@@ -535,6 +535,7 @@ pub struct Arranged {
     pub sidebar: Option<Rect>,
     pub top_bar: Option<Rect>,
     pub terminal: Option<Rect>,
+    pub chats: Option<Rect>,
     pub panels: Vec<Placed>,
     pub dividers: Vec<Divider>,
 }
@@ -559,6 +560,8 @@ pub struct Inputs<'a> {
     pub top_bar_height: f64,
     /// The terminal's block only takes room while the terminal is open.
     pub terminal_open: bool,
+    /// The chats block folds away while Chats fills the window, or when chats are off.
+    pub chats_block: bool,
     /// Sizes dragged to and blocks shown or hidden, by block name.
     pub sizes: &'a HashMap<String, f64>,
     pub shown: &'a HashMap<String, bool>,
@@ -578,6 +581,9 @@ fn visible(n: &Node, i: &Inputs) -> bool {
         return false;
     }
     if n.part.as_deref() == Some("terminal") && !i.terminal_open {
+        return false;
+    }
+    if n.part.as_deref() == Some("chats") && !i.chats_block {
         return false;
     }
     if n.panel.as_ref().is_some_and(|p| i.unavailable.contains(p)) {
@@ -609,6 +615,7 @@ fn place(n: &Node, r: Rect, i: &Inputs, out: &mut Arranged) {
             "pages" => out.pages = r,
             "sidebar" => out.sidebar = Some(r),
             "terminal" => out.terminal = Some(r),
+            "chats" => out.chats = Some(r),
             _ => out.top_bar = Some(r),
         }
         return;
@@ -925,7 +932,7 @@ mod tests {
     }
 
     fn inputs<'a>(sizes: &'a HashMap<String, f64>, shown: &'a HashMap<String, bool>, none: &'a HashSet<String>) -> Inputs<'a> {
-        Inputs { sidebar_width: 200.0, sidebar_visible: true, top_bar_height: 40.0, terminal_open: false, sizes, shown, selected: none_selected(), spots: no_spots(), unavailable: none }
+        Inputs { sidebar_width: 200.0, sidebar_visible: true, top_bar_height: 40.0, terminal_open: false, chats_block: true, sizes, shown, selected: none_selected(), spots: no_spots(), unavailable: none }
     }
 
     const BASIC: &str = "
@@ -1106,6 +1113,18 @@ window:
         assert!(store(&root, "../x", "get", "k", None).is_err());
         assert!(store(&root, "a", "set", "big", Some(&Json::String("x".repeat(2_100_000)))).is_err());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn chats_can_sit_beside_the_page_and_fold_away() {
+        let l = parse("window: { row: [ { part: pages }, { part: chats, size: 400 } ] }").unwrap();
+        let (a, b, c) = (HashMap::new(), HashMap::new(), HashSet::new());
+        let o = arrange(&l, 1000.0, 600.0, &inputs(&a, &b, &c)).unwrap();
+        assert_eq!((o.chats.unwrap().w, o.pages.w), (400.0, 600.0));
+        let mut i = inputs(&a, &b, &c);
+        i.chats_block = false;
+        let o = arrange(&l, 1000.0, 600.0, &i).unwrap();
+        assert_eq!((o.chats, o.pages.w), (None, 1000.0));
     }
 
     #[test]

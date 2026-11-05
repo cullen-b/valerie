@@ -285,14 +285,20 @@ replacement with a script error as it starts, or that doesn't say ready within 8
 the reason in `layouts/<name>.error` and `read_logs` (area `layout`); saving a fixed file tries it again. Web pages' own find bar, link hints and menus, and the native right-click menus and menu bar, aren't windows:
 restyle the first with `page` CSS, extend the others with plugin `context_menu` and `menu`.
 
-**The terminal as a block.** `part: terminal` puts the terminal panel where you say; it takes room only while open.
+**The terminal and chats as blocks.** `part: terminal` puts the terminal panel where you say; it takes room only while open.
+`part: chats` keeps a chat beside the page all the time, and new chats open there instead of floating; it folds away
+while the full Chats space is open or `chats.enabled` is off.
+
+**Fonts.** `layout.font` uses any installed font. To bring one, embed it in a panel's or layout's CSS as
+`@font-face {{ font-family: X; src: url(data:font/woff2;base64,…) }}`: the marketplace takes text files only.
 
 `command_bar.hide_commands` takes commands out of the command bar. What can't be replaced, on purpose or for now: what
 Valerie draws inside web pages (find bar, link hints, link menus, save-password prompt: restyle with `page` CSS, change with
 `find` and other settings), Valerie's system questions, and the menu bar (`menu` settings and plugins' `menu`).
 
 **Check your work, every time:**
-1. `"{exe}" check-config` finds mistakes in every layout. Fix them until it passes.
+1. `"{exe}" check-config` finds mistakes in every layout. Fix them until it passes. For each panel you wrote or changed,
+   `"{exe}" call check_panel '{{"panel": "<plugin>/<file>"}}'` loads it out of sight and reports script errors and what it shows.
 2. `"{exe}" call run_command '{{"command": {{"cmd": "switch_layout", "name": "<name>"}}}}'` shows it, and
    `"{exe}" call list_layouts` says where each block landed and whether the file has a mistake.
 3. `"{exe}" call screenshot_ui '{{"part": "panel:<block id>"}}'` and `read_ui` show a panel; `read_logs` shows its errors.
