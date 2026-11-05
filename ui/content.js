@@ -1070,6 +1070,108 @@ document.addEventListener("mousemove", (e) => {
   if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
 }, { passive: true });
 
+// ---------- the widened bit of a split-view gap, following the mouse (layout.split_grab_width / split_grab_height) ----------
+// This page draws its share at its own edge; Valerie tells the page across the gap, and the chrome draws the middle.
+const grips = {}, gripHere = { left: false, right: false };
+let gripDrag = null, gripSendRaf = 0, gripSendY = null, gripSendSide = null, gripDragX = 0, gripSwallowClick = false;
+const gripReach = () => { const G = cfg.split_grip; return G ? Math.max(1, (G.w - G.gap) / 2) + 4 : 0; };
+function grip(side) {
+  const G = cfg.split_grip;
+  if (!G) return null;
+  let g = grips[side];
+  if (!g || !g.el.isConnected) {
+    const el = document.createElement("div"), bar = document.createElement("div");
+    el.appendChild(bar); ui().appendChild(el);
+    g = grips[side] = { el, bar, pos: 0, target: 0, on: false, raf: 0, hideT: 0 };
+  }
+  const bw = Math.max(1, (G.w - G.gap) / 2), reach = gripReach();
+  g.h = G.h;
+  g.el.style.cssText = `position: fixed; top: 0; ${side}: 0; width: ${reach}px; height: ${G.h}px; cursor: col-resize; pointer-events: ${g.on ? "auto" : "none"}; transform: translateY(${g.pos - G.h / 2}px);`;
+  g.bar.style.cssText = `position: absolute; top: 0; bottom: 0; ${side}: 0; width: ${bw}px; background: ${cfg.accent || "#9d8cff"};
+    border-radius: ${side === "left" ? `0 ${bw}px ${bw}px 0` : `${bw}px 0 0 ${bw}px`}; transform-origin: ${side} center;
+    transform: ${g.on ? "none" : "scale(0, .35)"}; opacity: ${g.on ? 1 : 0};
+    transition: transform 260ms cubic-bezier(.34, 1.56, .64, 1), opacity 140ms ease-out;`;
+  return g;
+}
+function gripShow(g, on) {
+  if (g.on === on) return;
+  g.on = on;
+  g.el.style.pointerEvents = on ? "auto" : "none";
+  g.bar.style.transform = on ? "none" : "scale(0, .35)";
+  g.bar.style.opacity = on ? "1" : "0";
+}
+// Glides toward the mouse with a little lag, the same on both sides of the gap whichever page the mouse is over.
+function gripMove(g) {
+  if (g.raf) return;
+  let last = performance.now();
+  const step = (now) => {
+    g.pos += (g.target - g.pos) * (1 - Math.exp(-(now - last) / 55)); last = now;
+    if (Math.abs(g.target - g.pos) < 0.3) g.pos = g.target;
+    g.el.style.transform = `translateY(${g.pos - g.h / 2}px)`;
+    g.raf = g.pos === g.target ? 0 : requestAnimationFrame(step);
+  };
+  g.raf = requestAnimationFrame(step);
+}
+function gripTo(side, y) {
+  const g = grip(side);
+  if (!g) return;
+  clearTimeout(g.hideT);
+  // Hiding waits a moment: the mouse is often just crossing the gap to the chrome or the page beyond.
+  if (y == null) { g.hideT = setTimeout(() => gripShow(g, false), 90); return; }
+  if (!g.on) { g.pos = y; g.el.style.transform = `translateY(${y - g.h / 2}px)`; }
+  g.target = y; gripShow(g, true); gripMove(g);
+}
+function gripSend(side, y) {
+  gripSendSide = side; gripSendY = y;
+  if (!gripSendRaf) gripSendRaf = requestAnimationFrame(() => {
+    gripSendRaf = 0;
+    post({ t: "split_grip", side: gripSendSide, y: gripSendY });
+    if (gripDrag) post({ t: "split_drag", side: gripDrag.side, dx: gripDragX - gripDrag.x0 });
+  });
+}
+function gripLeave(side) {
+  if (!gripHere[side]) return;
+  gripHere[side] = false; gripTo(side, null);
+  if (gripSendRaf && gripSendSide === side) { cancelAnimationFrame(gripSendRaf); gripSendRaf = 0; }
+  post({ t: "split_grip", side, y: null });
+}
+function gripsTidy() {
+  if (cfg.split_grip) { for (const s in grips) grip(s); return; }
+  gripLeave("left"); gripLeave("right");
+  for (const s in grips) { gripShow(grips[s], false); }
+}
+document.addEventListener("mousemove", (e) => {
+  const G = cfg.split_grip;
+  if (gripDrag) { gripDragX = e.screenX; gripTo(gripDrag.side, e.clientY); gripSend(gripDrag.side, e.clientY); return; }
+  if (!G) return;
+  const reach = gripReach();
+  const side = G.left && e.clientX < reach ? "left" : G.right && e.clientX >= innerWidth - reach ? "right" : null;
+  for (const s of ["left", "right"]) if (s !== side) gripLeave(s);
+  if (side) { gripHere[side] = true; gripTo(side, e.clientY); gripSend(side, e.clientY); }
+}, { passive: true });
+document.addEventListener("mouseout", (e) => { if (!e.relatedTarget && !gripDrag) { gripLeave("left"); gripLeave("right"); } });
+addEventListener("mousedown", (e) => {
+  gripSwallowClick = false;
+  const side = gripHere.left ? "left" : gripHere.right ? "right" : null;
+  if (!cfg.split_grip || !side || e.button !== 0 || !e.isTrusted) return;
+  e.preventDefault(); e.stopImmediatePropagation(); gripSwallowClick = true;
+  if (e.detail === 2) { post({ t: "reset_split" }); return; }
+  gripDrag = { side, x0: e.screenX }; gripDragX = e.screenX;
+  post({ t: "split_drag_start", side });
+  const shield = document.createElement("div");
+  shield.style.cssText = "position: fixed; inset: 0; cursor: col-resize; pointer-events: auto;";
+  ui().appendChild(shield); gripDrag.shield = shield;
+}, true);
+addEventListener("mouseup", (e) => {
+  if (!gripDrag) return;
+  e.stopImmediatePropagation();
+  if (gripSendRaf) { cancelAnimationFrame(gripSendRaf); gripSendRaf = 0; post({ t: "split_drag", side: gripDrag.side, dx: gripDragX - gripDrag.x0 }); }
+  const { side, shield } = gripDrag;
+  gripDrag = null; shield.remove();
+  if (side === "left" ? e.clientX >= gripReach() : e.clientX < innerWidth - gripReach()) gripLeave(side);
+}, true);
+addEventListener("click", (e) => { if (gripSwallowClick) { gripSwallowClick = false; e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+
 // ---------- link gestures: middle / ⌘ / ⇧ / ⌥ clicks and Valerie's link menu ----------
 const isMac = /Mac/.test(navigator.platform);
 const linkAt = (e) => { const a = e.target.closest && e.target.closest("a[href]"); return a && /^https?:/.test(a.href) ? a : null; };
@@ -1770,7 +1872,8 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, findStep, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); gripsTidy(); }, toast,
+    splitGrip: (side, y) => { if ((side === "left" || side === "right") && !gripHere[side] && !gripDrag) gripTo(side, typeof y === "number" ? y : null); }, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave,
