@@ -78,8 +78,8 @@ the owner reports a failure. When you add code where something can fail without 
 
 - `cargo build`, `cargo test` (one Keychain test is opt-in: `cargo test -- --ignored keychain`).
 - Every push to `main` is tested, built for macOS, Linux and Windows, signed with Valerie's release key and published
-  with `latest.json` (`.github/workflows/release.yml`). **Since 2026-11-05 the owner has every build go straight to
-  stable** (`PUBLISH_TO: stable` in that file): everyone gets each merge within hours, so a merge is a public release.
+  with `latest.json` (`.github/workflows/release.yml`). **The owner's rule (2026-11-05): push everything to stable unless
+  they explicitly say not to**, so every build goes straight to stable (`PUBLISH_TO: stable` in that file): everyone gets each merge within hours, so a merge is a public release.
   The edge feed (`updates.channel: edge`, the owner's Mac via its `this-mac.yaml`) still gets every build too. To go
   back to testing builds that only edge copies get, set `PUBLISH_TO: edge` (only when the owner asks); then a build
   reaches everyone only when the owner approves it and it's promoted with `gh workflow run promote.yml`.
