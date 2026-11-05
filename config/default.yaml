@@ -157,9 +157,14 @@ command_bar:
                            # at the top, as do questions ending in "?" two words shorter, and anything twice as long;
                            # 0 = never (it's still listed at the bottom)
   ask_agent_starts: [summarize, summarise, create, generate, write, draft, rewrite, explain, translate, compare,
-                     analyze, analyse, research, brainstorm, outline, organize, organise, tidy]
-                           # starting with one of these words puts "Ask agent" at the top, however short
-                           # ("summarize this page", "create a packing list"); [] = only by length
+                     analyze, analyse, research, brainstorm, outline, organize, organise, tidy,
+                     can you, could you, would you, will you, please, lets, let's, i need to, i need you, i want you,
+                     help me, make this, make my, make it, make valerie, change my, change the, change this,
+                     turn off the, turn on the, increase my, decrease my, remove my, remove the, remove this, roll back]
+                           # starting with one of these words or phrases puts "Ask agent" at the top as soon as one more
+                           # word follows ("can you fix…", "summarize this page"); "ok", "so", "hey" in front don't
+                           # count. Typing about the browser itself ("…my tabs", "…this space", "valerie") does the
+                           # same from three words. [] = only by length
   customize_row: false     # a "Customize Valerie: …" row under "Ask agent" while you type; "!" then a request still
                            # customizes Valerie either way. true | false
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
