@@ -23,6 +23,18 @@ const consoleKept = [];
   addEventListener("unhandledrejection", (e) => keep("error", ["Unhandled promise rejection:", e.reason]));
 })();
 
+// ---------- YouTube starts sharp: a bad "stall" it saved earlier mustn't hold new videos at 240p ----------
+// The player divides its speed estimate by this (seconds lost per byte); above the cap it would cost more than the connection's own speed.
+if (CFG.pages && CFG.pages.youtube_sharp_start && /(^|\.)youtube\.com$/.test(location.hostname)) {
+  try {
+    const key = "yt-player-bandwidth", saved = JSON.parse(localStorage.getItem(key)), estimate = JSON.parse(saved.data);
+    if (estimate.stall > 1e-7) {
+      estimate.stall = 1e-7; saved.data = JSON.stringify(estimate);
+      localStorage.setItem(key, JSON.stringify(saved));
+    }
+  } catch (_) {}
+}
+
 // ---------- the page's requests, kept for an agent debugging it (read_network) ----------
 // Recording bodies, once an agent asks, lasts through reloads in that tab.
 const netKept = [], net = { bodies: (() => { try { return sessionStorage.getItem("valerie-net-bodies") === "1"; } catch (_) { return false; } })() };
