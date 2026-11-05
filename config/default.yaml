@@ -561,6 +561,7 @@ keybindings:
   "CmdOrCtrl+L": { cmd: open_command_bar, mode: current }
   "CmdOrCtrl+W": close_tab
   "CmdOrCtrl+Shift+W": close_window
+  "CmdOrCtrl+Shift+N": new_private_window   # its cookies and storage are forgotten when it closes; no history
   "CmdOrCtrl+Shift+T": reopen_closed_tab
   "CmdOrCtrl+Shift+C": copy_url
   "CmdOrCtrl+S": toggle_sidebar
@@ -626,7 +627,7 @@ keybindings:
 global_keybindings:
   "Ctrl+Semicolon": new_little_window   # Ctrl+; a new little window from any app, asking where to go
 
-# The menu bar at the top of the screen. Its menus: Valerie, File, Edit, View, History, Tabs, Spaces, Tools, Plugins, Window, Help.
+# The menu bar at the top of the screen. Its menus: Valerie, File, Edit, View, History, Bookmarks, Tabs, Spaces, Tools, Plugins, Window, Help.
 menu:
   hide: []                 # menus to leave out of the bar, e.g. [Tools, Plugins]; their shortcuts keep working (the menu
                            # moves inside the Valerie menu)
@@ -638,6 +639,8 @@ menu:
   browser_menus: true      # File, Edit, View, History, Window and Help menus laid out like other browsers (History has Recently
                            # Closed; on a Mac, Help has the search box that finds any menu item). false = the older Edit, Tabs,
                            # Spaces, View, Tools and Window menus. true | false
+  recent_pages: 10         # how many recently visited pages the History menu lists; 0 = none
+  bookmarks: true          # a Bookmarks menu listing your favorites and pinned tabs (folders as submenus, other spaces too). true | false
 
 # Valerie's right-click menus (on links, tabs and folders). Plugins add their own entries (`context_menu` on a command).
 context_menu:

@@ -112,6 +112,10 @@ pub struct MenuConfig {
     pub confirm_quit: bool,
     /// File, Edit, View, History, Window and Help menus laid out like other browsers; false = the older Tabs / View / Tools menus.
     pub browser_menus: bool,
+    /// How many recently visited pages the History menu lists (0 = none).
+    pub recent_pages: usize,
+    /// A Bookmarks menu listing your favorites and pinned tabs.
+    pub bookmarks: bool,
 }
 
 /// Valerie's right-click menus.

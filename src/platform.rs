@@ -1105,6 +1105,32 @@ mod mac {
         }
     }
 
+    /// The share menu (NSSharingServicePicker) for a page's address, pointing at the top right of the page.
+    pub fn share(wv: &WebView, url: &str) {
+        use objc2::class;
+        unsafe {
+            let v = ptr(wv);
+            let s = objc2_foundation::NSString::from_str(url);
+            let nsurl: *mut AnyObject = msg_send![class!(NSURL), URLWithString: &*s];
+            if nsurl.is_null() {
+                return;
+            }
+            let items: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: nsurl];
+            let picker: *mut AnyObject = msg_send![class!(NSSharingServicePicker), alloc];
+            let picker: *mut AnyObject = msg_send![picker, initWithItems: items];
+            if picker.is_null() {
+                return;
+            }
+            let b: objc2_foundation::NSRect = msg_send![v, bounds];
+            let flipped: bool = msg_send![v, isFlipped];
+            // Just under the top edge, near the right; the menu opens downward.
+            let x = (b.size.width - 80.0).max(0.0);
+            let (y, edge) = if flipped { (6.0, 3usize) } else { (b.size.height - 6.0, 1usize) };
+            let at = objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(x, y), objc2_foundation::NSSize::new(1.0, 1.0));
+            let _: () = msg_send![picker, showRelativeToRect: at, ofView: v, preferredEdge: edge];
+        }
+    }
+
     /// A file window (NSOpenPanel) for opening files; the chosen files, empty if cancelled.
     pub fn pick_files(message: &str) -> Vec<std::path::PathBuf> {
         use objc2::class;
@@ -2609,14 +2635,62 @@ pub fn pick_folder(message: &str) -> Option<std::path::PathBuf> {
     }
 }
 
-/// Pick files to open in the system's file window. Empty when cancelled, and elsewhere than macOS (`open_file` is hidden there).
+/// The system's share menu for a page (macOS only; `share_page` is hidden elsewhere).
+pub fn share(wv: &WebView, url: &str) {
+    #[cfg(target_os = "macos")]
+    mac::share(wv, url);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (wv, url);
+}
+
+/// Pick files to open in the system's file window; empty when cancelled.
 pub fn pick_files(message: &str) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "macos")]
     return mac::pick_files(message);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    return windows_pick_files(message);
+    #[cfg(target_os = "linux")]
     {
-        let _ = message;
-        Vec::new()
+        use gtk::prelude::*;
+        let d = gtk::FileChooserDialog::with_buttons(
+            Some(message),
+            None::<&gtk::Window>,
+            gtk::FileChooserAction::Open,
+            &[("_Cancel", gtk::ResponseType::Cancel), ("_Open", gtk::ResponseType::Accept)],
+        );
+        d.set_select_multiple(true);
+        let files = if d.run() == gtk::ResponseType::Accept { d.filenames() } else { Vec::new() };
+        d.close();
+        files
+    }
+}
+
+/// The Windows file window (IFileOpenDialog), several files allowed.
+#[cfg(target_os = "windows")]
+fn windows_pick_files(message: &str) -> Vec<std::path::PathBuf> {
+    use windows::core::HSTRING;
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, SIGDN_FILESYSPATH};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let Ok(d) = CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) else { return Vec::new() };
+        if let Ok(o) = d.GetOptions() {
+            let _ = d.SetOptions(o | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST);
+        }
+        let _ = d.SetTitle(&HSTRING::from(message));
+        if d.Show(None).is_err() {
+            return Vec::new();
+        }
+        let Ok(items) = d.GetResults() else { return Vec::new() };
+        let n = items.GetCount().unwrap_or(0);
+        (0..n)
+            .filter_map(|i| {
+                let p = items.GetItemAt(i).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+                let path = p.to_string().ok();
+                CoTaskMemFree(Some(p.0 as _));
+                path.map(std::path::PathBuf::from)
+            })
+            .collect()
     }
 }
 

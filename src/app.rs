@@ -181,6 +181,18 @@ pub enum UserEvent {
     ExtensionLoaded { name: String, result: Result<(), String>, announce: bool },
 }
 
+/// History › Recently Closed, the recent pages under it, and the Bookmarks menu: refilled only when what they show changes.
+#[derive(Default)]
+struct DynMenus {
+    closed: Option<Submenu>,
+    /// A menu and how many of its first items stay put (the rest are refilled).
+    history: Option<(Submenu, usize)>,
+    bookmarks: Option<(Submenu, usize)>,
+    /// What each part last showed (a hash), so unchanged ones aren't rebuilt.
+    keys: [u64; 3],
+    cmds: HashMap<MenuId, Command>,
+}
+
 struct Little {
     window: Window,
     bar: WebView,
@@ -191,6 +203,8 @@ struct Little {
     zoom: f64,
     /// Resizing it sets the size of the next little window (not for a window opened at a size of its own).
     usual_size: bool,
+    /// A private window: its own throwaway cookies and storage, no history, and its links stay private.
+    private: bool,
 }
 
 pub struct App {
@@ -328,9 +342,8 @@ pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     _menu: Option<Menu>,
     menu_cmds: HashMap<MenuId, Command>,
-    /// History › Recently Closed, refilled when the closed tabs change (what it last showed: count, newest).
-    closed_menu: Option<Submenu>,
-    closed_menu_key: Option<(usize, Option<TabId>)>,
+    /// Menus whose items follow what's in Valerie: Recently Closed, recent pages, Bookmarks.
+    dyn_menus: DynMenus,
     bar_open: bool,
     /// How tall the command bar drew itself (only used where its view is just the bar: `bar_bounds`).
     bar_height: f64,
@@ -1471,8 +1484,7 @@ impl App {
             proxy,
             _menu: None,
             menu_cmds: HashMap::new(),
-            closed_menu: None,
-            closed_menu_key: None,
+            dyn_menus: DynMenus::default(),
             bar_open: false,
             bar_height: 120.0,
             remote: Vec::new(),
@@ -3325,6 +3337,7 @@ impl App {
                 "picker": self.config.little_window.space_picker && self.state.spaces.len() > 1,
                 "copy_button": self.config.little_window.copy_button,
                 "font": self.config.layout.font,
+                "private": l.private,
                 "ask": l.url.is_empty() || l.url == LITTLE_BLANK || l.url.starts_with("about:") || l.url.starts_with("data:"),
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
@@ -4182,14 +4195,15 @@ impl App {
     // ---------------------------------------------------------------- little windows
 
     fn open_little(&mut self, url: &str, space: usize, elwt: &EventLoopWindowTarget<UserEvent>) {
-        self.open_window(url, space, None, elwt)
+        self.open_window(url, space, None, false, elwt)
     }
 
     /// A small window of its own for one page (`size` overrides little_window's width and height).
-    fn open_window(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, elwt: &EventLoopWindowTarget<UserEvent>) {
+    fn open_window(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, private: bool, elwt: &EventLoopWindowTarget<UserEvent>) {
         trace("little window asked for");
         let url = &self.rewrite(url);
-        let l = match self.take_ready_little(url, space, size) {
+        let ready = if private { None } else { self.take_ready_little(url, space, size) };
+        let l = match ready {
             Some(l) => {
                 let _ = l.view.load_url(url);
                 // Made a while ago: the usual size may have changed since.
@@ -4200,7 +4214,7 @@ impl App {
                 l.window.set_visible(true);
                 l
             }
-            None => match self.build_little(url, space, size, true, elwt) {
+            None => match self.build_little(url, space, size, true, private, elwt) {
                 Some(l) => l,
                 None => return,
             },
@@ -4222,10 +4236,10 @@ impl App {
     }
 
     /// The window and its two views; the page's view first, so the page starts loading as early as it can.
-    fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
+    fn build_little(&mut self, url: &str, space: usize, size: Option<(f64, f64)>, visible: bool, private: bool, elwt: &EventLoopWindowTarget<UserEvent>) -> Option<Little> {
         let (w, h) = size.unwrap_or_else(|| self.little_size());
         let mut builder = mac_window(WindowBuilder::new())
-            .with_title("Valerie")
+            .with_title(if private { "Valerie — Private" } else { "Valerie" })
             .with_visible(visible)
             .with_inner_size(LogicalSize::new(w, h))
             .with_min_inner_size(LogicalSize::new(360.0, 240.0));
@@ -4242,9 +4256,14 @@ impl App {
         realize_hidden(&window);
         let id = window.id();
         let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(space));
-        let view = self.with_profile(&profile, |app, base| {
-            app.page_builder(base, Target::Little(id), url).with_visible(true).with_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR)).child_of(&window)
-        });
+        let place = |b: WebViewBuilder<'_>| b.with_visible(true).with_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR)).child_of(&window);
+        let view = if private {
+            // Cookies and storage that live only as long as the window; no profile, no extensions.
+            self.protocol_taken.set(false);
+            place(self.page_builder(WebViewBuilder::new().with_incognito(true), Target::Little(id), url))
+        } else {
+            self.with_profile(&profile, |app, base| place(app.page_builder(base, Target::Little(id), url)))
+        };
         let p = self.proxy.clone();
         let bar = WebViewBuilder::new()
             .with_html(ui_page("little.html", &self.config))
@@ -4259,7 +4278,7 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private })
     }
 
     /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
@@ -4332,10 +4351,13 @@ impl App {
         if self.ready_little.as_ref().is_some_and(|r| r.space == space) {
             return;
         }
-        self.ready_little = self.build_little("about:blank", space, None, false, elwt);
+        self.ready_little = self.build_little("about:blank", space, None, false, false, elwt);
     }
 
     fn little_to_main(&mut self, id: WindowId, space: Option<String>) {
+        if self.littles.get(&id).is_some_and(|l| l.private) {
+            return self.toast("A private window's page can't move into your tabs: copy its link instead");
+        }
         if let Some(l) = self.littles.remove(&id) {
             let url = l.url.clone();
             let target = space.and_then(|s| self.state.space_index(&s)).unwrap_or(l.space);
@@ -4642,10 +4664,10 @@ impl App {
         let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 4);
         // Menus by their English names, in the bar's order; menu.commands can add new ones (before Window).
         let browser = mc.browser_menus;
-        let names: &[&str] = if browser {
-            &["File", "Edit", "View", "History", "Tabs", "Spaces", "Tools", "Window", "Help"]
+        let names: Vec<&str> = if browser {
+            ["File", "Edit", "View", "History", "Bookmarks", "Tabs", "Spaces", "Tools", "Window", "Help"].into_iter().filter(|n| *n != "Bookmarks" || mc.bookmarks).collect()
         } else {
-            &["Edit", "Tabs", "Spaces", "View", "Tools", "Window"]
+            vec!["Edit", "Tabs", "Spaces", "View", "Tools", "Window"]
         };
         let mut groups: Vec<(String, Submenu)> = names.iter().map(|n| (n.to_string(), Submenu::new(name_of(n), true))).collect();
         let group = |groups: &mut Vec<(String, Submenu)>, name: &str| -> usize {
@@ -4679,7 +4701,11 @@ impl App {
         let cmd_name = |cmd: &Command| serde_json::to_value(cmd).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)).unwrap_or_default();
         // Where a command goes: menu.commands (null = no menu), else its usual menu.
         let placed = |cmd: &Command| -> Option<Option<String>> { mc.commands.get(&cmd_name(cmd)).map(|m| m.clone().filter(|m| !m.is_empty() && m != "none")) };
-        let browser_usual = |cmd: &Command| browser.then(|| browser_menu(&cmd_name(cmd))).flatten();
+        let browser_usual = |cmd: &Command| {
+            let m = browser.then(|| browser_menu(&cmd_name(cmd))).flatten();
+            // With menu.bookmarks off, its commands go back to Tabs.
+            m.map(|m| if m == "Bookmarks" && !mc.bookmarks { "Tabs" } else { m })
+        };
         let mut bound: Vec<Command> = Vec::new();
         let mut taken = std::collections::HashSet::new();
         for (i, (accel, binding)) in self.config.keybindings.iter().enumerate() {
@@ -4741,7 +4767,9 @@ impl App {
                 Some(None) => continue,
                 None => group(&mut groups, browser_usual(&cmd).unwrap_or("Tools")),
             };
-            let item = MenuItem::with_id(format!("c-{name}"), self.translate(title), true, None);
+            // The command bar's explanation in brackets is too long for a menu.
+            let label = self.translate(title);
+            let item = MenuItem::with_id(format!("c-{name}"), label.split(" (").next().unwrap_or(&label), true, None);
             cmds.insert(item.id().clone(), cmd);
             let _ = groups[g].1.append(&item);
         }
@@ -4768,11 +4796,11 @@ impl App {
             let g = group(&mut groups, if browser { "File" } else { "Tools" });
             let _ = groups[g].1.append_items(&[&PredefinedMenuItem::separator(), &import]);
         }
-        // History › Recently Closed (Tabs with the older menus), filled by fill_closed_menu.
+        // History › Recently Closed (Tabs with the older menus); it, the recent pages and Bookmarks are filled by fill_dynamic_menus.
         let closed = Submenu::new(self.translate("Recently Closed"), true);
         let g = group(&mut groups, if browser { "History" } else { "Tabs" });
         let _ = groups[g].1.append_items(&[&PredefinedMenuItem::separator(), &closed]);
-        self.closed_menu = Some(closed);
+        self.dyn_menus = DynMenus { closed: Some(closed), keys: [u64::MAX; 3], ..Default::default() };
         let plugin_menu = Submenu::new(name_of("Plugins"), true);
         for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
             for c in &p.manifest.commands {
@@ -4812,6 +4840,14 @@ impl App {
                 let _ = app_menu.append(g);
             }
         };
+        for name in ["History", "Bookmarks"].into_iter().filter(|n| browser && (*n != "Bookmarks" || mc.bookmarks)) {
+            if let Some((_, g)) = groups.iter().find(|(n, _)| n == name) {
+                let part = Some((g.clone(), g.items().len()));
+                if name == "History" { self.dyn_menus.history = part } else { self.dyn_menus.bookmarks = part }
+            }
+        }
+        // Filled now so a Bookmarks menu with nothing else in it still makes it into the bar.
+        self.fill_dynamic_menus();
         for (name, g) in &groups {
             if name == "Window" {
                 place("Plugins", &plugin_menu);
@@ -4874,8 +4910,6 @@ impl App {
         (self.dock_menu, self.status_menu) = (dock, status);
         self.menu_cmds = cmds;
         self._menu = Some(menu);
-        self.closed_menu_key = None;
-        self.fill_closed_menu();
     }
 
     /// Bring back one of the closed tabs (by its place in state.closed) where it was.
@@ -4892,22 +4926,125 @@ impl App {
         self.activate(id);
     }
 
-    /// History › Recently Closed: the newest closed tabs, refilled only when they change.
-    fn fill_closed_menu(&mut self) {
-        let Some(m) = &self.closed_menu else { return };
-        let key = (self.state.closed.len(), self.state.closed.last().map(|c| c.tab.id));
-        if self.closed_menu_key == Some(key) {
-            return;
+    /// Recently Closed, the recent pages in History and the Bookmarks menu, each rebuilt only when what it shows changed.
+    fn fill_dynamic_menus(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let hash = |f: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            f(&mut h);
+            h.finish()
+        };
+        let short = |t: &str| if t.chars().count() > 60 { format!("{}…", t.chars().take(59).collect::<String>()) } else { t.to_string() };
+        let clear_from = |m: &Submenu, keep: usize| while m.items().len() > keep && m.remove_at(keep).is_some() {};
+        // Recently Closed.
+        let key = hash(&|h| self.state.closed.iter().rev().take(15).for_each(|c| (c.tab.id, c.tab.display_title()).hash(h)));
+        if let Some(m) = self.dyn_menus.closed.as_ref().filter(|_| self.dyn_menus.keys[0] != key) {
+            clear_from(m, 0);
+            if self.state.closed.is_empty() {
+                let _ = m.append(&MenuItem::new(self.translate("No Closed Tabs"), false, None));
+            }
+            for c in self.state.closed.iter().rev().take(15) {
+                let _ = m.append(&MenuItem::with_id(format!("closed-{}", c.tab.id), short(c.tab.display_title()), true, None));
+            }
+            self.dyn_menus.keys[0] = key;
         }
-        self.closed_menu_key = Some(key);
-        while m.remove_at(0).is_some() {}
-        if self.state.closed.is_empty() {
-            let _ = m.append(&MenuItem::new(self.translate("No Closed Tabs"), false, None));
+        // History: the pages visited last (menu.recent_pages of them).
+        let n = self.config.menu.recent_pages;
+        let recent: Vec<&crate::state::HistoryEntry> = self.state.history.iter().filter(|h| h.url.starts_with("http")).take(n).collect();
+        let key = hash(&|h| recent.iter().for_each(|e| (&e.url, &e.title).hash(h)));
+        if let Some((m, keep)) = self.dyn_menus.history.clone().filter(|_| self.dyn_menus.keys[1] != key) {
+            clear_from(&m, keep);
+            self.dyn_menus.cmds.retain(|k, _| !k.0.starts_with("recent-"));
+            if !recent.is_empty() {
+                let _ = m.append_items(&[&PredefinedMenuItem::separator(), &MenuItem::new(self.translate("Recently Visited"), false, None)]);
+            }
+            for (i, e) in recent.iter().enumerate() {
+                let item = MenuItem::with_id(format!("recent-{i}"), short(if e.title.is_empty() { &e.url } else { &e.title }), true, None);
+                self.dyn_menus.cmds.insert(item.id().clone(), Command::NewTab { url: Some(e.url.clone()), space: None, background: false });
+                let _ = m.append(&item);
+            }
+            self.dyn_menus.keys[1] = key;
         }
-        for c in self.state.closed.iter().rev().take(15) {
-            let title = c.tab.display_title();
-            let title = if title.chars().count() > 60 { format!("{}…", title.chars().take(59).collect::<String>()) } else { title.to_string() };
-            let _ = m.append(&MenuItem::with_id(format!("closed-{}", c.tab.id), title, true, None));
+        // Bookmarks: favorites, then the pinned tabs (folders as submenus) of this space, then of the others.
+        let title = |id: &TabId| self.state.tabs.get(id).map(|t| t.display_title().to_string());
+        let key = hash(&|h| {
+            self.state.active_space.hash(h);
+            self.state.favorites.iter().for_each(|id| (id, title(id)).hash(h));
+            fn walk(nodes: &[crate::state::Node], h: &mut std::collections::hash_map::DefaultHasher, title: &dyn Fn(&TabId) -> Option<String>) {
+                for n in nodes {
+                    match n {
+                        crate::state::Node::Tab { id } => (id, title(id)).hash(h),
+                        crate::state::Node::Folder { name, children, .. } => {
+                            name.hash(h);
+                            walk(children, h, title);
+                            0u8.hash(h);
+                        }
+                    }
+                }
+            }
+            for sp in &self.state.spaces {
+                sp.name.hash(h);
+                walk(&sp.pinned, h, &title);
+            }
+        });
+        if let Some((m, keep)) = self.dyn_menus.bookmarks.clone().filter(|_| self.dyn_menus.keys[2] != key) {
+            clear_from(&m, keep);
+            let mut cmds = std::mem::take(&mut self.dyn_menus.cmds);
+            cmds.retain(|k, _| !k.0.starts_with("bm-"));
+            let tab_item = |id: &TabId, cmds: &mut HashMap<MenuId, Command>| -> Option<MenuItem> {
+                let item = MenuItem::with_id(format!("bm-{id}"), short(&title(id)?), true, None);
+                cmds.insert(item.id().clone(), Command::ActivateTab { tab: *id });
+                Some(item)
+            };
+            fn fill(to: &Submenu, nodes: &[crate::state::Node], cmds: &mut HashMap<MenuId, Command>, tab_item: &dyn Fn(&TabId, &mut HashMap<MenuId, Command>) -> Option<MenuItem>) {
+                for n in nodes {
+                    match n {
+                        crate::state::Node::Tab { id } => {
+                            if let Some(item) = tab_item(id, cmds) {
+                                let _ = to.append(&item);
+                            }
+                        }
+                        crate::state::Node::Folder { name, children, .. } => {
+                            let sub = Submenu::new(name, true);
+                            fill(&sub, children, cmds, tab_item);
+                            if !sub.items().is_empty() {
+                                let _ = to.append(&sub);
+                            }
+                        }
+                    }
+                }
+            }
+            let mut any = false;
+            if !self.state.favorites.is_empty() {
+                let _ = m.append_items(&[&PredefinedMenuItem::separator(), &MenuItem::new(self.translate("Favorites"), false, None)]);
+                for id in &self.state.favorites {
+                    if let Some(item) = tab_item(id, &mut cmds) {
+                        let _ = m.append(&item);
+                    }
+                }
+                any = true;
+            }
+            let here = self.state.active_space;
+            if let Some(sp) = self.state.spaces.get(here).filter(|sp| !sp.pinned.is_empty()) {
+                let _ = m.append_items(&[&PredefinedMenuItem::separator(), &MenuItem::new(format!("{} · {}", sp.name, self.translate("Pinned")), false, None)]);
+                fill(&m, &sp.pinned, &mut cmds, &tab_item);
+                any = true;
+            }
+            let others: Vec<&crate::state::Space> = self.state.spaces.iter().enumerate().filter(|(i, sp)| *i != here && !sp.pinned.is_empty()).map(|(_, sp)| sp).collect();
+            if !others.is_empty() {
+                let _ = m.append(&PredefinedMenuItem::separator());
+                for sp in others {
+                    let sub = Submenu::new(&sp.name, true);
+                    fill(&sub, &sp.pinned, &mut cmds, &tab_item);
+                    let _ = m.append(&sub);
+                }
+                any = true;
+            }
+            if !any {
+                let _ = m.append_items(&[&PredefinedMenuItem::separator(), &MenuItem::new(self.translate("Pin tabs or add favorites to see them here"), false, None)]);
+            }
+            self.dyn_menus.cmds = cmds;
+            self.dyn_menus.keys[2] = key;
         }
     }
 
@@ -4995,6 +5132,10 @@ impl App {
         if !failed.is_empty() && !keys.is_empty() {
             self.toast("A global shortcut couldn't be set (another app may be using it)");
         }
+    }
+
+    fn is_private(&self, target: Target) -> bool {
+        matches!(target, Target::Little(id) if self.littles.get(&id).is_some_and(|l| l.private))
     }
 
     fn view_for(&self, target: Target) -> Option<&WebView> {
@@ -5124,7 +5265,7 @@ impl App {
     }
 
     fn credential_checked(&mut self, target: Target, origin: String, username: String, password: String, known: bool) {
-        if known {
+        if known || self.is_private(target) {
             return;
         }
         self.pending_save = Some(PendingSave { target, origin, username, password, nonce: crate::mcp::random_hex(), at: now() });
@@ -5216,6 +5357,10 @@ impl App {
 
     /// Open a link the way a click gesture or the link menu asked for.
     fn open_link_as(&mut self, url: &str, mode: &str, space: usize, from: Target, elwt: &EventLoopWindowTarget<UserEvent>) {
+        // Links from a private window open in another private window, never in your tabs or a preview.
+        if self.is_private(from) {
+            return self.dispatch(Command::NewPrivateWindow { url: Some(url.to_string()) }, elwt);
+        }
         let url = &self.rewrite(url);
         match mode {
             "peek" => self.open_peek(url),
@@ -5976,6 +6121,7 @@ impl App {
                     return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.findStep({})", if cmd == Command::FindNext { 1 } else { -1 })));
                 }
                 Command::SavePage | Command::ViewSource | Command::EmailLink => return self.page_file(&cmd, &l.view, &l.title, &l.url),
+                Command::SharePage => return platform::share(&l.view, &self.clean(&l.url)),
                 Command::CopyMarkdownLink => {
                     let title = l.title.replace('[', "(").replace(']', ")");
                     let url = self.clean(&l.url);
@@ -6304,6 +6450,12 @@ impl App {
                     .filter_map(|f| url::Url::from_file_path(f).ok().map(String::from))
                     .collect();
                 self.open_external(files, elwt);
+            }
+            Command::SharePage => {
+                let Some(t) = self.state.active_tab() else { return };
+                if let (Some(v), Some(tab)) = (self.views.get(&t), self.state.tabs.get(&t)) {
+                    platform::share(v, &self.clean(&tab.url));
+                }
             }
             Command::SavePage | Command::ViewSource | Command::EmailLink => {
                 let Some(t) = self.state.active_tab() else { return };
@@ -7330,7 +7482,12 @@ impl App {
             Command::NewWindow { url } => {
                 let url = url.map(|u| routing::resolve_input(&u, &self.config.search_engine)).or_else(|| Some(self.config.new_tab_url.clone()).filter(|u| !u.is_empty()));
                 let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-                self.open_window(&url.unwrap_or_else(|| "about:blank".into()), self.state.active_space, Some((size.width * 0.9, size.height * 0.9)), elwt);
+                self.open_window(&url.unwrap_or_else(|| "about:blank".into()), self.state.active_space, Some((size.width * 0.9, size.height * 0.9)), false, elwt);
+            }
+            Command::NewPrivateWindow { url } => {
+                let url = url.map(|u| routing::resolve_input(&u, &self.config.search_engine)).unwrap_or_else(|| LITTLE_BLANK.into());
+                let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                self.open_window(&url, self.state.active_space, Some((size.width * 0.9, size.height * 0.9)), true, elwt);
             }
             Command::UndoCustomization => {
                 self.close_bar();
@@ -7909,6 +8066,7 @@ impl App {
                     }
                 }
             }
+            UserEvent::NewWindow { target, url } if self.is_private(target) => self.dispatch(Command::NewPrivateWindow { url: Some(url) }, elwt),
             UserEvent::NewWindow { target, url } => {
                 let url = self.clean(&url);
                 let space = match target {
@@ -7943,7 +8101,7 @@ impl App {
                     if let Some(i) = self.state.closed.iter().position(|c| c.tab.id == tab) {
                         self.reopen_closed(i);
                     }
-                } else if let Some(cmd) = self.menu_cmds.get(&id).cloned() {
+                } else if let Some(cmd) = self.menu_cmds.get(&id).or_else(|| self.dyn_menus.cmds.get(&id)).cloned() {
                     self.dispatch(cmd, elwt);
                 }
             }
@@ -9324,7 +9482,7 @@ static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsiz
 
 /// Commands that only mean something on one system.
 fn on_this_system(name: &str) -> bool {
-    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location" | "open_file")
+    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location" | "share_page")
 }
 
 /// The page's HTML without what Valerie put in it (its find bar, toasts and styles).
@@ -9332,11 +9490,12 @@ const PAGE_HTML_JS: &str = r#"(() => { const d = document.documentElement.cloneN
 
 /// Which menu each command sits in when the menus are laid out like other browsers' (menu.browser_menus).
 const BROWSER_MENUS: &[(&str, &[&str])] = &[
-    ("File", &["new_tab", "new_window", "new_little_window", "open_command_bar", "open_file", "close_tab", "close_window", "move_to_little_window", "move_to_main_window", "save_page", "email_link", "print", "capture_page", "capture_full_page"]),
+    ("File", &["new_tab", "new_window", "new_private_window", "share_page", "new_little_window", "open_command_bar", "open_file", "close_tab", "close_window", "move_to_little_window", "move_to_main_window", "save_page", "email_link", "print", "capture_page", "capture_full_page"]),
     ("Edit", &["copy_url", "copy_markdown_link", "copy_link_to_highlight", "paste_and_go", "search_selection", "find_in_page", "find_next", "find_previous"]),
     ("View", &["toggle_sidebar", "toggle_tab_bar_position", "cycle_sidebar_size", "reload", "hard_reload", "stop", "zoom_in", "zoom_out", "zoom_reset", "reader_view", "toggle_dark_page", "translate_page", "split_view", "unsplit", "focus_next_pane", "focus_pane", "toggle_terminal", "new_terminal", "layout_gallery", "next_layout", "reset_layout", "duplicate_layout", "switch_layout", "dev_tools", "view_source", "hide_element", "show_hidden_elements"]),
     ("History", &["back", "forward", "reopen_closed_tab", "history", "clear_site_data", "clear_cache", "clear_cache_and_cookies"]),
-    ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "toggle_favorite", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs", "review_saved_tabs"]),
+    ("Bookmarks", &["toggle_favorite", "review_saved_tabs"]),
+    ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs"]),
     ("Spaces", &["next_space", "prev_space", "switch_space", "new_space", "delete_space", "rename_space"]),
     ("Window", &["downloads", "show_downloads", "extensions"]),
     ("Help", &["welcome", "report_problem", "check_for_updates", "toggle_test_builds"]),
@@ -9660,12 +9819,12 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                     app.reveal(why);
                 }
                 app.drain_events(elwt);
-                app.fill_closed_menu();
+                app.fill_dynamic_menus();
             }
             Event::WindowEvent { window_id, event, .. } => {
                 app.window_event(window_id, event, elwt);
                 app.drain_events(elwt);
-                app.fill_closed_menu();
+                app.fill_dynamic_menus();
             }
             Event::Reopen { .. } => app.show_main(),
             Event::Opened { urls } => {

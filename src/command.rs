@@ -150,6 +150,8 @@ pub enum Command {
     EmailLink,
     /// The page's HTML source, in a new tab.
     ViewSource,
+    /// The system's share menu for the page (macOS): Mail, Messages, AirDrop, Notes…
+    SharePage,
     CopyUrl {
         #[serde(default)]
         tab: Option<TabId>,
@@ -657,6 +659,11 @@ pub enum Command {
         #[serde(default)]
         url: Option<String>,
     },
+    /// A private window: its cookies and storage last only while it's open, and it records no history.
+    NewPrivateWindow {
+        #[serde(default)]
+        url: Option<String>,
+    },
     /// The Change History page: every state of the settings, plugins and looks (valerie://page/changes).
     ChangeHistory,
     /// Put the settings, plugins and looks back exactly as they were at a change in the history.
@@ -831,6 +838,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("save_page", "Save Page to Downloads"),
     ("email_link", "Email Link to This Page"),
     ("view_source", "View Page Source"),
+    ("share_page", "Share… (send the page with Mail, Messages, AirDrop…)"),
     ("last_tab", "Switch to Last Tab"),
     ("toggle_mute", "Mute / Unmute Tab"),
     ("toggle_media", "Play / Pause Media"),
@@ -890,6 +898,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("sync_passphrase", "Sync Passphrase (set, enter or change the one that encrypts your synced tabs, chats and passwords)"),
     ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
+    ("new_private_window", "New Private Window"),
     ("report_problem", "Triage: Report a Problem… (your AI finds what went wrong, fixes your setup or files the bug for review)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("change_history", "Change History (every change to your settings and looks; go back to any of them)"),
@@ -966,6 +975,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),
     ("new_window", "{ url? }  (a separate window for one page)"),
+    ("new_private_window", "{ url? }  (a window whose cookies and storage last only while it's open; no history)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
     ("toggle_plugin", "{ name, on?, extension? }  (turn a plugin or browser extension on or off; without `on`, switch it; `extension: true` when a plugin has the same name)"),
     ("go_back_to_change", "{ id }  (put the settings, plugins and looks back exactly as they were at a change; `valerie changes` lists the ids; undoable the same way)"),

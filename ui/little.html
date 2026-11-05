@@ -26,11 +26,18 @@ body {
   color: var(--fg); font: inherit; -webkit-user-select: text; user-select: text; }
 #addr::placeholder { color: var(--dim); }
 #addr:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+#priv { display: none; height: 20px; padding: 0 8px; border-radius: 10px; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600;
+  color: #e9e4ff; background: rgba(255,255,255,.1); white-space: nowrap; }
+#priv svg { width: 12px; height: 12px; }
+body.private { background: linear-gradient(90deg, #1b1a21, #25222e); --fg: #ecebf5; --dim: rgba(236,235,245,.55); --hover: rgba(255,255,255,.08); }
+body.private #priv { display: flex; }
+body.private #split { display: none; }
 body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
 </style>
 </head>
 <body>
 <div class="btn" id="back">‹</div>
+<div id="priv" title="Cookies and site data here are forgotten when this window closes, and nothing goes in your history"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 9.5c2.5-1.2 9.5-1.2 12 0"/><path d="M4 9l1.2-5h5.6L12 9"/><circle cx="5" cy="12" r="1.8"/><circle cx="11" cy="12" r="1.8"/><path d="M6.8 12h2.4"/></svg>Private</div>
 <div id="title"></div>
 <input id="addr" placeholder="Search or enter address" spellcheck="false" autocomplete="off">
 <div class="btn" id="copy" title="Copy URL (⌘⇧C)">Copy link</div>
@@ -66,6 +73,7 @@ window.little = {
     const b = document.createElement("b"); b.textContent = h; t.append(b, document.createTextNode(s.title || ""));
     document.getElementById("open").textContent = "Open in " + (s.space || "Valerie");
     document.getElementById("split").classList.toggle("picker", !!s.picker);
+    document.body.classList.toggle("private", !!s.private);
     document.getElementById("copy").style.display = s.copy_button ? "" : "none";
     const asking = !!s.ask && !document.body.classList.contains("ask");
     document.body.classList.toggle("ask", !!s.ask);
