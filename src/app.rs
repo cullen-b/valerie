@@ -9895,12 +9895,13 @@ impl App {
             format!("\n\nAttached files (open them with your file tools): {}", files.join(", "))
         };
         let text = format!("{text}{attached}{shared}{plan_note}");
+        let scratch = config::data_dir().join("agents").join("chat");
         let prompt = match &session {
             Some(_) => text,
             None => {
                 let mut p = match chat_workdir(&c).filter(|_| folder.is_some()) {
-                    Some(w) => crate::ai::coding_preamble(&def, &w),
-                    None => crate::ai::browser_preamble(&def, &context, self.config.plugin_marketplace.offer_to_share),
+                    Some(w) => crate::ai::coding_preamble(&def, &w, &opts.access),
+                    None => crate::ai::browser_preamble(&def, &context, self.config.plugin_marketplace.offer_to_share, &scratch, &opts.access),
                 };
                 if !c.worktree.is_empty() {
                     p.push_str(&format!(
@@ -9938,7 +9939,7 @@ impl App {
             .first()
             .and_then(chat_workdir)
             .filter(|_| folder.is_some())
-            .unwrap_or_else(|| config::data_dir().join("agents").join("chat"));
+            .unwrap_or(scratch);
         std::thread::spawn(move || {
             let on = |ev: crate::ai::Ev| send(&p, UserEvent::ChatEv { chat: id.clone(), ev });
             if let Some(Err(e)) = plan.as_ref().map(|pl| make_worktree(pl, &copy)) {
