@@ -238,7 +238,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
+    "list_pages", "list_layouts", "check_panel", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
 ];
 
 /// The confirm tool that always reaches a person: "Always Allow" can't cover it.
@@ -699,6 +699,11 @@ pub fn tools() -> Vec<Value> {
             "name": { "type": "string", "description": "Letters, digits, - and _ (e.g. tab-report)" },
             "html": { "type": "string", "description": "The whole page" },
             "activate": { "type": "boolean", "description": "Switch to it (default true)" } }), &["name", "html"]),
+        tool("list_layouts", "The layout on screen (layouts/<name>.yaml arranges the whole window), any mistake in its file, where \
+             each of its blocks is, and every layout there is. Show one with run_command switch_layout { name }.", json!({}), &[]),
+        tool("check_panel", "Load a plugin's panel out of sight for a moment: whether it works, its script errors, the tools it \
+             called (none of them run) and what it shows. Use it after writing or changing a panel.",
+             json!({ "panel": { "type": "string", "description": "<plugin> or <plugin>/<file>" }, "props": { "type": "object" } }), &["panel"]),
         tool("list_pages", "List the pages at valerie://page/<name>: ones agents or the user made (pages/ in the config folder) and \
              the built-in downloads and history pages (a pages/downloads.html or history.html replaces those).", json!({}), &[]),
         tool("read_logs", "Read Valerie's log, oldest first: failures, messages the user saw, commands run, agents' tool calls with \
@@ -717,10 +722,10 @@ pub fn tools() -> Vec<Value> {
             "value": { "type": "string", "description": "The new value as you'd write it in the YAML file: 32, true, bottom, [a, b] or { x: 1 }" },
             "this_computer": { "type": "boolean", "description": "Only on this computer (this-mac.yaml), not synced to the others" } }), &["key", "value"]),
         tool("screenshot_ui", "Capture Valerie's own interface as a PNG (to check a change to its look).",
-             json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" },
+             json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins or panel:<block id> for a layout's panel" },
                      "width": { "type": "integer" } }), &[]),
         tool("read_ui", "Read Valerie's own interface: its visible text and an outline of elements with their ids and classes \
-             (the names to use in ui/*.css).", json!({ "part": { "type": "string", "enum": ["sidebar", "command_bar", "chats", "welcome", "plugins"], "default": "sidebar" } }), &[]),
+             (the names to use in ui/*.css).", json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins or panel:<block id> for a layout's panel" } }), &[]),
     ];
     let ask = ASK_USER.load(std::sync::atomic::Ordering::Relaxed);
     all.into_iter().filter(|t| (web || !WEB.contains(&t["name"].as_str().unwrap_or(""))) && (ask || t["name"] != "ask_user")).collect()
@@ -1729,7 +1734,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
         | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
         "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
-        "screenshot_ui" | "get_settings" | "list_pages" => call(proxy, name, a),
+        "screenshot_ui" | "get_settings" | "list_pages" | "list_layouts" | "check_panel" => call(proxy, name, a),
         "show_page" => {
             let page = a["name"].as_str().unwrap_or("").trim().to_string();
             let html = a["html"].as_str().unwrap_or("");

@@ -13,7 +13,8 @@ pub const STAMP: &str = ".marketplace.json";
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entry {
-    /// "plugin" or "extension" (index.json lists them under `plugins` and `extensions`).
+    /// "plugin", "extension" or "layout" (index.json lists them under `plugins`, `extensions` and `layouts`). A layout
+    /// installs like a plugin: a folder in plugins/ with `layouts/<name>.yaml` and the panels it uses.
     pub kind: String,
     pub name: String,
     pub description: String,
@@ -28,6 +29,15 @@ pub struct Entry {
     pub permissions: Vec<String>,
     pub files: Vec<File>,
     pub updated: String,
+    /// The panels it brings (`<file>` for its `<file>.html`).
+    pub panels: Vec<String>,
+    /// Valerie's own windows a layout replaces.
+    pub replaces: Vec<String>,
+    /// A layout's tree and floating panels, for the gallery's picture of it.
+    pub tree: Value,
+    pub floating: Value,
+    /// A layout's own picture: a data: address of its preview.svg.
+    pub preview: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,10 +53,21 @@ impl Entry {
         self.kind == EXTENSION
     }
 
+    pub fn is_layout(&self) -> bool {
+        self.kind == LAYOUT
+    }
+
+    /// Whether it changes the pages you visit. A layout or panel with no page script or style only draws in the window.
+    pub fn on_every_site(&self) -> bool {
+        self.matches.is_empty() && self.files.iter().any(|f| f.path == "script.js" || f.path == "style.css")
+    }
+
     /// "plugin" or "extension", for messages.
     pub fn noun(&self) -> &'static str {
         if self.is_extension() {
             "extension"
+        } else if self.is_layout() {
+            "layout"
         } else {
             "plugin"
         }
@@ -59,6 +80,7 @@ impl Entry {
 }
 
 pub const EXTENSION: &str = "extension";
+pub const LAYOUT: &str = "layout";
 
 /// Every plugin and extension in the marketplace, plugins first.
 pub fn fetch(index: &str) -> Result<Vec<Entry>> {
@@ -76,6 +98,12 @@ pub fn fetch(index: &str) -> Result<Vec<Entry>> {
         e.kind = EXTENSION.into();
     }
     all.extend(ext);
+    // Valerie versions before layouts read only `plugins`, so layouts have their own key.
+    let mut layouts: Vec<Entry> = serde_json::from_value(v.get("layouts").cloned().unwrap_or(json!([])))?;
+    for e in &mut layouts {
+        e.kind = LAYOUT.into();
+    }
+    all.extend(layouts);
     Ok(all)
 }
 
@@ -241,7 +269,14 @@ pub fn share(dir: &Path, repo: &str, index: &[Entry], token: &str) -> Result<Str
     use crate::github::api;
     let name = dir.file_name().and_then(|n| n.to_str()).context("no plugin name")?.to_string();
     let extension = !dir.join("plugin.yaml").exists() && dir.join("manifest.json").exists();
-    let (noun, folder, main) = if extension { ("extension", "extensions", "manifest.json") } else { ("plugin", "plugins", "plugin.yaml") };
+    let layout = !extension && dir.join("layouts").join(format!("{name}.yaml")).exists();
+    let (noun, folder, main) = if extension {
+        ("extension", "extensions", "manifest.json")
+    } else if layout {
+        ("layout", "layouts", "plugin.yaml")
+    } else {
+        ("plugin", "plugins", "plugin.yaml")
+    };
     if !safe_name(&name) {
         bail!("rename the {noun}'s folder to lowercase words with hyphens (like {}) before sharing", name.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
     }

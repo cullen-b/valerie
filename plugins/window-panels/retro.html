@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Valerie 98</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { background: #c0c0c0; color: #000; font: 12px/1 Tahoma, "MS Sans Serif", Geneva, sans-serif; user-select: none; -webkit-user-select: none; cursor: default; }
+  .raised { border: 1px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px #808080, inset 1px 1px #dfdfdf; background: #c0c0c0; }
+  .sunken { border: 1px solid; border-color: #808080 #fff #fff #808080; box-shadow: inset 1px 1px #404040; background: #c0c0c0; }
+  button { height: 24px; padding: 0 7px; color: #000; font: inherit; }
+  button:active, button.on { border-color: #404040 #fff #fff #404040; box-shadow: inset 1px 1px #808080; }
+  button.on { background: repeating-conic-gradient(#fff 0 25%, #c0c0c0 0 50%) 0 0 / 2px 2px; font-weight: 700; }
+  button:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+  #title { display: none; height: 100%; align-items: center; gap: 3px; padding: 3px 4px; }
+  body.title #title { display: flex; }
+  body.mac #title { padding-left: 76px; }
+  #caption { flex: 1; min-width: 0; height: 26px; display: flex; align-items: center; padding: 0 8px; background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bar { display: none; height: 100%; align-items: center; gap: 4px; padding: 3px 4px; border-top: 1px solid #fff; box-shadow: inset 0 1px #dfdfdf; }
+  body.taskbar #bar { display: flex; }
+  #start { font-weight: 700; display: flex; align-items: center; gap: 5px; flex: none; }
+  .flag { display: grid; grid-template-columns: 6px 6px; gap: 1px; }
+  .flag i { width: 6px; height: 5px; display: block; }
+  #tasks { flex: 1; min-width: 0; display: flex; gap: 3px; }
+  #tasks button { flex: 0 1 160px; min-width: 28px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #clock { flex: none; height: 24px; padding: 0 9px; display: flex; align-items: center; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="title">
+  <button class="raised" id="back" title="Back" aria-label="Back">◀</button>
+  <button class="raised" id="fwd" title="Forward" aria-label="Forward">▶</button>
+  <button class="raised" id="again" title="Reload Page" aria-label="Reload Page">↻</button>
+  <div id="caption"></div>
+</div>
+<div id="bar">
+  <button class="raised" id="start" aria-label="Open the command bar"><span class="flag" aria-hidden="true"><i style="background:#e33"></i><i style="background:#3a3"></i><i style="background:#36d"></i><i style="background:#ec3"></i></span>Start</button>
+  <div id="tasks"></div>
+  <div class="sunken" id="clock"></div>
+</div>
+<script>
+  const role = (valerie.props && valerie.props.role) || "taskbar";
+  document.body.classList.add(role);
+  document.body.classList.toggle("mac", /Mac/.test(navigator.platform));
+  const command = (c) => valerie.call("run_command", { command: c });
+  const flat = (nodes) => nodes.flatMap((n) => n.type === "folder" ? flat(n.children) : [n]);
+  const all = (s) => [...flat(s.pinned || []), ...flat(s.kept || []), ...(s.today || [])];
+  function draw() {
+    const s = valerie.state;
+    if (!s) return;
+    const tabs = all(s);
+    if (role === "title") {
+      const on = tabs.find((t) => t.id === s.active);
+      document.getElementById("caption").textContent = (on ? (on.title || on.url) + " - " : "") + "Valerie";
+      return;
+    }
+    document.getElementById("tasks").replaceChildren(...tabs.map((t) => {
+      const b = document.createElement("button");
+      b.className = "raised" + (t.id === s.active ? " on" : "");
+      b.textContent = t.title || t.url || "New Tab";
+      b.title = t.title || t.url || "New Tab";
+      b.addEventListener("click", () => command({ cmd: "activate_tab", tab: t.id }));
+      return b;
+    }));
+  }
+  function tick() {
+    document.getElementById("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  document.getElementById("back").addEventListener("click", () => command({ cmd: "back" }));
+  document.getElementById("fwd").addEventListener("click", () => command({ cmd: "forward" }));
+  document.getElementById("again").addEventListener("click", () => command({ cmd: "reload" }));
+  document.getElementById("start").addEventListener("click", () => command({ cmd: "open_command_bar", mode: "new_tab" }));
+  document.getElementById("caption").addEventListener("mousedown", (e) => { if (e.button === 0) valerie.dragWindow(); });
+  valerie.on("state", draw);
+  draw();
+  tick();
+  setInterval(tick, 20000);
+</script>
+</body>
+</html>

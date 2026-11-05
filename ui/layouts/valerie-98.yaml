@@ -1,0 +1,16 @@
+title: Valerie 98
+description: A whole window from another decade. Title bar and taskbar are one panel, with buttons for your tabs.
+settings:
+  window: { traffic_lights: show }
+  layout: { corner_radius: 0 }
+window:
+  column:
+    - panel: window-panels/retro
+      id: title-bar
+      props: { role: title }
+      size: 34
+    - part: pages
+    - panel: window-panels/retro
+      id: taskbar
+      props: { role: taskbar }
+      size: 36

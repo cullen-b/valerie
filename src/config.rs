@@ -107,6 +107,17 @@ pub struct MenuConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextMenuConfig {
     pub hide: Vec<String>,
+    #[serde(default)]
+    pub panels: ContextMenuPanels,
+}
+
+/// Right-click menus drawn by a plugin's panel instead of the system's; empty = the usual menu.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContextMenuPanels {
+    pub tab: String,
+    pub page: String,
+    pub folder: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +221,7 @@ pub struct ExtensionsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layout {
+    pub arrangement: String,
     pub tab_bar: TabBar,
     pub sidebar_visible: bool,
     pub sidebar_width: f64,
@@ -299,6 +311,8 @@ pub struct SiteSearch {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandBarConfig {
+    #[serde(default)]
+    pub hide_commands: Vec<String>,
     pub site_search: bool,
     pub footer_hints: bool,
     pub empty_hint: bool,
@@ -553,6 +567,8 @@ pub struct NotificationsConfig {
     pub websites: String,
     pub sites: BTreeMap<String, String>,
     pub sound: bool,
+    #[serde(default)]
+    pub sound_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -830,6 +846,8 @@ pub struct PagesConfig {
     pub markdown_edit: String,
     pub pdf_viewer: bool,
     pub wait_for_first_draw: bool,
+    pub youtube_sharp_start: bool,
+    pub quick_full_screen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1404,6 +1422,11 @@ impl Config {
         if let Some(here) = std::fs::read_to_string(this_mac_path()).ok().and_then(|t| serde_yaml::from_str::<Value>(&t).ok()).filter(|v| v.is_mapping()) {
             merge(&mut base, here);
         }
+        // The look the chosen layout brings goes on top; it can't reach anything but the look (see window_layout.rs).
+        #[cfg(not(test))]
+        if let Some(over) = base.get("layout").and_then(|l| l.get("arrangement")).and_then(|a| a.as_str()).and_then(crate::window_layout::active).and_then(|l| l.overlay()) {
+            merge(&mut base, over);
+        }
         Ok(base)
     }
 
@@ -1422,6 +1445,13 @@ impl Config {
         let over = self.spaces.iter().find(|s| s.name == space)?.settings.clone()?;
         let mut v = base.clone();
         merge(&mut v, serde_yaml::to_value(over).ok()?);
+        // A space with its own layout gets that layout's look too.
+        #[cfg(not(test))]
+        if let Some(name) = v.get("layout").and_then(|l| l.get("arrangement")).and_then(|a| a.as_str()).filter(|a| *a != self.layout.arrangement) {
+            if let Some(look) = crate::window_layout::active(name).and_then(|l| l.overlay()) {
+                merge(&mut v, look);
+            }
+        }
         Some(serde_yaml::from_value(v).map_err(|e| anyhow::anyhow!("space {space:?} settings: {e}")))
     }
 

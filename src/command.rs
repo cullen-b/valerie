@@ -268,6 +268,63 @@ pub enum Command {
         tab: Option<TabId>,
     },
     /// Jump a tab's video/audio (the one it played last) by this many seconds; negative goes back.
+    /// Show a layout (`layouts/<name>.yaml`); without a name, the next one.
+    SwitchLayout {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    NextLayout,
+    /// Back to the classic window, whatever a layout did.
+    ResetLayout,
+    /// Copy a layout into `layouts/` to edit, and show the copy.
+    DuplicateLayout {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default, rename = "as")]
+        copy_as: Option<String>,
+    },
+    /// Copy one of Valerie's own windows into a plugin to edit, and draw it from there.
+    DuplicateWindow {
+        window: String,
+    },
+    /// The Plugins window, at its layout gallery.
+    LayoutGallery,
+    /// Show one block of a stack in the layout on screen.
+    SelectBlock {
+        stack: String,
+        child: String,
+    },
+    /// Tell a panel on screen something (`valerie.on("command", …)`).
+    PanelCommand {
+        panel: String,
+        command: String,
+    },
+    /// Open a plugin's panel as a pop-up over the window; opening it again closes it.
+    OpenPanel {
+        panel: String,
+        #[serde(default)]
+        props: Option<serde_json::Value>,
+        #[serde(default)]
+        x: Option<f64>,
+        #[serde(default)]
+        y: Option<f64>,
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        height: Option<f64>,
+    },
+    ClosePanel {
+        panel: String,
+    },
+    /// Show or hide a block of the layout on screen.
+    ToggleBlock {
+        id: String,
+    },
+    /// Set a block's size in the layout on screen, in pixels.
+    ResizeBlock {
+        id: String,
+        px: f64,
+    },
     SkipMedia {
         seconds: f64,
         #[serde(default)]
@@ -753,6 +810,10 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("print", "Print Page…"),
     ("open_chats", "Chats"),
     ("toggle_terminal", "Terminal (show or hide the terminal panel)"),
+    ("layout_gallery", "Layouts (gallery: browse, use and share whole-window layouts)"),
+    ("next_layout", "Next Layout"),
+    ("reset_layout", "Back to the Classic Layout"),
+    ("duplicate_layout", "Duplicate This Layout to Edit"),
     ("new_terminal", "New Terminal"),
     ("new_chat", "New Chat"),
     ("stop_chat", "Stop the Agent in This Chat"),
@@ -851,6 +912,15 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("stop_watching", "{ id }"),
     ("set_up_agent", "{ agent: claude | codex | opencode | pi | cursor | hermes }  (install if needed, then sign in)"),
     ("toggle_media", "{ tab? }  (play / pause)"),
+    ("switch_layout", "{ name? }  (show this layout; no name: the next one)"),
+    ("duplicate_layout", "{ name?, as? }  (copy a layout into layouts/ to edit, and show the copy)"),
+    ("duplicate_window", "{ window: sidebar | command_bar | chats | terminal | little_window | answer | welcome | plugins }  (copy that window into plugins/my-windows to edit, and draw it from there)"),
+    ("select_block", "{ stack, child }  (show that block of a stack in the layout on screen)"),
+    ("panel_command", "{ panel, command }  (tell a panel on screen something; it hears it with valerie.on(\"command\"))"),
+    ("open_panel", "{ panel, props?, x?, y?, width?, height? }  (a plugin's panel as a pop-up over the window; again closes it)"),
+    ("close_panel", "{ panel }"),
+    ("toggle_block", "{ id }  (show or hide a block of the layout on screen)"),
+    ("resize_block", "{ id, px }  (a block's size in the layout on screen)"),
     ("skip_media", "{ seconds, tab? }  (jump the video or audio by this many seconds; negative goes back)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),

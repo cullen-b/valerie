@@ -1,0 +1,3 @@
+# Panels for Valerie's layouts: nothing shows unless a layout (layouts/<name>.yaml) places one in the window.
+description: The tab strip, page outline and retro bars that Valerie's built-in layouts use.
+permissions: [run_command, eval_js]

@@ -187,6 +187,17 @@ mod mac {
         !url.is_null()
     }
 
+    /// Reaches the page ahead of the close, so sound stops before the site's unload code (which can run for 100s of ms).
+    pub fn silence(wv: &WebView) {
+        use objc2::sel;
+        let v = ptr(wv);
+        unsafe {
+            if msg_send![v, respondsToSelector: sel!(_setPageMuted:)] {
+                let _: () = msg_send![v, _setPageMuted: 1usize];
+            }
+        }
+    }
+
     /// Re-adding a subview moves it to the top of its siblings.
     pub fn bring_to_front(wv: &WebView) {
         let v = ptr(wv);
@@ -498,6 +509,89 @@ mod mac {
             }
             let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
             objc2::ffi::class_addMethod(cls, sel!(_webViewFullscreenMayReturnToInline:), std::mem::transmute::<*const (), Imp>(may_return as *const ()), c"v@:@".as_ptr());
+        }
+    }
+
+    /// WebKit moves a page into its own window for full screen. `f` hears when it's back in Valerie's window.
+    pub fn on_page_fullscreen(wv: &WebView, f: Box<dyn Fn() + Send + Sync>) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::sel;
+        static BACK: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+        // WebKit has just moved the page and nothing animates yet: rounded corners would stay on the video.
+        unsafe extern "C-unwind" fn will_enter(_: *mut AnyObject, _: Sel, wv: *mut AnyObject) {
+            crate::log::line("fullscreen", "page entering full screen");
+            let layer: *mut AnyObject = msg_send![wv, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setCornerRadius: 0.0f64];
+                let _: () = msg_send![layer, setMasksToBounds: false];
+            }
+        }
+        unsafe extern "C-unwind" fn did_exit(_: *mut AnyObject, _: Sel, _wv: *mut AnyObject) {
+            crate::log::line("fullscreen", "page back in the window");
+            crate::quick_fullscreen::finish();
+            if let Some(f) = BACK.get() {
+                f();
+            }
+        }
+        if BACK.set(f).is_err() {
+            return;
+        }
+        crate::quick_fullscreen::install();
+        unsafe {
+            let view_class = (*ptr(wv)).class() as *const AnyClass as *mut AnyClass;
+            objc2::ffi::class_addMethod(view_class, sel!(convertRect:toView:), std::mem::transmute::<*const (), Imp>(convert_rect as *const ()), c"{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}@".as_ptr());
+            let delegate: *mut AnyObject = msg_send![ptr(wv), UIDelegate];
+            if delegate.is_null() {
+                return;
+            }
+            let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
+            let add = |name: Sel, imp: Imp| objc2::ffi::class_addMethod(cls, name, imp, c"v@:@".as_ptr());
+            add(sel!(_webViewWillEnterFullscreen:), std::mem::transmute::<*const (), Imp>(will_enter as *const ()));
+            add(sel!(_webViewDidExitFullscreen:), std::mem::transmute::<*const (), Imp>(did_exit as *const ()));
+        }
+    }
+
+    /// WebKit photographs the page before full screen by converting the view's frame as if it were in the view's own
+    /// coordinates, which is off by the page's position: beside a sidebar the picture came out shifted, half of it blank.
+    unsafe extern "C-unwind" fn convert_rect(this: *mut AnyObject, sel: objc2::runtime::Sel, rect: objc2_foundation::NSRect, to: *mut AnyObject) -> objc2_foundation::NSRect {
+        use objc2::class;
+        use objc2_foundation::NSRect;
+        let frame: NSRect = msg_send![this, frame];
+        let is_own_frame = to.is_null() && rect.origin == frame.origin && rect.size == frame.size;
+        let rect = if is_own_frame { msg_send![this, bounds] } else { rect };
+        let inherited = class!(NSView).instance_method(sel).expect("NSView converts rects").implementation();
+        let inherited: unsafe extern "C-unwind" fn(*mut AnyObject, objc2::runtime::Sel, NSRect, *mut AnyObject) -> NSRect = std::mem::transmute(inherited);
+        inherited(this, sel, rect, to)
+    }
+
+    /// Every page reports its own full screen changes to the delegate `on_page_fullscreen` set up.
+    pub fn watch_page_fullscreen(wv: &WebView) {
+        use objc2::sel;
+        unsafe {
+            let v = ptr(wv);
+            let delegate: *mut AnyObject = msg_send![v, UIDelegate];
+            let can: bool = msg_send![v, respondsToSelector: sel!(_setFullscreenDelegate:)];
+            if can && !delegate.is_null() {
+                let _: () = msg_send![v, _setFullscreenDelegate: delegate];
+            }
+            // Otherwise WebKit keeps a title bar's height free at the top of the page until the animation ends, then the video jumps.
+            if msg_send![v, respondsToSelector: sel!(_setAutomaticallyAdjustsContentInsets:)] {
+                let _: () = msg_send![v, _setAutomaticallyAdjustsContentInsets: false];
+            }
+        }
+    }
+
+    /// True while WebKit holds this page in its full screen window, where Valerie's layout means nothing.
+    pub fn in_page_fullscreen(wv: &WebView) -> bool {
+        use objc2::sel;
+        unsafe {
+            let v = ptr(wv);
+            let can: bool = msg_send![v, respondsToSelector: sel!(fullscreenState)];
+            if !can {
+                return false;
+            }
+            let state: isize = msg_send![v, fullscreenState];
+            state != 0
         }
     }
 
@@ -1771,6 +1865,27 @@ pub fn page_url(wv: &WebView) -> Option<String> {
     wv.url().ok()
 }
 
+/// Cut a page's sound right away; call just before dropping its view.
+pub fn silence(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::silence(wv);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        wv.webview().set_is_muted(true);
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+        use windows::core::Interface;
+        use wry::WebViewExtWindows;
+        if let Ok(page) = wv.controller().CoreWebView2().and_then(|p| p.cast::<ICoreWebView2_8>()) {
+            let _ = page.SetIsMuted(true);
+        }
+    }
+}
+
 pub fn bring_to_front(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::bring_to_front(wv);
@@ -2160,6 +2275,93 @@ pub struct Note<'a> {
     pub body: &'a str,
     pub action: Option<String>,
     pub sound: bool,
+}
+
+/// Whether a page's full screen is Valerie's quick kind (setting pages.quick_full_screen).
+pub static QUICK_FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+#[cfg(not(target_os = "macos"))]
+static FULLSCREEN_CHANGED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+#[cfg(not(target_os = "macos"))]
+fn fullscreen_changed() {
+    if let Some(f) = FULLSCREEN_CHANGED.get() {
+        f();
+    }
+}
+
+#[cfg(target_os = "linux")]
+thread_local!(static FULL_SCREEN_PAGES: std::cell::RefCell<Vec<webkit2gtk::WebView>> = const { std::cell::RefCell::new(Vec::new()) });
+
+/// `f` runs when Valerie has to lay out again for a page's full screen: on the Mac when the page is back in Valerie's
+/// window, elsewhere when a page starts or stops filling the window.
+#[allow(unused_variables)]
+pub fn on_page_fullscreen(wv: &WebView, f: impl Fn() + Send + Sync + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::on_page_fullscreen(wv, Box::new(f));
+    #[cfg(not(target_os = "macos"))]
+    let _ = FULLSCREEN_CHANGED.set(Box::new(f));
+}
+
+/// The engine's own word, not the page's: a page can't claim full screen without a real request.
+#[allow(unused_variables)]
+pub fn watch_page_fullscreen(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::watch_page_fullscreen(wv);
+    #[cfg(target_os = "windows")]
+    {
+        use webview2_com::ContainsFullScreenElementChangedEventHandler;
+        use wry::WebViewExtWindows;
+        let handler = ContainsFullScreenElementChangedEventHandler::create(Box::new(|_, _| {
+            fullscreen_changed();
+            Ok(())
+        }));
+        let mut token = 0i64;
+        if let Err(e) = unsafe { wv.webview().add_ContainsFullScreenElementChanged(&handler, &mut token) } {
+            crate::log::line("fullscreen", format!("can't watch full screen: {e}"));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        let view = wv.webview();
+        // false: WebKitGTK goes on to make the window full screen itself, and the page only enters if it does.
+        view.connect_enter_fullscreen(|v| {
+            FULL_SCREEN_PAGES.with(|p| p.borrow_mut().push(v.clone()));
+            fullscreen_changed();
+            false
+        });
+        view.connect_leave_fullscreen(|v| {
+            FULL_SCREEN_PAGES.with(|p| p.borrow_mut().retain(|x| x != v));
+            fullscreen_changed();
+            false
+        });
+    }
+}
+
+/// A page in full screen: on the Mac in WebKit's window, where Valerie mustn't move or hide it (whatever the setting);
+/// elsewhere still in its view, which Valerie stretches over the window when quick full screen is on.
+#[allow(unused_variables)]
+pub fn in_page_fullscreen(wv: &WebView) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::in_page_fullscreen(wv);
+    #[cfg(not(target_os = "macos"))]
+    if !QUICK_FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use wry::WebViewExtWindows;
+        let mut full = windows::core::BOOL(0);
+        return unsafe { wv.webview().ContainsFullScreenElement(&mut full) }.is_ok() && full.as_bool();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use wry::WebViewExtUnix;
+        let view = wv.webview();
+        return FULL_SCREEN_PAGES.with(|p| p.borrow().contains(&view));
+    }
 }
 
 /// `f` gets the webview whose floating video's return button was pressed (see `is_webview`).

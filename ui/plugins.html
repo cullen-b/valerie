@@ -41,7 +41,7 @@ main { position: absolute; inset: 186px 0 0; overflow-y: auto; }
 .chip.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .chip.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .chip.kind { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-.foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
 .foot .grow { flex: 1; }
 button.b { all: unset; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; font-size: 13.5px; font-weight: 650; background: var(--card2); }
 button.b:hover { background: rgba(255,255,255,.13); } button.b:active { transform: scale(.97); }
@@ -53,6 +53,17 @@ button.b[disabled] { opacity: .5; pointer-events: none; }
 .switch.on { background: var(--accent); } .switch.on::after { transform: translateX(14px); background: #0b0a10; }
 .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+.wire { position: relative; height: 132px; border-radius: 10px; overflow: hidden; background: rgba(0,0,0,.28); border: 1px solid var(--line); display: flex; padding: 4px; }
+.wire img { width: 100%; height: 100%; object-fit: cover; }
+.wire .box { display: flex; min-width: 0; min-height: 0; gap: 3px; flex: 1 1 0; }
+.wire .box.row { flex-direction: row; } .wire .box.column { flex-direction: column; }
+.wire .leaf { flex: 1 1 0; min-width: 0; min-height: 0; border-radius: 4px; background: var(--card2); color: var(--dim); font-size: 10px; line-height: 1.2; padding: 2px 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wire .leaf.pages { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--fg); }
+.wire .leaf.panel { outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1px; background: transparent; }
+.wire .leaf.float { position: absolute; flex: none; background: var(--bg); outline: 1px solid var(--accent); outline-offset: -1px; }
+.chip.on { background: var(--accent); color: #0b0a10; font-weight: 650; }
+h2 { font-size: 15px; font-weight: 680; margin: 22px 0 10px; } h2:first-child { margin-top: 4px; }
+button.b:focus-visible, .tabs button:focus-visible, .x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .empty { text-align: center; color: var(--dim); padding: 50px 20px; }
 .empty b { display: block; color: var(--fg); font-size: 17px; margin-bottom: 6px; }
 .share { margin-top: 18px; display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 16px;
@@ -68,7 +79,7 @@ button.b[disabled] { opacity: .5; pointer-events: none; }
 <div id="drag"></div>
 <header>
   <div class="top"><h1>Plugins</h1><button class="x" id="close" title="Close">×</button></div>
-  <div class="sub">Plugins and browser extensions people made for Valerie. Install one with a click, or ask your AI to make you one.</div>
+  <div class="sub">Plugins, layouts and panels people made for Valerie. Install one with a click, or ask your AI to make you one.</div>
   <div class="bar"><div class="tabs" id="tabs"></div><input id="q" placeholder="Search plugins and extensions…" autocomplete="off"></div>
 </header>
 <main id="main"><div class="wrap" id="list"></div></main>
@@ -77,17 +88,113 @@ const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const $ = (s) => document.querySelector(s);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(text, cls, on) { const b = el("button", "b " + (cls || ""), text); b.onclick = on; return b; }
-const S = { tab: "browse", index: null, indexError: "", local: [], busy: {}, notes: {}, repo: "" };
+const S = { tab: "browse", index: null, indexError: "", local: [], layouts: [], busy: {}, notes: {}, repo: "" };
 const pretty = (n) => n.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const versionOf = (e) => (e.files || []).map((f) => (f.sha256 || "").slice(0, 8)).join("");
 // A plugin and an extension can share a name, so busy states and notes go by both.
 const isExt = (x) => x.kind === "extension";
+const isLayout = (x) => x.kind === "layout";
+const hasPanels = (x) => (x.panels || []).length > 0;
 const key = (x) => (isExt(x) ? "extension:" : "plugin:") + x.name;
 const same = (a, b) => a.name === b.name && isExt(a) === isExt(b);
 const msg = (t, x) => ({ t, name: x.name, kind: isExt(x) ? "extension" : "plugin" });
 
 function words(q) { return q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1); }
 function hits(text, q) { const w = words(q); return !w.length || w.every((x) => text.toLowerCase().includes(x)); }
+
+// A layout's picture: its own preview.svg if it has one (an image, so nothing in it runs), else its blocks drawn to scale.
+const WIRE_SCALE = 0.13;
+const PART_NAMES = { pages: "Pages", sidebar: "Sidebar", top_bar: "Tabs", terminal: "Terminal", chats: "Chats" };
+function wireNode(n) {
+  const kids = n.row || n.column, grow = n.weight || 1;
+  // Valerie's own bars have their usual sizes unless the layout says otherwise.
+  const size = n.size || { sidebar: 248, top_bar: 40, chats: 380 }[n.part];
+  const sized = (e) => {
+    e.style.flex = size ? `0 0 ${Math.max(15, size * WIRE_SCALE)}px` : `${grow} 1 0`;
+    return e;
+  };
+  if (n.stack) {
+    const shown = n.stack.find((k) => (k.id || k.part || (k.panel || "").replace(/\//g, "-")) === n.active) || n.stack[0];
+    return sized(shown ? wireNode({ ...shown, size: undefined, weight: undefined }) : el("div", "leaf"));
+  }
+  if (kids) {
+    const box = sized(el("div", "box " + (n.row ? "row" : "column")));
+    kids.forEach((k) => box.append(wireNode(k)));
+    return box;
+  }
+  const label = n.part ? PART_NAMES[n.part] || n.part : (n.id || n.panel || "").split("/").pop().replace(/-/g, " ");
+  return sized(el("div", "leaf " + (n.part === "pages" ? "pages" : n.panel ? "panel" : ""), label));
+}
+function wire(x) {
+  const w = el("div", "wire");
+  w.setAttribute("aria-hidden", "true");
+  if (x.preview && x.preview.startsWith("data:image/svg+xml;base64,")) {
+    const i = el("img"); i.src = x.preview; i.alt = ""; w.append(i);
+    return w;
+  }
+  w.append(x.tree ? wireNode(x.tree) : el("div", "leaf pages", "Pages"));
+  (x.floating || []).forEach((f) => {
+    const e = el("div", "leaf float", (f.id || f.panel).split("/").pop().replace(/-/g, " "));
+    e.style.width = Math.max(30, f.width * WIRE_SCALE) + "px"; e.style.height = Math.max(14, f.height * WIRE_SCALE) + "px";
+    const side = { top: "top", bottom: "bottom", left: "left", right: "right" }[f.edge] || "right";
+    e.style[side] = "8px";
+    const along = side === "top" || side === "bottom" ? ["left", "right"] : ["top", "bottom"];
+    if (f.align === "end") e.style[along[1]] = "8px"; else if (f.align === "start") e.style[along[0]] = "8px"; else e.style[along[0]] = "40%";
+    w.append(e);
+  });
+  return w;
+}
+const layoutSends = (t, name) => ({ t, name, kind: "plugin" });
+function replacesChip(chips, list) {
+  if (list && list.length) { const c = el("span", "chip warn", "replaces " + list.join(", ").replace(/_/g, " ")); c.title = "Valerie asks before a layout replaces its own windows"; chips.append(c); }
+}
+function myLayoutCard(l) {
+  const c = el("div", "card"), on = l.name === S.onScreen;
+  c.append(wire(l));
+  const head = el("div", "head"), title = el("div", "title");
+  title.append(el("b", null, l.title || pretty(l.name)), el("small", null, l.from === "valerie" ? "comes with Valerie" : l.from === "yours" ? "yours" : "from a plugin"));
+  head.append(title);
+  if (on) head.append(el("span", "chip on", "On screen"));
+  c.append(head, l.error ? el("div", "err", l.error) : el("div", "desc", l.description || ""));
+  const chips = el("div", "chips"); replacesChip(chips, l.replaces); if (chips.children.length) c.append(chips);
+  const foot = el("div", "foot"), note = S.notes["layout:" + l.name];
+  if (note) { if (note.url) { const a = el("a", "chip ok", "✓ Shared: see the pull request"); a.href = note.url; a.style.textDecoration = "none"; foot.append(a); } else foot.append(el("span", note.ok === false ? "err" : "chip ok", note.text)); }
+  foot.append(el("span", "grow"));
+  if (S.busy["layout:" + l.name]) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), S.busy["layout:" + l.name]); foot.append(b); }
+  else {
+    if (l.from === "yours") {
+      foot.append(btn("Remove", "ghost", () => send(layoutSends("remove_layout", l.name))));
+      foot.append(btn("Share", "", () => { S.busy["layout:" + l.name] = "Sharing"; draw(); send(layoutSends("share_layout", l.name)); }));
+    }
+    if (l.name !== "classic") foot.append(btn("Duplicate", "", () => send(layoutSends("duplicate_layout", l.name))));
+    if (!on && !l.error) foot.append(btn("Use", "primary", () => send(layoutSends("use_layout", l.name))));
+  }
+  c.append(foot);
+  return c;
+}
+function marketLayoutCard(e) {
+  const c = el("div", "card"), local = S.local.find((p) => p.name === e.name), busy = S.busy[key(e)];
+  c.append(wire(e));
+  const head = el("div", "head"), title = el("div", "title");
+  title.append(el("b", null, pretty(e.name)), el("small", null, e.author ? "by " + e.author : ""));
+  head.append(title);
+  c.append(head, el("div", "desc", e.description));
+  const chips = el("div", "chips");
+  if (hasPanels(e)) chips.append(el("span", "chip", e.panels.length + " panel" + (e.panels.length > 1 ? "s" : "")));
+  replacesChip(chips, e.replaces);
+  if (e.programs && e.programs.length) chips.append(el("span", "chip warn", "runs programs"));
+  c.append(chips);
+  const foot = el("div", "foot"), note = S.notes[key(e)];
+  if (note) foot.append(el("span", note.ok === false ? "err" : "chip ok", note.text));
+  foot.append(el("span", "grow"));
+  if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
+  else if (!local) foot.append(btn("Install", "primary", () => { S.busy[key(e)] = "Installing"; draw(); send(msg("install", e)); }));
+  else if (local.market_version && local.market_version !== versionOf(e)) foot.append(btn("Update", "primary", () => { S.busy[key(e)] = "Updating"; draw(); send(msg("install", e)); }));
+  else if (S.onScreen === e.name) foot.append(el("span", "chip on", "On screen"));
+  else foot.append(btn("Use", "primary", () => send(layoutSends("use_layout", e.name))));
+  c.append(foot);
+  return c;
+}
 
 function browseCard(e) {
   const c = el("div", "card"), local = S.local.find((p) => same(p, e)), busy = S.busy[key(e)];
@@ -149,13 +256,25 @@ function mineCard(p) {
 function draw() {
   const q = $("#q").value, list = $("#list"); list.replaceChildren();
   const tabs = $("#tabs"); tabs.replaceChildren();
-  [["browse", "Browse", S.index ? S.index.length : null], ["mine", "Yours", S.local.length]].forEach(([id, label, n]) => {
+  const market = S.index || [], listed = market.filter((e) => !isLayout(e));
+  [["browse", "Plugins", S.index ? listed.filter((e) => !hasPanels(e)).length : null], ["layouts", "Layouts", S.layouts.length + market.filter((e) => isLayout(e) && !S.layouts.some((l) => l.name === e.name)).length], ["panels", "Panels", S.index ? listed.filter(hasPanels).length : null], ["mine", "Yours", S.local.length]].forEach(([id, label, n]) => {
     const b = el("button", S.tab === id ? "on" : "", label); if (n != null) b.append(el("span", "n", String(n)));
     b.onclick = () => { S.tab = id; draw(); }; tabs.append(b);
   });
-  if (S.tab === "browse") {
+  $("#q").placeholder = S.tab === "layouts" ? "Search layouts…" : S.tab === "panels" ? "Search panels…" : "Search plugins and extensions…";
+  if (S.tab === "layouts") {
+    const here = S.layouts.filter((l) => hits(`${l.name} ${l.title || ""} ${l.description || ""}`, q));
+    const others = market.filter((e) => isLayout(e) && !S.layouts.some((l) => l.name === e.name) && hits(`${e.name} ${e.description}`, q));
+    if (here.length) { list.append(el("h2", null, "On this computer")); const g = el("div", "grid"); here.forEach((l) => g.append(myLayoutCard(l))); list.append(g); }
+    if (others.length) { list.append(el("h2", null, "Made by people")); const g = el("div", "grid"); others.forEach((e) => g.append(marketLayoutCard(e))); list.append(g); }
+    if (S.index === null && S.indexError) list.append(el("div", "empty", "Couldn't reach the marketplace: " + S.indexError));
+    else if (S.index === null) list.append(el("div", "empty", "Loading the marketplace…"));
+    else if (!others.length && !here.length) { const em = el("div", "empty"); em.append(el("b", null, "Nothing like that yet"), "Ask your AI to make it: type ! and describe the window you want in the command bar."); list.append(em); }
+    return;
+  }
+  if (S.tab === "browse" || S.tab === "panels") {
     if (S.index === null) { list.append(el("div", "empty", S.indexError ? "Couldn't reach the marketplace: " + S.indexError : "Loading the marketplace…")); if (S.indexError) list.append(Object.assign(btn("Try again", "", () => { S.indexError = ""; draw(); send({ t: "refresh" }); }), { style: "display:block;margin:0 auto" })); return; }
-    const shown = S.index.filter((e) => hits(`${e.name} ${e.description} ${(e.matches || []).join(" ")} ${(e.commands || []).join(" ")} ${e.kind || ""}`, q));
+    const shown = S.index.filter((e) => !isLayout(e) && hasPanels(e) === (S.tab === "panels") && hits(`${e.name} ${e.description} ${(e.matches || []).join(" ")} ${(e.commands || []).join(" ")} ${e.kind || ""}`, q));
     if (!shown.length) { const em = el("div", "empty"); em.append(el("b", null, "Nothing like that yet"), "Ask your AI to make it: type ! and describe it in the command bar. Then share it here for everyone."); list.append(em); }
     else { const g = el("div", "grid"); shown.forEach((e) => g.append(browseCard(e))); list.append(g); }
   } else {
@@ -179,7 +298,7 @@ document.addEventListener("click", (e) => { const a = e.target.closest && e.targ
 
 window.market = {
   init(d) {
-    S.local = d.plugins || []; S.repo = d.repo || "";
+    S.local = d.plugins || []; S.repo = d.repo || ""; S.layouts = d.layouts || []; S.onScreen = d.on_screen || "classic"; if (d.tab) S.tab = d.tab;
     if (d.accent) document.documentElement.style.setProperty("--accent", d.accent);
     if (d.font) document.body.style.fontFamily = `${d.font}, -apple-system, system-ui, sans-serif`;
     draw(); $("#q").focus();
@@ -187,12 +306,14 @@ window.market = {
   event(ev) {
     if (ev.type === "index") { S.index = ev.plugins || []; S.indexError = ""; }
     else if (ev.type === "index_error") { S.index = null; S.indexError = ev.detail || "unknown error"; }
-    else if (ev.type === "local") S.local = ev.plugins || [];
+    else if (ev.type === "local") { S.local = ev.plugins || []; S.layouts = ev.layouts || S.layouts; if (ev.on_screen) S.onScreen = ev.on_screen; }
     else if (ev.type === "tab") S.tab = ev.tab;
     else if (ev.type === "sharing") S.busy[key(ev)] = "Sharing";
     else if (ev.type === "installed") { delete S.busy[key(ev)]; S.notes[key(ev)] = ev.ok ? { text: isExt(ev) ? "✓ Installed: Valerie asks before loading it" : "✓ Installed" } : { ok: false, text: ev.detail || "Couldn't install" }; }
+    else if (ev.type === "removed" && ev.kind === "layout") send({ t: "refresh" });
+    else if (ev.type === "shared" && ev.kind === "layout") { delete S.busy["layout:" + ev.name]; S.notes["layout:" + ev.name] = { ok: false, text: ev.detail || "Couldn't share" }; }
     else if (ev.type === "removed") { if (ev.name) delete S.notes[key(ev)]; }
-    else if (ev.type === "shared") { delete S.busy[key(ev)]; S.notes[key(ev)] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
+    else if (ev.type === "shared") { delete S.busy["layout:" + ev.name]; if (ev.url) S.notes["layout:" + ev.name] = { url: ev.url }; else if (S.layouts.some((l) => l.name === ev.name)) S.notes["layout:" + ev.name] = { ok: false, text: ev.detail || "Couldn't share" }; delete S.busy[key(ev)]; S.notes[key(ev)] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
     draw();
   },
 };

@@ -37,6 +37,12 @@ language: ""               # the language of Valerie's own words, as a code like
 # --------------------------------------------------------------------------------------------------------------
 
 layout:
+  arrangement: classic     # the layout that arranges the whole window. one of: classic (the settings below) | workbench |
+                           # tab-strip | valerie-98 | any layouts/<name>.yaml in this folder or a plugin's layouts/ folder.
+                           # A layout's file says where the sidebar, pages and plugins' panels go, and can bring its own
+                           # look, even replace Valerie's own windows. The Layouts tab in "Plugins" shows them and
+                           # everyone's. "Next Layout" in the command bar switches; "Back to the Classic Layout" (Ctrl+Alt+Shift+0,
+                           # Cmd+Option+Shift+0 on a Mac) always returns here
   tab_bar: side            # where tabs live. one of: side | top
   sidebar_visible: true    # show the sidebar at launch (⌘S or `s` toggles it)
   sidebar_width: 248       # width of the full-size sidebar, pixels (drag the sidebar's edge to resize it live)
@@ -131,6 +137,8 @@ welcome: true              # the welcome guide (AI, sync, describe your browser,
                            # "Welcome Tour" in the command bar shows it again. true | false
 
 command_bar:
+  hide_commands: []        # commands to leave out of the command bar, by name or words, e.g. [next_layout, "Print"];
+                           # their shortcuts keep working
   site_search: true        # type a site's name (e.g. "youtube"), press Tab, and search that site directly
   footer_hints: true       # the "↑↓ navigate  ↵ open …" row at the bottom
   empty_hint: false        # "Type to search tabs, history, bookmarks and commands" when nothing matches
@@ -384,6 +392,8 @@ notifications:
   sites: {}                # your choice per site, e.g. { mail.google.com: allow, news.example.com: deny }; this wins
                            # over the answers you gave when asked (toggle_site_notifications flips the site you're on)
   sound: true              # play the notification sound
+  sound_file: ""           # Valerie's own notifications play this sound file instead of the system's (a path, ~ allowed;
+                           # .wav works everywhere). empty = the system's sound
 
 # Watch This Page…: describe what to wait for ("the price drops below $500", "checks pass on this PR"); an agent looks
 # in the background and tells you once it happens.
@@ -415,6 +425,11 @@ pages:
   loading_bar: true        # a thin line across the top of a page while it loads
   wait_for_first_draw: true # a tab that's loading from scratch (new, or asleep) stays hidden until it has drawn, up to a
                            # second, then fades in, so it never flashes white. false = show it straight away
+  quick_full_screen: true  # a page's full screen (a video's button) fills the whole screen straight away: no slide to a
+                           # separate desktop on the Mac, and over the whole window everywhere. false = the system's own way:
+                           # the Mac's slide; on Windows and Linux the video stays inside the tab's area
+  youtube_sharp_start: true # YouTube videos start at full quality even if a past hiccup left YouTube expecting a bad connection.
+                           # Your real connection speed still counts. false = leave YouTube's saved estimate alone
   markdown: true           # show Markdown files (.md, on this computer or the web) as formatted documents: headings,
                            # tables, highlighted code, task lists, GitHub-style notes. false = the plain text
   markdown_theme: auto     # their look. one of: auto (dark when your computer or dark_mode is) | light | dark
@@ -592,6 +607,7 @@ keybindings:
   "CmdOrCtrl+N": { cmd: new_chat, in_project: true }   # a new chat; in a coding chat, on the same project
   "Ctrl+Quote": toggle_terminal   # the terminal panel (Ctrl+')
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
+  "CmdOrCtrl+Alt+Shift+0": reset_layout   # back to the classic window, whatever a layout did
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
 
@@ -614,6 +630,10 @@ menu:
 
 # Valerie's right-click menus (on links, tabs and folders). Plugins add their own entries (`context_menu` on a command).
 context_menu:
+  panels:                  # draw a right-click menu with a plugin's panel instead of the system's (<plugin>/<file>; it gets
+    tab: ""                # what was clicked as valerie.props). empty = the usual menu. tab: on a tab in the sidebar
+    page: ""               # on a web page
+    folder: ""             # on a folder in the sidebar
   hide: []                 # entries to leave out, by their words, e.g. ["Open in Little Window", "Peek", "New Folder…"]
 
 # Mouse buttons. Each is a command (like under keybindings) or null for nothing.
