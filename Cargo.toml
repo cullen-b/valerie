@@ -46,3 +46,7 @@ cairo-rs = { version = "0.18", features = ["png"] }
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+# wry with one change: window.ipc can be replaced by a page, so sites that name a global `ipc` (Google Docs/Sheets) still load.
+[patch.crates-io]
+wry = { path = "vendor/wry" }
