@@ -173,13 +173,18 @@ function calc(raw) {
 
 // Questions and requests ("what's in my tabs?", "merge these PRs once checks pass") rather than searches.
 const ASKY = /^(what|why|how|who|when|where|which|is|are|can|could|does|do|should|would|will|explain|summari[sz]e|compare|find|merge|close|open|book|buy|order|check|watch|remind|organi[sz]e|tidy|draft|write|reply|fill|sign|tell|show|list|help)\b/i;
+// Words people put before a request ("ok roll back…", "so can you…") that say nothing about it.
+const FILLER = /^((ok|okay|k|hey|hi|so|also|and|now|alright|actually|um|great|thanks|yes|no)\b[,.!]?\s+)+/i;
+// "change my tab size", "make this space grey": about the browser or the agent, not the web.
+const ABOUT_ME = /\b(this|my|current|these)( [\w'-]+){0,2} (page|tab|tabs|space|spaces|site|video|window|browser|config|settings|extension|plugin|sidebar|theme)\b|\bvalerie\b/i;
 function wantsAgent(raw) {
   const o = D.options || {}, n = o.ask_agent_words ?? 6;
-  const t = raw.trim(), words = t.split(/\s+/).length;
-  // Starting with a word like "summarize" or "create" means an agent, however short.
-  const first = t.split(/\s+/)[0].toLowerCase().replace(/[^a-z']/g, "");
-  if (words >= 2 && (o.ask_agent_starts || []).some((w) => w.toLowerCase() === first)) return true;
+  const t = raw.trim().replace(FILLER, ""), ws = t.toLowerCase().replace(/[^a-z'\s]/g, "").split(/\s+/).filter(Boolean), words = ws.length;
+  // Starting with a word or phrase like "summarize" or "can you" means an agent, once one more word follows.
+  const starts = (o.ask_agent_starts || []).map((w) => w.toLowerCase().split(/\s+/));
+  if (starts.some((p) => words > p.length && p.every((w, i) => ws[i] === w))) return true;
   if (n <= 0) return false;
+  if (words >= 3 && ABOUT_ME.test(t)) return true;
   return (t.endsWith("?") && words >= Math.max(3, n - 2)) || (words >= n && ASKY.test(t)) || words >= n * 2;
 }
 
@@ -241,7 +246,7 @@ function compute() {
     // Something that reads like a question or a request goes to the top: Enter asks the agent.
     const ask = { kind: "agent", title: "Ask " + D.agent + ": " + raw, sub: "Opens in Chats · can use your browser", icon: "✦", cmd: { cmd: "new_chat", prompt: raw } };
     if (wantsAgent(raw)) results.unshift(ask); else results.push(ask);
-    results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
+    if ((D.options || {}).customize_row) results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
   }
   // Results plugins sent for this text go just under what you typed (they arrive a moment after typing).
   const fromPlugins = Object.values(extra).filter((m) => m.query === raw).flatMap((m) => m.items.slice(0, 8));

@@ -1060,8 +1060,10 @@ if (document.documentElement) applyBoostCss(); else document.addEventListener("D
 
 // ---------- reveal the hidden sidebar when the mouse touches the screen edge ----------
 // Only a deliberate push toward the edge counts: when the sidebar hides, the page slides under a resting mouse.
-let edgeAt = 0, edgeArmedAt = 0;
+let edgeAt = 0, edgeArmedAt = 0, grabAt = 0;
 document.addEventListener("mousemove", (e) => {
+  // The mouse left the widened split-view gap for this page: let it slim back down.
+  if (cfg.split_grab && e.timeStamp - grabAt > 300) { grabAt = e.timeStamp; post({ t: "split_unhover" }); }
   if (cfg.peek) { if (e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
   if (!cfg.edge || e.timeStamp - edgeAt < 300 || performance.now() < edgeArmedAt) return;
   const hit = cfg.edge === "left" ? e.clientX <= 2 && e.movementX < 0 : e.clientX >= innerWidth - 3 && e.movementX > 0;

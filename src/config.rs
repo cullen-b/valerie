@@ -254,6 +254,8 @@ pub struct Layout {
     pub split_max_panes: usize,
     pub split_unfocused_opacity: f64,
     pub split_border_width: f64,
+    pub split_resize: bool,
+    pub split_grab_width: f64,
 }
 
 /// Which bits of sidebar text and chrome are shown.
@@ -280,6 +282,7 @@ pub struct SidebarConfig {
     pub now_playing_skip: f64,
     pub compact_width: f64,
     pub medium_width: f64,
+    pub medium_tab_text: String,
     pub max_width: f64,
     pub pinned_columns: u32,
     pub pinned_tile_height: f64,
@@ -338,6 +341,7 @@ pub struct CommandBarConfig {
     pub top_result: String,
     pub ask_agent_words: usize,
     pub ask_agent_starts: Vec<String>,
+    pub customize_row: bool,
     pub width: f64,
     pub top: f64,
     pub font_size: f64,

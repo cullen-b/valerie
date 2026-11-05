@@ -48,7 +48,9 @@ define_class!(
       // and stop propagating the event to the window, hence the menu shortcut won't be
       // triggered. However, overriding this method also means the cmd+key event won't be
       // handled in webview, which means the key cannot be listened by JavaScript.
-      if self.ivars().is_child {
+      // Valerie: ⌘Z and ⇧⌘Z go to the page first, so editors with their own undo (Google Sheets, Docs) get them;
+      // WebKit re-sends what the page leaves alone to the Edit menu, so text boxes still undo.
+      if self.ivars().is_child && !is_undo(event) {
         Bool::NO
       } else {
         unsafe { objc2::msg_send![super(self), performKeyEquivalent: event] }
@@ -150,4 +152,12 @@ impl WryWebView {
       .get(&task_id)
       .cloned()
   }
+}
+
+/// ⌘Z or ⇧⌘Z (any layout's Z), without ⌃ or ⌥.
+#[cfg(target_os = "macos")]
+fn is_undo(event: &NSEvent) -> bool {
+  use objc2_app_kit::NSEventModifierFlags as F;
+  let flags = event.modifierFlags() & (F::Command | F::Control | F::Option);
+  flags == F::Command && event.charactersIgnoringModifiers().is_some_and(|k| k.to_string().eq_ignore_ascii_case("z"))
 }

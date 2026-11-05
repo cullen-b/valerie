@@ -381,6 +381,8 @@ pub struct App {
     boosts: Vec<Boost>,
     plugins: Vec<plugins::Plugin>,
     sidebar_peek: bool,
+    /// The split-view gap the mouse is on, widened to `layout.split_grab_width` so it's easy to grab.
+    split_grab: Option<usize>,
     /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
     /// When each page last clicked or submitted by keyboard: the page it leads to puts the cursor in its text box.
@@ -1511,6 +1513,7 @@ impl App {
             boosts: load_boosts(),
             plugins: plugins::load_all().0,
             sidebar_peek: false,
+            split_grab: None,
             fill_offers: HashMap::new(),
             keyed: HashMap::new(),
             pending_save: None,
@@ -1633,7 +1636,7 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
             "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
@@ -2091,6 +2094,76 @@ impl App {
 
     // ---------------------------------------------------------------- layout
 
+    /// Each split-view pane's width in a content area `w` wide: the shares people dragged to, else equal.
+    fn pane_widths(&self, panes: &[TabId], w: f64) -> Vec<f64> {
+        let n = panes.len().max(1);
+        let room = (w - self.config.layout.split_gap.max(0.0) * (n - 1) as f64).max(0.0);
+        let shares: Vec<f64> = (0..n)
+            .map(|i| panes.get(i).filter(|_| self.config.layout.split_resize).and_then(|t| self.state.split_widths.get(t)).copied().filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0 / n as f64))
+            .collect();
+        let total: f64 = shares.iter().sum();
+        shares.iter().map(|s| room * s / total).collect()
+    }
+
+    /// Each split-view pane's left edge and width, with the gap under the mouse widened (`layout.split_grab_width`).
+    fn pane_rects(&self, panes: &[TabId], x: f64, w: f64) -> Vec<(f64, f64)> {
+        let gap = self.config.layout.split_gap.max(0.0);
+        let mut at = x;
+        let mut out: Vec<(f64, f64)> = self.pane_widths(panes, w).into_iter().map(|pw| {
+            let left = at;
+            at += pw + gap;
+            (left, pw)
+        }).collect();
+        if let Some(i) = self.split_grab.filter(|i| i + 1 < out.len()) {
+            let extra = ((self.config.layout.split_grab_width - gap).max(0.0) / 2.0).min(out[i].1.min(out[i + 1].1) / 4.0);
+            out[i].1 -= extra;
+            out[i + 1].0 += extra;
+            out[i + 1].1 -= extra;
+        }
+        out
+    }
+
+    /// The gaps between split-view panes the chrome lets people drag, in window points.
+    fn split_dividers(&self, width: f64, height: f64) -> Value {
+        let panes = self.panes();
+        if !self.config.layout.split_resize || panes.len() < 2 || self.peek.is_some() {
+            return json!([]);
+        }
+        let (x, y, w, h) = self.content_area(width, height);
+        let rects = self.pane_rects(&panes, x, w);
+        let gaps = rects.windows(2).enumerate().map(|(i, p)| {
+            let at = p[0].0 + p[0].1;
+            json!({ "i": i, "rect": { "x": at, "y": y, "w": p[1].0 - at, "h": h } })
+        });
+        json!(gaps.collect::<Vec<_>>())
+    }
+
+    /// Move the gap after pane `i` to `at` (window points), keeping the two panes beside it at least 120 wide.
+    fn resize_split(&mut self, i: usize, at: f64) {
+        let panes = self.panes();
+        if !self.config.layout.split_resize || i + 1 >= panes.len() || !at.is_finite() {
+            return;
+        }
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (x, _, w, _) = self.content_area(size.width, size.height);
+        let gap = self.config.layout.split_gap.max(0.0);
+        let mut widths = self.pane_widths(&panes, w);
+        let start = x + widths[..i].iter().sum::<f64>() + i as f64 * gap;
+        let pair = widths[i] + widths[i + 1];
+        let min = 120.0_f64.min(pair / 2.0);
+        widths[i] = (at - gap / 2.0 - start).clamp(min, pair - min);
+        widths[i + 1] = pair - widths[i];
+        let room: f64 = widths.iter().sum();
+        if room <= 0.0 {
+            return;
+        }
+        for (t, pw) in panes.iter().zip(&widths) {
+            self.state.split_widths.insert(*t, pw / room);
+        }
+        self.dirty = true;
+        self.layout();
+    }
+
     fn panes(&self) -> Vec<TabId> {
         if self.chats_open {
             return vec![];
@@ -2228,9 +2301,10 @@ impl App {
         platform::follow_window(&self.overlay, platform::Follow::Fill);
         let (x, y, w, h) = self.content_area(size.width, size.height);
         let panes = self.panes();
-        let n = panes.len().max(1) as f64;
-        let gap = self.config.layout.split_gap.max(0.0);
-        let pw = (w - gap * (n - 1.0)) / n;
+        if panes.len() < 2 {
+            self.split_grab = None;
+        }
+        let rects = self.pane_rects(&panes, x, w);
         for (id, v) in &self.views {
             if !panes.contains(id) && !platform::in_page_fullscreen(v) {
                 let _ = v.set_visible(false);
@@ -2245,7 +2319,7 @@ impl App {
         for (i, id) in panes.iter().enumerate() {
             if let Some(v) = self.views.get(id).filter(|v| !platform::in_page_fullscreen(v)) {
                 platform::round_corners(v, self.config.layout.corner_radius, self.pane_corners(i, panes.len()));
-                let px = x + i as f64 * (pw + gap);
+                let (px, pw) = rects[i];
                 // Only a page already on screen glides; one appearing would glide in from wherever it was last.
                 if secs <= 0.0 || !self.shown_panes.contains(id) || !platform::animate_bounds(v, px, y, pw, h, secs) {
                     let _ = v.set_bounds(rect(px, y, pw, h));
@@ -2527,7 +2601,7 @@ impl App {
                 platform::bring_to_front(&p.view);
             }
         }
-        let arrangement = self.arrangement_vm(width, height).to_string();
+        let arrangement = format!("{}{}", self.arrangement_vm(width, height), self.split_dividers(width, height));
         if *self.last_arrangement.borrow() != arrangement {
             *self.last_arrangement.borrow_mut() = arrangement;
             self.render();
@@ -3282,6 +3356,7 @@ impl App {
             "active": active,
             "split": active.and_then(|a| self.state.split_of(a)).cloned().unwrap_or_default(),
             "splits": s.splits,
+            "split_dividers": self.split_dividers(window_size.width, window_size.height),
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
             "agents": self.agents_running,
             "peek": self.sidebar_peek,
@@ -7877,6 +7952,34 @@ impl App {
             (Source::Panel(num), k) => {
                 let k = k.to_string();
                 self.panel_message(num, &k, &m);
+            }
+            (Source::Chrome, "resize_split") => {
+                if let (Some(i), Some(at)) = (m["i"].as_u64(), m["x"].as_f64()) {
+                    self.resize_split(i as usize, at);
+                }
+            }
+            (Source::Chrome, "split_hover") => {
+                let grab = m["i"].as_u64().map(|i| i as usize).filter(|i| i + 1 < self.panes().len());
+                if self.config.layout.split_resize && self.config.layout.split_grab_width > self.config.layout.split_gap && grab.is_some() && self.split_grab != grab {
+                    self.split_grab = grab;
+                    let secs = self.anim_secs();
+                    self.layout_anim(secs);
+                    self.refresh_pane_config();
+                }
+            }
+            (Source::Chrome, "split_unhover") | (Source::Page(Target::Tab(_)), "split_unhover") => {
+                if self.split_grab.take().is_some() {
+                    let secs = self.anim_secs();
+                    self.layout_anim(secs);
+                    self.refresh_pane_config();
+                }
+            }
+            (Source::Chrome, "reset_split") => {
+                for t in self.panes() {
+                    self.state.split_widths.remove(&t);
+                }
+                self.dirty = true;
+                self.layout();
             }
             (Source::Chrome, "resize_block") => {
                 if let (Some(id), Some(px)) = (m["id"].as_str(), m["px"].as_f64()) {
