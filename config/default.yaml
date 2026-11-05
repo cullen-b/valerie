@@ -923,6 +923,11 @@ plugin_marketplace:
   repo: cullen-b/valerie-plugins   # where "Share Plugin" sends your plugins and extensions (as a pull request the maintainers review)
   offer_to_share: true     # when your AI makes a new plugin or extension, Valerie and the AI offer to share it in the marketplace. true | false
 
+# "Report a Problem" (type "triage" in the command bar): your AI finds what went wrong and, if it's Valerie's bug, files it.
+triage:
+  file_issues: true        # the AI can send the bug report as a GitHub issue from your GitHub account (you see the text and say yes first); false = it only shows you the text to post. true | false
+  repo: cullen-b/valerie   # where bug reports go: a GitHub repo, owner/name
+
 # Your own themes, used by name in `spaces` (same shape as the inline theme above).
 themes: {}
 

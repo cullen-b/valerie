@@ -867,7 +867,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("sync_passphrase", "Sync Passphrase (set, enter or change the one that encrypts your synced tabs, chats and passwords)"),
     ("allow_from_other_machines", "Allow Plugins from Other Machines"),
     ("new_window", "New Window"),
-    ("report_problem", "Report a Problem… (your AI helps find what went wrong, fixes it or writes the bug report)"),
+    ("report_problem", "Triage: Report a Problem… (your AI finds what went wrong, fixes your setup or files the bug for review)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("change_history", "Change History (every change to your settings and looks; go back to any of them)"),
     ("extensions", "Extensions"),

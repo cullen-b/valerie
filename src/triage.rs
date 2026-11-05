@@ -26,12 +26,47 @@ pub fn facts(c: &Config) -> String {
 
 /// The hidden instructions for a "Report a Problem" chat (it reaches the log and settings through Valerie's tools).
 pub fn chat_brief(c: &Config) -> String {
+    let send = if c.triage.file_issues {
+        format!(
+            "Send a bug report with the report_issue tool (title and body in Markdown; issue: <number> to add it as a \
+             comment on an existing issue). It goes to {} from their GitHub account, and they see the exact text and \
+             say yes before anything is posted. Give them the link it returns. If they'd rather not, or it fails, show \
+             them the text to post themselves.",
+            c.triage.repo
+        )
+    } else {
+        "Show them the text and let them send it themselves (never post anything for them).".to_string()
+    };
     format!(
         "{PLAYBOOK}\nIn this chat you reach everything through Valerie's tools: read_logs for the log, get_settings and \
          set_setting for settings, site_state for a site, screenshot and read_page for a page, read_ui and screenshot_ui \
-         for Valerie's own window, and open_tab plus read_page for the issues page.\n\n{}",
+         for Valerie's own window, and open_tab plus read_page for the issues page. {send}\n\n{}",
         facts(c)
     )
+}
+
+/// Send a bug report to `repo` ("owner/name") from the user's GitHub account: a new issue, or a comment on issue
+/// `number` when one already covers it. Returns its address.
+pub fn file_issue(token: &str, repo: &str, title: &str, body: &str, number: Option<u64>) -> anyhow::Result<String> {
+    use anyhow::{bail, Context};
+    let (title, body) = (title.trim(), body.trim());
+    if body.is_empty() || (number.is_none() && title.is_empty()) {
+        bail!("give the report a title and a body");
+    }
+    if !repo.contains('/') {
+        bail!("triage.repo should look like owner/name");
+    }
+    let body = format!("{body}\n\n<sub>Sent from Valerie {} with Report a Problem.</sub>", crate::app::version());
+    let (path, payload) = match number {
+        Some(n) => (format!("/repos/{repo}/issues/{n}/comments"), serde_json::json!({ "body": body })),
+        None => (format!("/repos/{repo}/issues"), serde_json::json!({ "title": title.chars().take(200).collect::<String>(), "body": body })),
+    };
+    let (code, r) = crate::github::api(token, "POST", &path, Some(&payload))?;
+    r["html_url"]
+        .as_str()
+        .filter(|_| (200..300).contains(&code))
+        .map(str::to_string)
+        .with_context(|| format!("GitHub didn't take it: {}", r["message"].as_str().unwrap_or("no reason given")))
 }
 
 /// `valerie triage`: start the user's AI in a terminal with the playbook, for when Valerie itself won't open.
@@ -45,7 +80,8 @@ pub fn run_cli() -> anyhow::Result<()> {
          newest last; times in UTC)\n- Settings: {config} (the user's changes; every option is described in \
          reference/default-config.yaml next to it). `{exe} check-config` checks them and `{exe} effective-config` prints what applies.\n\
          - Data: {data}\n- Source code: https://github.com/cullen-b/valerie (clone it if reading the code would help find \
-         the bug). If the `gh` command is installed you can search issues with it.\n\nStart by asking what went wrong.\n\n{facts}",
+         the bug). If the `gh` command is installed you can search issues with it. Show them the report and let them \
+         send it themselves (never post anything for them).\n\nStart by asking what went wrong.\n\n{facts}",
         logs = crate::log::dir().display(),
         config = config::config_path().display(),
         data = config::data_dir().display(),
@@ -78,4 +114,14 @@ pub fn run_cli() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn refuses_a_report_without_text_before_calling_github() {
+        assert!(super::file_issue("t", "o/r", "", "steps", None).is_err());
+        assert!(super::file_issue("t", "o/r", "Title", "  ", None).is_err());
+        assert!(super::file_issue("t", "nope", "Title", "body", None).is_err());
+    }
 }

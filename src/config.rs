@@ -56,6 +56,7 @@ pub struct Config {
     pub sync: SyncConfig,
     pub updates: UpdatesConfig,
     pub plugin_marketplace: MarketplaceConfig,
+    pub triage: TriageConfig,
     pub agents: AgentsConfig,
     pub content_blocking: BlockingConfig,
     pub passwords: PasswordsConfig,
@@ -992,6 +993,12 @@ pub struct MarketplaceConfig {
     pub index: String,
     pub repo: String,
     pub offer_to_share: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriageConfig {
+    pub file_issues: bool,
+    pub repo: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

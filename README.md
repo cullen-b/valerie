@@ -146,8 +146,8 @@ Pi, Cursor and Hermes**. "Set Up <name>" in the command bar installs one if need
   the selection, Key facts and dates, Tidy my tabs, Triage my tabs (a plan for every open tab, done only when you say
   go), Short tab titles, Find related reading, and anything you add in YAML (`{title}`, `{url}`, `{selection}`,
   `{input}` fill-ins; `mode: page` answers on the page, `mode: chat` can use the browser).
-- **Report a Problem…:** your AI reads Valerie's log, works out what went wrong, and fixes the setting or writes the
-  bug report for you.
+- **Report a Problem… (type "triage"):** your AI reads Valerie's log, works out what went wrong, and fixes the
+  setting, or writes the bug report and, once you've read it and said yes, files it as a GitHub issue from your account.
 - **Tasks:** "Create Task…" in the command bar asks two things in plain words: what ("go through my Jira and tell
   me what's on my plate today", "join my Google Meet calls when they start", "open my dashboards side by side") and
   when ("weekdays at 8am", "every 2 minutes", "when Valerie starts", "only when I ask"). An agent with your signed-in
