@@ -61,6 +61,7 @@ layout:
   split_max_panes: 4       # most pages side by side in split view
   split_unfocused_opacity: 0.72   # how see-through the other panes get when split_focus is dim or both (0–1)
   split_border_width: 2    # thickness of the focused pane's border when split_focus is border or both, pixels
+  split_resize: true       # drag the gap between split-view panes to resize them (double-click it for equal widths). true | false
 
 # Your own look for Valerie's windows: CSS files in the `ui` folder next to this file, applied after Valerie's own
 # styles and updated the moment you save them:

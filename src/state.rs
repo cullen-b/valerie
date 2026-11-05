@@ -179,6 +179,9 @@ pub struct State {
     /// Terminal panel height the user dragged to (overrides terminal_panel.height).
     #[serde(default)]
     pub terminal_height: Option<f64>,
+    /// Split-view pane widths the user dragged to, as each tab's share of its group (missing = an equal share).
+    #[serde(default)]
+    pub split_widths: std::collections::HashMap<TabId, f64>,
     /// Blocks' sizes people dragged in layouts ("<layout>/<block>": pixels).
     #[serde(default)]
     pub layout_sizes: std::collections::HashMap<String, f64>,
@@ -596,6 +599,8 @@ impl State {
             groups.retain(|g| g.len() > 1);
             self.spaces[i].splits = groups;
         }
+        let spaces = &self.spaces;
+        self.split_widths.retain(|t, _| spaces.iter().any(|s| s.splits.iter().any(|g| g.contains(t))));
     }
 
     /// Put `tab` in split view beside `with` (joining its group), and next to it in the sidebar so the group moves,
@@ -619,6 +624,8 @@ impl State {
             None => sp.splits.push(vec![with, tab]),
         }
         let group = self.split_of(with).cloned().unwrap_or_default();
+        // A page joining starts the group over at equal widths.
+        self.split_widths.retain(|t, _| !group.contains(t));
         let last = group.iter().rev().copied().find(|t| *t != tab).unwrap_or(with);
         // Favorites live in every space, so a favorite in a split stays where it is.
         if !self.favorites.contains(&tab) && !self.favorites.contains(&last) {

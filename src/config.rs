@@ -254,6 +254,7 @@ pub struct Layout {
     pub split_max_panes: usize,
     pub split_unfocused_opacity: f64,
     pub split_border_width: f64,
+    pub split_resize: bool,
 }
 
 /// Which bits of sidebar text and chrome are shown.
