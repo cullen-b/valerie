@@ -280,6 +280,7 @@ pub struct SidebarConfig {
     pub now_playing_skip: f64,
     pub compact_width: f64,
     pub medium_width: f64,
+    pub medium_tab_text: String,
     pub max_width: f64,
     pub pinned_columns: u32,
     pub pinned_tile_height: f64,

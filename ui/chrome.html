@@ -631,7 +631,14 @@ function tickTitles() {
       (bounce ? "animation-direction:alternate;" : "");
   }
 }
-const tabTitle = (t) => S.layout.sidebar_size === "medium" ? host(t.url) || t.title || "New Tab" : t.title || host(t.url) || "New Tab";
+// sidebar.medium_tab_text: the medium sidebar shows the title, then the domain (both), or just one; no title = the domain.
+function tabTitle(t) {
+  const h = host(t.url), title = t.title && t.title !== h && t.title !== t.url ? t.title : "";
+  if (S.layout.sidebar_size !== "medium") return t.title || h || "New Tab";
+  const how = S.sidebar.medium_tab_text || "both";
+  if (how === "domain" || !title) return h || t.title || "New Tab";
+  return how === "title" || !h ? title : title + " · " + h;
+}
 // One side of a split-view group's row or tile: clicking it shows the split with that page focused.
 function splitHalf(t, key, label) {
   const h = el("div", "half" + (t.id === S.active ? " focused" : "") + (t.loaded ? "" : " unloaded") + (t.loading ? " loading" : ""));

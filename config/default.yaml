@@ -113,6 +113,8 @@ sidebar:
   now_playing_skip: 10     # seconds the mini player's back and forward buttons jump (1 to 99); 0 hides those buttons
   compact_width: 78        # sidebar width in its icons-only size, pixels (leave room for the window buttons)
   medium_width: 180        # sidebar width in its icon + domain size, pixels
+  medium_tab_text: both    # what a tab shows in that size. one of: both (the page's title, then its domain) | title
+                           # (just the title) | domain (just the domain). A page with no title shows its domain
   max_width: 520           # widest you can drag the sidebar, pixels
   pinned_columns: 4        # pinned icon tiles per row (full and medium sizes)
   pinned_tile_height: 46   # height of each pinned icon tile, pixels
