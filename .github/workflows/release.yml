@@ -1,7 +1,8 @@
 name: Release
-# Every push to main becomes an edge (testing) build: tested, built for macOS (signed with Valerie's release key),
-# Linux and Windows, and published as a pre-release with latest.json. Copies on the edge channel update from the
-# rolling `edge` release's latest.json; everyone else stays on stable until a build is promoted (promote.yml).
+# Every push to main is tested, built for macOS (signed with Valerie's release key), Linux and Windows, and published
+# with latest.json. PUBLISH_TO below decides who gets it:
+#   stable: every build is the stable release everyone gets (and the edge feed too).
+#   edge:   a pre-release only copies on the edge channel get; everyone else waits until it's promoted (promote.yml).
 on:
   push:
     branches: [main]
@@ -15,6 +16,9 @@ concurrency:
 
 permissions:
   contents: write
+
+env:
+  PUBLISH_TO: stable   # stable | edge (see above)
 
 jobs:
   version:
@@ -128,9 +132,10 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
-      - name: Release notes (commits since the last release)
+      - name: Release notes (commits since the last release; for stable, since the last stable one)
         run: |
-          PREV=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ "$PUBLISH_TO" = stable ]; then PREV=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true); fi
+          [ -n "${PREV:-}" ] || PREV=$(git tag --list 'v*' --sort=-v:refname | head -1)
           { echo "## What's new"; git log --no-merges --format='- %s' ${PREV:+$PREV..}HEAD | head -40 | cut -c1-300; } > notes.md
           cat notes.md
       - name: latest.json (what installed copies update from)
@@ -148,11 +153,12 @@ jobs:
                     open("dist/latest.json", "w"), indent=2)
           PY
           cat dist/latest.json
-      - name: Publish as a testing build (stable users get it only once it's promoted)
+      - name: Publish (stable, or a testing build stable users get only once it's promoted)
         run: |
+          if [ "$PUBLISH_TO" = stable ]; then kind=(--latest); title="Valerie $VERSION"; else kind=(--prerelease); title="Valerie $VERSION (testing)"; fi
           gh release create "v$VERSION" dist/Valerie-macos.zip dist/Valerie.dmg dist/valerie-linux-x86_64.tar.gz \
-            dist/valerie-windows-x86_64.zip dist/latest.json --title "Valerie $VERSION (testing)" --notes-file notes.md \
-            --target "$GITHUB_SHA" --prerelease
+            dist/valerie-windows-x86_64.zip dist/latest.json --title "$title" --notes-file notes.md \
+            --target "$GITHUB_SHA" "${kind[@]}"
       - name: Edge feed (what copies on the edge channel update from)
         run: |
           gh release view edge >/dev/null 2>&1 || gh release create edge --prerelease --target "$GITHUB_SHA" \
