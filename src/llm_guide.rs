@@ -148,6 +148,7 @@ If a wish needs something no setting covers, a boost (CSS for one site) or a plu
 - **Something that should happen by itself** ("pin every Figma tab", "mute YouTube when I switch away", "save every PDF
   I download to Notion"): a plugin with `events`.
 - **A new right-click entry, sidebar button, command-bar search, menu entry or start page**: a plugin (see Plugins).
+- **Moving or replacing whole parts of the window, or a panel beside the page**: a layout (see Layouts).
 
 ## Restyling Valerie itself
 
@@ -178,6 +179,83 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
 - `ui/page.css`: what Valerie draws inside pages: `.hint` (link hints), `.toast`, `.menu` (link menu), `.find`
   (find bar) and `.find input`, `.minimap`, `.pill` (link address on hover), `.save` (save password), `.loadbar`,
   `.pick` (hide-an-element highlight); reader view: `main`, `.site`, `h1`, `p`.
+
+## Layouts: the whole window as a file
+
+A **layout** says where everything in the window goes. `layout.arrangement` in config.yaml picks one: `classic` (the
+usual window, arranged by the `layout` and `sidebar` settings) or the name of a `layouts/<name>.yaml` file in this
+folder. Valerie's own are in `reference/layouts/` (`workbench`, `tab-strip`, `valerie-98`); read them for examples. A
+file in `layouts/` with the same name replaces one of Valerie's. Saving a file changes the window within a second.
+
+When someone wants the window rearranged ("put my tabs along the bottom", "a panel of my PRs on the right", "make it
+look like Windows 98"), that's a layout, with a panel for anything Valerie doesn't draw itself:
+
+```yaml
+title: My Window                 # its name in the command bar
+description: One line about it.
+settings:                        # look settings while it shows, over the user's: layout, sidebar, window, command_bar,
+  sidebar: {{ tab_height: 30 }}    # start_page, toast_seconds. Nothing else is allowed (layouts can't reach agents or data)
+css:                             # CSS while it shows, per window: chrome, palette, chat, terminal, little, answer, welcome,
+  chrome: 'body {{ opacity: .9 }}'   # plugins, page (the parts are listed under "Restyling Valerie itself")
+window:                          # leave this out to keep the usual window and only bring settings and CSS
+  gap: 6                         # pixels between the children; dragging a gap resizes the sized block next to it
+  row:                           # `row` is side by side, `column` is stacked
+    - part: sidebar              # Valerie's own parts: pages (required, exactly once), sidebar, top_bar
+    - column:
+        - part: pages
+        - panel: my-plugin/board # plugins/my-plugin/board.html (`panel: my-plugin` means its panel.html)
+          id: board              # commands use this; panels and parts default to their name
+          props: {{ repo: me/app }} # the panel reads these as valerie.props
+          size: 220              # pixels along its row or column. Or `weight: 2`, its share of what's left (default 1)
+          min: 100               # smallest and largest it can be dragged to
+          max: 500
+          hidden: false          # starts hidden; toggle_block shows it
+          padding: 0             # empty pixels inside its edge
+          radius: 12             # its rounded corners, pixels (default layout.corner_radius)
+floating:                        # panels over the window, against one edge
+  - panel: my-plugin/clock
+    edge: right                  # top | right | bottom | left
+    align: end                   # start | center | end, along that edge
+    width: 160
+    height: 60
+    margin: 12                   # pixels from the edge
+```
+
+A layout with `sidebar` shows Valerie's sidebar, `top_bar` its tab bar. With neither, panels replace them: see
+`window-panels/tab-strip.html`, a whole tab bar in one file. The terminal panel and Chats open inside the `pages` block.
+
+**A panel** is one HTML file in a plugin's folder, in its own view in the window. Only `<script>` tags and scripts from
+`https://` addresses run: no `onclick="…"` attributes, and build what you show with `textContent`, not innerHTML. It has:
+
+- `valerie.state`: what the sidebar draws, kept live: `spaces`, `active_space`, `active` (the tab on screen), `url`,
+  `pinned`, `kept` (lists that hold folders with `children`), `today`, `favorites`, each tab `{{ id, title, url, favicon,
+  loading, playing, muted }}`, plus `split`, `agents`, `chats`, `now_playing`, `theme` and `layout`.
+  `valerie.on("state", draw)` runs whenever it changes.
+- `await valerie.call("<tool>", {{ …arguments }})`: the browser tools below. `valerie.call("run_command", {{ command: {{
+  cmd: "activate_tab", tab: 3 }} }})` does anything a shortcut can. Tools that only look work at once; list others in
+  the plugin's `permissions:` and the user is asked once.
+- `valerie.props`, `valerie.dragWindow()` (call it on mousedown in a bar you draw, so it moves the window),
+  `valerie.log("…", data)` (read it back with `read_logs`, area `panel:<plugin>`; the panel's errors go there too).
+- Colours: `var(--v-bg)`, `--v-fg`, `--v-dim`, `--v-line`, `--v-card`, `--v-accent`. Links open as tabs.
+
+Saving a panel's file rebuilds it. Its folder is a normal plugin, so `enabled: false` folds its blocks away (the pages
+take the room), and it's shared and installed like any plugin. **A plugin can bring a whole layout**: put
+`layouts/<name>.yaml` in its folder and every panel that layout uses, and whoever installs it can pick it.
+
+**Check your work, every time:**
+1. `"{exe}" check-config` finds mistakes in every layout. Fix them until it passes.
+2. `"{exe}" call run_command '{{"command": {{"cmd": "switch_layout", "name": "<name>"}}}}'` shows it, and
+   `"{exe}" call list_layouts` says where each block landed and whether the file has a mistake.
+3. `"{exe}" call screenshot_ui '{{"part": "panel:<block id>"}}'` and `read_ui` show a panel; `read_logs` shows its errors.
+
+**Nothing can trap the user.** A broken file changes nothing: the last good version stays, and `layouts/<name>.error`
+says why. A layout always has somewhere to show pages, and panels can't take all of its room. `reset_layout`
+(CmdOrCtrl+Alt+Shift+0) goes back to `classic`. Other commands: `next_layout`, `switch_layout {{ name? }}`,
+`duplicate_layout {{ name?, as? }}` (copy one into `layouts/` to edit: do this rather than starting from nothing),
+`toggle_block {{ id }}`, `resize_block {{ id, px }}`. What people drag and toggle is remembered per layout.
+
+A setting a layout brings wins over config.yaml while it shows, so if a change to config.yaml seems ignored, look at the
+layout's `settings`.
 
 ## Valerie in another language
 
@@ -471,6 +549,11 @@ pub fn install() {
     let reference = dir.join("reference");
     let _ = std::fs::create_dir_all(&reference);
     let _ = std::fs::write(reference.join("default-config.yaml"), crate::config::DEFAULT_YAML);
+    let layouts = reference.join("layouts");
+    let _ = std::fs::create_dir_all(&layouts);
+    for (name, text) in crate::window_layout::built_ins() {
+        let _ = std::fs::write(layouts.join(format!("{name}.yaml")), text);
+    }
     crate::plugins::install_bundled();
     let example = crate::plugins::plugins_dir().join("_example");
     if !example.exists() {

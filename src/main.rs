@@ -19,6 +19,7 @@ mod routing;
 mod state;
 mod sync;
 mod trust;
+mod window_layout;
 mod github;
 mod ai;
 mod update;
@@ -66,7 +67,10 @@ fn check_config() -> anyhow::Result<()> {
 
 /// Every mistake `valerie check-config` would report, and how many plugins loaded.
 pub fn config_problems() -> (Vec<String>, usize) {
-    let mut problems = Vec::new();
+    let mut problems = window_layout::problems(|plugin, file| {
+        let dir = plugins::plugins_dir().join(plugin);
+        dir.join(format!("{file}.html")).is_file()
+    });
     match Config::load() {
         Ok(c) => {
             for (key, binding) in &c.keybindings {

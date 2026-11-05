@@ -2,11 +2,11 @@ use crate::command::{title_for, BarMode, Command, TabId, CATALOG};
 use crate::config::{self, Config, SidebarPosition, TabBar, Theme, ThemeRef};
 use crate::mcp::McpRequest;
 use crate::state::{find_folder, now, Node, State, Tab};
-use crate::{agents, blocking, import, passwords, platform, plugins, routing, sync};
+use crate::{agents, blocking, import, passwords, platform, plugins, routing, sync, window_layout};
 use anyhow::Result;
 use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
@@ -27,10 +27,12 @@ pub enum Target {
     Tab(TabId),
     Little(WindowId),
     Peek,
+    Panel(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Source {
+    Panel(u32),
     Chrome,
     Overlay,
     Chat,
@@ -371,6 +373,20 @@ pub struct App {
     pending_focus: std::cell::Cell<Option<TabId>>,
     /// The last sidebar state sent, so unchanged states aren't redrawn.
     last_render: std::cell::RefCell<String>,
+    /// The layout on screen (None: the classic window) and its name.
+    win_layout: Option<window_layout::Layout>,
+    win_layout_name: String,
+    /// Panels placed by the layout, by block name.
+    panels: HashMap<String, Panel>,
+    panel_count: u32,
+    /// Panels to build or rebuild at the next layout pass (a file or the layout changed).
+    panels_stale: bool,
+    /// Panels the layout names that can't show (their plugin is off, missing or waiting to be allowed).
+    panels_unavailable: HashSet<String>,
+    /// What panels were last told, and where the chrome was last told things go.
+    panel_state: std::cell::RefCell<String>,
+    last_arrangement: std::cell::RefCell<String>,
+    layout_error_shown: Option<String>,
     #[cfg(not(target_os = "macos"))]
     contexts: HashMap<String, wry::WebContext>,
     /// The profile's context a view is being built in already has the valerie:// protocol.
@@ -612,9 +628,20 @@ fn serve_page(name: &str, key: &str, theme: &str) -> wry::http::Response<std::bo
             <h2>No page called “{name}”</h2><p>Pages live in {}.</p>", pages_dir().display().to_string().replace('<', "&lt;"));
         return wry::http::Response::builder().header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(body.into_bytes())).unwrap();
     };
+    let (body, csp) = dress_page(&html, name, key, theme, "null", "null");
+    wry::http::Response::builder()
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header("Content-Security-Policy", format!("{csp}; frame-ancestors 'self'"))
+        .body(std::borrow::Cow::Owned(body.into_bytes()))
+        .unwrap()
+}
+
+/// A page or panel's HTML with Valerie's colours and its `valerie` object, and the content policy that goes with it.
+fn dress_page(html: &str, name: &str, key: &str, theme: &str, props: &str, state: &str) -> (String, String) {
     let nonce = crate::mcp::random_hex()[..24].to_string();
     let csp = format!("script-src 'nonce-{nonce}' https:; object-src 'none'; base-uri 'none'");
-    let bridge = PAGE_BRIDGE.replace("__KEY__", key).replace("__NAME__", name);
+    // "</" would end the <script> early if a title or a prop contains it.
+    let bridge = PAGE_BRIDGE.replace("__KEY__", key).replace("__NAME__", name).replace("__PROPS__", &props.replace("</", "<\\/")).replace("__STATE__", &state.replace("</", "<\\/"));
     let head = format!(
         "<meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\"><style id=\"valerie-theme\">{theme}</style><script nonce=\"{nonce}\">{bridge}</script>"
     );
@@ -633,19 +660,18 @@ fn serve_page(name: &str, key: &str, theme: &str) -> wry::http::Response<std::bo
         .or_else(|| lower.starts_with("<!doctype").then(|| lower.find('>').map(|e| e + 1)).flatten())
         .unwrap_or(0);
     body.insert_str(at, &head);
-    wry::http::Response::builder()
-        .header("Content-Type", "text/html; charset=utf-8")
-        .header("Content-Security-Policy", format!("{csp}; frame-ancestors 'self'"))
-        .body(std::borrow::Cow::Owned(body.into_bytes()))
-        .unwrap()
+    (body, csp)
 }
 
 /// The `valerie` object pages get. Replies come back through __valeriePage.reply.
 const PAGE_BRIDGE: &str = r#"(function () {
-  const key = "__KEY__", post = window.ipc.postMessage.bind(window.ipc), waits = new Map(); let n = 0;
+  const key = "__KEY__", post = window.ipc.postMessage.bind(window.ipc), waits = new Map(); let n = 0, state = __STATE__;
   const text = (v) => v instanceof Error ? String(v.stack || v.message) : typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch (_) { return String(v); } })();
   const valerie = Object.freeze({
     page: "__NAME__",
+    props: __PROPS__,
+    get state() { return state; },
+    dragWindow: () => post(JSON.stringify({ t: "panel_drag", key })),
     call: (tool, args) => new Promise((resolve, reject) => {
       const id = "p" + (++n); waits.set(id, [resolve, reject]);
       post(JSON.stringify({ t: "page_call", key, id, tool: String(tool), args: args || {} }));
@@ -656,6 +682,11 @@ const PAGE_BRIDGE: &str = r#"(function () {
   Object.defineProperty(window, "valerie", { value: valerie, writable: false, configurable: false });
   Object.defineProperty(window, "__valeriePage", { value: Object.freeze({ reply(id, ok, v) {
     const w = waits.get(id); if (!w) return; waits.delete(id); ok ? w[0](v) : w[1](new Error(String(v)));
+  }, state(s, css) {
+    state = s;
+    const theme = document.getElementById("valerie-theme");
+    if (theme && theme.textContent !== css) theme.textContent = css;
+    dispatchEvent(new CustomEvent("valerie:changed", { detail: "state" }));
   } }), writable: false, configurable: false });
   addEventListener("error", (e) => valerie.log("error:", e.message, (e.filename || "").split("/").pop() + ":" + e.lineno));
   addEventListener("unhandledrejection", (e) => valerie.log("error: unhandled", text(e.reason)));
@@ -669,6 +700,20 @@ fn legacy_device_name() -> String {
 /// Chats live on this machine; with chats.sync they also travel, encrypted, through the sync repo.
 fn chats_dir(_config: &Config) -> PathBuf {
     config::data_dir().join("chats")
+}
+
+/// A plugin's panel placed in the window by the layout on screen.
+struct Panel {
+    num: u32,
+    view: WebView,
+    plugin: String,
+    /// What it was built from; when this changes it's built again.
+    source: String,
+    /// Exactly as Valerie ships it, so its tools need no question.
+    shipped: bool,
+    floating: bool,
+    rect: window_layout::Rect,
+    radius: Option<f64>,
 }
 
 /// A hidden tab an agent opened to work in (open_tab with hidden): when it last used it, and the tab whose pop-up it is.
@@ -1042,7 +1087,13 @@ fn user_css(file: &str, config: &Config) -> String {
     if !config.ui.custom_css {
         return String::new();
     }
-    std::fs::read_to_string(config::config_dir().join("ui").join(file)).unwrap_or_default()
+    let own = std::fs::read_to_string(config::config_dir().join("ui").join(file)).unwrap_or_default();
+    // The layout on screen brings its look after the user's file.
+    let brought = window_layout::active(&config.layout.arrangement).and_then(|l| l.css.get(file.trim_end_matches(".css")).cloned());
+    match brought {
+        Some(css) => format!("{own}\n{css}"),
+        None => own,
+    }
 }
 
 /// strings/<language>.yaml from the config folder: English words → the user's.
@@ -1370,6 +1421,15 @@ impl App {
             view_profiles: HashMap::new(),
             pending_focus: std::cell::Cell::new(None),
             last_render: Default::default(),
+            win_layout: None,
+            win_layout_name: window_layout::CLASSIC.to_string(),
+            panels: HashMap::new(),
+            panel_count: 0,
+            panels_stale: true,
+            panels_unavailable: HashSet::new(),
+            panel_state: Default::default(),
+            last_arrangement: Default::default(),
+            layout_error_shown: None,
             #[cfg(not(target_os = "macos"))]
             contexts: HashMap::new(),
             protocol_taken: std::cell::Cell::new(false),
@@ -1515,7 +1575,7 @@ impl App {
         match target {
             Target::Tab(id) => self.state.space_of(id),
             Target::Little(id) => self.littles.get(&id).map(|l| l.space),
-            Target::Peek => None,
+            Target::Peek | Target::Panel(_) => None,
         }
         .unwrap_or(self.state.active_space)
     }
@@ -1948,9 +2008,28 @@ impl App {
         Some(if self.terminal_max { (x, y, w, h) } else { (x, y + h - th, w, th) })
     }
 
+    /// Where everything goes in a window this big, when a layout with a tree is on screen.
+    fn arranged(&self, w: f64, h: f64) -> Option<window_layout::Arranged> {
+        let layout = self.win_layout.as_ref()?;
+        let sizes = window_layout::for_layout(&self.state.layout_sizes, &self.win_layout_name);
+        let shown = window_layout::for_layout(&self.state.layout_shown, &self.win_layout_name);
+        window_layout::arrange(layout, w, h, &window_layout::Inputs {
+            sidebar_width: self.sidebar_width(),
+            sidebar_visible: self.config.layout.sidebar_visible || self.sidebar_peek,
+            top_bar_height: self.config.layout.top_bar_height,
+            sizes: &sizes,
+            shown: &shown,
+            unavailable: &self.panels_unavailable,
+        })
+    }
+
     fn content_area_full(&self, w: f64, h: f64) -> (f64, f64, f64, f64) {
         let l = &self.config.layout;
         let b = l.bezel;
+        if let Some(a) = self.arranged(w, h) {
+            let p = a.pages;
+            return (p.x + b, p.y + b, (p.w - 2.0 * b).max(1.0), (p.h - 2.0 * b).max(1.0));
+        }
         match l.tab_bar {
             TabBar::Top => (b, self.config.layout.top_bar_height, w - 2.0 * b, h - self.config.layout.top_bar_height - b),
             TabBar::Side => {
@@ -2018,6 +2097,7 @@ impl App {
             }
         }
         self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id) && !self.waiting_draw.contains(id)).collect();
+        self.layout_panels(size.width, size.height);
         if let Some(av) = &self.answer_view {
             match self.answer_tab.filter(|t| panes.contains(t)) {
                 Some(_) => {
@@ -2089,6 +2169,11 @@ impl App {
         let hide_lights = match self.config.window.traffic_lights.as_str() {
             "show" => false,
             "hide" => true,
+            // The buttons sit in the window's corner: keep them only where Valerie's own bars leave room for them.
+            _ if self.win_layout.as_ref().is_some_and(|l| l.window.is_some()) => {
+                let at_corner = |r: Option<window_layout::Rect>| r.is_some_and(|r| r.x <= 0.0 && r.y <= 0.0);
+                !self.arranged(size.width, size.height).is_some_and(|a| at_corner(a.sidebar) || at_corner(a.top_bar))
+            }
             _ => self.config.layout.tab_bar == TabBar::Side && (!self.config.layout.sidebar_visible || self.config.layout.sidebar_position == SidebarPosition::Right),
         };
         platform::set_traffic_lights_hidden(&self.window, hide_lights);
@@ -2110,7 +2195,7 @@ impl App {
         if l.corner_radius <= 0.0 {
             return Corners::None;
         }
-        if l.bezel > 0.0 {
+        if l.bezel > 0.0 || self.win_layout.as_ref().is_some_and(|l| l.window.is_some()) {
             return Corners::All;
         }
         match l.tab_bar {
@@ -2122,6 +2207,262 @@ impl App {
                 _ => Corners::None,
             },
         }
+    }
+
+    /// Read the chosen layout again: its file may have changed, or the plugins its panels come from.
+    fn refresh_win_layout(&mut self) {
+        let name = self.base_config.get("layout").and_then(|l| l.get("arrangement")).and_then(|a| a.as_str()).unwrap_or(window_layout::CLASSIC).to_string();
+        let layout = window_layout::active(&name);
+        self.panels_unavailable = layout.iter().flat_map(|l| l.panels()).filter(|p| !self.panel_available(p)).collect();
+        for p in &self.panels_unavailable {
+            crate::log::event("layout", format!("{name}: panel {p} can't show (its plugin is off, missing or waiting to be allowed)"));
+        }
+        let error = window_layout::error_of(&name);
+        if error.is_some() && error != self.layout_error_shown {
+            self.toast(&format!("Layout {name} has a mistake, so the last good version stays: {}", error.as_deref().unwrap_or("")));
+        }
+        self.layout_error_shown = error;
+        self.win_layout = layout;
+        self.win_layout_name = name;
+        self.panels_stale = true;
+    }
+
+    /// The file a panel is drawn from, in a plugin that's on.
+    fn panel_file(&self, panel: &str) -> Option<(&plugins::Plugin, PathBuf)> {
+        let (plugin, file) = window_layout::panel_parts(panel).ok()?;
+        let p = self.plugins.iter().find(|p| p.name == plugin && p.manifest.enabled)?;
+        Some((p, p.dir.join(format!("{file}.html"))))
+    }
+
+    fn panel_available(&self, panel: &str) -> bool {
+        self.panel_file(panel).is_some_and(|(_, f)| f.is_file())
+    }
+
+    /// Put the layout's panels where they go, building or dropping them as needed, and tell the chrome what moved.
+    fn layout_panels(&mut self, width: f64, height: f64) {
+        let placed = self.arranged(width, height).map(|a| a.panels).unwrap_or_default();
+        if std::mem::take(&mut self.panels_stale) && !self.main_hidden {
+            self.build_panels(&placed);
+        }
+        let on_screen: HashSet<&str> = placed.iter().map(|p| p.id.as_str()).collect();
+        for (id, p) in &mut self.panels {
+            if !on_screen.contains(id.as_str()) {
+                let _ = p.view.set_visible(false);
+            }
+        }
+        for place in &placed {
+            let Some(p) = self.panels.get_mut(&place.id) else { continue };
+            let r = place.rect;
+            let radius = place.radius.unwrap_or(self.config.layout.corner_radius);
+            if p.rect != r || p.radius != place.radius {
+                p.rect = r;
+                p.radius = place.radius;
+                platform::round_corners(&p.view, radius.max(0.0), if radius > 0.0 { platform::Corners::All } else { platform::Corners::None });
+                let _ = p.view.set_bounds(rect(r.x, r.y, r.w, r.h));
+            }
+            let _ = p.view.set_visible(true);
+            if p.floating {
+                platform::bring_to_front(&p.view);
+            }
+        }
+        let arrangement = self.arrangement_vm(width, height).to_string();
+        if *self.last_arrangement.borrow() != arrangement {
+            *self.last_arrangement.borrow_mut() = arrangement;
+            self.render();
+        }
+    }
+
+    /// What the chrome draws where: its sidebar or top bar, the start page and the gaps people can drag.
+    fn arrangement_vm(&self, width: f64, height: f64) -> Value {
+        match self.arranged(width, height) {
+            Some(a) => json!({ "pages": a.pages, "sidebar": a.sidebar, "top_bar": a.top_bar, "dividers": a.dividers }),
+            None => Value::Null,
+        }
+    }
+
+    /// Make the panels match the layout: new ones built, changed ones rebuilt, ones no longer in it dropped.
+    fn build_panels(&mut self, placed: &[window_layout::Placed]) {
+        self.panels.retain(|id, _| placed.iter().any(|p| &p.id == id));
+        let theme = self.page_theme.read().map(|t| t.clone()).unwrap_or_default();
+        let state = self.panel_state.borrow().clone();
+        for place in placed {
+            let Some((plugin, file)) = self.panel_file(&place.panel).map(|(p, f)| (p.name.clone(), f)) else { continue };
+            let html = match std::fs::read_to_string(&file) {
+                Ok(h) => h,
+                Err(e) => {
+                    crate::log::line("layout", format!("panel {}: {e}", place.panel));
+                    continue;
+                }
+            };
+            let source = format!("{}\n{}\n{html}", place.panel, place.props);
+            if self.panels.get(&place.id).is_some_and(|p| p.source == source) {
+                continue;
+            }
+            let (page, _) = dress_page(&html, &place.panel, &self.page_key, &theme, &place.props.to_string(), if state.is_empty() { "null" } else { &state });
+            self.panel_count += 1;
+            let num = self.panel_count;
+            let (p1, p2, p3) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
+            let built = WebViewBuilder::new()
+                .with_html(page)
+                .with_visible(false)
+                .with_accept_first_mouse(true)
+                .with_devtools(true)
+                .with_ipc_handler(move |r| send(&p1, UserEvent::Ipc { from: Source::Panel(num), msg: r.into_body() }))
+                .with_navigation_handler(move |url| {
+                    if url.starts_with("about:") || url.starts_with("data:") {
+                        return true;
+                    }
+                    send(&p2, UserEvent::Ipc { from: Source::Panel(num), msg: json!({ "t": "open", "url": url }).to_string() });
+                    false
+                })
+                .with_new_window_req_handler(move |url, _| {
+                    send(&p3, UserEvent::Ipc { from: Source::Panel(num), msg: json!({ "t": "open", "url": url }).to_string() });
+                    NewWindowResponse::Deny
+                })
+                .child_of(&self.window);
+            match built {
+                Ok(view) => {
+                    let dir = plugins::plugins_dir().join(&plugin);
+                    let shipped = plugins::shipped(&plugin, &crate::trust::files_in(&dir));
+                    self.panels.insert(place.id.clone(), Panel { num, view, plugin, source, shipped, floating: place.floating, rect: Default::default(), radius: None });
+                }
+                Err(e) => crate::log::line("layout", format!("panel {}: {e}", place.panel)),
+            }
+        }
+    }
+
+    /// A message from a panel: a tool call, a log line or a request to move the window. Tools that only look work at
+    /// once; others must be in the plugin's `permissions`, and the user is asked once (as for its page scripts).
+    fn panel_message(&mut self, num: u32, kind: &str, m: &Value) {
+        if kind == "open" {
+            if let Some(url) = m["url"].as_str().filter(|u| u.starts_with("http://") || u.starts_with("https://")) {
+                self.open_tab(url, None, true);
+            }
+            return;
+        }
+        if !m["key"].as_str().is_some_and(|k| crate::mcp::same_secret(k, &self.page_key)) {
+            return;
+        }
+        let Some((plugin, shipped)) = self.panels.values().find(|p| p.num == num).map(|p| (p.plugin.clone(), p.shipped)) else { return };
+        let who = format!("panel:{plugin}");
+        let now_i = std::time::Instant::now();
+        let recent = self.plugin_calls.entry(who.clone()).or_default();
+        recent.retain(|t| now_i.duration_since(*t) < std::time::Duration::from_secs(10));
+        if recent.len() >= 200 {
+            return;
+        }
+        recent.push(now_i);
+        let target = Target::Panel(num);
+        match kind {
+            "panel_drag" => {
+                let _ = self.window.drag_window();
+            }
+            "page_log" => {
+                let text = m["text"].as_str().unwrap_or("");
+                if text.starts_with("error") { crate::log::line(&who, text) } else { crate::log::event(&who, text) }
+            }
+            "page_call" => {
+                let (id, tool, args) = (m["id"].as_str().unwrap_or("").to_string(), m["tool"].as_str().unwrap_or("").to_string(), m["args"].clone());
+                let Some(p) = self.plugins.iter().find(|p| p.name == plugin && p.manifest.enabled) else { return };
+                let looking = crate::mcp::LOOKING.contains(&tool.as_str()) && tool != "screenshot_ui";
+                if !looking && !p.manifest.permissions.contains(&tool) {
+                    crate::log::line(&who, format!("called {tool}, which isn't in its permissions"));
+                    return self.plugin_reply(target, &id, Err(format!("{tool} isn't in this plugin's permissions (add it to `permissions` in plugin.yaml)")));
+                }
+                let mut wanted = p.manifest.permissions.clone();
+                wanted.sort();
+                if looking || shipped || self.state.plugin_grants.get(&plugin) == Some(&wanted) {
+                    return self.plugin_tool(target, id, tool, args);
+                }
+                if self.plugin_denied.contains(&plugin) {
+                    return self.plugin_reply(target, &id, Err("the user didn't allow this plugin to use browser tools".into()));
+                }
+                let asking = self.plugin_waiting.iter().any(|w| w.1 == plugin);
+                self.plugin_waiting.push((target, plugin.clone(), id, tool, args));
+                if !asking {
+                    let px = self.proxy.clone();
+                    let list = wanted.iter().map(|t| t.replace('_', " ")).collect::<Vec<_>>().join(", ");
+                    platform::ask(&self.chrome, &format!("Let the plugin “{plugin}” use the browser?"), &format!("Its panel wants to: {list}. You're asked once; remove a tool from `permissions` in its plugin.yaml to take it back."), "Allow", "Don't Allow", move |ok| {
+                        send(&px, UserEvent::PluginGrant { plugin, allowed: ok });
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Show a layout by saving the choice, the way any setting changes.
+    fn set_layout(&mut self, name: &str) {
+        if name != window_layout::CLASSIC && window_layout::text_of(name).is_none() {
+            return self.toast(&format!("There's no layout called {name}"));
+        }
+        let value = serde_json::to_string(name).unwrap_or_default();
+        match config::change_setting(&["layout", "arrangement"], &value, false) {
+            Ok(()) => {
+                self.reload_config();
+                let title = self.win_layout.as_ref().map(|l| l.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| name.replace(['-', '_'], " "));
+                self.toast(&format!("Layout: {title}"));
+            }
+            Err(e) => self.toast(&format!("Couldn't change the layout: {e:#}")),
+        }
+    }
+
+    fn next_layout(&mut self) {
+        let names = window_layout::names();
+        let at = names.iter().position(|n| *n == self.win_layout_name).unwrap_or(0);
+        let next = names[(at + 1) % names.len()].clone();
+        self.set_layout(&next);
+    }
+
+    /// Copy a layout into layouts/ under a new name, then show the copy. Valerie's own stay as they are.
+    fn duplicate_layout(&mut self, name: Option<String>, copy_as: Option<String>) {
+        let name = name.unwrap_or_else(|| self.win_layout_name.clone());
+        let text = if name == window_layout::CLASSIC {
+            Some("title: My Layout\nwindow:\n  row:\n    - part: sidebar\n    - part: pages\n".to_string())
+        } else {
+            window_layout::text_of(&name)
+        };
+        let Some(text) = text else { return self.toast(&format!("There's no layout called {name}")) };
+        let dir = config::config_dir().join("layouts");
+        let wanted = copy_as.unwrap_or_else(|| format!("{name}-copy"));
+        if !page_name_ok(&wanted) {
+            return self.toast("A layout's name can have letters, digits, - and _");
+        }
+        let free = |n: &str| !dir.join(format!("{n}.yaml")).exists() && window_layout::text_of(n).is_none();
+        let Some(copy) = std::iter::once(wanted.clone()).chain((2..100).map(|i| format!("{wanted}-{i}"))).find(|n| free(n)) else { return };
+        let written = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(format!("{copy}.yaml")), text));
+        match written {
+            Ok(()) => self.set_layout(&copy),
+            Err(e) => self.toast(&format!("Couldn't copy the layout: {e}")),
+        }
+    }
+
+    fn toggle_block(&mut self, id: &str) {
+        if id == "sidebar" {
+            self.event_queue_cmds.push(Command::ToggleSidebar);
+            return;
+        }
+        let Some(layout) = &self.win_layout else { return self.toast("The classic layout has no blocks") };
+        if !window_layout::blocks(layout).iter().any(|b| b == id) {
+            return self.toast(&format!("This layout has no block called {id}"));
+        }
+        let key = window_layout::block_key(&self.win_layout_name, id);
+        let shown = window_layout::for_layout(&self.state.layout_shown, &self.win_layout_name);
+        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let now = shown.get(id).copied().unwrap_or_else(|| self.arranged(size.width, size.height).is_some_and(|a| a.panels.iter().any(|p| p.id == id) || (id == "top_bar" && a.top_bar.is_some())));
+        self.state.layout_shown.insert(key, !now);
+        self.dirty = true;
+        self.panels_stale = true;
+        self.layout();
+    }
+
+    fn resize_block(&mut self, id: &str, px: f64) {
+        if !self.win_layout.as_ref().is_some_and(|l| window_layout::blocks(l).iter().any(|b| b == id)) || !px.is_finite() {
+            return;
+        }
+        self.state.layout_sizes.insert(window_layout::block_key(&self.win_layout_name, id), px.clamp(20.0, 4000.0));
+        self.dirty = true;
+        self.layout();
     }
 
     /// The sidebar's current width: what the user dragged to, else the preset for `layout.sidebar_size`.
@@ -2439,7 +2780,7 @@ impl App {
         );
         if let Ok(mut t) = self.page_theme.write() {
             if *t != css {
-                *t = css;
+                t.clone_from(&css);
             }
         }
         let s = self.state.space();
@@ -2447,6 +2788,8 @@ impl App {
         let mut layout = serde_json::to_value(&self.config.layout).unwrap_or_default();
         layout["sidebar_width"] = json!(self.sidebar_width());
         layout["sidebar_size"] = json!(self.sidebar_size());
+        let window_size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let arrangement = self.arrangement_vm(window_size.width, window_size.height);
         let vm = json!({
             "spaces": self.state.spaces.iter().enumerate().map(|(i, sp)| json!({
                 "name": sp.name, "icon": self.space_cfg(i).and_then(|c| c.icon.clone()),
@@ -2486,7 +2829,20 @@ impl App {
                 "closed": if self.chats_open && self.config.chats.closed_list { &self.closed_chats[..self.closed_chats.len().min(300)] } else { &[] },
             },
             "now_playing": self.now_playing(),
+            "arrangement": arrangement,
         });
+        if !self.panels.is_empty() || self.win_layout.is_some() {
+            let keep = ["spaces", "active_space", "theme", "layout", "kept", "favorites", "pinned", "today", "active", "split", "splits", "url", "agents", "chats", "now_playing"];
+            let told: serde_json::Map<String, Value> = keep.iter().map(|k| (k.to_string(), vm[*k].clone())).collect();
+            let told = Value::Object(told).to_string();
+            if *self.panel_state.borrow() != told {
+                let script = format!("window.__valeriePage && __valeriePage.state({told}, {})", json!(css));
+                for p in self.panels.values() {
+                    let _ = p.view.evaluate_script(&script);
+                }
+                *self.panel_state.borrow_mut() = told;
+            }
+        }
         let vm = vm.to_string();
         if *self.last_render.borrow() == vm {
             return;
@@ -3017,6 +3373,11 @@ impl App {
         for (name, title, _) in list_pages().into_iter().filter(|p| !p.2) {
             let title = if title.is_empty() { name.replace(['-', '_'], " ") } else { title };
             items.push(json!({ "kind": "page", "title": title, "sub": format!("valerie://page/{name}"), "cmd": { "cmd": "open_page", "name": name } }));
+        }
+        for name in window_layout::names() {
+            let title = window_layout::text_of(&name).and_then(|t| window_layout::parse(&t).ok()).map(|l| l.title).filter(|t| !t.is_empty()).unwrap_or_else(|| name.replace(['-', '_'], " "));
+            let sub = if name == self.win_layout_name { "On screen" } else { "Layout" };
+            items.push(json!({ "kind": "command", "title": format!("Layout: {title}"), "sub": sub, "cmd": { "cmd": "switch_layout", "name": name } }));
         }
         let plugin_search = self.plugins.iter().any(|p| p.active_in(&space_name) && !p.manifest.search.is_empty());
         for name in &self.agents_running {
@@ -3669,6 +4030,7 @@ impl App {
                 let blocking_changed = blocking(&c) != blocking(&self.config);
                 crate::log::set_level(&c.logs.level);
                 self.config = c;
+                self.refresh_win_layout();
                 self.load_strings();
                 self.push_ui_custom();
                 self.apply_app_settings();
@@ -4007,6 +4369,7 @@ impl App {
             Target::Tab(id) => self.views.get(&id),
             Target::Little(id) => self.littles.get(&id).map(|l| &l.view),
             Target::Peek => self.peek.as_ref().map(|p| &p.view),
+            Target::Panel(n) => self.panels.values().find(|p| p.num == n).map(|p| &p.view),
         }
     }
 
@@ -4014,7 +4377,7 @@ impl App {
         let space = match target {
             Target::Tab(id) => self.state.space_of(id).unwrap_or(self.state.active_space),
             Target::Little(id) => self.littles.get(&id).map(|l| l.space).unwrap_or(self.state.active_space),
-            Target::Peek => self.state.active_space,
+            Target::Peek | Target::Panel(_) => self.state.active_space,
         };
         self.config.vaults_for(&self.profile_for(space))
     }
@@ -5700,6 +6063,12 @@ impl App {
             }
             Command::OpenChats => self.open_chats(),
             Command::ToggleTerminal => self.toggle_terminal(),
+            Command::SwitchLayout { name: Some(name) } => self.set_layout(&name),
+            Command::SwitchLayout { name: None } | Command::NextLayout => self.next_layout(),
+            Command::ResetLayout => self.set_layout(window_layout::CLASSIC),
+            Command::DuplicateLayout { name, copy_as } => self.duplicate_layout(name, copy_as),
+            Command::ToggleBlock { id } => self.toggle_block(&id),
+            Command::ResizeBlock { id, px } => self.resize_block(&id, px),
             Command::NewTerminal { folder } => {
                 let (cwd, chat) = match folder.map(|f| expand_home(f.trim())) {
                     Some(f) if !f.is_dir() => return self.toast(&format!("There's no folder at {}", f.display())),
@@ -6410,7 +6779,7 @@ impl App {
                 match from {
                     Source::Page(_) if !cmd.page_safe() => return,
                     Source::Page(Target::Little(id)) | Source::LittleBar(id) => self.focused_little = Some(id),
-                    Source::Page(Target::Peek) => self.focused_little = None,
+                    Source::Page(Target::Peek | Target::Panel(_)) => self.focused_little = None,
                     Source::Page(Target::Tab(id)) => {
                         self.focused_little = None;
                         // A key pressed in a split pane acts on that pane.
@@ -6418,7 +6787,7 @@ impl App {
                             self.state.space_mut().active = Some(id);
                         }
                     }
-                    Source::Chrome | Source::Chat | Source::Terminal | Source::Answer | Source::Welcome | Source::Market => self.focused_little = None,
+                    Source::Chrome | Source::Chat | Source::Terminal | Source::Answer | Source::Welcome | Source::Market | Source::Panel(_) => self.focused_little = None,
                     Source::Overlay => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
@@ -6607,6 +6976,15 @@ impl App {
             (Source::Terminal, _) => self.terminal_message(kind, &m),
             (Source::Welcome, _) => self.welcome_message(&m, elwt),
             (Source::Market, _) => self.market_message(&m, elwt),
+            (Source::Panel(num), k) => {
+                let k = k.to_string();
+                self.panel_message(num, &k, &m);
+            }
+            (Source::Chrome, "resize_block") => {
+                if let (Some(id), Some(px)) = (m["id"].as_str(), m["px"].as_f64()) {
+                    self.resize_block(id, px);
+                }
+            }
             (Source::Answer, "ready") => {
                 // The panel finished loading after the question went out: replay it and what's arrived so far.
                 if let (Some(v), Some(t)) = (&self.answer_view, self.answer_tab) {
@@ -6673,7 +7051,7 @@ impl App {
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
-                    Target::Peek => None,
+                    Target::Peek | Target::Panel(_) => None,
                 }
                 .unwrap_or(self.state.active_space);
                 self.open_link_as(&url, mode, space, target, elwt);
@@ -6754,6 +7132,7 @@ impl App {
                     }
                     self.render_little(id);
                 }
+                Target::Panel(_) => {}
                 Target::Peek => {
                     if let Some(p) = self.peek.as_mut() {
                         p.url = url.clone();
@@ -6778,7 +7157,7 @@ impl App {
                     }
                     self.render_little(id);
                 }
-                Target::Peek => {}
+                Target::Peek | Target::Panel(_) => {}
             },
             UserEvent::NewWindow { target: Target::Tab(from), url } if self.state.web_tabs.contains(&from) && !self.helping.contains_key(&from) => {
                 // A hidden tab's pop-ups stay hidden: the agent's opens beside it, a page being read has none.
@@ -6794,7 +7173,7 @@ impl App {
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
                     Target::Little(id) => self.littles.get(&id).map(|l| l.space),
-                    Target::Peek => None,
+                    Target::Peek | Target::Panel(_) => None,
                 };
                 self.close_peek();
                 self.open_tab(&url, space, true);
@@ -7692,6 +8071,30 @@ impl App {
                 .map(|tab| json!({ "tab": tab, "url": format!("valerie://page/{}", args["name"].as_str().unwrap_or("")) })),
             "read_terminal" => return self.read_terminal(&args, reply),
             "run_in_terminal" => self.run_in_terminal(&args),
+            "list_layouts" => {
+                let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                let a = self.arranged(size.width, size.height);
+                Ok(json!({
+                    "on_screen": self.win_layout_name,
+                    "error": window_layout::error_of(&self.win_layout_name),
+                    "panels_that_cant_show": self.panels_unavailable,
+                    "blocks": a.map(|a| {
+                        let mut b = vec![json!({ "id": "pages", "rect": a.pages })];
+                        b.extend(a.sidebar.map(|r| json!({ "id": "sidebar", "rect": r })));
+                        b.extend(a.top_bar.map(|r| json!({ "id": "top_bar", "rect": r })));
+                        b.extend(a.panels.iter().map(|p| json!({ "id": p.id, "panel": p.panel, "rect": p.rect, "floating": p.floating, "built": self.panels.contains_key(&p.id) })));
+                        b
+                    }),
+                    "layouts": window_layout::names().into_iter().map(|n| {
+                        let parsed = window_layout::text_of(&n).map(|t| window_layout::parse(&t).map_err(|e| format!("{e:#}")));
+                        match parsed {
+                            Some(Ok(l)) => json!({ "name": n, "title": l.title, "description": l.description, "panels": l.panels() }),
+                            Some(Err(e)) => json!({ "name": n, "error": e }),
+                            None => json!({ "name": n, "title": "Classic", "description": "The window the layout and sidebar settings describe." }),
+                        }
+                    }).collect::<Vec<_>>(),
+                }))
+            }
             "list_pages" => Ok(json!(list_pages().into_iter().map(|(name, title, built_in)| json!({
                 "name": name, "title": title, "url": format!("valerie://page/{name}"), "built_in": built_in,
                 "file": pages_dir().join(format!("{name}.html")),
@@ -7754,6 +8157,7 @@ impl App {
                     "terminal" => self.terminal_view.as_ref(),
                     "welcome" => self.welcome_view.as_ref(),
                     "plugins" => self.market_view.as_ref(),
+                    part if part.starts_with("panel:") => self.panels.get(&part[6..]).map(|p| &p.view),
                     _ => Some(&self.chrome),
                 };
                 let Some(v) = view else {
@@ -7851,6 +8255,8 @@ impl App {
                     self.save();
                     self.window.set_visible(false);
                     self.main_hidden = true;
+                    self.panels.clear();
+                    self.panels_stale = true;
                     set_window_closed(true);
                 } else if main {
                     self.dispatch(Command::Quit, elwt);
@@ -7992,6 +8398,7 @@ impl App {
         self.started_for_agent = false;
         if std::mem::take(&mut self.main_hidden) {
             set_window_closed(false);
+            self.panels_stale = true;
             self.wake_after_closed();
             for p in self.panes() {
                 self.ensure_view(p);
@@ -8097,8 +8504,9 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
                 .iter()
                 .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten().filter_map(|e| m(&e.path())))
                 .chain(plugin_dirs.iter().filter_map(|d| m(d)))
+                .chain(plugin_dirs.iter().flat_map(|d| std::fs::read_dir(d.join("layouts")).into_iter().flatten().flatten().filter_map(|e| m(&e.path()))))
                 .collect();
-            let more: Vec<std::time::SystemTime> = ["ui", "strings", "extensions"]
+            let more: Vec<std::time::SystemTime> = ["ui", "strings", "extensions", "layouts"]
                 .iter()
                 .map(|d| config::config_dir().join(d))
                 .flat_map(|d| std::fs::read_dir(&d).into_iter().flatten().flatten().filter_map(|e| m(&e.path())).chain(m(&d)))
@@ -8425,6 +8833,8 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     });
     watch_config(proxy.clone());
     let mut app = App::new(&event_loop, config, proxy)?;
+    app.refresh_win_layout();
+    app.layout();
     trace("window and sidebar created");
     let mut initial = Some(urls);
     event_loop.run(move |event, elwt, control_flow| {

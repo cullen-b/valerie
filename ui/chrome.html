@@ -137,6 +137,10 @@ body.left #resize { right: 0; }
 body.right #resize { left: 0; }
 body.pointer #resize:hover, body.resizing #resize { background: linear-gradient(90deg, transparent 2px, color-mix(in srgb, var(--accent) 55%, transparent) 2px, transparent 5px); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
+body.resizing-down, body.resizing-down * { cursor: row-resize !important; user-select: none; }
+.block-gap { position: fixed; z-index: 6; cursor: row-resize; border-radius: 3px; transition: background .12s; }
+.block-gap.across { cursor: col-resize; }
+.block-gap:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 /* medium: icon + domain; tiles three across */
 body.size-medium .grid { grid-template-columns: repeat(3, 1fr); }
 body.size-medium #url .path { display: none; }
@@ -889,6 +893,7 @@ function render(state) {
   empty.style.left = S.layout.sidebar_position === "left" ? sw + "px" : "0";
   empty.style.right = S.layout.sidebar_position === "right" ? sw + "px" : "0";
   empty.style.top = S.layout.tab_bar === "top" ? "40px" : "0";
+  arrange(S.arrangement);
 
   for (const id of ["#back", "#fwd", "#reload"]) $(id).style.display = O.nav_buttons ? "" : "none";
   $("#url").style.display = O.url_bar && !(S.chats && S.chats.open) ? "" : "none";
@@ -1180,7 +1185,8 @@ $("#resize").addEventListener("mousedown", (e) => {
 // The sidebar webview keeps receiving mouse moves after the press, even over the page.
 addEventListener("mousemove", (e) => {
   if (!resizing) return;
-  resizeW = S.layout.sidebar_position === "right" ? innerWidth - e.clientX : e.clientX;
+  const box = S.arrangement && S.arrangement.sidebar;
+  resizeW = S.layout.sidebar_position === "right" ? (box ? box.x + box.w : innerWidth) - e.clientX : e.clientX - (box ? box.x : 0);
   if (!resizeRaf) resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; send({ t: "resize", width: resizeW }); });
 });
 addEventListener("mouseup", () => {
@@ -1189,6 +1195,48 @@ addEventListener("mouseup", () => {
   send({ t: "resize", width: resizeW || S.layout.sidebar_width, done: true });
 });
 $("#resize").addEventListener("dblclick", () => { if (!S || S.sidebar.double_click_edge !== false) cmd({ cmd: "cycle_sidebar_size" }); });
+
+// ---------- a layout (layouts/<name>.yaml) says where the sidebar, top bar and start page go ----------
+const boxStyle = (el, box, props) => { for (const [css, v] of Object.entries(props)) el.style[css] = box ? v : ""; };
+function arrange(a) {
+  const side = a && a.sidebar, bar = a && a.top_bar, pages = a && a.pages;
+  boxStyle($("#sidebar"), side, side ? { left: side.x + "px", right: "auto", top: side.y + "px", bottom: "auto", width: side.w + "px", height: side.h + "px" } : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 });
+  boxStyle($("#topbar"), bar, bar ? { left: bar.x + "px", right: "auto", top: bar.y + "px", width: bar.w + "px", height: bar.h + "px", paddingLeft: bar.x > 0 ? "8px" : "" } : { left: 0, right: 0, top: 0, width: 0, height: 0, paddingLeft: 0 });
+  if (pages) {
+    const empty = $("#empty");
+    empty.style.left = pages.x + "px"; empty.style.top = pages.y + "px";
+    empty.style.right = "auto"; empty.style.bottom = "auto"; empty.style.width = pages.w + "px"; empty.style.height = pages.h + "px";
+  } else if ($("#empty").style.width) {
+    for (const k of ["width", "height", "bottom"]) $("#empty").style[k] = "";
+  }
+  const gaps = (a && a.dividers) || [];
+  if (blockDrag) return;
+  document.querySelectorAll(".block-gap").forEach((g) => g.remove());
+  for (const d of gaps) {
+    const g = document.createElement("div");
+    g.className = "block-gap" + (d.across ? " across" : "");
+    Object.assign(g.style, { left: d.rect.x + "px", top: d.rect.y + "px", width: d.rect.w + "px", height: d.rect.h + "px" });
+    g.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      blockDrag = { d, from: d.across ? e.clientX : e.clientY };
+      document.body.classList.add(d.across ? "resizing" : "resizing-down");
+    });
+    document.body.append(g);
+  }
+}
+let blockDrag = null;
+addEventListener("mousemove", (e) => {
+  if (!blockDrag) return;
+  const { d, from } = blockDrag, moved = (d.across ? e.clientX : e.clientY) - from;
+  send({ t: "resize_block", id: d.id, px: Math.min(d.max, Math.max(d.min, d.px + d.sign * moved)) });
+});
+addEventListener("mouseup", () => {
+  if (!blockDrag) return;
+  blockDrag = null;
+  document.body.classList.remove("resizing", "resizing-down");
+  if (S) arrange(S.arrangement);
+});
 
 let toastTimer;
 function toast(msg) {

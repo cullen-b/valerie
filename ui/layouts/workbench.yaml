@@ -1,0 +1,12 @@
+title: Workbench
+description: Your sidebar, the page, and a live outline of the page beside it.
+window:
+  gap: 6
+  row:
+    - part: sidebar
+    - part: pages
+    - panel: window-panels/outline
+      id: outline
+      size: 260
+      min: 160
+      max: 480

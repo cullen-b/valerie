@@ -151,6 +151,7 @@ const GITIGNORE: &[&str] = &[
     "AGENTS.md",
     "reference/",
     "plugins/.installed",
+    "layouts/*.error",
     "*.before-sync.yaml",
     "# This computer's own settings.",
     "this-mac.yaml",

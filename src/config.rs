@@ -210,6 +210,7 @@ pub struct ExtensionsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layout {
+    pub arrangement: String,
     pub tab_bar: TabBar,
     pub sidebar_visible: bool,
     pub sidebar_width: f64,
@@ -1404,6 +1405,11 @@ impl Config {
         #[cfg(not(test))]
         if let Some(here) = std::fs::read_to_string(this_mac_path()).ok().and_then(|t| serde_yaml::from_str::<Value>(&t).ok()).filter(|v| v.is_mapping()) {
             merge(&mut base, here);
+        }
+        // The look the chosen layout brings goes on top; it can't reach anything but the look (see window_layout.rs).
+        #[cfg(not(test))]
+        if let Some(over) = base.get("layout").and_then(|l| l.get("arrangement")).and_then(|a| a.as_str()).and_then(crate::window_layout::active).and_then(|l| l.overlay()) {
+            merge(&mut base, over);
         }
         Ok(base)
     }

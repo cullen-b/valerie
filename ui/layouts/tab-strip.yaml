@@ -1,0 +1,11 @@
+title: Tab Strip
+description: No sidebar. Your tabs in a strip across the top, drawn by a panel you can edit or replace.
+settings:
+  window: { traffic_lights: show }
+  layout: { corner_radius: 0 }
+window:
+  column:
+    - panel: window-panels/tab-strip
+      id: tabs
+      size: 40
+    - part: pages

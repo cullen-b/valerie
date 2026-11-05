@@ -179,6 +179,12 @@ pub struct State {
     /// Terminal panel height the user dragged to (overrides terminal_panel.height).
     #[serde(default)]
     pub terminal_height: Option<f64>,
+    /// Blocks' sizes people dragged in layouts ("<layout>/<block>": pixels).
+    #[serde(default)]
+    pub layout_sizes: std::collections::HashMap<String, f64>,
+    /// Blocks people showed or hid in layouts ("<layout>/<block>": shown).
+    #[serde(default)]
+    pub layout_shown: std::collections::HashMap<String, bool>,
     /// Where the window was last (x, y, width, height in points), to reopen it there.
     #[serde(default)]
     pub window_frame: Option<(f64, f64, f64, f64)>,

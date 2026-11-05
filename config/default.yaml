@@ -37,6 +37,11 @@ language: ""               # the language of Valerie's own words, as a code like
 # --------------------------------------------------------------------------------------------------------------
 
 layout:
+  arrangement: classic     # the layout that arranges the whole window. one of: classic (the settings below) | workbench |
+                           # tab-strip | valerie-98 | any layouts/<name>.yaml in this folder or a plugin's layouts/ folder.
+                           # A layout's file says where the sidebar, pages and plugins' panels go, and can bring its own
+                           # look. "Next Layout" in the command bar switches; "Back to the Classic Layout" (Ctrl+Alt+Shift+0,
+                           # Cmd+Option+Shift+0 on a Mac) always returns here
   tab_bar: side            # where tabs live. one of: side | top
   sidebar_visible: true    # show the sidebar at launch (⌘S or `s` toggles it)
   sidebar_width: 248       # width of the full-size sidebar, pixels (drag the sidebar's edge to resize it live)
@@ -594,6 +599,7 @@ keybindings:
   "CmdOrCtrl+N": { cmd: new_chat, in_project: true }   # a new chat; in a coding chat, on the same project
   "Ctrl+Quote": toggle_terminal   # the terminal panel (Ctrl+')
   "CmdOrCtrl+Alt+Shift+C": copy_markdown_link
+  "CmdOrCtrl+Alt+Shift+0": reset_layout   # back to the classic window, whatever a layout did
   "CmdOrCtrl+Comma": open_config
   "CmdOrCtrl+Shift+Y": sync
 

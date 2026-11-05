@@ -348,14 +348,25 @@ pub fn is_bundled(name: &str) -> bool {
     BUNDLED.iter().any(|(n, _)| *n == name)
 }
 
-const BUNDLED: &[(&str, &[(&str, &str)])] = &[(
-    "youtube-speed",
-    &[
-        ("plugin.yaml", include_str!("../plugins/youtube-speed/plugin.yaml")),
-        ("script.js", include_str!("../plugins/youtube-speed/script.js")),
-        ("style.css", include_str!("../plugins/youtube-speed/style.css")),
-    ],
-)];
+const BUNDLED: &[(&str, &[(&str, &str)])] = &[
+    (
+        "youtube-speed",
+        &[
+            ("plugin.yaml", include_str!("../plugins/youtube-speed/plugin.yaml")),
+            ("script.js", include_str!("../plugins/youtube-speed/script.js")),
+            ("style.css", include_str!("../plugins/youtube-speed/style.css")),
+        ],
+    ),
+    (
+        "window-panels",
+        &[
+            ("plugin.yaml", include_str!("../plugins/window-panels/plugin.yaml")),
+            ("tab-strip.html", include_str!("../plugins/window-panels/tab-strip.html")),
+            ("outline.html", include_str!("../plugins/window-panels/outline.html")),
+            ("retro.html", include_str!("../plugins/window-panels/retro.html")),
+        ],
+    ),
+];
 
 /// Whether these files are exactly a plugin Valerie ships (so one arriving through sync is nothing new).
 pub fn shipped(name: &str, files: &[(String, Vec<u8>)]) -> bool {
@@ -538,6 +549,9 @@ mod tests {
         assert_eq!((m.events.len(), m.search.len(), m.sidebar.len()), (1, 1, 1));
         assert_eq!(m.commands[2].context_menu, ["link", "page"]);
         assert_eq!(m.settings["greeting"], "Hello from a plugin");
+        for (name, files) in BUNDLED {
+            serde_yaml::from_str::<Manifest>(files[0].1).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
         let yt: Manifest = serde_yaml::from_str(BUNDLED[0].1[0].1).unwrap();
         assert!(yt.commands.iter().all(|c| c.actions.iter().all(|a| a.command().is_some())));
         assert!(m.commands[0].actions.iter().all(|a| a.command().is_some()));

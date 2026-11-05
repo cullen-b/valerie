@@ -268,6 +268,30 @@ pub enum Command {
         tab: Option<TabId>,
     },
     /// Jump a tab's video/audio (the one it played last) by this many seconds; negative goes back.
+    /// Show a layout (`layouts/<name>.yaml`); without a name, the next one.
+    SwitchLayout {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    NextLayout,
+    /// Back to the classic window, whatever a layout did.
+    ResetLayout,
+    /// Copy a layout into `layouts/` to edit, and show the copy.
+    DuplicateLayout {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default, rename = "as")]
+        copy_as: Option<String>,
+    },
+    /// Show or hide a block of the layout on screen.
+    ToggleBlock {
+        id: String,
+    },
+    /// Set a block's size in the layout on screen, in pixels.
+    ResizeBlock {
+        id: String,
+        px: f64,
+    },
     SkipMedia {
         seconds: f64,
         #[serde(default)]
@@ -753,6 +777,9 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("print", "Print Page…"),
     ("open_chats", "Chats"),
     ("toggle_terminal", "Terminal (show or hide the terminal panel)"),
+    ("next_layout", "Next Layout"),
+    ("reset_layout", "Back to the Classic Layout"),
+    ("duplicate_layout", "Duplicate This Layout to Edit"),
     ("new_terminal", "New Terminal"),
     ("new_chat", "New Chat"),
     ("stop_chat", "Stop the Agent in This Chat"),
@@ -851,6 +878,10 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("stop_watching", "{ id }"),
     ("set_up_agent", "{ agent: claude | codex | opencode | pi | cursor | hermes }  (install if needed, then sign in)"),
     ("toggle_media", "{ tab? }  (play / pause)"),
+    ("switch_layout", "{ name? }  (show this layout; no name: the next one)"),
+    ("duplicate_layout", "{ name?, as? }  (copy a layout into layouts/ to edit, and show the copy)"),
+    ("toggle_block", "{ id }  (show or hide a block of the layout on screen)"),
+    ("resize_block", "{ id, px }  (a block's size in the layout on screen)"),
     ("skip_media", "{ seconds, tab? }  (jump the video or audio by this many seconds; negative goes back)"),
     ("run_agent", "{ name? | prompt?, agent? }"),
     ("customize", "{ request }  (have the user's AI assistant change Valerie's settings or plugins)"),

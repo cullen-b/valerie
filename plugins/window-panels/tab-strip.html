@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tab Strip</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { background: var(--v-bg); color: var(--v-fg); font: 12.5px/1 system-ui, sans-serif; user-select: none; -webkit-user-select: none; cursor: default; }
+  #strip { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 8px; }
+  body.mac #strip { padding-left: 80px; }
+  #tabs { display: flex; gap: 4px; min-width: 0; flex: 0 1 auto; }
+  .tab { display: flex; align-items: center; gap: 7px; flex: 0 1 190px; min-width: 40px; height: 28px; padding: 0 6px 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--v-dim); font: inherit; text-align: left; }
+  .tab:hover { background: var(--v-card); }
+  .tab.on { background: var(--v-card); color: var(--v-fg); box-shadow: inset 0 0 0 1px var(--v-line); }
+  .tab img { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+  .tab .name { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  button:focus-visible { outline: 2px solid var(--v-accent); outline-offset: -2px; }
+  .tab .x, #new { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: 14px/1 system-ui, sans-serif; }
+  .tab .x { opacity: 0; }
+  .tab:hover .x, .tab.on .x, .tab .x:focus-visible { opacity: .7; }
+  .tab .x:hover, #new:hover { background: var(--v-line); opacity: 1; }
+  #new { color: var(--v-dim); width: 26px; height: 26px; font-size: 17px; }
+  #drag { flex: 1; align-self: stretch; min-width: 24px; }
+</style>
+</head>
+<body>
+<div id="strip">
+  <div id="tabs"></div>
+  <button id="new" title="New Tab" aria-label="New Tab">+</button>
+  <div id="drag"></div>
+</div>
+<script>
+  document.body.classList.toggle("mac", /Mac/.test(navigator.platform));
+  const command = (c) => valerie.call("run_command", { command: c });
+  const flat = (nodes) => nodes.flatMap((n) => n.type === "folder" ? flat(n.children) : [n]);
+  function draw() {
+    const s = valerie.state;
+    if (!s) return;
+    const list = document.getElementById("tabs");
+    const tabs = [...flat(s.pinned || []), ...flat(s.kept || []), ...(s.today || [])];
+    list.replaceChildren(...tabs.map((t) => {
+      const b = document.createElement("div");
+      b.className = "tab" + (t.id === s.active ? " on" : "");
+      b.title = t.title || t.url || "New Tab";
+      if (t.favicon) { const i = document.createElement("img"); i.src = t.favicon; i.alt = ""; i.width = i.height = 14; b.append(i); }
+      const name = document.createElement("button");
+      name.className = "name";
+      name.textContent = t.title || t.url || "New Tab";
+      const x = document.createElement("button");
+      x.className = "x";
+      x.textContent = "×";
+      x.setAttribute("aria-label", "Close Tab");
+      x.addEventListener("click", (e) => { e.stopPropagation(); command({ cmd: "close_tab", tab: t.id }); });
+      b.append(name, x);
+      name.addEventListener("click", () => command({ cmd: "activate_tab", tab: t.id }));
+      b.addEventListener("click", (e) => { if (e.target === b) command({ cmd: "activate_tab", tab: t.id }); });
+      return b;
+    }));
+  }
+  document.getElementById("new").addEventListener("click", () => command({ cmd: "open_command_bar", mode: "new_tab" }));
+  document.getElementById("drag").addEventListener("mousedown", (e) => { if (e.button === 0) valerie.dragWindow(); });
+  valerie.on("state", draw);
+  draw();
+</script>
+</body>
+</html>
