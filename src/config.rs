@@ -110,6 +110,8 @@ pub struct MenuConfig {
     pub commands: BTreeMap<String, Option<String>>,
     pub quit_shortcut: String,
     pub confirm_quit: bool,
+    /// File, Edit, View, History, Window and Help menus laid out like other browsers; false = the older Tabs / View / Tools menus.
+    pub browser_menus: bool,
 }
 
 /// Valerie's right-click menus.

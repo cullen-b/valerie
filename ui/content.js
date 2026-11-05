@@ -774,7 +774,7 @@ addEventListener("wheel", kbCancel, { capture: true, passive: true });
 if (cfg.vim.enabled && cfg.vim.jump_to_text_box !== false) post({ t: "arrived" });
 
 // ---------- find: every match highlighted, a count, and a minimap of the whole page ----------
-const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0 };
+const fnd = { bar: null, input: null, count: null, items: [], cur: -1, map: null, sil: null, k: 1, timer: 0, onScroll: null, raf: 0, last: "" };
 const canHighlight = typeof Highlight !== "undefined" && typeof CSS !== "undefined" && CSS.highlights;
 function findScroller() { const s = scroller(); return s === document.body ? document.scrollingElement : s; }
 function docY(rect, s) { return s === document.scrollingElement ? rect.top + s.scrollTop : rect.top - s.getBoundingClientRect().top + s.scrollTop; }
@@ -827,6 +827,7 @@ function goToMatch(i) {
 }
 function runSearch() {
   fnd.query = fnd.input.value;
+  if (fnd.query) fnd.last = fnd.query;
   fnd.items = searchPage(fnd.query);
   // Start from the first match at or below the top of the screen, like other browsers.
   const s = findScroller(), top = s.scrollTop;
@@ -925,6 +926,11 @@ function openFind(initial) {
   fnd.bar.classList.toggle("question", isQuestion(fnd.input.value));
   if (fnd.input.value) runSearch(); else drawMinimap();
   setTimeout(() => { fnd.input.focus(); fnd.input.select(); }, 0);
+}
+// Find Next / Find Previous: step through the matches, or bring back the last search (or the selected text).
+function findStep(d) {
+  if (fnd.bar && fnd.items.length) return goToMatch(fnd.cur + d);
+  openFind(fnd.last || String(getSelection()).trim());
 }
 function closeFind() {
   if (!fnd.bar) return;
@@ -1720,7 +1726,7 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = document.activeElement; if (f instanceof HTMLInputElement && (f.type === "password" || f.type === "email")) showAccounts(f); },
     fill, offerSave,

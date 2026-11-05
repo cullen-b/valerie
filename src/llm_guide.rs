@@ -100,6 +100,7 @@ changed in plain words. Some translations:
 | "Put Valerie in Spanish" | `language: es` plus `strings/es.yaml` (translate the output of `"{exe}" strings`) |
 | "Keep Valerie on top" / "see-through window" / "frosted sidebar" | `window.always_on_top: true`, `window.opacity: 0.9`, `window.vibrancy: sidebar` |
 | "Hide the Tools menu" / "rename Spaces to Desks" / "don't quit with ⌘Q" | `menu.hide: [Tools]`, `menu.rename: {{ Spaces: Desks }}`, `menu.quit_shortcut: ""` or `menu.confirm_quit: true` |
+| "Put the menus back the old way" / "no File, History or Help menus" | `menu.browser_menus: false` (Edit, Tabs, Spaces, View, Tools, Window only) |
 | "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
 | "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
 | "Let this map use my location" / "no site may ask where I am" | `sites: {{ maps.example.com: {{ location: allow }} }}`, `permissions.location: deny` (the `toggle_site_location` command flips the site you're on) |

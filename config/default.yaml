@@ -599,9 +599,12 @@ keybindings:
   "CmdOrCtrl+Minus": zoom_out
   "CmdOrCtrl+0": zoom_reset
   "CmdOrCtrl+Alt+I": dev_tools
+  "CmdOrCtrl+Alt+U": view_source   # the page's HTML in a new tab
   "CmdOrCtrl+O": move_to_main_window
   "CmdOrCtrl+Shift+O": move_to_little_window   # the tab you're on moves out into a little window
   "CmdOrCtrl+F": find_in_page
+  "CmdOrCtrl+G": find_next
+  "CmdOrCtrl+Shift+G": find_previous
   "CmdOrCtrl+Alt+R": reader_view   # was CmdOrCtrl+Shift+R, which is now hard_reload as in other browsers
   "CmdOrCtrl+Shift+2": capture_page
   "CmdOrCtrl+Alt+Shift+2": capture_full_page   # the whole page, top to bottom
@@ -623,7 +626,7 @@ keybindings:
 global_keybindings:
   "Ctrl+Semicolon": new_little_window   # Ctrl+; a new little window from any app, asking where to go
 
-# The menu bar at the top of the screen. Its menus: Valerie, Edit, Tabs, Spaces, View, Tools, Plugins, Window.
+# The menu bar at the top of the screen. Its menus: Valerie, File, Edit, View, History, Tabs, Spaces, Tools, Plugins, Window, Help.
 menu:
   hide: []                 # menus to leave out of the bar, e.g. [Tools, Plugins]; their shortcuts keep working (the menu
                            # moves inside the Valerie menu)
@@ -632,6 +635,9 @@ menu:
                            # name makes a new menu; null takes a command without a shortcut out of the menus
   quit_shortcut: "CmdOrCtrl+Q"   # the shortcut for Quit; "" = none (Quit stays in the Valerie menu)
   confirm_quit: false      # ask "Quit Valerie?" before quitting. true | false
+  browser_menus: true      # File, Edit, View, History, Window and Help menus laid out like other browsers (History has Recently
+                           # Closed; on a Mac, Help has the search box that finds any menu item). false = the older Edit, Tabs,
+                           # Spaces, View, Tools and Window menus. true | false
 
 # Valerie's right-click menus (on links, tabs and folders). Plugins add their own entries (`context_menu` on a command).
 context_menu:

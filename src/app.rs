@@ -328,6 +328,9 @@ pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     _menu: Option<Menu>,
     menu_cmds: HashMap<MenuId, Command>,
+    /// History › Recently Closed, refilled when the closed tabs change (what it last showed: count, newest).
+    closed_menu: Option<Submenu>,
+    closed_menu_key: Option<(usize, Option<TabId>)>,
     bar_open: bool,
     /// How tall the command bar drew itself (only used where its view is just the bar: `bar_bounds`).
     bar_height: f64,
@@ -1468,6 +1471,8 @@ impl App {
             proxy,
             _menu: None,
             menu_cmds: HashMap::new(),
+            closed_menu: None,
+            closed_menu_key: None,
             bar_open: false,
             bar_height: 120.0,
             remote: Vec::new(),
@@ -4634,8 +4639,24 @@ impl App {
         // Mac menu items. Elsewhere they do nothing or take Ctrl+H and Ctrl+M from the page.
         #[cfg(target_os = "macos")]
         let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 4);
-        let edit = Submenu::new(name_of("Edit"), true);
-        let _ = edit.append_items(&[
+        // Menus by their English names, in the bar's order; menu.commands can add new ones (before Window).
+        let browser = mc.browser_menus;
+        let names: &[&str] = if browser {
+            &["File", "Edit", "View", "History", "Tabs", "Spaces", "Tools", "Window", "Help"]
+        } else {
+            &["Edit", "Tabs", "Spaces", "View", "Tools", "Window"]
+        };
+        let mut groups: Vec<(String, Submenu)> = names.iter().map(|n| (n.to_string(), Submenu::new(name_of(n), true))).collect();
+        let group = |groups: &mut Vec<(String, Submenu)>, name: &str| -> usize {
+            if let Some(i) = groups.iter().position(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                return i;
+            }
+            let at = groups.iter().position(|(n, _)| n == "Window").unwrap_or(groups.len());
+            groups.insert(at, (name.to_string(), Submenu::new(name_of(name), true)));
+            at
+        };
+        let g = group(&mut groups, "Edit");
+        let _ = groups[g].1.append_items(&[
             &PredefinedMenuItem::undo(None),
             &PredefinedMenuItem::redo(None),
             &PredefinedMenuItem::separator(),
@@ -4644,20 +4665,20 @@ impl App {
             &PredefinedMenuItem::paste(None),
             &PredefinedMenuItem::select_all(None),
         ]);
-        // Menus by their English names; menu.commands can add new ones.
-        let mut groups: Vec<(String, Submenu)> = ["Tabs", "Spaces", "View", "Tools"].iter().map(|n| (n.to_string(), Submenu::new(name_of(n), true))).collect();
-        let group = |groups: &mut Vec<(String, Submenu)>, name: &str| -> usize {
-            if let Some(i) = groups.iter().position(|(n, _)| n.eq_ignore_ascii_case(name)) {
-                return i;
+        let g = group(&mut groups, "Window");
+        #[cfg(target_os = "macos")]
+        let _ = groups[g].1.append_items(&[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::maximize(None)]);
+        let _ = groups[g].1.append(&PredefinedMenuItem::fullscreen(None));
+        if browser {
+            for name in ["Edit", "Window"] {
+                let g = group(&mut groups, name);
+                let _ = groups[g].1.append(&PredefinedMenuItem::separator());
             }
-            groups.push((name.to_string(), Submenu::new(name_of(name), true)));
-            groups.len() - 1
-        };
+        }
+        let cmd_name = |cmd: &Command| serde_json::to_value(cmd).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)).unwrap_or_default();
         // Where a command goes: menu.commands (null = no menu), else its usual menu.
-        let placed = |cmd: &Command| -> Option<Option<String>> {
-            let name = serde_json::to_value(cmd).ok().and_then(|v| v["cmd"].as_str().map(str::to_string)).unwrap_or_default();
-            mc.commands.get(&name).map(|m| m.clone().filter(|m| !m.is_empty() && m != "none"))
-        };
+        let placed = |cmd: &Command| -> Option<Option<String>> { mc.commands.get(&cmd_name(cmd)).map(|m| m.clone().filter(|m| !m.is_empty() && m != "none")) };
+        let browser_usual = |cmd: &Command| browser.then(|| browser_menu(&cmd_name(cmd))).flatten();
         let mut bound: Vec<Command> = Vec::new();
         let mut taken = std::collections::HashSet::new();
         for (i, (accel, binding)) in self.config.keybindings.iter().enumerate() {
@@ -4684,14 +4705,14 @@ impl App {
             };
             let item = MenuItem::with_id(format!("k{i}"), self.translate(&self.command_label(&cmd)), true, Some(acc));
             cmds.insert(item.id().clone(), cmd.clone());
-            let usual = match &cmd {
+            let usual = browser_usual(&cmd).unwrap_or(match &cmd {
                 Command::NextSpace | Command::PrevSpace | Command::SwitchSpace { .. } | Command::NewSpace { .. } => "Spaces",
                 Command::ToggleSidebar | Command::SplitView { .. } | Command::Unsplit { .. } | Command::FocusNextPane | Command::ZoomIn
                 | Command::ZoomOut | Command::ZoomReset | Command::Reload { .. } | Command::HardReload { .. } | Command::FindInPage { .. } | Command::ToggleTerminal
                 | Command::NewTerminal { .. } => "View",
                 Command::DevTools | Command::OpenConfig | Command::Sync | Command::CopyUrl { .. } => "Tools",
                 _ => "Tabs",
-            };
+            });
             // A shortcut needs its menu item to work, so it can move to another menu but not leave them all.
             let g = match placed(&cmd) {
                 Some(Some(m)) => group(&mut groups, &m),
@@ -4717,12 +4738,40 @@ impl App {
             let g = match placed(&cmd) {
                 Some(Some(m)) => group(&mut groups, &m),
                 Some(None) => continue,
-                None => group(&mut groups, "Tools"),
+                None => group(&mut groups, browser_usual(&cmd).unwrap_or("Tools")),
             };
             let item = MenuItem::with_id(format!("c-{name}"), self.translate(title), true, None);
             cmds.insert(item.id().clone(), cmd);
             let _ = groups[g].1.append(&item);
         }
+        // File › Import From: the browsers on this computer with bookmarks to bring in.
+        let found = crate::import::available();
+        if !found.is_empty() {
+            let import = Submenu::new(self.translate("Import From"), true);
+            for src in found {
+                let label = match src {
+                    "arc" => "Arc",
+                    "chrome" => "Chrome",
+                    "brave" => "Brave",
+                    "edge" => "Edge",
+                    "vivaldi" => "Vivaldi",
+                    "chromium" => "Chromium",
+                    "safari" => "Safari",
+                    "firefox" => "Firefox",
+                    s => s,
+                };
+                let item = MenuItem::with_id(format!("import-{src}"), label, true, None);
+                cmds.insert(item.id().clone(), Command::Import { source: src.to_string() });
+                let _ = import.append(&item);
+            }
+            let g = group(&mut groups, if browser { "File" } else { "Tools" });
+            let _ = groups[g].1.append_items(&[&PredefinedMenuItem::separator(), &import]);
+        }
+        // History › Recently Closed (Tabs with the older menus), filled by fill_closed_menu.
+        let closed = Submenu::new(self.translate("Recently Closed"), true);
+        let g = group(&mut groups, if browser { "History" } else { "Tabs" });
+        let _ = groups[g].1.append_items(&[&PredefinedMenuItem::separator(), &closed]);
+        self.closed_menu = Some(closed);
         let plugin_menu = Submenu::new(name_of("Plugins"), true);
         for p in self.plugins.iter().filter(|p| p.manifest.enabled) {
             for c in &p.manifest.commands {
@@ -4740,10 +4789,11 @@ impl App {
                 }
             }
         }
-        let window_menu = Submenu::new(name_of("Window"), true);
         #[cfg(target_os = "macos")]
-        let _ = window_menu.append(&PredefinedMenuItem::minimize(None));
-        let _ = window_menu.append_items(&[&PredefinedMenuItem::fullscreen(None)]);
+        {
+            let g = group(&mut groups, "Window");
+            let _ = groups[g].1.append_items(&[&PredefinedMenuItem::separator(), &PredefinedMenuItem::bring_all_to_front(None)]);
+        }
         let _ = menu.append(&app_menu);
         // A hidden menu moves inside the Valerie menu: out of the bar, but its shortcuts (and ⌘C / ⌘V) still work.
         let mut tucked = false;
@@ -4761,17 +4811,24 @@ impl App {
                 let _ = app_menu.append(g);
             }
         };
-        place("Edit", &edit);
         for (name, g) in &groups {
+            if name == "Window" {
+                place("Plugins", &plugin_menu);
+            }
             place(name, g);
         }
-        place("Plugins", &plugin_menu);
-        place("Window", &window_menu);
         // The menu is also where keyboard shortcuts live, so every platform needs it attached.
         #[cfg(target_os = "macos")]
         {
             menu.init_for_nsapp();
-            window_menu.set_as_windows_menu_for_nsapp();
+            for (name, g) in &groups {
+                match name.as_str() {
+                    "Window" => g.set_as_windows_menu_for_nsapp(),
+                    // macOS puts its search box (which finds any menu item) in the Help menu.
+                    "Help" if shown("Help") => g.set_as_help_menu_for_nsapp(),
+                    _ => {}
+                }
+            }
         }
         #[cfg(target_os = "windows")]
         unsafe {
@@ -4816,6 +4873,92 @@ impl App {
         (self.dock_menu, self.status_menu) = (dock, status);
         self.menu_cmds = cmds;
         self._menu = Some(menu);
+        self.closed_menu_key = None;
+        self.fill_closed_menu();
+    }
+
+    /// Bring back one of the closed tabs (by its place in state.closed) where it was.
+    fn reopen_closed(&mut self, index: usize) {
+        if index >= self.state.closed.len() {
+            return;
+        }
+        let c = self.state.closed.remove(index);
+        let space = c.space.min(self.state.spaces.len() - 1);
+        let id = c.tab.id;
+        self.state.tabs.insert(id, c.tab);
+        let today = &mut self.state.spaces[space].today;
+        if self.config.tabs.new_tab_position == "bottom" { today.push(id) } else { today.insert(0, id) }
+        self.activate(id);
+    }
+
+    /// History › Recently Closed: the newest closed tabs, refilled only when they change.
+    fn fill_closed_menu(&mut self) {
+        let Some(m) = &self.closed_menu else { return };
+        let key = (self.state.closed.len(), self.state.closed.last().map(|c| c.tab.id));
+        if self.closed_menu_key == Some(key) {
+            return;
+        }
+        self.closed_menu_key = Some(key);
+        while m.remove_at(0).is_some() {}
+        if self.state.closed.is_empty() {
+            let _ = m.append(&MenuItem::new(self.translate("No Closed Tabs"), false, None));
+        }
+        for c in self.state.closed.iter().rev().take(15) {
+            let title = c.tab.display_title();
+            let title = if title.chars().count() > 60 { format!("{}…", title.chars().take(59).collect::<String>()) } else { title.to_string() };
+            let _ = m.append(&MenuItem::with_id(format!("closed-{}", c.tab.id), title, true, None));
+        }
+    }
+
+    /// Save Page, View Source and Email Link for a page (a tab or a little window).
+    fn page_file(&self, cmd: &Command, v: &WebView, title: &str, url: &str) {
+        if *cmd == Command::EmailLink {
+            let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>().replace('+', "%20");
+            let link = format!("mailto:?subject={}&body={}", enc(title), enc(&self.clean(url)));
+            // cmd.exe would take & as the end of the command.
+            #[cfg(target_os = "windows")]
+            let link = link.replace('&', "^&");
+            return platform::open_external(&link);
+        }
+        let source = *cmd == Command::ViewSource;
+        let (p, url) = (self.proxy.clone(), url.to_string());
+        let host = url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_else(|| "page".into());
+        let safe = |s: &str| s.chars().map(|c| if c.is_alphanumeric() || " -_.".contains(c) { c } else { '-' }).collect::<String>().trim().chars().take(80).collect::<String>();
+        let (dir, name) = if source {
+            (config::data_dir().join("page-source"), format!("{}.txt", safe(&host)))
+        } else {
+            let t = safe(title);
+            (self.config.downloads.dir(), format!("{}.html", if t.is_empty() { safe(&host) } else { t }))
+        };
+        let _ = v.evaluate_script_with_callback(PAGE_HTML_JS, move |r| {
+            let Ok(html) = serde_json::from_str::<String>(&r) else {
+                return send(&p, UserEvent::Toast("Couldn't read this page".into()));
+            };
+            let (path, body) = if source {
+                // A byte order mark so the text shows as UTF-8.
+                (dir.join(&name), format!("\u{feff}{html}"))
+            } else {
+                // Saved pages keep loading their pictures and styles from the site.
+                let base = format!("<base href=\"{}\">", url.replace('"', "%22"));
+                let html = match html.find("<head").and_then(|i| html[i..].find('>').map(|j| i + j + 1)) {
+                    Some(at) => format!("{}{base}{}", &html[..at], &html[at..]),
+                    None => format!("{base}{html}"),
+                };
+                (free_name(&dir, &name), format!("<!DOCTYPE html>\n{html}"))
+            };
+            if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, body)) {
+                crate::log::line("page", format!("couldn't write {}: {e}", path.display()));
+                return send(&p, UserEvent::Toast(format!("Couldn't save the page: {e}")));
+            }
+            if source {
+                let tab = url::Url::from_file_path(&path).map(String::from).unwrap_or_default();
+                let msg = json!({ "t": "cmd", "cmd": Command::NewTab { url: Some(tab), space: None, background: false } }).to_string();
+                send(&p, UserEvent::Ipc { from: Source::Chrome, msg });
+            } else {
+                let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                send(&p, UserEvent::Toast(format!("Saved {file} to {}", dir.display())));
+            }
+        });
     }
 
     /// Window, Dock and system-wide settings that apply to the app as a whole (window.*, app.*, global_keybindings).
@@ -5827,6 +5970,11 @@ impl App {
                     let q = serde_json::to_string(query).unwrap_or("null".into());
                     return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.find({q})")));
                 }
+                Command::FindNext | Command::FindPrevious => {
+                    let _ = focus_view(&l.view);
+                    return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.findStep({})", if cmd == Command::FindNext { 1 } else { -1 })));
+                }
+                Command::SavePage | Command::ViewSource | Command::EmailLink => return self.page_file(&cmd, &l.view, &l.title, &l.url),
                 Command::CopyMarkdownLink => {
                     let title = l.title.replace('[', "(").replace(']', ")");
                     let url = self.clean(&l.url);
@@ -5942,13 +6090,8 @@ impl App {
                 self.ask_about_saved(stale);
             }
             Command::ReopenClosedTab => {
-                if let Some(c) = self.state.closed.pop() {
-                    let space = c.space.min(self.state.spaces.len() - 1);
-                    let id = c.tab.id;
-                    self.state.tabs.insert(id, c.tab);
-                    let today = &mut self.state.spaces[space].today;
-                    if self.config.tabs.new_tab_position == "bottom" { today.push(id) } else { today.insert(0, id) }
-                    self.activate(id);
+                if let Some(last) = self.state.closed.len().checked_sub(1) {
+                    self.reopen_closed(last);
                 }
             }
             Command::ActivateTab { tab } => {
@@ -6147,6 +6290,24 @@ impl App {
                 if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
                     let _ = v.evaluate_script("window.stop()");
                 }
+            }
+            Command::FindNext | Command::FindPrevious => {
+                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
+                    let _ = focus_view(v);
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.findStep({})", if cmd == Command::FindNext { 1 } else { -1 }));
+                }
+            }
+            Command::OpenFile => {
+                let files: Vec<String> = platform::pick_files(&self.translate("Choose files to open in Valerie"))
+                    .iter()
+                    .filter_map(|f| url::Url::from_file_path(f).ok().map(String::from))
+                    .collect();
+                self.open_external(files, elwt);
+            }
+            Command::SavePage | Command::ViewSource | Command::EmailLink => {
+                let Some(t) = self.state.active_tab() else { return };
+                let (Some(v), Some(tab)) = (self.views.get(&t), self.state.tabs.get(&t)) else { return };
+                self.page_file(&cmd, v, tab.display_title(), &tab.url);
             }
             Command::CopyUrl { tab } => {
                 if let Some(url) = self.target_tab(tab).and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()) {
@@ -7777,7 +7938,11 @@ impl App {
                 }
             }
             UserEvent::Menu(id) => {
-                if let Some(cmd) = self.menu_cmds.get(&id).cloned() {
+                if let Some(tab) = id.0.strip_prefix("closed-").and_then(|t| t.parse::<TabId>().ok()) {
+                    if let Some(i) = self.state.closed.iter().position(|c| c.tab.id == tab) {
+                        self.reopen_closed(i);
+                    }
+                } else if let Some(cmd) = self.menu_cmds.get(&id).cloned() {
                     self.dispatch(cmd, elwt);
                 }
             }
@@ -9158,7 +9323,26 @@ static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsiz
 
 /// Commands that only mean something on one system.
 fn on_this_system(name: &str) -> bool {
-    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location")
+    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location" | "open_file")
+}
+
+/// The page's HTML without what Valerie put in it (its find bar, toasts and styles).
+const PAGE_HTML_JS: &str = r#"(() => { const d = document.documentElement.cloneNode(true); d.querySelectorAll('valerie-ui, valerie-reader, [id^="__valerie"]').forEach((e) => e.remove()); return d.outerHTML; })()"#;
+
+/// Which menu each command sits in when the menus are laid out like other browsers' (menu.browser_menus).
+const BROWSER_MENUS: &[(&str, &[&str])] = &[
+    ("File", &["new_tab", "new_window", "new_little_window", "open_command_bar", "open_file", "close_tab", "close_window", "move_to_little_window", "move_to_main_window", "save_page", "email_link", "print", "capture_page", "capture_full_page"]),
+    ("Edit", &["copy_url", "copy_markdown_link", "copy_link_to_highlight", "paste_and_go", "search_selection", "find_in_page", "find_next", "find_previous"]),
+    ("View", &["toggle_sidebar", "toggle_tab_bar_position", "cycle_sidebar_size", "reload", "hard_reload", "stop", "zoom_in", "zoom_out", "zoom_reset", "reader_view", "toggle_dark_page", "translate_page", "split_view", "unsplit", "focus_next_pane", "focus_pane", "toggle_terminal", "new_terminal", "layout_gallery", "next_layout", "reset_layout", "duplicate_layout", "switch_layout", "dev_tools", "view_source", "hide_element", "show_hidden_elements"]),
+    ("History", &["back", "forward", "reopen_closed_tab", "history", "clear_site_data", "clear_cache", "clear_cache_and_cookies"]),
+    ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "toggle_favorite", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs", "review_saved_tabs"]),
+    ("Spaces", &["next_space", "prev_space", "switch_space", "new_space", "delete_space", "rename_space"]),
+    ("Window", &["downloads", "show_downloads", "extensions"]),
+    ("Help", &["welcome", "report_problem", "check_for_updates", "toggle_test_builds"]),
+];
+
+fn browser_menu(name: &str) -> Option<&'static str> {
+    BROWSER_MENUS.iter().find(|(_, names)| names.contains(&name)).map(|(menu, _)| *menu)
 }
 
 /// Where a test copy's windows go (`platform::test_windows`): a display other than the main one, if there is one.
@@ -9475,10 +9659,12 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                     app.reveal(why);
                 }
                 app.drain_events(elwt);
+                app.fill_closed_menu();
             }
             Event::WindowEvent { window_id, event, .. } => {
                 app.window_event(window_id, event, elwt);
                 app.drain_events(elwt);
+                app.fill_closed_menu();
             }
             Event::Reopen { .. } => app.show_main(),
             Event::Opened { urls } => {
@@ -13133,6 +13319,16 @@ mod custom_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn browser_menus_name_real_commands() {
+        for (menu, names) in super::BROWSER_MENUS {
+            for n in *names {
+                let known = crate::command::CATALOG.iter().any(|(c, _)| c == n) || crate::command::WITH_ARGS.iter().any(|(c, _)| c == n);
+                assert!(known, "{menu} lists {n}, which isn't a command");
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn links_the_valerie_command_without_taking_over() {

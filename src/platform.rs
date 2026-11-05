@@ -1105,6 +1105,38 @@ mod mac {
         }
     }
 
+    /// A file window (NSOpenPanel) for opening files; the chosen files, empty if cancelled.
+    pub fn pick_files(message: &str) -> Vec<std::path::PathBuf> {
+        use objc2::class;
+        unsafe {
+            let panel: *mut AnyObject = msg_send![class!(NSOpenPanel), openPanel];
+            if panel.is_null() {
+                return Vec::new();
+            }
+            let _: () = msg_send![panel, setCanChooseDirectories: false];
+            let _: () = msg_send![panel, setCanChooseFiles: true];
+            let _: () = msg_send![panel, setAllowsMultipleSelection: true];
+            let m = objc2_foundation::NSString::from_str(message);
+            let _: () = msg_send![panel, setMessage: &*m];
+            let r: isize = msg_send![panel, runModal];
+            if r != 1 {
+                return Vec::new();
+            }
+            let urls: *mut AnyObject = msg_send![panel, URLs];
+            if urls.is_null() {
+                return Vec::new();
+            }
+            let n: usize = msg_send![urls, count];
+            (0..n)
+                .filter_map(|i| {
+                    let url: *mut AnyObject = msg_send![urls, objectAtIndex: i];
+                    let path: *mut objc2_foundation::NSString = msg_send![url, path];
+                    path.as_ref().map(|p| std::path::PathBuf::from(p.to_string()))
+                })
+                .collect()
+        }
+    }
+
     pub fn has_entitlement(name: &str) -> bool {
         use std::ffi::{c_char, c_void, CString};
         #[link(name = "Security", kind = "framework")]
@@ -2574,6 +2606,17 @@ pub fn pick_folder(message: &str) -> Option<std::path::PathBuf> {
     {
         let _ = message;
         None
+    }
+}
+
+/// Pick files to open in the system's file window. Empty when cancelled, and elsewhere than macOS (`open_file` is hidden there).
+pub fn pick_files(message: &str) -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    return mac::pick_files(message);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = message;
+        Vec::new()
     }
 }
 

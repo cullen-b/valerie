@@ -142,6 +142,14 @@ pub enum Command {
         tab: Option<TabId>,
     },
     Stop,
+    /// Pick files on this computer and open each in a new tab.
+    OpenFile,
+    /// Save the page's HTML to the downloads folder.
+    SavePage,
+    /// Start an email with the page's title and address.
+    EmailLink,
+    /// The page's HTML source, in a new tab.
+    ViewSource,
     CopyUrl {
         #[serde(default)]
         tab: Option<TabId>,
@@ -591,6 +599,10 @@ pub enum Command {
     },
     /// Clear cookies, caches and storage for the current site (signs you out of it).
     ClearSiteData,
+    /// Clear every site's cache in the current tab's profile (keeps you signed in).
+    ClearCache,
+    /// Clear every site's cache, cookies and storage in the current tab's profile, after asking (signs you out everywhere).
+    ClearCacheAndCookies,
     /// Open this page in Safari, where passkeys work, then offer to bring the login back.
     SignInWithSafari,
     /// Copy this site's login (its cookies) from Safari into this tab's profile, then reload.
@@ -599,10 +611,6 @@ pub enum Command {
     /// Make Valerie the app Markdown files (.md) open in (macOS).
     SetDefaultMarkdownApp,
     /// Run a command defined by a plugin in `<config dir>/plugins/<plugin>/plugin.yaml`.
-    /// Clear every site's cache in the current tab's profile (keeps you signed in).
-    ClearCache,
-    /// Clear every site's cache, cookies and storage in the current tab's profile, after asking (signs you out everywhere).
-    ClearCacheAndCookies,
     Plugin {
         plugin: String,
         command: String,
@@ -629,6 +637,9 @@ pub enum Command {
         #[serde(default)]
         query: Option<String>,
     },
+    /// The next match of the last find (the bar opens again if it was closed).
+    FindNext,
+    FindPrevious,
     /// Open a link the way Valerie's link menu does: new_tab | background_tab | split | peek | little_window.
     OpenLink {
         url: String,
@@ -699,6 +710,7 @@ impl Command {
             Command::CopyPassword { .. }
                 | Command::DeletePassword { .. }
                 | Command::OpenDownload { .. }
+                | Command::OpenFile
                 | Command::BringLoginFromSafari
                 // An agent starting agents could loop forever; setting one up installs software.
                 | Command::NewChat { .. }
@@ -746,6 +758,7 @@ impl Command {
                 | Back { tab: None }
                 | Forward { tab: None }
                 | Reload { tab: None }
+                | HardReload { tab: None }
                 | CopyUrl { tab: None }
                 | ToggleSidebar
                 | NextSpace
@@ -758,10 +771,11 @@ impl Command {
                 | ZoomReset
                 | LastTab
                 | ToggleMute { tab: None }
-                | HardReload { tab: None }
                 | ToggleMedia { tab: None }
                 | SkipMedia { tab: None, .. }
                 | ReaderView
+                | FindNext
+                | FindPrevious
                 | HideElement
                 | CopyMarkdownLink
                 | CopyLinkToHighlight
@@ -789,6 +803,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("prev_tab", "Previous Tab"),
     ("copy_url", "Copy URL"),
     ("reload", "Reload Page"),
+    ("hard_reload", "Hard Reload (skip the cache)"),
     ("back", "Back"),
     ("forward", "Forward"),
     ("toggle_sidebar", "Toggle Sidebar"),
@@ -803,13 +818,19 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("zoom_in", "Zoom In"),
     ("zoom_out", "Zoom Out"),
     ("zoom_reset", "Actual Size"),
-    ("hard_reload", "Hard Reload (skip the cache)"),
     ("dev_tools", "Developer Tools"),
     ("new_little_window", "New Little Window"),
     ("close_window", "Close Window"),
     ("move_to_little_window", "Move Tab to Little Window"),
     ("move_to_main_window", "Move Little Window to Main Window"),
     ("find_in_page", "Find in Page"),
+    ("find_next", "Find Next"),
+    ("find_previous", "Find Previous"),
+    ("stop", "Stop Loading"),
+    ("open_file", "Open File…"),
+    ("save_page", "Save Page to Downloads"),
+    ("email_link", "Email Link to This Page"),
+    ("view_source", "View Page Source"),
     ("last_tab", "Switch to Last Tab"),
     ("toggle_mute", "Mute / Unmute Tab"),
     ("toggle_media", "Play / Pause Media"),
@@ -856,6 +877,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
+    ("clear_cache", "Clear Cache (keeps you signed in)"),
+    ("clear_cache_and_cookies", "Clear Cache and Cookies… (signs you out of every site)"),
     ("sign_in_with_safari", "Sign In with Safari (for passkeys)"),
     ("bring_login_from_safari", "Bring Login from Safari"),
     ("set_default_browser", "Make Valerie the Default Browser"),
@@ -877,8 +900,6 @@ pub const CATALOG: &[(&str, &str)] = &[
 /// Commands that take options, with their shapes (shared by the MCP tool description and the LLM guide).
 pub const WITH_ARGS: &[(&str, &str)] = &[
     ("share_plugin", "{ name? }  (a folder in plugins/, else in extensions/; without one, the marketplace opens on yours)"),
-    ("clear_cache", "Clear Cache (keeps you signed in)"),
-    ("clear_cache_and_cookies", "Clear Cache and Cookies… (signs you out of every site)"),
     ("open_command_bar", "{ mode: new_tab | current }"),
     ("new_tab", "{ url?, space?, background? }"),
     ("go", "{ input, new_tab? }  (URL or search terms, like typing in the command bar)"),
