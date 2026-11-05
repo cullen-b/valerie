@@ -667,7 +667,8 @@ pub fn tools() -> Vec<Value> {
                      "save_to": { "type": "string", "description": "Save the PNG to this file (or folder) and return its path instead of the image" } }), &[]),
         tool("read_network", "List the page's requests since it loaded, oldest first: API calls (fetch, XHR) with method and \
              status, and scripts, styles and images with timing. failed_only shows what broke (status 400+ or no answer). \
-             Reload the tab (history reload) to see its loading from the start.", json!({
+             The first read of a tab starts its recording (earlier requests come without status); reload the tab (history \
+             reload) to see its loading from the start.", json!({
             "tab": tab_prop(),
             "filter": { "type": "string", "description": "Only addresses (or response bodies) containing this, e.g. /api/" },
             "failed_only": { "type": "boolean" },
@@ -1894,12 +1895,14 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 return Err("this page keeps no network log (one of Valerie's own pages, or still loading)".into());
             }
             if v["on"] != Value::Bool(true) {
-                return Err("the network log is off (the mcp.network_log setting); turn it on and reload the tab".into());
+                return Err("the network log is off (the mcp.network_log setting is never); set it to when_asked and reload the tab".into());
             }
             let rows = v["requests"].as_array().cloned().unwrap_or_default();
             let failed = rows.iter().filter(|r| r["error"].is_string() || r["status"].as_u64().is_some_and(|s| s >= 400)).count();
             let mut out = json!({ "requests": rows, "shown": rows.len(), "failed": failed });
-            if a["bodies"].as_bool() == Some(true) && v["had_bodies"] != Value::Bool(true) {
+            if v["started_now"] == Value::Bool(true) {
+                out["note"] = json!("Recording started now: earlier requests are listed without status or method. Reload the tab (or repeat the action) and read again for full detail; it keeps recording through reloads.");
+            } else if a["bodies"].as_bool() == Some(true) && v["had_bodies"] != Value::Bool(true) {
                 out["note"] = json!("Bodies are recorded from now on: repeat the action (or reload the tab) and read again.");
             }
             Ok(out)

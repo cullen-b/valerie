@@ -773,8 +773,10 @@ mcp:
   ask_user: true           # let agents hand you a page for what only you can do (make an account, sign in, a CAPTCHA,
                            # pay, pick an option): it opens in your sidebar with their note and a Done button or their
                            # choices. true | false
-  network_log: true        # keep a list of each page's requests (address, status, time) for agents debugging a page
-                           # (read_network). Stays in the page; nothing is saved. true | false
+  network_log: when_asked  # keep a list of each page's requests (address, status, time) for agents debugging a page
+                           # (read_network). Stays in the page; nothing is saved. One of: when_asked (a tab starts
+                           # recording the first time an agent reads it, and keeps recording through reloads; other
+                           # pages are left untouched) | always (every page, from the moment it loads) | never
   answer_in_background: true # keep answering agents at full speed while Valerie is in the background. Off lets macOS slow
                            # it down to save battery, and a busy Mac can then leave agents waiting for minutes. macOS only;
                            # takes effect at the next start. true | false

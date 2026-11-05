@@ -31,7 +31,7 @@ Everything is plain files in this folder and Valerie reloads them the moment you
 | `reference/default-config.yaml` | Every option with its default and a comment (read-only reference, regenerated each launch). |
 | `plugins/<name>/plugin.yaml` | A plugin: commands, shortcuts, page scripts/styles, hooks. See `plugins/_example/`. |
 | `plugins/<name>/style.css`, `script.js` | Applied to the sites listed in that plugin's `matches`. |
-| `boosts/<host>.css`, `boosts/<host>.js` | Quick per-site CSS/JS without a plugin (e.g. `boosts/github.com.css`). |
+| `boosts/<host>.css`, `boosts/<host>.js` | Quick per-site CSS/JS without a plugin (e.g. `boosts/github.com.css`). The JS runs once per page load in a function of its own, so give anything the page must reach a `window.` name (`window.myHelper = ...`). |
 | `ui/chrome.css`, `ui/palette.css`, `ui/chat.css`, `ui/terminal.css`, `ui/little.css`, `ui/answer.css`, `ui/welcome.css`, `ui/plugins.css` | The user's own CSS for Valerie's windows (sidebar, command bar, Chats…). Live; see "Restyling Valerie itself". |
 | `ui/page.css` | CSS for what Valerie draws inside web pages: find bar, link hints, menus, toasts, reader view. |
 | `strings/<language>.yaml` | Valerie's words in another language (`language: es`). `"{exe}" strings` prints every word to translate. |
@@ -533,7 +533,8 @@ hidden tabs with the user's logins; `map_site` lists (and reads) a site's pages.
 hand the user a page for anything only a person can do, such as making an account, signing in, paying, creating an API key
 or picking an option (`ask_user` with a `url` or `tab`, a note, and a Done button or `choices`; off with
 `mcp.ask_user: false`), and read
-a page's requests (`read_network`; off with `mcp.network_log: false`). A `click`, Enter or form submit on a button that
+a page's requests (`read_network`: a tab starts recording when first read; `mcp.network_log: always` records every page
+from its load, `never` turns it off). A `click`, Enter or form submit on a button that
 looks like spending money (`mcp.paying_words`), or any of those on a page that takes payment (card fields, a payment form or
 a pay button), waits for the user's yes every time, even with full access, and so does typing into a card field. An `eval_js`
 script is stopped if it clicks, submits or sends anything like that, and told to use `click` instead; scripts that only read

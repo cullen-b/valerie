@@ -982,12 +982,28 @@ pub struct McpConfig {
     pub hidden_tabs_close_after: u64,
     pub hidden_tabs_max: usize,
     pub ask_user: bool,
-    pub network_log: bool,
+    /// "when_asked" | "always" | "never" (true and false from older settings files mean always and never).
+    #[serde(deserialize_with = "network_log_mode")]
+    pub network_log: String,
     pub ask_before_paying: bool,
     pub paying_words: Vec<String>,
     pub answer_in_background: bool,
     pub start_when_needed: bool,
     pub quit_when_unused_minutes: f64,
+}
+
+fn network_log_mode<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Mode {
+        Old(bool),
+        New(String),
+    }
+    Ok(match Mode::deserialize(d)? {
+        Mode::Old(true) => "always".into(),
+        Mode::Old(false) => "never".into(),
+        Mode::New(s) => s,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
