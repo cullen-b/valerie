@@ -528,6 +528,7 @@ mod mac {
         }
         unsafe extern "C-unwind" fn did_exit(_: *mut AnyObject, _: Sel, _wv: *mut AnyObject) {
             crate::log::line("fullscreen", "page back in the window");
+            crate::quick_fullscreen::finish();
             if let Some(f) = BACK.get() {
                 f();
             }
@@ -535,6 +536,7 @@ mod mac {
         if BACK.set(f).is_err() {
             return;
         }
+        crate::quick_fullscreen::install();
         unsafe {
             let view_class = (*ptr(wv)).class() as *const AnyClass as *mut AnyClass;
             objc2::ffi::class_addMethod(view_class, sel!(convertRect:toView:), std::mem::transmute::<*const (), Imp>(convert_rect as *const ()), c"{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}@".as_ptr());
@@ -2275,26 +2277,91 @@ pub struct Note<'a> {
     pub sound: bool,
 }
 
-/// `f` runs when a page that went full screen is back in Valerie's window.
+/// Whether a page's full screen is Valerie's quick kind (setting pages.quick_full_screen).
+pub static QUICK_FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+#[cfg(not(target_os = "macos"))]
+static FULLSCREEN_CHANGED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+#[cfg(not(target_os = "macos"))]
+fn fullscreen_changed() {
+    if let Some(f) = FULLSCREEN_CHANGED.get() {
+        f();
+    }
+}
+
+#[cfg(target_os = "linux")]
+thread_local!(static FULL_SCREEN_PAGES: std::cell::RefCell<Vec<webkit2gtk::WebView>> = const { std::cell::RefCell::new(Vec::new()) });
+
+/// `f` runs when Valerie has to lay out again for a page's full screen: on the Mac when the page is back in Valerie's
+/// window, elsewhere when a page starts or stops filling the window.
 #[allow(unused_variables)]
 pub fn on_page_fullscreen(wv: &WebView, f: impl Fn() + Send + Sync + 'static) {
     #[cfg(target_os = "macos")]
     mac::on_page_fullscreen(wv, Box::new(f));
+    #[cfg(not(target_os = "macos"))]
+    let _ = FULLSCREEN_CHANGED.set(Box::new(f));
 }
 
+/// The engine's own word, not the page's: a page can't claim full screen without a real request.
 #[allow(unused_variables)]
 pub fn watch_page_fullscreen(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::watch_page_fullscreen(wv);
+    #[cfg(target_os = "windows")]
+    {
+        use webview2_com::ContainsFullScreenElementChangedEventHandler;
+        use wry::WebViewExtWindows;
+        let handler = ContainsFullScreenElementChangedEventHandler::create(Box::new(|_, _| {
+            fullscreen_changed();
+            Ok(())
+        }));
+        let mut token = 0i64;
+        if let Err(e) = unsafe { wv.webview().add_ContainsFullScreenElementChanged(&handler, &mut token) } {
+            crate::log::line("fullscreen", format!("can't watch full screen: {e}"));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        let view = wv.webview();
+        // false: WebKitGTK goes on to make the window full screen itself, and the page only enters if it does.
+        view.connect_enter_fullscreen(|v| {
+            FULL_SCREEN_PAGES.with(|p| p.borrow_mut().push(v.clone()));
+            fullscreen_changed();
+            false
+        });
+        view.connect_leave_fullscreen(|v| {
+            FULL_SCREEN_PAGES.with(|p| p.borrow_mut().retain(|x| x != v));
+            fullscreen_changed();
+            false
+        });
+    }
 }
 
-/// A page in the system's own full screen window: Valerie mustn't move or hide it.
+/// A page in full screen: on the Mac in WebKit's window, where Valerie mustn't move or hide it (whatever the setting);
+/// elsewhere still in its view, which Valerie stretches over the window when quick full screen is on.
 #[allow(unused_variables)]
 pub fn in_page_fullscreen(wv: &WebView) -> bool {
     #[cfg(target_os = "macos")]
     return mac::in_page_fullscreen(wv);
     #[cfg(not(target_os = "macos"))]
-    false
+    if !QUICK_FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use wry::WebViewExtWindows;
+        let mut full = windows::core::BOOL(0);
+        return unsafe { wv.webview().ContainsFullScreenElement(&mut full) }.is_ok() && full.as_bool();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use wry::WebViewExtUnix;
+        let view = wv.webview();
+        return FULL_SCREEN_PAGES.with(|p| p.borrow().contains(&view));
+    }
 }
 
 /// `f` gets the webview whose floating video's return button was pressed (see `is_webview`).
