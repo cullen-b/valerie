@@ -187,6 +187,17 @@ mod mac {
         !url.is_null()
     }
 
+    /// Reaches the page ahead of the close, so sound stops before the site's unload code (which can run for 100s of ms).
+    pub fn silence(wv: &WebView) {
+        use objc2::sel;
+        let v = ptr(wv);
+        unsafe {
+            if msg_send![v, respondsToSelector: sel!(_setPageMuted:)] {
+                let _: () = msg_send![v, _setPageMuted: 1usize];
+            }
+        }
+    }
+
     /// Re-adding a subview moves it to the top of its siblings.
     pub fn bring_to_front(wv: &WebView) {
         let v = ptr(wv);
@@ -1850,6 +1861,27 @@ pub fn page_url(wv: &WebView) -> Option<String> {
         return None;
     }
     wv.url().ok()
+}
+
+/// Cut a page's sound right away; call just before dropping its view.
+pub fn silence(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::silence(wv);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        wv.webview().set_is_muted(true);
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+        use windows::core::Interface;
+        use wry::WebViewExtWindows;
+        if let Ok(page) = wv.controller().CoreWebView2().and_then(|p| p.cast::<ICoreWebView2_8>()) {
+            let _ = page.SetIsMuted(true);
+        }
+    }
 }
 
 pub fn bring_to_front(wv: &WebView) {

@@ -1642,7 +1642,7 @@ impl App {
         let ids: Vec<TabId> = self.views.keys().copied().collect();
         for id in ids {
             if panes.contains(&id) {
-                self.views.remove(&id);
+                self.drop_view(id);
                 self.ready_views.remove(&id);
                 self.ensure_view(id);
             } else {
@@ -1960,8 +1960,15 @@ impl App {
         }
     }
 
+    /// Every page goes away through here so its sound stops with it, not a moment later.
+    fn drop_view(&mut self, tab: TabId) {
+        if let Some(v) = self.views.remove(&tab) {
+            platform::silence(&v);
+        }
+    }
+
     fn unload(&mut self, tab: TabId) {
-        self.views.remove(&tab);
+        self.drop_view(tab);
         self.crashed.remove(&tab);
         self.preloaded.remove(&tab);
         self.ready_views.remove(&tab);
@@ -2990,7 +2997,7 @@ impl App {
             let space = self.state.space_of(tab);
             let views = &self.views;
             let next = self.state.close_tab(tab, |t| views.contains_key(&t));
-            self.views.remove(&tab);
+            self.drop_view(tab);
             if space == Some(self.state.active_space) || space.is_none() {
                 if let Some(n) = next {
                     return self.activate(n);
@@ -5221,7 +5228,7 @@ impl App {
                 .collect();
             for id in stale {
                 self.state.archive_tab(id);
-                self.views.remove(&id);
+                self.drop_view(id);
                 self.dirty = true;
             }
         }
@@ -5608,7 +5615,7 @@ impl App {
                     self.queue_event("tab_closed", Some(t), None);
                     let views = &self.views;
                     self.state.close_tab(t, |v| views.contains_key(&v));
-                    self.views.remove(&t);
+                    self.drop_view(t);
                 }
                 self.dirty = true;
                 if let Some(n) = self.state.space().active {
@@ -5622,7 +5629,7 @@ impl App {
                 let today = self.state.space().today.clone();
                 for id in today {
                     self.state.archive_tab(id);
-                    self.views.remove(&id);
+                    self.drop_view(id);
                 }
                 self.dirty = true;
                 self.layout();
@@ -5755,7 +5762,7 @@ impl App {
                 }
                 for id in self.state.order(i, false) {
                     self.state.archive_tab(id);
-                    self.views.remove(&id);
+                    self.drop_view(id);
                 }
                 self.state.spaces.remove(i);
                 self.state.active_space = self.state.active_space.min(self.state.spaces.len() - 1);
@@ -7070,7 +7077,7 @@ impl App {
                             || self.view_agents.get(&id).is_some_and(|a| *a != self.agent_for_url(&url))) =>
                 {
                     // This site belongs to another profile: reopen the tab there so it sees that profile's sign-ins.
-                    self.views.remove(&id);
+                    self.drop_view(id);
                     self.ready_views.remove(&id);
                     if let Some(t) = self.state.tabs.get_mut(&id) {
                         t.url = url;
@@ -7286,7 +7293,7 @@ impl App {
                             self.fresh_history = false;
                         }
                         for id in self.state.apply_remote(&out.devices) {
-                            self.views.remove(&id);
+                            self.drop_view(id);
                         }
                         self.state.reconcile_spaces(&self.config);
                         self.remote = out.devices;
@@ -10734,7 +10741,7 @@ impl App {
                 self.close(id);
             }
             self.state.archive_tab(id);
-            self.views.remove(&id);
+            self.drop_view(id);
         }
         self.dirty = true;
         self.layout();
