@@ -421,6 +421,9 @@ pages:
   loading_bar: true        # a thin line across the top of a page while it loads
   wait_for_first_draw: true # a tab that's loading from scratch (new, or asleep) stays hidden until it has drawn, up to a
                            # second, then fades in, so it never flashes white. false = show it straight away
+  quick_full_screen: true  # a page's full screen (a video's button) fills the whole screen straight away: no slide to a
+                           # separate desktop on the Mac, and over the whole window everywhere. false = the system's own way:
+                           # the Mac's slide; on Windows and Linux the video stays inside the tab's area
   youtube_sharp_start: true # YouTube videos start at full quality even if a past hiccup left YouTube expecting a bad connection.
                            # Your real connection speed still counts. false = leave YouTube's saved estimate alone
   markdown: true           # show Markdown files (.md, on this computer or the web) as formatted documents: headings,

@@ -14,6 +14,8 @@ mod llm_guide;
 mod mcp;
 mod passwords;
 mod platform;
+#[cfg(target_os = "macos")]
+mod quick_fullscreen;
 mod plugins;
 mod routing;
 mod state;
