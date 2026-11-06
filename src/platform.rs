@@ -260,12 +260,17 @@ mod mac {
 
     /// Run `f` inside an NSAnimationContext group so `animator` property changes ease over `secs`.
     unsafe fn animate(secs: f64, f: impl FnOnce()) {
+        animate_curve(secs, "easeInEaseOut", f)
+    }
+
+    /// `animate` with a named CAMediaTimingFunction curve.
+    unsafe fn animate_curve(secs: f64, curve: &str, f: impl FnOnce()) {
         use objc2::class;
         let ctx_cls = class!(NSAnimationContext);
         let _: () = msg_send![ctx_cls, beginGrouping];
         let ctx: *mut AnyObject = msg_send![ctx_cls, currentContext];
         let _: () = msg_send![ctx, setDuration: secs];
-        let name = objc2_foundation::NSString::from_str("easeInEaseOut");
+        let name = objc2_foundation::NSString::from_str(curve);
         let tf: *mut AnyObject = msg_send![class!(CAMediaTimingFunction), functionWithName: &*name];
         let _: () = msg_send![ctx, setTimingFunction: tf];
         f();
@@ -285,7 +290,8 @@ mod mac {
             let frame: NSRect = msg_send![sup, frame];
             let oy = if flipped { y } else { frame.size.height - y - h };
             let target = NSRect::new(NSPoint::new(x, oy), NSSize::new(w.round(), h.round()));
-            animate(secs, || {
+            // Ease-out: a press mid-slide turns around at full speed instead of stalling at the start of an ease-in.
+            animate_curve(secs, "easeOut", || {
                 let animator: *mut AnyObject = msg_send![v, animator];
                 let _: () = msg_send![animator, setFrame: target];
             });
