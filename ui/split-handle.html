@@ -6,8 +6,8 @@
 <style>
 html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; cursor: col-resize; user-select: none; -webkit-user-select: none; }
 #pill { position: absolute; left: 0; right: 0; top: 0; height: 72px; transform-origin: center; will-change: transform; }
-#pill > div { position: absolute; inset: 0; border-radius: 999px; background: var(--accent, #9d8cff); transform: scale(.3, .15); opacity: 0;
-  transition: transform 200ms cubic-bezier(.5, 0, .75, 0), opacity 180ms ease-in; }
+#pill > div { position: absolute; inset: 0; border-radius: 999px; background: var(--accent, #9d8cff); transform: scale(.4, .2); opacity: 0;
+  transition: transform 260ms cubic-bezier(.4, 0, .7, .2), opacity 220ms ease-in 40ms; }
 #pill.on > div { transform: none; opacity: 1; transition: transform 600ms var(--pop, cubic-bezier(.34, 1.56, .64, 1)), opacity 120ms ease-out; }
 </style>
 </head>
@@ -27,6 +27,8 @@ let H = 72, pos = 0, v = 0, target = 0, raf = 0, on = false, hideT = 0, drag = n
 })();
 
 window.handle = {
+  // Valerie saw the mouse over a page or the sidebar: this strip missed it leaving.
+  hide() { if (!drag) hide(true); },
   set(c) {
     H = +c.h || 72; pill.style.height = H + "px";
     if (c.accent) document.documentElement.style.setProperty("--accent", c.accent);
@@ -51,13 +53,15 @@ function run() {
 }
 function show(y) {
   clearTimeout(hideT);
-  if (!on) { pos = y; v = 0; place(0); on = true; pill.classList.add("on"); }
+  if (!on) { pos = y; v = 0; place(0); on = true; pill.classList.add("on"); send({ t: "split_pill", on: true }); }
   target = y; run();
 }
 // A short wait so a mouse wobbling on the strip's edge doesn't flicker it.
-function hide() { clearTimeout(hideT); hideT = setTimeout(() => { on = false; pill.classList.remove("on"); }, 80); }
+function hide(now) { clearTimeout(hideT); hideT = setTimeout(() => { if (!on) return; on = false; pill.classList.remove("on"); send({ t: "split_pill", on: false }); }, now ? 0 : 80); }
 
+const outside = (e) => e.clientX < 0 || e.clientX >= innerWidth || e.clientY < 0 || e.clientY >= innerHeight;
 addEventListener("mousemove", (e) => {
+  if (!drag && outside(e)) return hide();
   show(e.clientY);
   if (!drag) return;
   dragX = e.screenX;
@@ -76,7 +80,7 @@ addEventListener("mouseup", (e) => {
   if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
   send({ t: "split_drag", dx: dragX - drag.x0 });
   drag = null;
-  if (e.clientX < 0 || e.clientX >= innerWidth || e.clientY < 0 || e.clientY >= innerHeight) hide();
+  if (outside(e)) hide();
 });
 send({ t: "ready" });
 </script>

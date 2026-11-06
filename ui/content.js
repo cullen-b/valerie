@@ -1060,8 +1060,10 @@ if (document.documentElement) applyBoostCss(); else document.addEventListener("D
 
 // ---------- reveal the hidden sidebar when the mouse touches the screen edge ----------
 // Only a deliberate push toward the edge counts: when the sidebar hides, the page slides under a resting mouse.
-let edgeAt = 0, edgeArmedAt = 0, grabAt = 0;
+let edgeAt = 0, edgeArmedAt = 0, grabAt = 0, splitPill = false;
 document.addEventListener("mousemove", (e) => {
+  // The split-view grab pill is showing but the mouse is on this page: it missed the mouse leaving.
+  if (splitPill) { splitPill = false; post({ t: "split_pill_away" }); }
   // The mouse left the widened split-view gap for this page: let it slim back down.
   if (cfg.split_grab && e.timeStamp - grabAt > 300) { grabAt = e.timeStamp; post({ t: "split_unhover" }); }
   if (cfg.peek) { if (e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
@@ -1770,7 +1772,7 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, toast, find: openFind, findStep, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, toast, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave,

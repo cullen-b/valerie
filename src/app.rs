@@ -8029,6 +8029,21 @@ impl App {
                     self.refresh_pane_config();
                 }
             }
+            (Source::SplitHandle(_), "split_pill") => {
+                // While the pill shows, the chrome and pages report the mouse, in case the strip misses it leaving.
+                let on = m["on"].as_bool().unwrap_or(false);
+                let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.splitPill && valerie.splitPill({on})"));
+                for t in self.panes() {
+                    if let Some(v) = self.views.get(&t) {
+                        let _ = v.evaluate_script(&format!("window.__valerie && __valerie.splitPill && __valerie.splitPill({on})"));
+                    }
+                }
+            }
+            (Source::Chrome, "split_pill_away") | (Source::Page(Target::Tab(_)), "split_pill_away") => {
+                for v in &self.split_handles {
+                    let _ = v.evaluate_script("window.handle && handle.hide()");
+                }
+            }
             (Source::SplitHandle(i), "ready") => {
                 if let Some(v) = self.split_handles.get(i) {
                     let _ = v.evaluate_script(&format!("handle.set({})", self.split_handle_settings()));
