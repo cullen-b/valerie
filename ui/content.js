@@ -224,39 +224,50 @@ const locationHooks = { fix() {} };
 })();
 
 // ---------- tabs opened in the background don't play audio/video until you first look at them ----------
-// A tab Valerie hasn't shown yet is a hidden document. Until it becomes visible, play() is held (and resumed then);
-// after that, media behaves normally (switching away doesn't pause anything).
+// A tab Valerie hasn't shown yet is a hidden document. Until it becomes visible (or Valerie says it's shown), play() is
+// held (and resumed then); after that, media behaves normally (switching away doesn't pause anything).
+let releaseHeld = null;
 (() => {
   const C0 = withSite(CFG);
   if (C0.tabs && C0.tabs.autoplay_in_background) return;
   if (document.visibilityState === "visible") return;
   const realPlay = HTMLMediaElement.prototype.play;
-  const waiting = new Map(); // element -> [resolve, reject] for the promise play() returned
+  const waiting = new Map(); // element -> the [resolve, reject] of each promise play() returned while held
   HTMLMediaElement.prototype.play = function () {
-    if (document.visibilityState === "visible") return realPlay.call(this);
-    return new Promise((resolve, reject) => waiting.set(this, [resolve, reject]));
+    if (document.visibilityState === "visible" || !releaseHeld) return realPlay.call(this);
+    return new Promise((resolve, reject) => waiting.set(this, [...(waiting.get(this) || []), [resolve, reject]]));
   };
   // Media started by the `autoplay` attribute doesn't go through play(): pause it and remember it.
   const onPlay = (e) => {
     const m = e.target;
     if (document.visibilityState !== "visible" && m instanceof HTMLMediaElement && !waiting.has(m)) {
       m.pause();
-      waiting.set(m, null);
+      waiting.set(m, []);
     }
   };
   document.addEventListener("play", onPlay, true);
-  const release = () => {
-    if (document.visibilityState !== "visible") return;
-    document.removeEventListener("visibilitychange", release);
+  const release = (shown) => {
+    if (!releaseHeld || (!shown && document.visibilityState !== "visible")) return;
+    releaseHeld = null;
     document.removeEventListener("play", onPlay, true);
     HTMLMediaElement.prototype.play = realPlay;
-    for (const [m, p] of waiting) {
+    const held = [...waiting.keys()];
+    for (const [m, ps] of waiting) {
       const r = realPlay.call(m);
-      if (p) r.then(p[0], p[1]); else r.catch(() => {});
+      r.then(() => ps.forEach((p) => p[0]()), (e) => ps.forEach((p) => p[1](e)));
     }
     waiting.clear();
+    // Some players (YouTube) give up on a play() that waited: start what's still paused, unless you've touched the page.
+    if (!(cfg.tabs && cfg.tabs.play_when_shown) || !held.length) return;
+    let touched = false;
+    const touch = () => { touched = true; };
+    addEventListener("pointerdown", touch, true); addEventListener("keydown", touch, true);
+    for (const ms of [700, 2500]) setTimeout(() => {
+      if (!touched) for (const m of held) if (m.isConnected && m.paused && !m.ended) realPlay.call(m).catch(() => {});
+    }, ms);
   };
-  document.addEventListener("visibilitychange", release);
+  releaseHeld = release;
+  document.addEventListener("visibilitychange", () => release(false));
 })();
 // Capture natives before page scripts run, so pages can't intercept what we send or fill.
 const stringify = JSON.stringify, keysOf = Object.keys, isArray = Array.isArray;
@@ -1772,7 +1783,7 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, toast, find: openFind, findStep, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, toast, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave,
