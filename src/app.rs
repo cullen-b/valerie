@@ -232,6 +232,8 @@ pub struct App {
     chat_float: bool,
     /// Pages on screen after the last layout.
     shown_panes: Vec<TabId>,
+    /// Pages off screen whose settings changed (the sidebar toggled); each catches up when it's next shown.
+    config_stale: HashSet<TabId>,
     /// The terminal panel along the bottom of the content area, and its shells.
     terminal_view: Option<WebView>,
     terminal_open: bool,
@@ -1426,6 +1428,7 @@ impl App {
             chat_view: None,
             chat_float: false,
             shown_panes: Vec::new(),
+            config_stale: HashSet::new(),
             terminal_view: None,
             terminal_open: false,
             terminal_max: false,
@@ -2386,6 +2389,18 @@ impl App {
             }
         }
         self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id) && !self.waiting_draw.contains(id)).collect();
+        if !self.config_stale.is_empty() {
+            let behind: Vec<TabId> = panes.iter().copied().filter(|id| self.config_stale.remove(id)).collect();
+            if !behind.is_empty() {
+                let cfg = self.page_config();
+                for id in behind {
+                    if let Some(v) = self.views.get(&id) {
+                        let _ = v.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config_for(Target::Tab(id), &cfg)));
+                    }
+                }
+            }
+            self.config_stale.retain(|id| self.views.contains_key(id));
+        }
         self.layout_split_handles(&rects, y, h);
         self.layout_panels(size.width, size.height);
         if let Some(av) = &self.answer_view {
@@ -6607,7 +6622,10 @@ impl App {
                 if !self.config.layout.sidebar_visible {
                     self.sidebar_hidden_at = std::time::Instant::now();
                 }
-                self.refresh_content_config();
+                // Only pages on screen hear now; telling every tab each press stalls the slide when S is held or spammed.
+                let panes = self.panes();
+                self.config_stale.extend(self.views.keys().filter(|id| !panes.contains(id)));
+                self.refresh_pane_config();
                 // Pages sit above the sidebar, so growing/shrinking them over it is the whole animation.
                 let secs = self.anim_secs();
                 self.layout_anim(secs);
