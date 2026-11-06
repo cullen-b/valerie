@@ -1403,7 +1403,12 @@ addEventListener("keydown", (e) => {
 }, true);
 function nextKey() { seqUntil = performance.now() + 2000; }
 
-window.valerie = { render, toast, pointerOut, nextKey };
+// The split-view grab pill is showing but the mouse is here: it missed the mouse leaving.
+let splitPillOn = false;
+addEventListener("mousemove", () => { if (splitPillOn) { splitPillOn = false; send({ t: "split_pill_away" }); } }, { passive: true });
+function splitPill(on) { splitPillOn = !!on; }
+
+window.valerie = { render, toast, pointerOut, nextKey, splitPill };
 send({ t: "ready" });
 </script>
 </body>

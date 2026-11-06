@@ -1644,7 +1644,7 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
             "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
@@ -2379,6 +2379,10 @@ impl App {
                 }
                 platform::follow_window(v, platform::Follow::Pane { first: i == 0, last: i + 1 == panes.len() });
                 let _ = v.set_visible(!self.waiting_draw.contains(id));
+                // Tell a page that just appeared, so media it held in the background starts even if WebKit's own visibility lags.
+                if !self.waiting_draw.contains(id) && !self.shown_panes.contains(id) {
+                    let _ = v.evaluate_script("window.__valerie && __valerie.shown()");
+                }
             }
         }
         self.shown_panes = panes.iter().copied().filter(|id| self.views.contains_key(id) && !self.waiting_draw.contains(id)).collect();
@@ -8027,6 +8031,21 @@ impl App {
                     let secs = self.anim_secs();
                     self.layout_anim(secs);
                     self.refresh_pane_config();
+                }
+            }
+            (Source::SplitHandle(_), "split_pill") => {
+                // While the pill shows, the chrome and pages report the mouse, in case the strip misses it leaving.
+                let on = m["on"].as_bool().unwrap_or(false);
+                let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.splitPill && valerie.splitPill({on})"));
+                for t in self.panes() {
+                    if let Some(v) = self.views.get(&t) {
+                        let _ = v.evaluate_script(&format!("window.__valerie && __valerie.splitPill && __valerie.splitPill({on})"));
+                    }
+                }
+            }
+            (Source::Chrome, "split_pill_away") | (Source::Page(Target::Tab(_)), "split_pill_away") => {
+                for v in &self.split_handles {
+                    let _ = v.evaluate_script("window.handle && handle.hide()");
                 }
             }
             (Source::SplitHandle(i), "ready") => {

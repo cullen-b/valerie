@@ -85,6 +85,7 @@ changed in plain words. Some translations:
 | "Bigger window" / "smaller window" | `window.width`, `window.height` |
 | "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
+| "A video tab should start playing when I open it" / "…shouldn't" | `tabs.play_when_shown: true` / `false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
 | "Turn off that plugin / extension" | `"{exe}" plugins off <name>` (`on` to turn it back on; add `--extension` when a plugin has the same name) |
 | "Find me a plugin for…" / "is there a plugin that…" | `"{exe}" plugins search <words>`, then `"{exe}" plugins install <name>`; "Plugins" in the command bar browses them |
