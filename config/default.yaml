@@ -146,6 +146,10 @@ escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mo
                            # "press Esc to exit full screen" banner, whatever this is set to.
 welcome: true              # the welcome guide (AI, sync, describe your browser, a tour) the first time Valerie opens;
                            # "Welcome Tour" in the command bar shows it again. true | false
+welcome_permissions: true  # Mac only: a welcome step that offers Full Disk Access, with Valerie's icon to drag into System
+                           # Settings (only shown while Valerie doesn't have it). true | false
+welcome_agent_setup: true  # welcome guide: your AI sets Valerie up in a live chat beside the guide, moving over what it
+                           # finds in your other browsers. false = five questions, then it works out of sight. true | false
 
 command_bar:
   hide_commands: []        # commands to leave out of the command bar, by name or words, e.g. [next_layout, "Print"];

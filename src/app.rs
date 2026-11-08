@@ -251,6 +251,9 @@ pub struct App {
     /// The welcome guide, over the whole window while it's open.
     welcome_view: Option<WebView>,
     welcome_open: bool,
+    /// The chat the welcome guide's live setup runs in, and whether it's showing beside the guide.
+    welcome_chat: Option<String>,
+    welcome_pane: bool,
     /// The plugin marketplace, over the whole window while it's open.
     market_view: Option<WebView>,
     market_open: bool,
@@ -1440,6 +1443,8 @@ impl App {
             terminal_size: (100, 20),
             welcome_view: None,
             welcome_open: false,
+            welcome_chat: None,
+            welcome_pane: false,
             market_view: None,
             market_open: false,
             market_index: Vec::new(),
@@ -2351,6 +2356,8 @@ impl App {
         self.state.tidy_splits();
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
+        // The welcome guide's share of the window while an agent works beside it.
+        let guide_w = (size.width * 0.46).round().min(size.width - 380.0).max(size.width.min(380.0) / 2.0);
         let _ = self.chrome.set_bounds(full);
         let _ = self.overlay.set_bounds(self.bar_bounds(size.width, size.height));
         platform::follow_window(&self.chrome, platform::Follow::Fill);
@@ -2422,7 +2429,12 @@ impl App {
             self.ensure_chat_view();
         }
         if let Some(cv) = &self.chat_view {
-            if self.chats_open {
+            if self.welcome_open && self.welcome_pane {
+                platform::round_corners(cv, 0.0, platform::Corners::None);
+                let _ = cv.set_bounds(rect(guide_w, 0.0, size.width - guide_w, size.height));
+                platform::follow_window(cv, platform::Follow::Pane { first: false, last: true });
+                let _ = cv.set_visible(true);
+            } else if self.chats_open {
                 platform::round_corners(cv, self.config.layout.corner_radius, self.pane_corners(0, 1));
                 let _ = cv.set_bounds(rect(x, y, w, h));
                 platform::follow_window(cv, platform::Follow::Fill);
@@ -2471,10 +2483,18 @@ impl App {
         }
         if let Some(wv) = &self.welcome_view {
             if self.welcome_open {
-                let _ = wv.set_bounds(full);
-                platform::follow_window(wv, platform::Follow::Fill);
+                if self.welcome_pane {
+                    let _ = wv.set_bounds(rect(0.0, 0.0, guide_w, size.height));
+                    platform::follow_window(wv, platform::Follow::Pane { first: true, last: false });
+                } else {
+                    let _ = wv.set_bounds(full);
+                    platform::follow_window(wv, platform::Follow::Fill);
+                }
                 let _ = wv.set_visible(true);
                 platform::bring_to_front(wv);
+                if let Some(cv) = self.chat_view.as_ref().filter(|_| self.welcome_pane) {
+                    platform::bring_to_front(cv);
+                }
             } else {
                 let _ = wv.set_visible(false);
             }
@@ -8855,6 +8875,9 @@ impl App {
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
+                if self.welcome_chat.as_ref() == Some(&chat) {
+                    self.welcome_send(&json!({ "type": "agent_setup", "state": "idle" }));
+                }
                 if let Some(started) = self.chat_started.remove(&chat) {
                     let steps = self.chats.iter().find(|c| c.id == chat).and_then(|c| c.messages.last()).map_or(0, |m| m.steps.len());
                     crate::log::event("chats", format!("chat {chat} answered in {}s after {steps} step(s)", now().saturating_sub(started)));
@@ -10172,7 +10195,7 @@ impl App {
 
     /// The user can see this chat right now (in Chats, or floating over a space).
     fn chat_shown(&self, chat: &str) -> bool {
-        (self.chats_open || self.chat_float || self.chats_block_rect().is_some()) && self.active_chat.as_deref() == Some(chat)
+        (self.chats_open || self.chat_float || self.welcome_pane || self.chats_block_rect().is_some()) && self.active_chat.as_deref() == Some(chat)
     }
 
     /// The effort to ask for, if the model has it: models say which levels they take (OpenCode's DeepSeek has no
@@ -10524,6 +10547,9 @@ impl App {
         self.chats.insert(0, c);
         self.chat_running.insert(id.clone());
         self.chat_started.insert(id.clone(), now());
+        if self.welcome_chat.as_ref() == Some(&id) {
+            self.welcome_send(&json!({ "type": "agent_setup", "state": "running" }));
+        }
         self.render();
         self.render_chat();
         let p = self.proxy.clone();
@@ -10639,7 +10665,7 @@ impl App {
             }
             Ev::Session { .. } => {}
         }
-        if (self.chats_open || self.chat_float) && self.active_chat.as_deref() == Some(chat.as_str()) {
+        if (self.chats_open || self.chat_float || self.welcome_pane) && self.active_chat.as_deref() == Some(chat.as_str()) {
             let i = c.messages.len() - 1;
             if let Some(v) = &self.chat_view {
                 let _ = v.evaluate_script(&format!("window.chat && chat.update({i}, {}, true)", json!(c.messages[i])));
@@ -11621,8 +11647,29 @@ impl App {
         self.focus_active();
     }
 
+    /// The welcome guide's live setup: a real chat with the chosen AI, shown beside the guide.
+    fn start_welcome_setup(&mut self, note: &str) {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("valerie"));
+        let mut c = crate::ai::Chat::new(&self.config.agent_for("chat").0);
+        c.title = "Set up Valerie".into();
+        c.brief = crate::ai::welcome_setup_brief(&crate::import::found(), &exe);
+        let id = c.id.clone();
+        self.chats.insert(0, c);
+        // So "Undo Last Customization" can put things back (before the agent starts changing them).
+        snapshot_config("Welcome: set up with an agent");
+        self.welcome_chat = Some(id.clone());
+        self.active_chat = Some(id.clone());
+        self.ensure_chat_view();
+        self.welcome_pane = true;
+        self.layout();
+        let text = if note.is_empty() { "Set up Valerie for me.".to_string() } else { format!("Set up Valerie for me. {note}") };
+        self.send_chat(Some(id), text, None, vec![]);
+    }
+
     fn close_welcome(&mut self, done: bool) {
         self.welcome_open = false;
+        self.welcome_pane = false;
+        crate::permission_tile::close();
         if done && !self.state.welcome_done {
             self.state.welcome_done = true;
             self.dirty = true;
@@ -11659,6 +11706,10 @@ impl App {
             "accent": self.theme_for(self.state.active_space).accent, "font": self.config.layout.font,
             "done": self.state.welcome_done,
             "only": self.welcome_only,
+            "permission_step": self.config.welcome_permissions && crate::update::app_bundle().is_some(),
+            "full_disk_access": crate::permission_tile::full_disk_access(),
+            "resume": self.state.welcome_resume,
+            "agent_setup": self.config.welcome_agent_setup && self.config.chats.enabled,
             // Unknown until the first sync has looked at the repo.
             "sync_key": if self.sync_checked { json!(self.passphrase_state()) } else { Value::Null },
             "suggestion": crate::crypt::suggest_passphrase(),
@@ -11714,6 +11765,51 @@ impl App {
                 let data = self.welcome_data();
                 if let Some(v) = &self.welcome_view {
                     let _ = v.evaluate_script(&format!("window.welcome && welcome.init({data})"));
+                }
+                if !self.state.welcome_resume.is_empty() {
+                    self.state.welcome_resume.clear();
+                    self.dirty = true;
+                }
+            }
+            // Full Disk Access: System Settings opens, with Valerie's icon to drag beside it.
+            "grant_access" => {
+                let Some(app) = crate::update::app_bundle() else { return };
+                if !crate::permission_tile::show(&app) {
+                    crate::log::line("welcome", "couldn't show the window to drag Valerie from");
+                }
+                platform::open_external("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");
+                // Saved now: macOS may quit Valerie to apply the permission.
+                self.state.welcome_resume = "permissions".into();
+                self.save();
+            }
+            "check_access" => {
+                crate::permission_tile::follow();
+                let granted = crate::permission_tile::full_disk_access() == Some(true);
+                if granted {
+                    crate::permission_tile::close();
+                    crate::log::event("welcome", "Full Disk Access allowed");
+                }
+                self.welcome_send(&json!({ "type": "access", "granted": granted }));
+            }
+            "close_access_helper" => crate::permission_tile::close(),
+            "agent_setup" => {
+                let note: String = m["note"].as_str().unwrap_or("").trim().chars().take(2000).collect();
+                self.start_welcome_setup(&note);
+            }
+            "stop_agent_setup" => {
+                if let Some(id) = &self.welcome_chat {
+                    crate::ai::stop(id);
+                }
+            }
+            "agent_pane" => {
+                self.welcome_pane = m["show"].as_bool().unwrap_or(false) && self.welcome_chat.is_some();
+                if self.welcome_pane {
+                    self.active_chat = self.welcome_chat.clone();
+                    self.ensure_chat_view();
+                }
+                self.layout();
+                if self.welcome_pane {
+                    self.render_chat();
                 }
             }
             // Ask each installed agent a one-line question, in parallel: does it answer (signed in, plan active)?
@@ -12205,7 +12301,7 @@ impl App {
         let mut changed = false;
         let mut woke = Vec::new();
         let mut to_close = Vec::new();
-        let shown = if self.chats_open || self.chat_float || self.chats_block_rect().is_some() { self.active_chat.clone() } else { None };
+        let shown = if self.chats_open || self.chat_float || self.welcome_pane || self.chats_block_rect().is_some() { self.active_chat.clone() } else { None };
         for c in self.chats.iter_mut() {
             if c.snoozed_until > 0 && t >= c.snoozed_until {
                 c.snoozed_until = 0;
