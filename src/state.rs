@@ -222,6 +222,9 @@ pub struct State {
     /// The welcome guide was finished or skipped.
     #[serde(default)]
     pub welcome_done: bool,
+    /// The welcome step to come back to after a restart (macOS may quit Valerie to apply a permission).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub welcome_resume: String,
     /// Answers to "Allow this site to send notifications?" (site → allowed).
     #[serde(default)]
     pub notify_sites: BTreeMap<String, bool>,

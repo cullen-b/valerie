@@ -70,6 +70,9 @@ button[disabled] { opacity: .4; pointer-events: none; }
 .source { display: flex; align-items: center; gap: 14px; }
 .source .ico { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--card2); font-weight: 700; font-size: 17px; }
 .source .what { flex: 1; } .source .what small { display: block; color: var(--dim); font-size: 13px; }
+.access { margin-top: 4px; } .howto { margin-top: 16px; } .howto p { margin: 0 0 6px; } .howto .note { margin: 0; color: var(--dim); }
+.note.plain { color: var(--dim); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* agents */
 .status-line { display: flex; align-items: center; gap: 10px; margin: -6px 0 18px; color: var(--dim); font-size: 14px; min-height: 22px; }
 .agent { display: flex; flex-direction: column; gap: 10px; min-height: 132px; transition: border-color .2s, background .2s; }
@@ -164,7 +167,7 @@ function btn(text, cls, on) { const b = el("button", cls, text); b.onclick = on;
 
 let W = null;                      // data from Valerie
 const S = { step: 0, dir: 1, agents: {}, setup: {}, chosen: "", free: null, sync: null, key: null, only: "", imported: {}, qi: 0, answers: {}, request: "", custom: null, model: {}, effort: "" };
-const STEPS = ["hello", "import", "ai", "sync", "yours", "window", "tour"];
+const STEPS = ["hello", "permissions", "import", "ai", "sync", "yours", "window", "tour"];
 const IS_MAC = /Mac/.test(navigator.platform);
 
 // ---------- shortcut labels from the user's keybindings ----------
@@ -206,11 +209,37 @@ function hello(root) {
   h.append(el("div", "mark", "✦"), el("h1", null, "Welcome to Valerie"),
     el("p", "lead", "A fast browser where everything is yours to change. Let's set up the few things that make it yours. It takes about two minutes, and you can skip anything."));
   const ag = el("div", "agenda");
-  [["1", "Bring your bookmarks"], ["2", "Pick your AI"], ["3", "Sync your computers"], ["4", "Describe your browser"], ["5", "A quick tour"]]
+  [["1", "Bring your bookmarks"], ["2", "Pick your AI"], ["3", "Sync your computers"], ["4", W.agent_setup ? "Your AI sets up the rest" : "Describe your browser"], ["5", "A quick tour"]]
     .forEach(([n, t]) => { const s = el("span"); s.append(el("b", null, n), t); ag.append(s); });
   h.append(ag);
   root.append(h);
 }
+
+// Full Disk Access has no system dialog: System Settings opens and a small window beside it holds Valerie's icon to drag.
+function permissionsStep(root) {
+  const a = S.access;
+  root.append(el("h1", null, "One permission, if you want it"),
+    el("p", "lead", "Full Disk Access lets Valerie bring over Safari's bookmarks and logins, and stops your Mac asking about each folder while your AI works."));
+  const c = el("div", "card source access"), w = el("div", "what");
+  w.append(el("b", null, "Full Disk Access"), el("small", null, a.granted ? "Allowed. You can change this any time in System Settings." : "Set in System Settings, under Privacy & Security."));
+  c.append(w);
+  if (a.granted) c.append(el("span", "chip ok", "Allowed"));
+  else c.append(btn(S.helper ? "Open Settings again" : "Allow", S.helper ? "small" : "primary", grantAccess));
+  root.append(c);
+  if (S.helper && !a.granted) {
+    const h = el("div", "howto"); h.setAttribute("role", "status");
+    h.append(el("p", null, "Drag Valerie from the small window beside System Settings into the list, then turn on its switch. This page updates by itself."),
+      el("p", "note", "If your Mac offers Quit & Reopen, choose it. Valerie comes back to this step."));
+    root.append(h);
+  }
+  root.append(el("p", "note plain", "Anything you run inside Valerie, including your AI and its terminal, gets the same access."));
+}
+let accessTimer = 0;
+function grantAccess() {
+  S.helper = true; send({ t: "grant_access" }); draw();
+  clearInterval(accessTimer); accessTimer = setInterval(() => send({ t: "check_access" }), 400);
+}
+function stopAccessHelper() { S.helper = false; clearInterval(accessTimer); send({ t: "close_access_helper" }); }
 
 function importStep(root) {
   root.append(el("div", "kicker", "Step 1 · Bring your stuff"), el("h1", null, "Start with what you already have"),
@@ -449,12 +478,14 @@ function compose() {
 }
 function yoursStep(root) {
   root.append(el("div", "kicker", "Step 4 · Make it yours"));
+  if (W.agent_setup && S.agentSetup) return agentSetup(root);
   if (!chosenWorks()) {
-    root.append(el("h1", null, "Describe your browser, and it happens"),
-      el("p", "lead", "Answer a few questions in your own words and your AI changes Valerie to match. This needs an AI that's ready: set one up in the previous step, or skip this for now."),
-      btn("Back to AI setup", "", () => go(STEPS.indexOf("ai"))));
+    root.append(el("h1", null, W.agent_setup ? "Your AI sets up the rest" : "Describe your browser, and it happens"),
+      el("p", "lead", (W.agent_setup ? "It moves over what it finds in your other browsers and shapes Valerie to fit you. " : "Answer a few questions in your own words and your AI changes Valerie to match. ") + "This needs an AI that's ready: set one up in the previous step, or skip this for now."),
+      btn("Back to AI setup", "", () => go(visibleSteps().indexOf("ai"))));
     return;
   }
+  if (W.agent_setup) return agentSetup(root);
   const c = S.custom;
   if (c && c.state === "working") {
     root.append(el("h1", null, `${agentTitle(S.chosen)} is changing Valerie…`), el("p", "lead", "Valerie updates the moment each change is saved. This usually takes a minute or two."));
@@ -495,11 +526,35 @@ function yoursStep(root) {
   nav.append(go2); root.append(nav);
   if (!t.value.trim()) t.placeholder = "Describe how Valerie should be…";
 }
+// The agent works in a real chat beside the guide: you watch it, answer it, and can stop it.
+function agentSetup(root) {
+  const name = agentTitle(S.chosen), a = S.agentSetup;
+  if (!a) {
+    root.append(el("h1", null, `Let ${name} set up the rest`),
+      el("p", "lead", "It looks through your other browsers, moves over what it can, asks you about anything that conflicts, and tells you exactly what moved and what couldn't. You'll see every step."));
+    const t = el("input"); t.placeholder = "Anything you want different…"; t.value = S.setupNote || ""; t.autocomplete = "off"; t.setAttribute("aria-label", "Anything you want different (optional)");
+    t.oninput = () => (S.setupNote = t.value);
+    const start = () => { S.agentSetup = { state: "running", at: Date.now() }; send({ t: "agent_setup", note: t.value }); draw(); };
+    t.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } };
+    const row = el("div", "qnav"); row.append(el("span", "grow"), btn(`Start ${name}`, "primary", start));
+    root.append(t, row, el("p", "note plain", S.chosen === "opencode"
+      ? "It's told to leave your passwords, cookies and history alone. Free models may keep what you send them, so pick a paid model if your settings are private."
+      : "It's told to leave your passwords, cookies and history alone."));
+    return;
+  }
+  if (a.state === "running") {
+    root.append(el("h1", null, `${name} is setting up Valerie`), el("p", "lead", "Valerie updates the moment each change is saved. You can keep going while it works, and find this later in Chats."));
+    const w = el("div", "working"); w.append(el("div", "spinner"), el("span", "elapsed", ""), btn("Stop", "small ghost", () => send({ t: "stop_agent_setup" })));
+    root.append(w); tickElapsed(() => S.agentSetup && S.agentSetup.state === "running" && S.agentSetup.at); return;
+  }
+  root.append(el("h1", null, "Your turn"), el("p", "lead", `If ${name} asked you something, answer it on the right. Otherwise you're done here.`),
+    el("p", "note", "Undo Last Customization in the command bar puts your settings back."));
+}
 let elapsedTimer = 0;
-function tickElapsed() {
+function tickElapsed(since = () => S.custom && S.custom.state === "working" && S.custom.at) {
   clearInterval(elapsedTimer);
-  const upd = () => { const e = $(".elapsed"); if (!e || !S.custom || S.custom.state !== "working") return clearInterval(elapsedTimer);
-    const s = Math.round((Date.now() - S.custom.at) / 1000); e.textContent = `Working… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  const upd = () => { const e = $(".elapsed"), at = since(); if (!e || !at) return clearInterval(elapsedTimer);
+    const s = Math.round((Date.now() - at) / 1000); e.textContent = `Working… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
   upd(); elapsedTimer = setInterval(upd, 1000);
 }
 
@@ -565,7 +620,7 @@ function tourStep(root) {
 }
 
 // ---------- frame ----------
-function visibleSteps() { return S.only ? [S.only] : STEPS.filter((s) => s !== "import" || (W && W.imports && W.imports.length)); }
+function visibleSteps() { return S.only ? [S.only] : STEPS.filter((s) => (s !== "import" || (W && W.imports && W.imports.length)) && (s !== "permissions" || S.askAccess)); }
 function go(i) {
   const vs = visibleSteps();
   if (vs[S.step] === "ai" && i > S.step && !chosenWorks() && !S.skippedAi) return confirmSkipAi();
@@ -573,12 +628,15 @@ function go(i) {
 function draw() {
   if (!W) return;
   const vs = visibleSteps(), name = vs[S.step];
+  if (name !== "permissions" && S.helper) stopAccessHelper();
+  const pane = name === "yours" && !!S.agentSetup;
+  if (pane !== !!S.paneShown) { S.paneShown = pane; send({ t: "agent_pane", show: pane }); }
   const top = $("#top"); top.replaceChildren();
   vs.forEach((_, i) => top.append(el("div", "dot" + (i === S.step ? " on" : i < S.step ? " past" : ""))));
   const stage = $("#stage"), keep = stage.scrollTop, same = stage.dataset.step === name;
   const root = el("section", "step" + (S.dir < 0 ? " back" : ""));
   if (same) root.style.animation = "none";
-  ({ hello, import: importStep, ai: aiStep, sync: syncStep, yours: yoursStep, window: windowStep, tour: tourStep, connect: (r) => connectSection(r, true) })[name](root);
+  ({ hello, permissions: permissionsStep, import: importStep, ai: aiStep, sync: syncStep, yours: yoursStep, window: windowStep, tour: tourStep, connect: (r) => connectSection(r, true) })[name](root);
   stage.replaceChildren(root); stage.dataset.step = name; if (same) stage.scrollTop = keep;
   const foot = $("#foot"); foot.replaceChildren();
   const last = S.step === vs.length - 1;
@@ -590,9 +648,9 @@ function draw() {
     foot.append(btn("Back", "ghost", () => go(S.step - 1)), el("span", "grow"));
     const busy = (name === "yours" && S.custom && S.custom.state === "working");
     if (!last) {
-      const skipLabel = { import: "Skip", ai: chosenWorks() ? "" : "Skip for now", sync: (S.sync && S.sync.step === "done") || W.sync ? "" : "Skip", yours: S.custom && S.custom.state === "done" ? "" : "Skip" }[name];
+      const skipLabel = { permissions: S.access.granted ? "" : "Not now", import: "Skip", ai: chosenWorks() ? "" : "Skip for now", sync: (S.sync && S.sync.step === "done") || W.sync ? "" : "Skip", yours: (S.custom && S.custom.state === "done") || S.agentSetup ? "" : "Skip" }[name];
       if (skipLabel) foot.append(btn(skipLabel, "ghost", () => go(S.step + 1)));
-      const done = { ai: chosenWorks(), sync: (S.sync && S.sync.step === "done") || !!W.sync, yours: S.custom && S.custom.state === "done", import: Object.values(S.imported).some((r) => r.ok) }[name];
+      const done = { permissions: S.access.granted, ai: chosenWorks(), sync: (S.sync && S.sync.step === "done") || !!W.sync, yours: (S.custom && S.custom.state === "done") || (S.agentSetup && S.agentSetup.state === "idle"), import: Object.values(S.imported).some((r) => r.ok) }[name];
       const b = btn(busy ? "Working…" : "Continue", done ? "primary" : "", () => go(S.step + 1)); if (busy) b.disabled = true;
       foot.append(b);
     } else foot.append(btn("Start browsing", "primary", () => send({ t: "done" })));
@@ -616,10 +674,13 @@ window.welcome = {
     S.effort = d.effort || "";
     S.only = d.only || "";
     if (d.sync_key) S.key = { state: d.sync_key, suggestion: d.suggestion };
+    S.access = { granted: d.full_disk_access === true };
+    S.askAccess = IS_MAC && d.permission_step && (d.full_disk_access === false || d.resume === "permissions");
+    if (d.resume && visibleSteps().includes(d.resume)) S.step = visibleSteps().indexOf(d.resume);
     draw();
     send({ t: "probe" });
   },
-  restart() { S.step = 0; S.dir = 1; S.qi = 0; S.only = ""; if (S.custom && S.custom.state !== "working") S.custom = null; draw(); send({ t: "probe" }); },
+  restart() { S.step = 0; S.dir = 1; S.qi = 0; S.only = ""; if (S.custom && S.custom.state !== "working") S.custom = null; if (S.agentSetup && S.agentSetup.state !== "running") S.agentSetup = null; S.paneShown = false; draw(); send({ t: "probe" }); },
   event(ev) {
     if (ev.type === "agent") { S.agents[ev.id] = { works: ev.works, detail: ev.detail }; pickDefault(); }
     else if (ev.type === "using") S.chosen = ev.id;
@@ -628,6 +689,8 @@ window.welcome = {
       else S.setup[ev.id] = ev;
     }
     else if (ev.type === "free") { S.free = ev; if (ev.step === "done") { S.agents.opencode = { works: true }; const a = W.agents.find((x) => x.id === "opencode"); if (a) a.installed = true; S.chosen = "opencode"; S.model.opencode = ev.model; } }
+    else if (ev.type === "access") { if (S.access.granted === ev.granted) return; S.access.granted = ev.granted; if (ev.granted) { S.helper = false; clearInterval(accessTimer); } }
+    else if (ev.type === "agent_setup") { if (!S.agentSetup) return; S.agentSetup.state = ev.state; if (ev.state === "running") S.agentSetup.at = Date.now(); }
     else if (ev.type === "imported") S.imported[ev.source] = ev;
     else if (ev.type === "models") { W.models = ev.models; if (document.activeElement && document.activeElement.tagName === "SELECT") return; }
     else if (ev.type === "sync") { S.sync = ev; if (ev.step === "done") W.sync = ev.repo; }

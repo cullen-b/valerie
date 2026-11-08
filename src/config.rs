@@ -20,6 +20,8 @@ pub struct Config {
     pub start_page: String,
     pub escape_hints: bool,
     pub welcome: bool,
+    pub welcome_permissions: bool,
+    pub welcome_agent_setup: bool,
     pub command_bar: CommandBarConfig,
     pub site_search: BTreeMap<String, Option<SiteSearch>>,
     pub find: FindConfig,

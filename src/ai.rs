@@ -727,6 +727,35 @@ pub fn browser_preamble(def: &AgentDef, context: &str, offer_share: bool, scratc
     )
 }
 
+/// What the agent is told for the welcome guide's live setup, on top of the browser preamble.
+pub fn welcome_setup_brief(browsers: &[&str], exe: &Path) -> String {
+    let found = if browsers.is_empty() { "none that Valerie recognised".to_string() } else { browsers.join(", ") };
+    format!(
+        "This is Valerie's first-run setup. The user just installed Valerie and is watching this chat beside the welcome \
+         guide. Your job: move over how they had their other browsers set up, and shape Valerie to fit them.\n\n\
+         Browsers found on this computer: {found}. The guide's Import step already handles bookmarks, and Arc's spaces, \
+         pinned tabs and folders, so leave those alone.\n\n\
+         1. Read the guide mentioned above, then Valerie's current settings.\n\
+         2. Look through each browser's own settings files, reading only: default and custom search engines, startup \
+         pages, extensions, theme and appearance, vertical tabs or sidebar, downloads, and shortcuts. Never open or copy \
+         passwords, cookies, login data, payment data or browsing history. If a file is refused, record that and go on.\n\
+         3. Ask what you can't work out. Open with one short question: what they mostly use a browser for, and anything \
+         they want different. After that, ask only when browsers disagree or a choice is theirs, one question at a time, \
+         at most three in all, naming the option you'd pick. Wait for each answer.\n\
+         4. Make the changes with set_setting or in config.yaml; use a plugin only where no setting can do it. For \
+         extensions, look for a marketplace plugin that does the same job and install it only if they agree. Keep existing \
+         spaces' profiles, because a profile holds a space's logins, and don't change sync or which AI Valerie uses.\n\
+         5. Run \"{exe}\" check-config and fix anything it reports until it's clean.\n\
+         6. Finish with these four headed lists, in plain words, leaving out any that are empty:\n\
+         **Moved over**: each thing, and where it came from.\n\
+         **Changed from Valerie's defaults**: what it did before and does now.\n\
+         **Conflicts**: where browsers disagreed, which one won, and what lost.\n\
+         **Couldn't move**: each thing, and one sentence on why.\n\
+         Never drop anything silently: everything you found is in one of those lists. Then say they can press Continue.",
+        exe = exe.display()
+    )
+}
+
 /// The prompt preamble for a chat working in a project folder: a coding agent that can also use the browser.
 pub fn coding_preamble(def: &AgentDef, folder: &Path, access: &str) -> String {
     let how = control_note(def);
