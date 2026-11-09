@@ -357,6 +357,7 @@ pub struct App {
     dirty: bool,
     last_sync: u64,
     syncing: bool,
+    sync_problem_told: Option<String>,
     /// The AI was picked in the welcome guide on this machine (kept for this machine if the synced settings differ).
     ai_picked_here: bool,
     /// What the welcome guide set here: agent, its definition, effort.
@@ -1468,6 +1469,7 @@ impl App {
             revealed: false,
             started_for_agent: false,
             closed_since: None,
+            sync_problem_told: None,
             restore_queue: Vec::new(),
             stopped_loads: Default::default(),
             graphics_checked: 0,
@@ -5808,6 +5810,7 @@ impl App {
             hold: c.ask_before_plugins,
             // Cleared only once a sync succeeds, so a failed one tries again.
             fresh_history: self.fresh_history,
+            start_over_after_commits: c.start_over_after_commits,
             old_names: [c.device.clone(), legacy_device_name()].into_iter().filter(|n| !n.is_empty()).collect(),
             ..Default::default()
         };
@@ -6033,7 +6036,7 @@ impl App {
             .views
             .keys()
             .copied()
-            .filter(|id| !self.agent_tabs.contains_key(id))
+            .filter(|id| !self.agent_tabs.contains_key(id) && !self.state.web_tabs.contains(id))
             .filter(|id| self.state.tabs.get(id).is_none_or(|tab| self.site_settings(&tab.url).unload != Some(false)))
             .collect();
         let freed = tabs.len() + [self.chat_view.is_some(), self.answer_view.is_some()].iter().filter(|b| **b).count();
@@ -6098,7 +6101,7 @@ impl App {
             .views
             .keys()
             .copied()
-            .filter(|id| !panes.contains(id) && !self.agent_tabs.contains_key(id))
+            .filter(|id| !panes.contains(id) && !self.agent_tabs.contains_key(id) && !self.state.web_tabs.contains(id))
             .filter(|id| self.state.tabs.get(id).is_some_and(|tab| !tab.playing && self.site_settings(&tab.url).unload != Some(false)))
             .collect();
         idle.sort_by_key(|id| self.state.tabs.get(id).map_or(0, |tab| tab.last_active));
@@ -6153,7 +6156,9 @@ impl App {
                 self.ask_about_saved(stale);
             }
         }
-        self.touch_panes();
+        if !self.main_hidden {
+            self.touch_panes();
+        }
         let t = now();
         self.free_memory_when_closed(t);
         self.check_graphics_buffers(t);
@@ -7468,6 +7473,7 @@ impl App {
             Command::ReloadConfig => self.reload_config(),
             Command::Sync => {
                 self.close_bar();
+                self.sync_problem_told = None;
                 self.start_sync()
             }
             Command::Import { source } => {
@@ -8425,12 +8431,17 @@ impl App {
                         if self.fresh_in_flight {
                             self.fresh_history = false;
                         }
+                        self.sync_problem_told = None;
+                        let before = serde_json::to_vec(&self.state).ok();
                         for id in self.state.apply_remote(&out.devices) {
                             self.drop_view(id);
                         }
                         self.state.reconcile_spaces(&self.config);
                         self.remote = out.devices;
-                        self.dirty = true;
+                        // Saving schedules a sync, so a sync that changed nothing must not ask for a save.
+                        if serde_json::to_vec(&self.state).ok() != before {
+                            self.dirty = true;
+                        }
                         for p in self.panes() {
                             self.ensure_view(p);
                         }
@@ -8438,10 +8449,18 @@ impl App {
                         self.render();
                         self.after_sync(out.held_plugins, out.held_programs, out.has_passphrase, out.locked, out.passwords_changed, out.chats_changed);
                     }
-                    Err(e) if e.contains("Permission denied (publickey)") || e.contains("denied to deploy key") => {
-                        self.toast("This computer's sync key was removed from GitHub: run \"Set Up Sync\" to give it a new one")
+                    Err(e) => {
+                        let problem = if e.contains("Permission denied (publickey)") || e.contains("denied to deploy key") {
+                            "GitHub refused this computer's sync key. If this keeps happening, run \"Set Up Sync\" to give it a new one".to_string()
+                        } else {
+                            format!("Sync failed: {e}")
+                        };
+                        // Sync retries every few minutes: say each problem once, until a sync works or someone asks.
+                        if self.sync_problem_told.as_ref() != Some(&problem) {
+                            self.toast(&problem);
+                            self.sync_problem_told = Some(problem);
+                        }
                     }
-                    Err(e) => self.toast(&format!("Sync failed: {e}")),
                 }
                 if std::mem::take(&mut self.resync) {
                     self.start_sync();
@@ -8500,7 +8519,9 @@ impl App {
                     self.welcome_send(&json!({ "type": "customized", "ok": f.ok, "summary": f.summary }));
                 }
                 self.offer_to_share();
-                self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, f.name));
+                let why: String = f.summary.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().trim().chars().take(160).collect();
+                let name = if f.ok || why.is_empty() { f.name.clone() } else { format!("{}. {why}", f.name) };
+                self.toast(&format!("Agent {}: {}", if f.ok { "finished" } else { "failed" }, name));
                 self.agent_runs.insert(0, f);
                 self.agent_runs.truncate(30);
                 self.render();
@@ -8775,7 +8796,8 @@ impl App {
                         .and_then(|dir| cannot_write(&dir).map(|e| (dir, e)));
                     if !ok {
                         let why = unwritable.as_ref().map(|(dir, e)| format!(" ({} isn't writable: {e})", dir.display())).unwrap_or_default();
-                        crate::log::line("downloads", format!("failed: {}{why}", site_of(&url).unwrap_or_default()));
+                        let what = self.state.downloads.iter().find(|d| d.url == url && d.state == "downloading").map(|d| format!(" {} after {}s", d.name, now().saturating_sub(d.at))).unwrap_or_default();
+                        crate::log::line("downloads", format!("failed: {}{what}{why}", site_of(&url).unwrap_or_default()));
                     }
                     if let Some(d) = self.state.downloads.iter_mut().find(|d| d.url == url && d.state == "downloading") {
                         d.state = if ok { String::new() } else { "failed".into() };
@@ -9130,6 +9152,7 @@ impl App {
                     }
                     Ok(json!("ok"))
                 }
+                None if op == "close_tab" && tab_arg.is_some() => Ok(json!("already closed")),
                 None => Err("unknown tab".into()),
             },
             "run" => match serde_json::from_value::<Command>(args) {

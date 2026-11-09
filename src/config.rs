@@ -1056,6 +1056,7 @@ pub struct SyncConfig {
     pub repo: String,
     pub device: String,
     pub interval_minutes: f64,
+    pub start_over_after_commits: u64,
     pub on_change: bool,
     pub delay_seconds: f64,
     pub repo_name: String,
