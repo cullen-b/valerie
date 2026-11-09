@@ -2011,7 +2011,8 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                     return Ok(json!("ready"));
                 }
                 if start.elapsed() > timeout {
-                    return Err("timed out".into());
+                    let what = a["selector"].as_str().or(a["text"].as_str()).unwrap_or("the page");
+                    return Err(format!("timed out after {}ms waiting for {what}", timeout.as_millis()));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }

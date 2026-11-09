@@ -77,6 +77,8 @@ pub struct Options {
     pub hold: bool,
     /// Replace the repo's history with one commit (after encryption is turned on, so nothing readable stays).
     pub fresh_history: bool,
+    /// Replace the history once it has this many commits (0 = never); encrypted files don't compress against each other.
+    pub start_over_after_commits: u64,
     /// Names this machine's tabs file had before ids (removed once it writes under its id).
     pub old_names: Vec<String>,
 }
@@ -422,6 +424,12 @@ fn ensure_repo(g: &Git, remote: &str, opt: &Options, out: &mut Outcome) -> Resul
     Ok(true)
 }
 
+/// Free the disk space of commits the history no longer reaches. Best effort: the sync itself already worked.
+fn drop_old_commits(g: &Git) {
+    let _ = g.run(&["reflog", "expire", "--expire=now", "--all"]);
+    let _ = g.run(&["gc", "-q", "--prune=now"]);
+}
+
 /// Sync the config folder with the repo: write this machine's files, commit, take in the other machines' changes
 /// (this machine wins a clash on the same line), push, then read what the others wrote.
 pub fn run(dir: &Path, me: &DeviceTabs, opt: &Options) -> Result<Outcome> {
@@ -464,6 +472,7 @@ pub fn run(dir: &Path, me: &DeviceTabs, opt: &Options) -> Result<Outcome> {
             changed = None;
             write_mine(dir, me, opt, &mut st)?;
             commit(&g)?;
+            drop_old_commits(&g);
         } else if has_head {
             let theirs: Vec<String> = g.run(&["diff", "--name-only", "HEAD...origin/main"]).unwrap_or_default().lines().map(str::to_string).collect();
             if opt.hold {
@@ -483,12 +492,15 @@ pub fn run(dir: &Path, me: &DeviceTabs, opt: &Options) -> Result<Outcome> {
         }
     }
     if g.ok(&["rev-parse", "--verify", "-q", "HEAD"]) {
-        if opt.fresh_history {
+        let too_long = opt.start_over_after_commits > 0
+            && g.run(&["rev-list", "--count", "HEAD"]).ok().and_then(|n| n.trim().parse::<u64>().ok()).is_some_and(|n| n >= opt.start_over_after_commits);
+        if opt.fresh_history || too_long {
             // One commit with everything as it is now; the old (readable) history is gone from the repo.
             g.run(&["checkout", "-q", "--orphan", "valerie-fresh"])?;
             g.run(&["commit", "-q", "--allow-empty", "-m", "Valerie sync (encrypted from here on)"])?;
             g.run(&["branch", "-q", "-M", "main"])?;
             g.run(&["push", "-q", "-f", "-u", "origin", "HEAD:main"])?;
+            drop_old_commits(&g);
         } else {
             let ahead = g.run(&["rev-list", "--count", "origin/main..HEAD"]).map(|n| n.trim() != "0").unwrap_or(true);
             if ahead {
@@ -621,6 +633,49 @@ mod tests {
             favorites: vec![],
             favorites_modified: 0,
         }
+    }
+
+    /// A history past `start_over_after_commits` becomes one commit, the disk space comes back, and the other machine
+    /// takes the new history without losing its own tabs.
+    #[test]
+    fn long_history_starts_over() {
+        let _g = crate::config::TEST_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        let root = std::env::temp_dir().join(format!("valerie-sync-test-{}", crate::crypt::hex(&crate::crypt::random::<4>())));
+        let bare = root.join("remote.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "-q", "--bare", "-b", "main"]);
+        let remote = format!("file://{}", bare.display());
+        let (a, b) = (root.join("a"), root.join("b"));
+        for m in [&a, &b] {
+            std::fs::create_dir_all(m.join("config")).unwrap();
+            std::fs::create_dir_all(m.join("data")).unwrap();
+        }
+        let on = |m: &Path| {
+            std::env::set_var("VALERIE_CONFIG_DIR", m.join("config"));
+            std::env::set_var("VALERIE_DATA_DIR", m.join("data"));
+        };
+        let opt = |limit: u64| Options { remote: remote.clone(), start_over_after_commits: limit, ..Default::default() };
+        on(&a);
+        run(&a.join("config"), &tabs("aaaa", "Mac A", "https://a.example/0"), &opt(0)).unwrap();
+        for i in 1..5 {
+            run(&a.join("config"), &tabs("aaaa", "Mac A", &format!("https://a.example/{i}")), &opt(0)).unwrap();
+        }
+        assert!(git(&bare, &["rev-list", "--count", "main"]).trim().parse::<u64>().unwrap() >= 5, "0 keeps all history");
+        on(&b);
+        run(&b.join("config"), &tabs("bbbb", "Mac B", "https://b.example"), &opt(0)).unwrap();
+
+        on(&a);
+        run(&a.join("config"), &tabs("aaaa", "Mac A", "https://a.example/last"), &opt(5)).unwrap();
+        assert_eq!(git(&bare, &["rev-list", "--count", "main"]).trim(), "1", "the history started over");
+        assert_eq!(git(&a.join("config"), &["rev-list", "--count", "--all", "--reflog"]).trim(), "1", "the old commits are gone from this machine");
+
+        on(&b);
+        let out = run(&b.join("config"), &tabs("bbbb", "Mac B", "https://b.example"), &opt(5)).unwrap();
+        assert!(out.devices.iter().any(|d| d.device == "Mac A" && d.spaces[0].tabs[0].url == "https://a.example/last"));
+        on(&a);
+        let out = run(&a.join("config"), &tabs("aaaa", "Mac A", "https://a.example/last"), &opt(5)).unwrap();
+        assert!(out.devices.iter().any(|d| d.device == "Mac B"), "B's tabs came back after the restart");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Two machines through a real git remote: the first sets a passphrase (and the history starts over), the second

@@ -914,6 +914,8 @@ sync:
   on_change: true          # sync shortly after you change tabs or settings
   delay_seconds: 10        # how long after a change to sync (changes in the meantime go along too)
   interval_minutes: 5      # also check for other machines' changes this often; 0 = only on change and ⌘⇧Y
+  start_over_after_commits: 2000 # once the sync repo has this many commits, replace its history with one commit so it
+                           # stops growing (your current files are kept; old versions go). 0 = keep all history
   repo_name: valerie-sync  # name of the private GitHub repo "Set Up Sync" creates or reuses
   github_client_id: ""     # a GitHub OAuth app's client ID for signing in without the GitHub CLI (device flow);
                            # empty = sign in through the GitHub CLI (`gh`)
