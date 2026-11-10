@@ -301,7 +301,9 @@ pub struct SidebarConfig {
     pub drag_folders: bool,
     pub reorder_spaces: bool,
     pub split_rows: bool,
-    pub scroll_long_titles: bool,
+    /// "hover" | "always" | "never" (true and false from older settings files mean always and never).
+    #[serde(deserialize_with = "title_scroll_mode")]
+    pub scroll_long_titles: String,
     pub title_scroll_speed: f64,
     pub title_scroll_style: String,
 }
@@ -1006,6 +1008,10 @@ pub struct McpConfig {
     pub quit_when_unused_minutes: f64,
 }
 
+fn title_scroll_mode<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    network_log_mode(d)
+}
+
 fn network_log_mode<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -1574,6 +1580,16 @@ pub fn preset(name: &str) -> Option<Theme> {
 
 #[cfg(test)]
 mod tests {
+    use super::Config;
+
+    /// Older settings files said true or false; they still load, as always and never.
+    #[test]
+    fn scroll_long_titles_takes_old_true_and_false() {
+        assert_eq!(Config::defaults().sidebar.scroll_long_titles, "hover");
+        assert_eq!(Config::parse("sidebar:\n  scroll_long_titles: true\n").unwrap().sidebar.scroll_long_titles, "always");
+        assert_eq!(Config::parse("sidebar:\n  scroll_long_titles: false\n").unwrap().sidebar.scroll_long_titles, "never");
+    }
+
     #[test]
     fn sets_settings_in_place() {
         let text = "# mine\nprofiles:\n  - name: Me\nagents:\n  default: claude   # who answers\n  available:\n    claude: { cli: claude }\n\nsync: { repo: x }\n";

@@ -689,24 +689,44 @@ function tabRow(t, list, index) {
   preloadOnHover(r, t);
   return r;
 }
-// sidebar.scroll_long_titles: a title too long for its row scrolls (title_scroll_style loop or bounce, title_scroll_speed px/s).
-// The phase comes from the clock, so re-rendering the sidebar doesn't restart it.
+// sidebar.scroll_long_titles: a title too long for its row scrolls, always or while the pointer is on its row (hover);
+// title_scroll_style loop or bounce, title_scroll_speed px/s. The phase comes from the clock (for hover, from when the
+// pointer arrived), so re-rendering the sidebar doesn't restart it.
+const scrollMode = () => { const m = S.sidebar.scroll_long_titles; return m === true ? "always" : m === false ? "never" : m || "hover"; };
+let hovered = null, hoverSince = 0;
+const rowKey = (r) => r.dataset.pick || r.title;
 function tickTitles() {
-  const O = S.sidebar;
-  if (O.scroll_long_titles === false) return;
-  const speed = Math.min(200, Math.max(5, +O.title_scroll_speed || 30)), bounce = O.title_scroll_style === "bounce";
-  for (const t of document.querySelectorAll("#sidebar .row .title")) {
-    if (t.scrollWidth <= t.clientWidth + 1) continue;
-    const text = t.textContent, gap = 36, tick = el("span", "tick", text);
-    t.textContent = ""; t.append(tick); t.classList.add("ticking");
-    const tw = tick.offsetWidth, d = bounce ? tw - t.clientWidth + 14 : tw + gap;
-    if (!bounce) { const sp = el("span"); sp.style.cssText = `display:inline-block;width:${gap}px`; tick.append(sp, text); }
-    const dur = bounce ? d / speed / .7 : d / speed, period = bounce ? 2 * dur : dur;
-    tick.style.cssText = `--tick-name:${bounce ? "tick-bounce" : "tick-loop"};--tick-d:${d}px;--tick-dur:${dur}s;` +
-      `--tick-delay:${-(performance.now() / 1000 % period)}s;animation-timing-function:${bounce ? "ease-in-out" : "linear"};` +
-      (bounce ? "animation-direction:alternate;" : "");
-  }
+  const mode = scrollMode();
+  if (mode === "always") document.querySelectorAll("#sidebar .row .title").forEach((t) => tickTitle(t, 0));
+  if (mode !== "hover" || !hovered) return;
+  const r = [...document.querySelectorAll("#sidebar .row:not(.ghost)")].find((n) => rowKey(n) === hovered);
+  r && r.querySelectorAll(".title").forEach((t) => tickTitle(t, hoverSince));
 }
+function tickTitle(t, since) {
+  if (t.classList.contains("ticking") || t.scrollWidth <= t.clientWidth + 1) return;
+  const O = S.sidebar, speed = Math.min(200, Math.max(5, +O.title_scroll_speed || 30)), bounce = O.title_scroll_style === "bounce";
+  const text = t.textContent, gap = 36, tick = el("span", "tick", text);
+  t._text = text; t.textContent = ""; t.append(tick); t.classList.add("ticking");
+  const tw = tick.offsetWidth, d = bounce ? tw - t.clientWidth + 14 : tw + gap;
+  if (!bounce) { const sp = el("span"); sp.style.cssText = `display:inline-block;width:${gap}px`; tick.append(sp, text); }
+  const dur = bounce ? d / speed / .7 : d / speed, period = bounce ? 2 * dur : dur;
+  // On hover it reads the start for a moment before it moves.
+  const phase = (performance.now() - since - (since ? 450 : 0)) / 1000, delay = phase < 0 ? -phase : -(phase % period);
+  tick.style.cssText = `--tick-name:${bounce ? "tick-bounce" : "tick-loop"};--tick-d:${d}px;--tick-dur:${dur}s;` +
+    `--tick-delay:${delay}s;animation-timing-function:${bounce ? "ease-in-out" : "linear"};` +
+    (bounce ? "animation-direction:alternate;" : "");
+}
+function untickTitles() {
+  document.querySelectorAll("#sidebar .title.ticking").forEach((t) => { t.classList.remove("ticking"); t.textContent = t._text ?? t.textContent; });
+}
+$("#sidebar").addEventListener("mouseover", (e) => {
+  if (!S || scrollMode() !== "hover") return;
+  const r = e.target.closest(".row"), key = r && !r.classList.contains("ghost") ? rowKey(r) : null;
+  if (key === hovered) return;
+  untickTitles(); hovered = key; hoverSince = performance.now();
+  tickTitles();
+});
+$("#sidebar").addEventListener("mouseleave", () => { if (hovered != null) { hovered = null; untickTitles(); } });
 // sidebar.medium_tab_text: the medium sidebar shows the title, then the domain (both), or just one; no title = the domain.
 function tabTitle(t) {
   const h = host(t.url), title = t.title && t.title !== h && t.title !== t.url ? t.title : "";
