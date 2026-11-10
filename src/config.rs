@@ -298,6 +298,8 @@ pub struct SidebarConfig {
     pub double_click_edge: bool,
     pub multi_select: bool,
     pub drop_to_split: bool,
+    pub drag_folders: bool,
+    pub reorder_spaces: bool,
     pub split_rows: bool,
     pub scroll_long_titles: bool,
     pub title_scroll_speed: f64,

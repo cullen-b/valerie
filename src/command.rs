@@ -176,6 +176,13 @@ pub enum Command {
         #[serde(default)]
         space: Option<String>,
     },
+    /// Move a space to another place among the spaces (`to` counts from 0, as they are now); config.yaml follows.
+    MoveSpace {
+        to: usize,
+        /// The space to move (default: the one you're in).
+        #[serde(default)]
+        name: Option<String>,
+    },
     /// Remove a space; its tabs are archived (still searchable). Spaces from config.yaml are taken out of it too.
     DeleteSpace {
         #[serde(default)]
@@ -930,6 +937,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("switch_space", "{ index? | name? }"),
     ("new_space", "{ name? }"),
     ("rename_space", "{ name, space? }"),
+    ("move_space", "{ to, name? }  (to: its new place among the spaces, 0 = first; name: default the one you're in)"),
     ("delete_space", "{ name?, confirm? }  (its tabs are archived)"),
     ("set_space_theme", "{ theme }"),
     ("split_view", "{ tab?, with? }  (show tab beside with, default the tab you're on)"),

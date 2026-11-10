@@ -389,9 +389,11 @@ impl State {
         self.next_id
     }
 
-    /// Make sure every configured space exists, in config order, followed by spaces created at runtime.
+    /// Make sure every configured space exists, in config order. A space created at runtime stays right after the
+    /// space it followed (first if it was first), so dragging one among the configured spaces sticks.
     pub fn reconcile_spaces(&mut self, config: &Config) {
         let active = self.spaces.get(self.active_space).map(|s| s.name.clone());
+        let old: Vec<String> = self.spaces.iter().map(|s| s.name.clone()).collect();
         let mut ordered: Vec<Space> = Vec::new();
         for sc in &config.spaces {
             let s = match self.spaces.iter().position(|s| s.name == sc.name) {
@@ -400,7 +402,11 @@ impl State {
             };
             ordered.push(s);
         }
-        ordered.append(&mut self.spaces);
+        for s in std::mem::take(&mut self.spaces) {
+            let k = old.iter().position(|n| *n == s.name).unwrap_or(0);
+            let at = k.checked_sub(1).and_then(|p| ordered.iter().position(|o| o.name == old[p])).map_or(0, |i| i + 1);
+            ordered.insert(at, s);
+        }
         if ordered.is_empty() {
             ordered.push(Space { name: "Home".into(), ..Default::default() });
         }
@@ -1267,5 +1273,25 @@ mod tests {
         s.tidy_splits();
         assert_eq!(s.spaces[0].splits, vec![vec![a, b]]);
         assert!(s.spaces[0].split.is_empty());
+    }
+    /// Configured spaces follow config order; one made in the app stays after the space it followed.
+    #[test]
+    fn reconcile_keeps_runtime_spaces_where_they_were_put() {
+        let mut cfg = Config::defaults();
+        let sc = |n: &str| crate::config::SpaceConfig { name: n.into(), profile: None, theme: None, icon: None, settings: None };
+        cfg.spaces = vec![sc("A"), sc("B"), sc("C")];
+        let mut s = State::default();
+        for n in ["New", "A", "B", "Mine", "C"] {
+            s.spaces.push(Space { name: n.into(), ..Default::default() });
+        }
+        s.active_space = 3;
+        s.reconcile_spaces(&cfg);
+        let names = |s: &State| s.spaces.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&s), ["New", "A", "B", "Mine", "C"]);
+        assert_eq!(s.active_space, 3);
+        cfg.spaces = vec![sc("C"), sc("A"), sc("B")];
+        s.reconcile_spaces(&cfg);
+        assert_eq!(names(&s), ["New", "C", "A", "B", "Mine"]);
+        assert_eq!(s.spaces[s.active_space].name, "Mine");
     }
 }
