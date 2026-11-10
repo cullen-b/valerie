@@ -112,6 +112,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["both", "title", "domain"].contains(&c.sidebar.medium_tab_text.as_str()) {
                 problems.push(format!("sidebar: medium_tab_text is {:?}; use both, title or domain", c.sidebar.medium_tab_text));
             }
+            if !["hover", "always", "never"].contains(&c.sidebar.scroll_long_titles.as_str()) {
+                problems.push(format!("sidebar: scroll_long_titles is {:?}; use hover, always or never", c.sidebar.scroll_long_titles));
+            }
             if !(16.0..=120.0).contains(&c.sidebar.tab_height) {
                 problems.push(format!("sidebar: tab_height is {}; use a number of pixels from 16 to 120", c.sidebar.tab_height));
             }
