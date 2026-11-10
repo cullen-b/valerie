@@ -6712,6 +6712,41 @@ impl App {
                 self.reload_config();
                 self.render();
             }
+            Command::MoveSpace { to, name } => {
+                let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+                let to = to.min(self.state.spaces.len() - 1);
+                if i == to {
+                    return self.render();
+                }
+                let mut order: Vec<usize> = (0..self.state.spaces.len()).collect();
+                let k = order.remove(i);
+                order.insert(to, k);
+                let names: Vec<String> = order.iter().map(|&k| self.state.spaces[k].name.clone()).collect();
+                // Configured spaces are drawn in config.yaml's order, so it changes too.
+                let place = |s: &serde_yaml::Value| s.get("name").and_then(|n| n.as_str()).and_then(|n| names.iter().position(|o| o == n)).unwrap_or(usize::MAX);
+                if (0..names.len()).any(|k| self.space_cfg(k).is_some()) {
+                    if let Err(e) = edit_config_spaces(&format!("move space {}", names[to]), |list| list.sort_by_key(place)) {
+                        return self.toast(&format!("Couldn't reorder it in config.yaml: {e:#}"));
+                    }
+                }
+                let new_of = |old: usize| order.iter().position(|&k| k == old).unwrap_or(old);
+                let mut spaces: Vec<Option<crate::state::Space>> = std::mem::take(&mut self.state.spaces).into_iter().map(Some).collect();
+                self.state.spaces = order.iter().filter_map(|&k| spaces[k].take()).collect();
+                self.state.active_space = new_of(self.state.active_space);
+                for l in self.littles.values_mut() {
+                    l.space = new_of(l.space);
+                }
+                if let Some(l) = self.ready_little.as_mut() {
+                    l.space = new_of(l.space);
+                }
+                for c in &mut self.state.closed {
+                    c.space = new_of(c.space);
+                }
+                crate::log::event("spaces", format!("moved space {} to place {}", names[to], to + 1));
+                self.dirty = true;
+                self.reload_config();
+                self.render();
+            }
             Command::DeleteSpace { name, confirm } => {
                 let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
                 if self.state.spaces.len() < 2 {

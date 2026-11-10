@@ -248,7 +248,8 @@ body.size-compact .chat-label, body.size-compact .row.chat .when { display: none
 .ghost { transition: none; }
 .ghost .count { position: absolute; right: -6px; top: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
   display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); opacity: 1; }
-body.dragging, body.dragging * { cursor: grabbing !important; }
+body.dragging, body.dragging *, body.sp-dragging, body.sp-dragging * { cursor: grabbing !important; }
+.sp.sp-moving { position: relative; z-index: 2; color: var(--fg); background: color-mix(in srgb, var(--accent) 26%, transparent); box-shadow: 0 4px 12px rgba(0,0,0,.25); }
 .drop-before::before, .drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--accent); z-index: 2; }
 .drop-before::before { top: -1px; }
 .drop-after::after { bottom: -1px; }
@@ -380,6 +381,7 @@ function source(node, id, list, index, ids = null, span = 1) {
 function pickGroup(key) { return picked.size > 1 && picked.has(key) ? pickKeys().filter((k) => picked.has(k)) : null; }
 // The tab itself, or for a group any of its tabs or a folder in it.
 function dragsOwn(d, t) {
+  if (d.folder != null) return d.node.contains(t.node) || t.payload.section === "today" || !!t.payload.favorite;
   if (!d.group) return t.payload.tab === d.id;
   return d.group.includes("t" + t.payload.tab) || d.group.includes("f" + t.payload.folder);
 }
@@ -394,8 +396,16 @@ function locate(x, y) {
   if (z.kind === "into") return { node, cls: "drop-into", payload: z.payload, list: null };
   const across = z.kind === "tile" ? (x - r.left) / r.width : (y - r.top) / r.height;
   if (z.kind === "area") return { node, cls: "drop-into", payload: { ...z.payload }, list: z.list, index: z.index };
+  // A folder's row: its top quarter puts things before the folder, its bottom quarter after it (or first inside it
+  // when it's open), the middle into it.
+  if (z.kind === "folder") {
+    if (across < 0.25) return { node, at: z.at, cls: "drop-before", after: false, kind: "row", payload: { ...z.payload }, list: z.list, index: z.index };
+    if (across > 0.75 && !z.open) return { node, at: z.at, cls: "drop-after", after: true, kind: "row", payload: { ...z.payload }, list: z.list, index: z.index + 1 };
+    if (across > 0.75) return { node, cls: "drop-after", payload: { ...z.into }, list: z.into.list, index: 0 };
+    return { node, cls: "drop-into", payload: z.into, list: null };
+  }
   // sidebar.drop_to_split: one tab dropped on the middle of another opens the two side by side.
-  const splits = S.sidebar.drop_to_split !== false && drag && !drag.group && !drag.ids && z.payload.tab != null;
+  const splits = S.sidebar.drop_to_split !== false && drag && !drag.group && !drag.ids && drag.folder == null && z.payload.tab != null;
   if (splits && across > 0.3 && across < 0.7) return { node, cls: "drop-split", split: true, payload: { ...z.payload } };
   const after = across > 0.5;
   return { node, cls: after ? "drop-after" : "drop-before", after, kind: z.kind, payload: { ...z.payload }, list: z.list, index: z.index + (after ? z.span || 1 : 0) };
@@ -417,7 +427,7 @@ function flip(change) {
 }
 // Move the dragged element into place when the target is the same kind of thing (row among rows, tile among tiles).
 function liveMove(t) {
-  const src = drag.node, dst = t.node;
+  const src = drag.node, dst = t.at || t.node;
   if (!t.kind || src === drag.ghost || !src.isConnected || dst === src || src.classList.contains("tile") !== dst.classList.contains("tile")) return false;
   // Only move once the pointer has crossed the target's middle in the direction of travel (no flicker at the edge).
   const pos = src.compareDocumentPosition(dst);
@@ -461,9 +471,9 @@ document.addEventListener("mousemove", (e) => {
   if (!drag.active) {
     if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;
     drag.active = true;
-    const r = drag.node.getBoundingClientRect();
+    const from = drag.handle || drag.node, r = from.getBoundingClientRect();
     drag.dx = e.clientX - r.left; drag.dy = e.clientY - r.top;
-    const g = drag.node.cloneNode(true); g.classList.add("ghost"); g.classList.remove("active", "drop-before", "drop-after", "dragging-src");
+    const g = from.cloneNode(true); g.classList.add("ghost"); g.classList.remove("active", "drop-before", "drop-after", "dragging-src");
     g.style.width = r.width + "px"; g.style.height = r.height + "px";
     if (drag.group) { g.classList.remove("picked"); g.append(el("div", "count", String(drag.group.length))); }
     document.body.append(g); drag.ghost = g;
@@ -489,7 +499,15 @@ function endDrag(drop) {
   } else settle();
   if (!t || dragsOwn(d, t)) { if (!drop || !t) S && render(S); return; }
   if (t.split) return cmd({ cmd: "split_view", tab: d.id, with: t.payload.tab });
-  const { tab: _target, ...p } = t.payload;
+  const { tab: _target, list: _list, ...p } = t.payload;
+  if (d.folder != null) {
+    if (t.index != null) {
+      if (t.list === d.list && d.space === S.active_space && (t.index === d.index || t.index === d.index + 1)) return S && render(S);
+      p.index = t.index;
+    }
+    if (p.space == null) p.space = S.spaces[S.active_space].name;
+    return cmd({ cmd: "move_items", ids: [d.folder], ...p });
+  }
   if (d.ids) {
     // A split-view group; positions count it where it is now, so dropping it within itself moves nothing.
     if (t.index != null) {
@@ -522,8 +540,66 @@ function keepDrag() {
   if (drag.group) markGroup(drag);
   const n = drag.id == null ? document.querySelector(`[data-pick="${drag.key}"]:not(.ghost)`) : document.querySelector(`[data-tab="${drag.id}"]:not(.ghost)`);
   drag.live = null;
-  if (n) { n.classList.add("dragging-src"); drag.node = n; }
+  if (n && drag.folder != null) { drag.handle = n; drag.node = n.closest(".folder") || n; drag.node.classList.add("dragging-src"); }
+  else if (n) { n.classList.add("dragging-src"); drag.node = n; }
   else drag.node = drag.ghost; // dragged into another space: nothing to hold its place yet
+}
+
+// ---------- drag a space's button to put the space somewhere else (sidebar.reorder_spaces) ----------
+let spDrag = null;
+function spaceSource(node, i) {
+  node.dataset.space = i;
+  node.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || S.sidebar.reorder_spaces === false || S.spaces.length < 2) return;
+    spDrag = { i, node, x: e.clientX, y: e.clientY, active: false, over: null };
+  });
+}
+// The buttons run across the bottom, or down it in the icons-only sidebar.
+const spacesDown = (sps) => getComputedStyle(sps).flexDirection === "column";
+function spaceDragMove(x, y) {
+  const d = spDrag, hit = document.elementFromPoint(x, y), o = hit && hit.closest(".sp[data-space]");
+  if (!o || o === d.node || o.parentNode !== d.node.parentNode) return;
+  const r = o.getBoundingClientRect(), after = spacesDown(o.parentNode) ? y > r.top + r.height / 2 : x > r.left + r.width / 2;
+  d.over = { i: +o.dataset.space, after };
+  if ((after ? o.nextSibling : o.previousSibling) === d.node) return;
+  const sibs = [...o.parentNode.children], before = new Map(sibs.map((n) => [n, n.getBoundingClientRect()]));
+  after ? o.after(d.node) : o.before(d.node);
+  for (const n of sibs) {
+    const a = before.get(n), b = n.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) continue;
+    n.style.transition = "none"; n.style.transform = `translate(${dx}px, ${dy}px)`; n.getBoundingClientRect();
+    n.style.transition = "transform 150ms cubic-bezier(.2,.8,.2,1)"; n.style.transform = "";
+    clearTimeout(n._flip); n._flip = setTimeout(() => { n.style.transition = ""; }, 170);
+  }
+}
+document.addEventListener("mousemove", (e) => {
+  if (!spDrag) return;
+  if (!spDrag.active) {
+    if (Math.hypot(e.clientX - spDrag.x, e.clientY - spDrag.y) < 5) return;
+    spDrag.active = true; spDrag.node.classList.add("sp-moving"); document.body.classList.add("sp-dragging");
+  }
+  spaceDragMove(e.clientX, e.clientY);
+});
+function endSpaceDrag(drop) {
+  const d = spDrag; spDrag = null;
+  if (!d || !d.active) return;
+  document.body.classList.remove("sp-dragging"); d.node.classList.remove("sp-moving");
+  suppressClick = true; setTimeout(() => (suppressClick = false), 0);
+  const to = [...d.node.parentNode.querySelectorAll(".sp[data-space]")].indexOf(d.node);
+  if (drop && to >= 0 && to !== d.i) cmd({ cmd: "move_space", name: S.spaces[d.i].name, to });
+  else render(S);
+}
+document.addEventListener("mouseup", () => endSpaceDrag(true));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && spDrag && spDrag.active) { e.preventDefault(); endSpaceDrag(false); } }, true);
+// The buttons were drawn again mid-drag: pick the space up again where it was going.
+function keepSpaceDrag(sps) {
+  const d = spDrag;
+  if (!d || !d.active) return;
+  d.node = sps.querySelector(`[data-space="${d.i}"]`);
+  if (!d.node) return (spDrag = null);
+  d.node.classList.add("sp-moving"); document.body.classList.add("sp-dragging");
+  const o = d.over && sps.querySelector(`[data-space="${d.over.i}"]`);
+  if (o && o !== d.node) d.over.after ? o.after(d.node) : o.before(d.node);
 }
 
 // ---------- elements ----------
@@ -698,7 +774,8 @@ function runRow(r, list, payload) {
   zone(row, { kind: "row", list, index: r.i, span: r.span, payload: { ...payload, tab: first.id } });
   return row;
 }
-function folderEl(n, section = "pinned") {
+// `list`, `index` and `around` place the folder itself (for drops just above or below it).
+function folderEl(n, section = "pinned", list = section, index = 0, around = { section }) {
   const f = el("div", "folder" + (n.open ? " open" : ""));
   const r = el("div", "row");
   r.append(el("div", "chev", "▶"), el("div", "ficon", n.open ? "📂" : "📁"), el("div", "title", n.name));
@@ -706,14 +783,18 @@ function folderEl(n, section = "pinned") {
   r.onclick = click((e) => { if (!pickClick(e, "f" + n.id)) cmd({ cmd: "toggle_folder", folder: n.id }); });
   r.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "f" + n.id)) folderMenu(e, n); };
   pickable(r, "f" + n.id);
+  // sidebar.drag_folders: a folder drags on its own (its tabs come along); picked with others it drags with them.
   r.addEventListener("mousedown", (e) => {
-    const group = e.button === 0 && pickGroup("f" + n.id);
-    if (group) drag = { id: null, key: "f" + n.id, node: r, space: S.active_space, x: e.clientX, y: e.clientY, active: false, group };
+    if (e.button !== 0) return;
+    const group = pickGroup("f" + n.id), at = { key: "f" + n.id, space: S.active_space, x: e.clientX, y: e.clientY, active: false };
+    if (group) drag = { id: null, node: r, group, ...at };
+    else if (S.sidebar.drag_folders !== false) drag = { id: null, folder: n.id, list, index, node: f, handle: r, group: null, ...at };
   });
   r.classList.add("folder-row");
-  zone(r, { kind: "into", payload: { section, folder: n.id } });
-  const kids = el("div", "kids"), list = "folder:" + n.id;
-  eachRun(n.children, (r) => kids.append(r.folder ? folderEl(r.folder, section) : runRow(r, list, { section, folder: n.id })));
+  const inner = "folder:" + n.id, inside = { section, folder: n.id };
+  zone(r, { kind: "folder", list, index, open: n.open, at: f, payload: around, into: { ...inside, list: inner } });
+  const kids = el("div", "kids");
+  eachRun(n.children, (r) => kids.append(r.folder ? folderEl(r.folder, section, inner, r.i, inside) : runRow(r, inner, inside)));
   f.append(r, kids);
   return f;
 }
@@ -1012,7 +1093,7 @@ function render(state) {
     pins.append(grid);
   }
   eachRun(S.pinned, (r) => {
-    if (r.folder) return pins.append(folderEl(r.folder, "pinned"));
+    if (r.folder) return pins.append(folderEl(r.folder, "pinned", "pinned", r.i));
     if (!icons) pins.append(runRow(r, "pinned", { section: "pinned" }));
   });
   if (!S.pinned.length && O.pinned_hint) {
@@ -1028,7 +1109,7 @@ function render(state) {
   if (O.kept_section !== false) {
     const kept = el("div", "kept" + (S.kept.length ? "" : " empty"));
     zone(kept, { kind: "area", list: "kept", index: S.kept.length, payload: { section: "kept" } });
-    eachRun(S.kept, (r) => kept.append(r.folder ? folderEl(r.folder, "kept") : runRow(r, "kept", { section: "kept" })));
+    eachRun(S.kept, (r) => kept.append(r.folder ? folderEl(r.folder, "kept", "kept", r.i) : runRow(r, "kept", { section: "kept" })));
     if (!S.kept.length) kept.append(el("div", "kept-hint", "Drag here to keep"));
     into("kept").append(kept);
   }
@@ -1066,11 +1147,13 @@ function render(state) {
   }
   if (O.space_switcher) S.spaces.forEach((s, i) => {
     const d = el("div", "sp" + (i === S.active_space && !chatsOpen ? " active" : ""), s.icon || s.name[0]);
-    d.title = s.name; d.onclick = () => cmd({ cmd: "switch_space", index: i });
+    d.title = s.name; d.onclick = click(() => cmd({ cmd: "switch_space", index: i }));
     d.oncontextmenu = (e) => { e.preventDefault(); send({ t: "space_menu", space: i, x: e.clientX, y: e.clientY }); };
     zone(d, { kind: "into", payload: { space: s.name } });
+    spaceSource(d, i);
     sps.append(d);
   });
+  keepSpaceDrag(sps);
   if (O.space_switcher) {
     const add = el("div", "sp", "+"); add.title = "New Space";
     add.onclick = () => prompt_("New space name", "", { cmd: "new_space" }, "name");
