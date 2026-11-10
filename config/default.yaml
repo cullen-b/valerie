@@ -138,7 +138,7 @@ sidebar:
   reorder_spaces: true     # drag a space's button along the bottom of the sidebar to change the order of your spaces. true | false
   split_rows: true         # tabs in split view show as one row (one wide tile among pinned icons) that you drag, pin
                            # and keep as one. false = separate rows, marked with a bar. true | false
-  scroll_long_titles: true # a tab title too long for its row scrolls sideways like a stock ticker. true | false
+  scroll_long_titles: false # true = a tab title too long for its row scrolls sideways like a stock ticker; false = it ends in "…". true | false
   title_scroll_speed: 30   # how fast those titles scroll, pixels per second (5 slow … 200 fast)
   title_scroll_style: loop # one of: loop (runs off one side and comes back on the other) | bounce (slides to the end,
                            # pauses, slides back)
