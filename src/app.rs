@@ -1931,6 +1931,12 @@ impl App {
                     if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.filter(|_| platform::test_windows().is_none()).map(|p| (p.x, p.y)), popup_floating) {
                         return NewWindowResponse::Create { webview };
                     }
+                    #[cfg(target_os = "windows")]
+                    if popup_floating {
+                        if let Some(webview) = crate::popup_win::popup_window(&features.opener.webview, &features.opener.environment, (size.width, size.height), features.position.map(|p| (p.x, p.y))) {
+                            return NewWindowResponse::Create { webview };
+                        }
+                    }
                     #[cfg(not(target_os = "macos"))]
                     let _ = size;
                     return NewWindowResponse::Allow;
