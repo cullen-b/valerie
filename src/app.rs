@@ -1879,6 +1879,7 @@ impl App {
         let ipc_proxy = std::sync::Mutex::new(self.proxy.clone());
         let (page_key, page_theme) = (self.page_key.clone(), self.page_theme.clone());
         let popup_windows = self.config.links.popups == "window";
+        let popup_floating = self.config.links.popup_look == "floating";
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
         let location = self.config.permissions.location.clone();
         // The page's address right now, for `sites:` settings decided as the page asks (camera, pop-ups).
@@ -1927,7 +1928,7 @@ impl App {
                     let host = url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
                     crate::log::line("page", format!("opened a pop-up window for {host}"));
                     #[cfg(target_os = "macos")]
-                    if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.filter(|_| platform::test_windows().is_none()).map(|p| (p.x, p.y))) {
+                    if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.filter(|_| platform::test_windows().is_none()).map(|p| (p.x, p.y)), popup_floating) {
                         return NewWindowResponse::Create { webview };
                     }
                     #[cfg(not(target_os = "macos"))]

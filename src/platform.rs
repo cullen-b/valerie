@@ -607,7 +607,9 @@ mod mac {
 
     /// A site's pop-up at the size it asked for ("Sign in with Google"). Wry's own pop-ups have no UI delegate, so
     /// `window.close()` did nothing and they stayed open after signing in; this one shares its opener's delegate.
-    pub fn popup_window<T: objc2::Message>(opener: &impl objc2::Message, configuration: &impl objc2::Message, size: (f64, f64), position: Option<(f64, f64)>) -> Option<objc2::rc::Retained<T>> {
+    /// `floating` gives it Valerie's look: no title bar, the page inset on a frosted pane, and the window buttons in a
+    /// strip that slides open while the pointer is at the top edge (dragging that strip moves the window).
+    pub fn popup_window<T: objc2::Message>(opener: &impl objc2::Message, configuration: &impl objc2::Message, size: (f64, f64), position: Option<(f64, f64)>, floating: bool) -> Option<objc2::rc::Retained<T>> {
         use objc2::class;
         use objc2_app_kit::{NSBackingStoreType, NSWindowStyleMask};
         use objc2_foundation::{NSPoint, NSRect, NSSize};
@@ -640,7 +642,10 @@ mod mac {
                 }
             }
             let rect = NSRect::new(origin, NSSize::new(size.0, size.1));
-            let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable | NSWindowStyleMask::Resizable;
+            let mut style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable | NSWindowStyleMask::Resizable;
+            if floating {
+                style |= NSWindowStyleMask::FullSizeContentView;
+            }
             let window: *mut AnyObject = msg_send![class!(NSWindow), alloc];
             let window: *mut AnyObject = msg_send![window, initWithContentRect: rect, styleMask: style, backing: NSBackingStoreType::Buffered, defer: false];
             let webview: *mut AnyObject = msg_send![class!(WKWebView), alloc];
@@ -649,7 +654,11 @@ mod mac {
             let _: () = msg_send![webview, setUIDelegate: delegate];
             // The window frees itself, and with it the webview, when it closes.
             let _: () = msg_send![window, setReleasedWhenClosed: true];
-            let _: () = msg_send![window, setContentView: webview];
+            if floating {
+                float_popup(window, webview, size);
+            } else {
+                let _: () = msg_send![window, setContentView: webview];
+            }
             let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
             // Showing can move it to the display in use.
             if let Some(spot) = test_spot {
@@ -657,6 +666,87 @@ mod mac {
             }
             objc2::rc::Retained::from_raw(webview.cast())
         }
+    }
+
+    /// Dresses a pop-up window as a floating pane (see `popup_window`). The hover watcher goes away with the window.
+    unsafe fn float_popup(window: *mut AnyObject, webview: *mut AnyObject, size: (f64, f64)) {
+        use objc2::class;
+        use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+        use std::{cell::Cell, rc::Rc};
+        const BEZEL: f64 = 6.0;
+        const STRIP: f64 = 28.0; // the title bar's height, so the buttons sit centred in it
+        let _: () = msg_send![window, setTitlebarAppearsTransparent: true];
+        let _: () = msg_send![window, setTitleVisibility: 1isize]; // hidden
+        let pane: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
+        let pane: *mut AnyObject = msg_send![pane, initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(size.0, size.1))];
+        let _: () = msg_send![pane, setMaterial: 7isize]; // sidebar
+        let _: () = msg_send![pane, setBlendingMode: 0isize]; // behind the window
+        let _: () = msg_send![pane, setState: 1isize]; // always active
+        let _: () = msg_send![window, setContentView: pane];
+        let _: () = msg_send![pane, release];
+        let page_frame = |open: bool, (w, h): (f64, f64)| {
+            let top = if open { STRIP } else { BEZEL };
+            NSRect::new(NSPoint::new(BEZEL, BEZEL), NSSize::new((w - 2.0 * BEZEL).max(0.0), (h - BEZEL - top).max(0.0)))
+        };
+        let _: () = msg_send![webview, setFrame: page_frame(false, size)];
+        let _: () = msg_send![webview, setAutoresizingMask: 18usize]; // width and height follow the window
+        let _: () = msg_send![webview, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![webview, layer];
+        if !layer.is_null() {
+            let _: () = msg_send![layer, setCornerRadius: 10.0f64];
+            let _: () = msg_send![layer, setMasksToBounds: true];
+        }
+        let _: () = msg_send![pane, addSubview: webview];
+        let set_buttons = move |hidden: bool| {
+            for b in 0usize..3 {
+                let btn: *mut AnyObject = msg_send![window, standardWindowButton: b];
+                if !btn.is_null() {
+                    let _: () = msg_send![btn, setHidden: hidden];
+                }
+            }
+        };
+        set_buttons(true);
+        // Mouse moves and exits over the whole window, even while it isn't the key window.
+        let area: *mut AnyObject = msg_send![class!(NSTrackingArea), alloc];
+        let area: *mut AnyObject = msg_send![area, initWithRect: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0)), options: (0x01usize | 0x02 | 0x80 | 0x200), owner: pane, userInfo: std::ptr::null_mut::<AnyObject>()];
+        let _: () = msg_send![pane, addTrackingArea: area];
+        let _: () = msg_send![area, release];
+        let open = Rc::new(Cell::new(false));
+        let watch = block2::RcBlock::new(move |event: *mut AnyObject| -> *mut AnyObject {
+            let frame: NSRect = msg_send![window, frame];
+            let at: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+            let inside = at.x >= frame.origin.x && at.x <= frame.origin.x + frame.size.width && at.y >= frame.origin.y && at.y <= frame.origin.y + frame.size.height;
+            let from_top = frame.origin.y + frame.size.height - at.y;
+            // A little past the bezel opens the strip; once open, the whole strip keeps it open.
+            let want = inside && from_top <= if open.get() { STRIP } else { BEZEL + 6.0 };
+            if want != open.get() {
+                open.set(want);
+                set_buttons(!want);
+                let content: *mut AnyObject = msg_send![window, contentView];
+                let bounds: NSRect = msg_send![content, bounds];
+                let to = page_frame(want, (bounds.size.width, bounds.size.height));
+                let animator: *mut AnyObject = msg_send![webview, animator];
+                let _: () = msg_send![animator, setFrame: to];
+            }
+            event
+        });
+        // Mouse moved, left-dragged, entered and exited.
+        let mask: u64 = (1 << 5) | (1 << 6) | (1 << 8) | (1 << 9);
+        let monitor: *mut AnyObject = msg_send![class!(NSEvent), addLocalMonitorForEventsMatchingMask: mask, handler: &*watch];
+        let center: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
+        let token = Rc::new(Cell::new(std::ptr::null_mut::<AnyObject>()));
+        let token2 = token.clone();
+        let closing = block2::RcBlock::new(move |_note: *mut AnyObject| {
+            let _: () = msg_send![class!(NSEvent), removeMonitor: monitor];
+            let center: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let t = token2.replace(std::ptr::null_mut());
+            if !t.is_null() {
+                let _: () = msg_send![center, removeObserver: t];
+            }
+        });
+        let name = NSString::from_str("NSWindowWillCloseNotification");
+        let t: *mut AnyObject = msg_send![center, addObserverForName: &*name, object: window, queue: std::ptr::null_mut::<AnyObject>(), usingBlock: &*closing];
+        token.set(t);
     }
 
     /// Nobody can answer a dialog from a tab they can't see (an agent's hidden tab, a page being read, a background
