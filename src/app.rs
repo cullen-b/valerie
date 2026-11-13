@@ -4174,6 +4174,16 @@ impl App {
     }
 
     /// Right-click on a space's icon.
+    /// Right-click on empty sidebar space.
+    fn sidebar_menu(&mut self, x: f64, y: f64) {
+        let section = if self.config.sidebar.kept_section { "kept" } else { "pinned" };
+        let e = vec![
+            Some(("New Tab".to_string(), json!({ "cmd": "new_tab" }))),
+            Some(("New Folder…".to_string(), json!({ "cmd": "prompt", "label": "Folder name", "value": "New Folder", "then": { "cmd": "new_folder", "section": section }, "field": "name" }))),
+        ];
+        self.popup(e, x, y);
+    }
+
     fn space_menu(&mut self, i: usize, x: f64, y: f64) {
         let Some(name) = self.state.spaces.get(i).map(|s| s.name.clone()) else { return };
         let mut e: Vec<Option<(String, Value)>> = Vec::new();
@@ -4229,7 +4239,7 @@ impl App {
             }
         }
         e.push(None);
-        let folder_section = if section == "pinned" { "pinned" } else { "kept" };
+        let folder_section = if section == "pinned" || !self.config.sidebar.kept_section { "pinned" } else { "kept" };
         e.push(item("New Folder…", json!({ "cmd": "prompt", "label": "Folder name", "value": "New Folder", "then": { "cmd": "new_folder", "section": folder_section }, "field": "name" })));
         e.push(item(if keeps { "Unload Tab" } else { "Close Tab" }, json!({ "cmd": "close_tab", "tab": tab })));
         let ctx: std::collections::BTreeMap<String, String> = [("tab".to_string(), t.url.clone())].into();
@@ -6515,7 +6525,8 @@ impl App {
                 let id = self.state.new_id();
                 let name = name.unwrap_or_else(|| "New Folder".into());
                 let folder = Node::Folder { id, name, open: true, children: vec![] };
-                if section.as_deref() == Some("pinned") {
+                // With the Kept list hidden (sidebar.kept_section), a folder there couldn't be seen: it goes in Pinned.
+                if section.as_deref() == Some("pinned") || !self.config.sidebar.kept_section {
                     self.state.space_mut().pinned.push(folder);
                 } else {
                     self.state.space_mut().kept.push(folder);
@@ -7822,6 +7833,7 @@ impl App {
                     self.tab_menu(tab, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
                 }
             }
+            (Source::Chrome, "sidebar_menu") => self.sidebar_menu(m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0)),
             (Source::Chrome, "space_menu") => {
                 if let Some(i) = m["space"].as_u64() {
                     self.space_menu(i as usize, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));

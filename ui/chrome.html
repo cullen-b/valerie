@@ -1297,6 +1297,11 @@ document.addEventListener("mousedown", (e) => { if (!$("#menu").contains(e.targe
 // Right-click menus are native (they float over the page at any sidebar size); Valerie builds them.
 function tabMenu(e, t) { send({ t: "tab_menu", tab: t.id, x: e.clientX, y: e.clientY }); }
 function folderMenu(e, f) { send({ t: "folder_menu", folder: f.id, x: e.clientX, y: e.clientY }); }
+// Right-click on empty space in the tab list (rows and tiles handle their own): New Tab, New Folder.
+$("#scroll").addEventListener("contextmenu", (e) => {
+  if (e.defaultPrevented || $("#scroll").classList.contains("chats")) return;
+  e.preventDefault(); send({ t: "sidebar_menu", x: e.clientX, y: e.clientY });
+});
 const prompt_ = (label, value, then, field) => cmd({ cmd: "prompt", label, value, then, field });
 
 $("#back").onclick = () => cmd({ cmd: "back" });
