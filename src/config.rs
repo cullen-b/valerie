@@ -320,6 +320,7 @@ pub struct LinksConfig {
     pub context_menu: bool,
     pub show_url_on_hover: bool,
     pub popups: String,
+    pub popup_look: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

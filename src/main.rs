@@ -224,6 +224,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
             }
+            if !["floating", "classic"].contains(&c.links.popup_look.as_str()) {
+                problems.push(format!("links: popup_look is {:?}; use floating or classic", c.links.popup_look));
+            }
             if !platform::TERMINALS.iter().any(|t| t.eq_ignore_ascii_case(&c.terminal)) {
                 problems.push(format!("terminal is {:?}; use one of {}", c.terminal, platform::TERMINALS.join(", ")));
             }
