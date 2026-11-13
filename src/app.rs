@@ -3635,7 +3635,8 @@ impl App {
             self.unload(tab);
             if was_active {
                 let order: Vec<TabId> = self.state.order(self.state.active_space, true);
-                let next = order.iter().copied().find(|t| *t != tab && self.views.contains_key(t));
+                // A tab preloaded on hover looks closed, so it's not where closing lands.
+                let next = order.iter().copied().find(|t| *t != tab && self.views.contains_key(t) && !self.preloaded.contains_key(t));
                 self.state.space_mut().active = next;
                 if let Some(n) = next {
                     return self.activate(n);
@@ -3644,8 +3645,8 @@ impl App {
         } else {
             self.queue_event("tab_closed", Some(tab), None);
             let space = self.state.space_of(tab);
-            let views = &self.views;
-            let next = self.state.close_tab(tab, |t| views.contains_key(&t));
+            let (views, preloaded) = (&self.views, &self.preloaded);
+            let next = self.state.close_tab(tab, |t| views.contains_key(&t) && !preloaded.contains_key(&t));
             self.drop_view(tab);
             if space == Some(self.state.active_space) || space.is_none() {
                 if let Some(n) = next {
