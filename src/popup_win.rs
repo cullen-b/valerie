@@ -215,7 +215,7 @@ fn hit_test(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 }
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if matches!(msg, WM_LBUTTONDOWN | WM_LBUTTONUP | WM_NCLBUTTONDOWN | WM_NCLBUTTONUP | WM_MOUSEACTIVATE | WM_ACTIVATE | WM_CLOSE | WM_SETFOCUS | WM_KILLFOCUS | WM_SYSCOMMAND | WM_ENTERSIZEMOVE | WM_EXITSIZEMOVE | WM_CAPTURECHANGED) {
+    if !matches!(msg, WM_MOUSEMOVE | WM_NCMOUSEMOVE | WM_PAINT | WM_SETCURSOR | WM_NCHITTEST | WM_ERASEBKGND | 0x2a1 | 0x2a2 | 0x2a3 | WM_GETOBJECT | WM_GETICON | WM_GETMINMAXINFO | WM_TIMER) {
         crate::log::line("popup-debug", format!("msg {msg:#x} w={:#x} l={:#x}", wparam.0, lparam.0));
     }
     match msg {
