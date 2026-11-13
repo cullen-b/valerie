@@ -104,9 +104,7 @@ fn set_open(hwnd: HWND, open: bool) {
             p.pressed = None;
         }
         if was != open {
-            crate::log::line("popup-debug", format!("set_bounds open={open} start"));
             let _ = p.webview.set_bounds(page_rect(hwnd, open));
-            crate::log::line("popup-debug", "set_bounds done");
         }
         was != open
     });
@@ -115,11 +113,15 @@ fn set_open(hwnd: HWND, open: bool) {
     }
 }
 
-/// After every move: open the strip at the top edge, close it once the pointer leaves it, and light the button under it.
-fn pointer_moved(hwnd: HWND, nonclient: bool) {
-    crate::log::line("popup-debug", format!("move nonclient={nonclient}"));
+/// Asks for a leave message from the part of the window the pointer is in. Only on real moves: arming it from a leave
+/// message for the other part fires another leave at once, and the two ping-pong forever, starving clicks and paints.
+fn track_leave(hwnd: HWND, nonclient: bool) {
     let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE | if nonclient { TME_NONCLIENT } else { Default::default() }, hwndTrack: hwnd, dwHoverTime: 0 };
     let _ = unsafe { TrackMouseEvent(&mut t) };
+}
+
+/// Opens the strip at the top edge, closes it once the pointer leaves it, and lights the button under the pointer.
+fn pointer_moved(hwnd: HWND) {
     let p = cursor(hwnd);
     let s = scale(hwnd);
     let r = client(hwnd);
@@ -133,13 +135,10 @@ fn pointer_moved(hwnd: HWND, nonclient: bool) {
     }
 }
 
-/// Paints now: Valerie's event loop keeps the queue busy, so a queued WM_PAINT for a window it doesn't own may never come.
 fn repaint(hwnd: HWND) {
-    crate::log::line("popup-debug", "repaint start");
     unsafe {
-        let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW);
+        let _ = InvalidateRect(Some(hwnd), None, false);
     }
-    crate::log::line("popup-debug", "repaint done");
 }
 
 fn paint(hwnd: HWND) {
@@ -220,9 +219,6 @@ fn hit_test(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 }
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if !matches!(msg, WM_MOUSEMOVE | WM_NCMOUSEMOVE | WM_PAINT | WM_SETCURSOR | WM_NCHITTEST | WM_ERASEBKGND | 0x2a1 | 0x2a2 | 0x2a3 | WM_GETOBJECT | WM_GETICON | WM_GETMINMAXINFO | WM_TIMER) {
-        crate::log::line("popup-debug", format!("msg {msg:#x} w={:#x} l={:#x}", wparam.0, lparam.0));
-    }
     match msg {
         // The whole window is client area (no title bar); a maximized window keeps its frame off screen.
         WM_NCCALCSIZE if wparam.0 != 0 => {
@@ -240,15 +236,17 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         WM_NCHITTEST => hit_test(hwnd, lparam),
         WM_MOUSEMOVE => {
-            pointer_moved(hwnd, false);
+            track_leave(hwnd, false);
+            pointer_moved(hwnd);
             LRESULT(0)
         }
         WM_NCMOUSEMOVE => {
-            pointer_moved(hwnd, true);
+            track_leave(hwnd, true);
+            pointer_moved(hwnd);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_MOUSELEAVE | WM_NCMOUSELEAVE => {
-            pointer_moved(hwnd, msg == WM_NCMOUSELEAVE);
+            pointer_moved(hwnd);
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
@@ -371,7 +369,6 @@ pub fn popup_window(opener: &ICoreWebView2, environment: &ICoreWebView2Environme
         let mut token = Default::default();
         let _ = core.add_WindowCloseRequested(
             &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
-                crate::log::line("popup-debug", "close requested by the page");
                 let _ = PostMessageW(Some(HWND(title_hwnd as _)), WM_CLOSE, WPARAM(0), LPARAM(0));
                 Ok(())
             })),
