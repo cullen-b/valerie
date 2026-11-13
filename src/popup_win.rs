@@ -104,7 +104,9 @@ fn set_open(hwnd: HWND, open: bool) {
             p.pressed = None;
         }
         if was != open {
+            crate::log::line("popup-debug", format!("set_bounds open={open} start"));
             let _ = p.webview.set_bounds(page_rect(hwnd, open));
+            crate::log::line("popup-debug", "set_bounds done");
         }
         was != open
     });
@@ -115,6 +117,7 @@ fn set_open(hwnd: HWND, open: bool) {
 
 /// After every move: open the strip at the top edge, close it once the pointer leaves it, and light the button under it.
 fn pointer_moved(hwnd: HWND, nonclient: bool) {
+    crate::log::line("popup-debug", format!("move nonclient={nonclient}"));
     let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE | if nonclient { TME_NONCLIENT } else { Default::default() }, hwndTrack: hwnd, dwHoverTime: 0 };
     let _ = unsafe { TrackMouseEvent(&mut t) };
     let p = cursor(hwnd);
@@ -132,9 +135,11 @@ fn pointer_moved(hwnd: HWND, nonclient: bool) {
 
 /// Paints now: Valerie's event loop keeps the queue busy, so a queued WM_PAINT for a window it doesn't own may never come.
 fn repaint(hwnd: HWND) {
+    crate::log::line("popup-debug", "repaint start");
     unsafe {
         let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW);
     }
+    crate::log::line("popup-debug", "repaint done");
 }
 
 fn paint(hwnd: HWND) {
