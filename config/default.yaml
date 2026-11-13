@@ -494,8 +494,9 @@ links:
   show_url_on_hover: true  # show where a link goes in the bottom corner while you hover it
   popups: window           # pop-up windows a site opens at a set size, like "Sign in with Google". one of:
                            # window (a small window that stays linked to the page, so sign-ins work) | tab
-  popup_look: floating     # how those pop-up windows look (Mac). one of: floating (no title bar, the page on a frosted
-                           # pane; the window buttons slide in when the pointer is at its top edge) | classic (a plain window)
+  popup_look: floating     # how those pop-up windows look (Mac and Windows; Linux opens them as tabs). one of: floating
+                           # (no title bar, the page on a pane; the window buttons slide in when the pointer is at its top
+                           # edge, and dragging there moves it) | classic (a plain window)
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)

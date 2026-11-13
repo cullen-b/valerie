@@ -604,15 +604,17 @@ function keepSpaceDrag(sps) {
 
 // ---------- elements ----------
 // Resting the pointer on a tab that isn't loaded yet starts loading it (sidebar.preload_on_hover).
-let preloadTimer = 0;
+// Not the tab whose − was just clicked: the pointer still resting on it shouldn't load it straight back.
+let preloadTimer = 0, justClosed = new Set();
+function closeHere(ids) { ids.forEach((id) => { justClosed.add(id); cmd({ cmd: "close_tab", tab: id }); }); }
 function preloadOnHover(node, t) {
   if (t.loaded) return;
   node.addEventListener("mouseenter", () => {
-    if (!S.sidebar.preload_on_hover || drag) return;
+    if (!S.sidebar.preload_on_hover || drag || justClosed.has(t.id)) return;
     clearTimeout(preloadTimer);
     preloadTimer = setTimeout(() => send({ t: "preload", tab: t.id }), S.sidebar.preload_delay_ms ?? 90);
   });
-  node.addEventListener("mouseleave", () => clearTimeout(preloadTimer));
+  node.addEventListener("mouseleave", () => { clearTimeout(preloadTimer); justClosed.delete(t.id); });
 }
 // sidebar.multi_select: shift-click picks a run of tabs and folders, ⌘-click (Ctrl) adds or drops one; right-click deletes them.
 // Keys are "t<id>" for tabs and "f<id>" for folders.
@@ -655,7 +657,7 @@ function tile(t, list, index) {
   // A loaded pinned or favorite tile: − in its corner closes the page and keeps the tile.
   if (t.loaded && S.sidebar.minus_for_saved_tabs !== false) {
     const x = el("div", "x minus", "−"); x.title = "Close (keeps it in the sidebar)";
-    x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
+    x.onclick = (e) => { e.stopPropagation(); closeHere([t.id]); };
     f.append(x);
   }
   f.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
@@ -678,7 +680,7 @@ function tabRow(t, list, index) {
   const minus = t.pinned && S.sidebar.minus_for_saved_tabs !== false;
   const x = el("div", "x" + (minus ? " minus" : ""), minus ? "−" : "×");
   x.title = t.pinned ? "Close (keeps it in the sidebar)" : "Close";
-  x.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "close_tab", tab: t.id }); };
+  x.onclick = (e) => { e.stopPropagation(); closeHere([t.id]); };
   if (!(minus && !t.loaded)) r.append(x);
   r.title = t.url;
   r.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
@@ -756,7 +758,7 @@ function splitRow(tabs, list, index, span) {
   const pinned = tabs[0].pinned, minus = pinned && S.sidebar.minus_for_saved_tabs !== false;
   const x = el("div", "x" + (minus ? " minus" : ""), minus ? "−" : "×");
   x.title = pinned ? "Close (keeps them in the sidebar)" : "Close both";
-  x.onclick = (e) => { e.stopPropagation(); tabs.forEach((t) => cmd({ cmd: "close_tab", tab: t.id })); };
+  x.onclick = (e) => { e.stopPropagation(); closeHere(tabs.map((t) => t.id)); };
   if (!(minus && !tabs.some((t) => t.loaded))) r.append(x);
   pickable(r, key);
   source(r, tabs[0].id, list, index, tabs.map((t) => t.id), span);

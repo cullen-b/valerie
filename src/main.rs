@@ -16,6 +16,8 @@ mod mcp;
 mod passwords;
 mod permission_tile;
 mod platform;
+#[cfg(target_os = "windows")]
+mod popup_win;
 #[cfg(target_os = "macos")]
 mod quick_fullscreen;
 mod plugins;

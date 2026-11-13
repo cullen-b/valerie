@@ -1931,6 +1931,12 @@ impl App {
                     if let Some(webview) = platform::popup_window(&*features.opener.webview, &*features.opener.target_configuration, (size.width, size.height), features.position.filter(|_| platform::test_windows().is_none()).map(|p| (p.x, p.y)), popup_floating) {
                         return NewWindowResponse::Create { webview };
                     }
+                    #[cfg(target_os = "windows")]
+                    if popup_floating {
+                        if let Some(webview) = crate::popup_win::popup_window(&features.opener.webview, &features.opener.environment, (size.width, size.height), features.position.map(|p| (p.x, p.y))) {
+                            return NewWindowResponse::Create { webview };
+                        }
+                    }
                     #[cfg(not(target_os = "macos"))]
                     let _ = size;
                     return NewWindowResponse::Allow;
@@ -3629,7 +3635,8 @@ impl App {
             self.unload(tab);
             if was_active {
                 let order: Vec<TabId> = self.state.order(self.state.active_space, true);
-                let next = order.iter().copied().find(|t| *t != tab && self.views.contains_key(t));
+                // A tab preloaded on hover looks closed, so it's not where closing lands.
+                let next = order.iter().copied().find(|t| *t != tab && self.views.contains_key(t) && !self.preloaded.contains_key(t));
                 self.state.space_mut().active = next;
                 if let Some(n) = next {
                     return self.activate(n);
@@ -3638,8 +3645,8 @@ impl App {
         } else {
             self.queue_event("tab_closed", Some(tab), None);
             let space = self.state.space_of(tab);
-            let views = &self.views;
-            let next = self.state.close_tab(tab, |t| views.contains_key(&t));
+            let (views, preloaded) = (&self.views, &self.preloaded);
+            let next = self.state.close_tab(tab, |t| views.contains_key(&t) && !preloaded.contains_key(&t));
             self.drop_view(tab);
             if space == Some(self.state.active_space) || space.is_none() {
                 if let Some(n) = next {
