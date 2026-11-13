@@ -125,6 +125,9 @@ fn pointer_moved(hwnd: HWND, nonclient: bool) {
     let open = with(hwnd, |p| p.open).unwrap_or(false);
     let band = if open { STRIP } else { BEZEL };
     let want = p.x >= 0 && p.x < r.right && p.y >= 0 && (p.y as f64) < band * s;
+    if want != open {
+        crate::log::line("popup-debug", format!("strip open={want} at {:?} nonclient={nonclient}", (p.x, p.y)));
+    }
     set_open(hwnd, want);
     let hover = want.then(|| (0..3).find(|&i| inside(&button_rect(hwnd, i), p))).flatten();
     if with(hwnd, |pp| std::mem::replace(&mut pp.hover, hover) != hover) == Some(true) {
@@ -146,6 +149,7 @@ fn paint(hwnd: HWND) {
         let brush = CreateSolidBrush(rgb(bg));
         FillRect(dc, &r, brush);
         let _ = DeleteObject(brush.into());
+        crate::log::line("popup-debug", format!("paint open={open} hover={hover:?} dark={dark} client={:?} update={:?} button2={:?}", (r.right, r.bottom), (ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom), { let b = button_rect(hwnd, 2); (b.left, b.top, b.right, b.bottom) }));
         if open {
             let s = scale(hwnd);
             let font = CreateFontW(-((10.0 * s).round() as i32), 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, 0, w!("Segoe MDL2 Assets"));
@@ -167,7 +171,8 @@ fn paint(hwnd: HWND) {
                 }
                 SetTextColor(dc, rgb(ink));
                 let mut text = [*g];
-                DrawTextW(dc, &mut text, &mut br, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                let n = DrawTextW(dc, &mut text, &mut br, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                crate::log::line("popup-debug", format!("glyph {i} drew height {n} font null={}", font.is_invalid()));
             }
             SelectObject(dc, old);
             let _ = DeleteObject(font.into());
