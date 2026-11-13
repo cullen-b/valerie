@@ -215,6 +215,9 @@ fn hit_test(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 }
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if matches!(msg, WM_LBUTTONDOWN | WM_LBUTTONUP | WM_NCLBUTTONDOWN | WM_NCLBUTTONUP | WM_MOUSEACTIVATE | WM_ACTIVATE | WM_CLOSE | WM_SETFOCUS | WM_KILLFOCUS | WM_SYSCOMMAND | WM_ENTERSIZEMOVE | WM_EXITSIZEMOVE | WM_CAPTURECHANGED) {
+        crate::log::line("popup-debug", format!("msg {msg:#x} w={:#x} l={:#x}", wparam.0, lparam.0));
+    }
     match msg {
         // The whole window is client area (no title bar); a maximized window keeps its frame off screen.
         WM_NCCALCSIZE if wparam.0 != 0 => {
@@ -363,6 +366,7 @@ pub fn popup_window(opener: &ICoreWebView2, environment: &ICoreWebView2Environme
         let mut token = Default::default();
         let _ = core.add_WindowCloseRequested(
             &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+                crate::log::line("popup-debug", "close requested by the page");
                 let _ = PostMessageW(Some(HWND(title_hwnd as _)), WM_CLOSE, WPARAM(0), LPARAM(0));
                 Ok(())
             })),
