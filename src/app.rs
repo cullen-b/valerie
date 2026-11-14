@@ -5391,11 +5391,15 @@ impl App {
                 self.fill_offers.insert(target, (nonce, entries));
             }
             "fill" => {
-                let Some((nonce, entries)) = self.fill_offers.get(&target) else { return };
+                let Some((nonce, entries)) = self.fill_offers.get(&target) else {
+                    return crate::log::line("passwords", "not filling: no saved logins were offered on this page");
+                };
                 if m["nonce"].as_str() != Some(nonce.as_str()) {
-                    return;
+                    return crate::log::line("passwords", "not filling: the request didn't match the logins offered");
                 }
-                let Some(e) = m["index"].as_u64().and_then(|i| entries.get(i as usize)).filter(|e| e.origin == origin) else { return };
+                let Some(e) = m["index"].as_u64().and_then(|i| entries.get(i as usize)).filter(|e| e.origin == origin) else {
+                    return crate::log::line("passwords", "not filling: that login isn't for this site");
+                };
                 let e = e.clone();
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
@@ -8308,6 +8312,9 @@ impl App {
                     if let Some((u, t)) = visit.filter(|_| !self.preloaded.contains_key(&id) && !self.state.web_tabs.contains(&id)) {
                         self.state.record_visit(&u, &t);
                         self.after_load(Target::Tab(id), &u, false);
+                    }
+                    // A new page drops the old one's offer; not on finish, since the login form often reports before then.
+                    if !finished {
                         self.fill_offers.remove(&Target::Tab(id));
                     }
                     self.dirty = true;
