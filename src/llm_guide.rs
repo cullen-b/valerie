@@ -75,7 +75,7 @@ changed in plain words. Some translations:
 | They say | Change |
 |---|---|
 | "The text is too small" / "I can't read it" | `tabs.default_zoom: 125` (every website), `sidebar.tab_height: 48`, `command_bar.font_size: 24` |
-| "Too cluttered" / "simpler" | `sidebar.nav_buttons: true`, `sidebar.url_bar: true`, `sidebar.space_switcher: false`, `sidebar.kept_section: false`, `vim.enabled: false`, `command_bar.calculator: false`, `links.show_url_on_hover: false` |
+| "Too cluttered" / "simpler" | `sidebar.nav_buttons: true`, `sidebar.url_bar: true`, `sidebar.space_switcher: false`, `vim.enabled: false`, `command_bar.calculator: false`, `links.show_url_on_hover: false` |
 | "I keep pressing keys by accident" | `vim.enabled: false`, remove shortcuts under `keybindings` with `null` |
 | "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0`, `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
 | "Messages vanish before I read them" | `toast_seconds: 5` |
@@ -130,7 +130,7 @@ Example: "I'm 82, my eyes aren't great, I only use email and the news, and the k
 
 ```yaml
 tabs: {{ default_zoom: 140, archive_after_hours: 0 }}
-sidebar: {{ tab_height: 56, space_switcher: false, kept_section: false }}
+sidebar: {{ tab_height: 56, space_switcher: false }}
 command_bar: {{ font_size: 26, calculator: false }}
 vim: {{ enabled: false }}
 layout: {{ animation_ms: 0, font: "Verdana" }}
