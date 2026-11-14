@@ -103,7 +103,7 @@ sidebar:
   pinned_hint: true        # "Drag here to pin" when a space has no pinned tabs
   compact_pinned: folder   # pinned tabs in the icons-only sidebar. one of: folder (one icon; hover it to pick a tab) | icons (every tab shown)
   pinned_folder_icon: pin  # what that folder icon shows. one of: pin | star | favicons (the first four sites)
-  kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them (with folders)
+  kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them, and where folders live. Keep it on unless the user asks by name to hide it
   minus_for_saved_tabs: true   # pinned and kept tabs show − instead of ×: it closes the page but keeps the tab in the
                            # sidebar (× on a pinned tab does the same). false = × everywhere
   new_tab_button: false    # the "+ New Tab" row
