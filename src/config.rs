@@ -1310,6 +1310,53 @@ pub fn change_setting(path: &[&str], value: &str, this_computer: bool) -> Result
     Ok(())
 }
 
+/// Once per computer: `sidebar.kept_section: false` in the user's files becomes `true` (the Kept list holds folders,
+/// and older guides switched it off for a "simpler" sidebar). Turning it off again afterwards sticks.
+#[cfg(not(test))]
+fn kept_back_on() {
+    let done = data_dir().join("kept-section-on");
+    if done.exists() {
+        return;
+    }
+    for path in [config_path(), this_mac_path()] {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let fixed = kept_on(&text);
+        if fixed != text {
+            match std::fs::write(&path, fixed) {
+                Ok(()) => crate::log::line("config", format!("turned the Kept list back on in {}", path.display())),
+                Err(e) => return crate::log::line("config", format!("couldn't turn the Kept list back on in {}: {e}", path.display())),
+            }
+        }
+    }
+    let _ = std::fs::create_dir_all(data_dir());
+    let _ = std::fs::write(done, "");
+}
+
+/// `kept_section: false` (block or `{ … }` style, any spacing) as `true`, the rest of the text untouched.
+fn kept_on(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("kept_section") {
+        let (head, tail) = rest.split_at(i + "kept_section".len());
+        out.push_str(head);
+        let after = tail.trim_start_matches([' ', '\t']);
+        let Some(value) = after.strip_prefix(':') else { rest = tail; continue };
+        let value_start = value.len() - value.trim_start_matches([' ', '\t']).len();
+        let word = &value[value_start..];
+        let ends = |w: &str| w.chars().next().map_or(true, |c| !c.is_alphanumeric() && c != '_');
+        if word.starts_with("false") && ends(&word[5..]) {
+            out.push_str(&tail[..tail.len() - value.len()]);
+            out.push_str(&value[..value_start]);
+            out.push_str("true");
+            rest = &word[5..];
+        } else {
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn config_path() -> PathBuf {
     config_dir().join("config.yaml")
 }
@@ -1463,6 +1510,8 @@ impl Config {
             std::fs::create_dir_all(config_dir())?;
             std::fs::write(&path, STARTER_YAML)?;
         }
+        #[cfg(not(test))]
+        kept_back_on();
         let text = std::fs::read_to_string(&path)?;
         Self::parse(&text).with_context(|| format!("in {}", path.display()))
     }
@@ -1582,6 +1631,18 @@ pub fn preset(name: &str) -> Option<Theme> {
 #[cfg(test)]
 mod tests {
     use super::Config;
+
+    #[test]
+    fn kept_on_flips_only_kept_section_false() {
+        let k = super::kept_on;
+        assert_eq!(k("sidebar:\n  kept_section: false   # hide it\n"), "sidebar:\n  kept_section: true   # hide it\n");
+        assert_eq!(k("sidebar: { tab_height: 56, kept_section:false }"), "sidebar: { tab_height: 56, kept_section:true }");
+        assert_eq!(k("sidebar:\n  kept_section: true\n"), "sidebar:\n  kept_section: true\n");
+        assert_eq!(k("kept_section: falsey\nmy_kept_section_x: 1"), "kept_section: falsey\nmy_kept_section_x: 1");
+        let flipped = k("spaces:\n  - name: A\n    settings: { sidebar: { kept_section: false } }\nsidebar:\n  kept_section: false\n");
+        assert!(Config::parse(&flipped).unwrap().sidebar.kept_section);
+        assert!(!flipped.contains("false"));
+    }
 
     /// Older settings files said true or false; they still load, as always and never.
     #[test]
