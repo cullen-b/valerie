@@ -128,28 +128,34 @@ pre.out .cmd { color: var(--accent); }
 #plan-now summary { cursor: default; color: var(--dim); list-style: none; user-select: none; }
 #plan-now summary::-webkit-details-marker { display: none; }
 #plan-now .todos { margin: 4px 0 2px; }
-#box { pointer-events: auto; max-width: 800px; margin: 0 auto; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--bg) 80%, var(--card));
-  box-shadow: 0 10px 30px rgba(0,0,0,.18); padding: 10px 12px 8px; transition: border-color .15s; }
-#box:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+#box { pointer-events: auto; max-width: 800px; margin: 0 auto; border: 1px solid var(--line); border-radius: 20px; background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 1px 3px rgba(0,0,0,.12); padding: 14px 10px 10px 14px; transition: border-color .15s; }
+:root.light #box { box-shadow: 0 12px 32px rgba(0,0,0,.07), 0 1px 3px rgba(0,0,0,.05); }
+#box:focus-within { border-color: color-mix(in srgb, var(--fg) 16%, transparent); }
 #box.drop { border-color: var(--accent); border-style: dashed; }
 #attach { display: none; justify-content: flex-start; margin-bottom: 8px; }
-textarea { width: 100%; resize: none; border: 0; outline: none; background: none; color: var(--fg); font: inherit; max-height: 220px; min-height: 24px; padding: 2px 2px 6px; }
+textarea { width: 100%; box-sizing: border-box; resize: none; border: 0; outline: none; background: none; color: var(--fg); font: inherit; font-size: 15px; line-height: 1.5; max-height: 220px; min-height: 24px; padding: 2px 4px 12px 2px; }
 textarea::placeholder { color: var(--dim); }
-#row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#row { display: flex; align-items: center; gap: 2px; min-width: 0; margin-left: -6px; }
 select { appearance: none; background: var(--faint); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 3px 22px 3px 9px; font: 12px inherit;
   background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
   background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
-#hint { flex: 1; font-size: 11.5px; color: var(--dim); text-align: right; white-space: nowrap; overflow: hidden; }
-.ctl { appearance: none; background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 8px; padding: 3px 8px; font: 12px inherit; min-width: 0; }
-.ctl:hover { background: var(--faint); color: var(--fg); }
-.ctl:focus { outline: none; } .ctl:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
-select.ctl { padding-right: 20px; background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
-  background-position: calc(100% - 10px) 52%, calc(100% - 6px) 52%; background-size: 4px 4px; background-repeat: no-repeat; }
-select.ctl:disabled { background-image: none; padding-right: 8px; opacity: 1; }
-#model { max-width: 190px; } #folder { max-width: 170px; font-family: var(--mono); font-size: 11.5px; }
+#hint { flex: 1; padding: 0 8px; font-size: 11.5px; color: var(--dim); text-align: right; white-space: nowrap; overflow: hidden; }
+.ctl { appearance: none; background-color: transparent; color: var(--dim); border: 0; border-radius: 10px; height: 30px; padding: 0 10px; font: 13px inherit; min-width: 0;
+  transition: background-color .12s ease-out, color .12s ease-out; }
+.ctl:hover, .ctl.open { background-color: var(--faint); color: var(--fg); }
+.ctl:focus { outline: none; } .ctl:focus-visible { background-color: var(--faint); color: var(--fg); }
+/* a thin chevron, like the rest of the chat's line icons */
+select.ctl { padding-right: 24px; background-repeat: no-repeat; background-position: calc(100% - 9px) 52%; background-size: 10px 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%23ecebf5' stroke-opacity='.45' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.75 5 6.25l2.5-2.5'/%3E%3C/svg%3E"); }
+:root.light select.ctl { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%2323201c' stroke-opacity='.45' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.75 5 6.25l2.5-2.5'/%3E%3C/svg%3E"); }
+select.ctl:disabled { background-image: none; padding-right: 10px; opacity: 1; }
+select.ctl:disabled:hover { background-color: transparent; color: var(--dim); }
+#agent { color: var(--fg); font-weight: 500; text-transform: capitalize; }
+#model, #effort { padding-left: 6px; margin-left: -4px; }
+#model { max-width: 200px; } #folder { max-width: 170px; }
 #access.full { color: var(--dim); } #access.ask { color: var(--warn); } #access.read { color: #6fc7a0; }
 #plan.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-.sep { width: 1px; height: 14px; background: var(--line); flex: none; }
 /* The composer's menus: drawn here so they match the chat, not the system's popup. */
 #menu { position: fixed; z-index: 50; min-width: 150px; max-height: 50vh; overflow-y: auto; padding: 4px; border-radius: 12px;
   background: color-mix(in srgb, var(--bg) 92%, var(--fg)); border: 1px solid var(--line); font-size: 12.5px;
@@ -170,9 +176,12 @@ select.ctl:disabled { background-image: none; padding-right: 8px; opacity: 1; }
 .msg.assistant { position: relative; }
 .copy { position: absolute; top: -2px; right: 0; display: none; font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; background: var(--bg); }
 .msg.assistant:hover .copy { display: block; } .copy:hover { color: var(--fg); }
-#send { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; font-size: 15px; display: grid; place-items: center; flex: none; }
+#send { width: 34px; height: 34px; margin-left: 6px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; flex: none;
+  transition: transform .12s ease-out, opacity .12s ease-out; }
+#send:active { transform: scale(.96); }
+#send svg { width: 16px; height: 16px; }
 #send:disabled { opacity: .35; }
-#send.stop { background: var(--fg); color: var(--bg); font-size: 11px; }
+#send.stop { background: var(--fg); color: var(--bg); }
 /* the diff pane */
 #pane { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: none; flex-direction: column; }
 #pane.on { display: flex; }
@@ -216,18 +225,15 @@ html.float.hints #floatHint { display: block; font-size: 11px; color: var(--dim)
   <textarea id="input" rows="1" placeholder="Ask anything, or ask for something to be done…"></textarea>
   <div id="row">
     <select id="folder" class="ctl" title="The project folder the agent works in"></select>
-    <select id="agent" class="ctl" title="Which agent answers"></select>
-    <select id="model" class="ctl" title="Model"></select>
-    <select id="effort" class="ctl" title="Reasoning effort">
-      <option value="">default effort</option><option value="low">low effort</option><option value="medium">medium effort</option>
-      <option value="high">high effort</option><option value="max">max effort</option>
-    </select>
-    <div class="sep"></div>
     <select id="access" class="ctl" title="What the agent may do">
       <option value="read">Read only</option><option value="ask">Ask first</option><option value="full">Full access</option>
     </select>
     <button id="plan" class="ctl" title="Plan first: the agent proposes, you say go">Plan</button>
-    <div id="hint"></div><button id="send" title="Send">↑</button>
+    <div id="hint"></div>
+    <select id="agent" class="ctl" title="Which agent answers"></select>
+    <select id="model" class="ctl" title="Model"></select>
+    <select id="effort" class="ctl" title="Reasoning effort"></select>
+    <button id="send" title="Send"></button>
   </div>
 </div></div>
 <div id="pane"><header><b>Changes</b><span class="sub" id="paneSub"></span><button class="btn quiet" id="paneRefresh">Refresh</button><button class="btn quiet" id="paneClose" title="Close">✕</button></header>
@@ -663,7 +669,7 @@ function chatOpt(k, fallback) { const c = D.chat; return c && c.messages.length 
 function fillModels(current) {
   const info = (D.models || {})[$("#agent").value] || {}, sel = $("#model"); sel.replaceChildren();
   // The model it uses when none is picked, by name (the app's own setting, or "Auto" when the app decides).
-  const def = el("option", null, (info.default_model || "Auto") + " (default)"); def.value = ""; sel.append(def);
+  const def = el("option", null, info.default_model || "Auto"); def.value = ""; def.dataset.menu = def.textContent + " (default)"; sel.append(def);
   const groups = new Map();
   (info.models || []).forEach((m) => {
     const o = el("option", null, m.label || m.id); o.value = m.id;
@@ -683,10 +689,11 @@ function fillEfforts() {
   const m = (info.models || []).find((x) => x.id === id);
   const levels = m && Array.isArray(m.efforts) ? m.efforts : ["low", "medium", "high", "max"];
   const sel = $("#effort"), cur = sel.value; sel.replaceChildren();
-  const d = el("option", null, (info.default_effort || "auto") + " effort (default)"); d.value = ""; sel.append(d);
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
   // OpenCode's models name their own levels; a few are on/off rather than how hard.
-  const named = { none: "no thinking", thinking: "thinking", minimal: "minimal effort" };
-  levels.forEach((l) => { const o = el("option", null, named[l] || l + " effort"); o.value = l; sel.append(o); });
+  const named = { none: "No thinking", thinking: "Thinking", minimal: "Minimal" };
+  const d = el("option", null, cap(named[info.default_effort] || info.default_effort || "auto")); d.value = ""; d.dataset.menu = d.textContent + " (default)"; sel.append(d);
+  levels.forEach((l) => { const o = el("option", null, named[l] || cap(l)); o.value = l; o.dataset.menu = named[l] || cap(l) + " effort"; sel.append(o); });
   sel.value = levels.includes(cur) ? cur : "";
 }
 // The folder menu: no folder, recent projects, or pick one. Fixed once the chat has started.
@@ -719,6 +726,7 @@ function renderControls() {
   $("#hint").textContent = D.composer_hint ? (ON_MAC ? "↵ send · ⇧↵ new line" : "Enter send · Shift+Enter new line") : "";
   const access = chatOpt("access", "") || D.default_access || "full";
   $("#access").value = access; $("#access").className = "ctl " + access;
+  fitSelects();
   $("#plan").classList.toggle("on", !!chatOpt("plan", false));
   $("#agentBadge").textContent = (D.chat && sel.value === D.chat.agent && D.answers_as) || sel.value;
   const f = D.chat && D.chat.folder, pb = $("#projBadge");
@@ -743,6 +751,15 @@ function renderWorking() {
   const show = () => { const s = Math.max(0, Math.floor(Date.now() / 1000 - D.started)); w.textContent = `Working ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
   show(); tick = setInterval(show, 1000);
 }
+// Send is an up arrow, stop a rounded square; line icons drawn like the rest of the chat's.
+function sendIcon(stop) {
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16"); svg.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(ns, stop ? "rect" : "path");
+  if (stop) { [["x", 4.5], ["y", 4.5], ["width", 7], ["height", 7], ["rx", 1.5], ["fill", "currentColor"]].forEach(([k, v]) => p.setAttribute(k, v)); }
+  else { [["d", "M8 13V3M3.75 7.25 8 3l4.25 4.25"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", 1.75], ["stroke-linecap", "round"], ["stroke-linejoin", "round"]].forEach(([k, v]) => p.setAttribute(k, v)); }
+  svg.append(p); return svg;
+}
 let shownChat = null;
 function renderAll() {
   const c = D.chat;
@@ -751,7 +768,7 @@ function renderAll() {
   $("#title").textContent = c && c.title ? c.title : "New chat";
   renderControls(); renderWorking(); renderPlanNow();
   const btn = $("#send");
-  btn.classList.toggle("stop", !!D.running); btn.textContent = D.running ? "■" : "↑"; btn.title = D.running ? "Stop (type to queue a message instead)" : "Send";
+  btn.classList.toggle("stop", !!D.running); btn.replaceChildren(sendIcon(!!D.running)); btn.title = D.running ? "Stop (type to queue a message instead)" : "Send";
   const follow = atBottom();
   renderLog();
   $("#scroll").style.paddingBottom = Math.max(220, $("#composer").offsetHeight + 60) + "px";
@@ -810,13 +827,13 @@ $("#input").addEventListener("keydown", (e) => {
 $("#send").onclick = () => (D.running && !$("#input").value.trim() ? cmd({ cmd: "stop_chat", chat: D.chat && D.chat.id }) : submit());
 // The composer's selects open a menu drawn in the page (the system popup can't be styled); the select keeps the value.
 let menu = null;
-function closeMenu() { if (menu) { menu.el.remove(); menu = null; } }
+function closeMenu() { if (menu) { menu.el.remove(); menu.sel.classList.remove("open"); menu = null; } }
 function openMenu(sel) {
   closeMenu();
   const box = el("div"), items = [];
   box.id = "menu";
   const add = (o) => {
-    const it = el("div", "it" + (o.value === sel.value ? " cur" : ""), o.textContent);
+    const it = el("div", "it" + (o.value === sel.value ? " cur" : ""), o.dataset.menu || o.textContent);
     if (o.title) it.title = o.title;
     it.onmouseenter = () => hilite(items.indexOf(it));
     it.onmousedown = (e) => e.preventDefault();
@@ -832,6 +849,7 @@ function openMenu(sel) {
   box.style.font = getComputedStyle(document.body).font; box.style.fontSize = "";
   document.documentElement.append(box);
   menu = { el: box, sel, items, pick, hilite, hi: -1 };
+  sel.classList.add("open");
   // Above the control when there's more room there (the composer sits at the bottom), else below.
   const r = sel.getBoundingClientRect(), up = r.top > innerHeight - r.bottom;
   box.style.maxHeight = Math.min(innerHeight * 0.5, (up ? r.top : innerHeight - r.bottom) - 12) + "px";
@@ -841,7 +859,18 @@ function openMenu(sel) {
   hilite(Math.max(0, items.findIndex((x) => x.classList.contains("cur"))));
   requestAnimationFrame(() => box.classList.add("on"));
 }
+// A select is as wide as its longest option; size each to the one showing, so the chevron sits right after it.
+function fitSelect(sel) {
+  const ctx = fitSelect.ctx || (fitSelect.ctx = document.createElement("canvas").getContext("2d"));
+  const cs = getComputedStyle(sel), o = sel.options[sel.selectedIndex];
+  let t = o ? o.textContent : "";
+  if (cs.textTransform === "capitalize") t = t.replace(/(^|\s)\S/g, (m) => m.toUpperCase());
+  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  sel.style.width = Math.ceil(ctx.measureText(t).width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 2) + "px";
+}
+function fitSelects() { document.querySelectorAll("select.ctl").forEach(fitSelect); }
 document.querySelectorAll("select.ctl").forEach((sel) => {
+  sel.addEventListener("change", fitSelects);
   sel.addEventListener("mousedown", (e) => { e.preventDefault(); if (sel.disabled) return; menu && menu.sel === sel ? closeMenu() : (sel.focus(), openMenu(sel)); });
   sel.addEventListener("keydown", (e) => {
     if (!menu && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); openMenu(sel); }
