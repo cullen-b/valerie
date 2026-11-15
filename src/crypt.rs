@@ -104,9 +104,21 @@ fn key_path() -> std::path::PathBuf {
 /// This machine's key for the repo whose key file has this salt (a new passphrase means a new salt, so an old key
 /// is never used by mistake).
 pub fn stored_key(kf: &KeyFile) -> Option<Key> {
+    if let Some((salt, key)) = REMEMBERED.lock().unwrap().clone() {
+        if salt == kf.salt && fits(kf, &key) {
+            return Some(key);
+        }
+    }
     let hexed = keychain_get(&kf.salt).or_else(|| std::fs::read_to_string(key_path()).ok().and_then(|s| s.trim().strip_prefix(&format!("{}:", kf.salt)).map(str::to_string)))?;
     let key: Key = unhex(&hexed).ok()?.try_into().ok()?;
-    fits(kf, &key).then_some(key)
+    fits(kf, &key).then_some(key).inspect(|k| remember(kf, k))
+}
+
+// Read the Keychain once per launch: an unsigned-by-Apple build updated on disk makes every read show a password prompt.
+static REMEMBERED: std::sync::Mutex<Option<(String, Key)>> = std::sync::Mutex::new(None);
+
+fn remember(kf: &KeyFile, key: &Key) {
+    *REMEMBERED.lock().unwrap() = Some((kf.salt.clone(), *key));
 }
 
 /// Whether `key` is the one for this key file (a key that doesn't open the check value belongs to another, perhaps
@@ -126,6 +138,7 @@ fn keychain_get(_: &str) -> Option<String> {
 }
 
 pub fn store_key(kf: &KeyFile, key: &Key) -> Result<()> {
+    remember(kf, key);
     #[cfg(not(test))]
     if crate::passwords::keychain::save(KEYCHAIN, &kf.salt, "Valerie sync key", &hex(key)).is_ok() {
         return Ok(());
@@ -177,5 +190,14 @@ mod tests {
         let s = suggest_passphrase();
         assert_eq!(s.split('-').count(), 5);
         assert!(s.len() >= 12);
+    }
+
+    #[test]
+    fn remembers_the_key_without_rereading() {
+        let (kf, key) = new_key_file("correct horse battery staple").unwrap();
+        remember(&kf, &key);
+        assert_eq!(stored_key(&kf), Some(key));
+        let (other, _) = new_key_file("another passphrase here").unwrap();
+        assert_eq!(stored_key(&other), None);
     }
 }
