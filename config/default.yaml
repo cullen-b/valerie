@@ -101,6 +101,8 @@ sidebar:
   favorites: false         # a row of favorite tiles shared by every space, above the pinned tabs. Off: one Pinned
                            # section per space (favorites you had become pinned tabs in the space you're in). true | false
   pinned_hint: true        # "Drag here to pin" when a space has no pinned tabs
+  pinned_stay_on_top: true # pinned icon tiles stay at the top while the folders and tabs below them scroll. true | false
+                           # (false = they scroll away with the list)
   compact_pinned: folder   # pinned tabs in the icons-only sidebar. one of: folder (one icon; hover it to pick a tab) | icons (every tab shown)
   pinned_folder_icon: pin  # what that folder icon shows. one of: pin | star | favicons (the first four sites)
   kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them, and where folders live. Keep it on unless the user asks by name to hide it
@@ -319,6 +321,8 @@ chats:
   from_space: float        # a chat started from a space (the command bar, an AI action, ⌘N). one of: float (it opens in
                            # the middle of the window, over your space; Esc sends it on to Chats and you keep working,
                            # Shift+Esc goes to Chats with it) | chats (switch to the Chats space)
+  agent_menu: installed    # agents in the composer's agent menu. one of: installed (only ones on this computer, plus
+                           # any with their own `command`) | all (every agent under agents.available)
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
   sync: true               # sync chats between machines (encrypted with the sync passphrase). false = this machine only

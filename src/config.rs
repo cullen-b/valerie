@@ -271,6 +271,7 @@ pub struct SidebarConfig {
     pub space_name: bool,
     pub favorites: bool,
     pub pinned_hint: bool,
+    pub pinned_stay_on_top: bool,
     pub compact_pinned: String,
     pub pinned_folder_icon: String,
     pub kept_section: bool,
@@ -646,6 +647,7 @@ pub struct ChatsConfig {
     pub worktree_copy: Vec<String>,
     pub closed_list: bool,
     pub from_space: String,
+    pub agent_menu: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -167,7 +167,7 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
   gradient), `--accent`, `--fg`, `--fg-dim`, `--hover`, `--active`, `--line`, `--tile`; sizes `--sw` (sidebar width),
   `--tab-h`, `--tab-icon`, `--tab-font`, `--pin-cols`, `--pin-h`. `:root.light` is set for light themes; `body` has
   `left`/`right`, `top` (tabs on top) and `size-full` / `size-medium` / `size-compact`. Parts: `#sidebar`, `.drag`
-  (title bar), `.navbtn`, `#url`, `#favorites`, `.grid`, `.tile` (pinned icons), `#widgets`, `.widget`, `#scroll`,
+  (title bar), `.navbtn`, `#url`, `#favorites`, `.grid`, `.tile` (pinned icons), `#widgets`, `.widget`, `#pins` (pinned icons kept at the top), `#scroll`,
   `.space-title`, `.row` (a tab; `.active`, `.unloaded`, `.loading`, `.split`), `.row .title`, `.row .x` (close),
   `.splitrow` / `.splittile` (a split-view group; `.half` per page, `.focused`), `.folder`, `.kids`, `.kept`, `.divider`, `.newtab`, `#nowplaying`, `#bottom`, `.sp` (space icons; `.active`),
   `.split-gap` (the draggable gap between split-view panes), `#topbar`, `.chip`, `#empty` (start page), `#toast`, `.pinfolder`, `#pinfly`, Chats: `.row.chat`, `.chat-label`.

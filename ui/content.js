@@ -2,6 +2,29 @@
 // browser through a whitelist of harmless messages.
 if (window.__valerie || window.top !== window) return;
 
+// ---------- tabs nobody sees (an agent's): animation frames from a timer while hidden ----------
+// Hidden pages get no animation frames, so editors, lists and charts that draw in one (Monaco) show nothing to an
+// agent's screenshot or read_page. Here frames come from a timer, about 20 a second, only while the page is hidden.
+let timerFramesOn = false;
+function timerFrames() {
+  if (timerFramesOn || !window.requestAnimationFrame) return false;
+  timerFramesOn = true;
+  const realRaf = window.requestAnimationFrame.bind(window), realCancel = window.cancelAnimationFrame.bind(window);
+  const timers = new Map();
+  let next = 1e9;
+  window.requestAnimationFrame = function requestAnimationFrame(cb) {
+    if (document.visibilityState !== "hidden") return realRaf(cb);
+    const id = ++next;
+    timers.set(id, setTimeout(() => { timers.delete(id); cb(performance.now()); }, 50));
+    return id;
+  };
+  window.cancelAnimationFrame = function cancelAnimationFrame(id) {
+    if (timers.has(id)) { clearTimeout(timers.get(id)); timers.delete(id); } else realCancel(id);
+  };
+  return true;
+}
+if (CFG.unseen_tab) timerFrames();
+
 // ---------- the console, kept for an agent checking a page it built (read_console) ----------
 const consoleKept = [];
 (() => {
@@ -1006,7 +1029,8 @@ function run(action) {
 }
 
 window.addEventListener("keydown", (e) => {
-  if (!cfg.vim.enabled || e.defaultPrevented && mode !== "hints") return;
+  // Only real keys: a page's (or an agent's) made-up "x" mustn't close the tab.
+  if (!e.isTrusted || !cfg.vim.enabled || e.defaultPrevented && mode !== "hints") return;
   // Typing in Valerie's own UI (find box, prompts) lives in a closed shadow root the page can't see into.
   if (mode !== "hints" && inOurUi(e)) return;
   if (e.isTrusted && (e.key === "i" || e.key === "Tab" || e.key === "/")) userActed = true; // deliberate moves into fields
@@ -1788,6 +1812,7 @@ Object.defineProperty(window, "__valerie", {
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave,
     consoleLines: () => consoleKept.slice(),
+    timerFrames,
     network: (o) => {
       const had = net.bodies, was = net.on;
       if (!was && CFG.network_log === "when_asked") { try { sessionStorage.setItem("valerie-net-log", "1"); } catch (_) {} startNetwork(true); }

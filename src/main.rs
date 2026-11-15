@@ -135,6 +135,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["float", "chats"].contains(&c.chats.from_space.as_str()) {
                 problems.push(format!("chats: from_space is {:?}; use float or chats", c.chats.from_space));
             }
+            if !["installed", "all"].contains(&c.chats.agent_menu.as_str()) {
+                problems.push(format!("chats: agent_menu is {:?}; use installed or all", c.chats.agent_menu));
+            }
             if !["auto", "always", "never"].contains(&c.chats.worktrees.as_str()) {
                 problems.push(format!("chats: worktrees is {:?}; use auto, always or never", c.chats.worktrees));
             }
