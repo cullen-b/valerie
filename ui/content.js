@@ -25,6 +25,108 @@ function timerFrames() {
 }
 if (CFG.unseen_tab) timerFrames();
 
+// Hidden pages stop working out what's in view after they load, so feeds never load more and lazy content never
+// shows. While hidden, observed targets are measured on a timer and the page hears of changes, as the browser would
+// tell it; while seen, the browser's own observer does it.
+function timerObservers() {
+  const Native = window.IntersectionObserver;
+  if (typeof Native !== "function") return;
+  const own = new WeakMap(), live = new Set();
+  let ticking = false;
+  const box = (x, y, w, h) => new DOMRectReadOnly(x, y, w, h);
+  const step = (obs, ratio, hit) => (hit ? (obs.thresholds.length ? obs.thresholds : [0]).filter((t) => ratio >= t).length : 0);
+  const keyOf = (obs, entry) => entry.isIntersecting + ":" + step(obs, entry.intersectionRatio, entry.isIntersecting);
+  const entry = (o) => {
+    const e = Object.create(window.IntersectionObserverEntry ? IntersectionObserverEntry.prototype : Object.prototype);
+    for (const k in o) Object.defineProperty(e, k, { value: o[k], enumerable: true });
+    return e;
+  };
+  const margin = (m, w, h) => {
+    const [t, r = t, b = t, l = r] = String(m || "0px").trim().split(/\s+/);
+    const px = (v, size) => (String(v).endsWith("%") ? (parseFloat(v) / 100) * size : parseFloat(v) || 0);
+    return { t: px(t, h), r: px(r, w), b: px(b, h), l: px(l, w) };
+  };
+  const measure = (obs, target) => {
+    const W = target.ownerDocument.defaultView, root = obs.root && obs.root.nodeType === 1 ? obs.root : null;
+    const rb = root ? root.getBoundingClientRect() : { left: 0, top: 0, right: W.innerWidth, bottom: W.innerHeight, width: W.innerWidth, height: W.innerHeight };
+    const m = margin(obs.rootMargin, rb.width, rb.height);
+    const L = rb.left - m.l, T = rb.top - m.t, R = rb.right + m.r, B = rb.bottom + m.b;
+    const tr = target.getBoundingClientRect();
+    const drawn = target.isConnected && target.getClientRects().length > 0 && (!root || root.contains(target));
+    let il = Math.max(tr.left, L), it = Math.max(tr.top, T), ir = Math.min(tr.right, R), ib = Math.min(tr.bottom, B);
+    // Clipped by the scrolling boxes between the target and the root.
+    for (let n = target.parentElement; drawn && n && n !== root && n !== W.document.documentElement && n !== W.document.body; n = n.parentElement) {
+      const s = W.getComputedStyle(n);
+      if (s.overflowX === "visible" && s.overflowY === "visible") continue;
+      const q = n.getBoundingClientRect();
+      il = Math.max(il, q.left); it = Math.max(it, q.top); ir = Math.min(ir, q.right); ib = Math.min(ib, q.bottom);
+    }
+    const hit = drawn && ir >= il && ib >= it, area = tr.width * tr.height;
+    const ratio = !hit ? 0 : area > 0 ? Math.min(1, ((ir - il) * (ib - it)) / area) : 1;
+    return { key: hit + ":" + step(obs, ratio, hit), entry: entry({ time: performance.now(), target, rootBounds: box(L, T, R - L, B - T),
+      boundingClientRect: box(tr.x, tr.y, tr.width, tr.height), intersectionRect: hit ? box(il, it, ir - il, ib - it) : box(0, 0, 0, 0), intersectionRatio: ratio, isIntersecting: hit }) };
+  };
+  const tell = (obs, entries) => {
+    try { own.get(obs).callback.call(obs, entries, obs); } catch (err) { setTimeout(() => { throw err; }); }
+  };
+  const tick = () => {
+    if (ticking) return;
+    ticking = true;
+    setTimeout(function run() {
+      if (document.visibilityState === "hidden") {
+        for (const obs of live) {
+          const fresh = [], targets = own.get(obs).targets;
+          for (const [t, last] of targets) {
+            const m = measure(obs, t);
+            if (m.key !== last) { targets.set(t, m.key); fresh.push(m.entry); }
+          }
+          if (fresh.length) tell(obs, fresh);
+        }
+      }
+      if (live.size) setTimeout(run, 250);
+      else ticking = false;
+    }, 250);
+  };
+  class IntersectionObserver extends Native {
+    constructor(callback, options) {
+      if (typeof callback !== "function") throw new TypeError("IntersectionObserver needs a callback function");
+      // What the browser reports goes through too, less anything the page has already heard from the timer.
+      super((entries) => {
+        const targets = own.get(this).targets;
+        const fresh = entries.filter((e) => {
+          if (!targets.has(e.target)) return true;
+          const k = keyOf(this, e);
+          if (targets.get(e.target) === k) return false;
+          targets.set(e.target, k);
+          return true;
+        });
+        if (fresh.length) tell(this, fresh);
+      }, options);
+      own.set(this, { callback, targets: new Map() });
+    }
+    observe(target) {
+      super.observe(target);
+      const targets = own.get(this).targets;
+      if (!targets.has(target)) targets.set(target, null);
+      live.add(this);
+      tick();
+    }
+    unobserve(target) {
+      super.unobserve(target);
+      const targets = own.get(this).targets;
+      targets.delete(target);
+      if (!targets.size) live.delete(this);
+    }
+    disconnect() {
+      super.disconnect();
+      own.get(this).targets.clear();
+      live.delete(this);
+    }
+  }
+  window.IntersectionObserver = IntersectionObserver;
+}
+if (CFG.unseen_tab) timerObservers();
+
 // ---------- the console, kept for an agent checking a page it built (read_console) ----------
 const consoleKept = [];
 (() => {

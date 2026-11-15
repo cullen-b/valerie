@@ -12483,6 +12483,8 @@ impl App {
             "run_command" => format!("run the browser command {}", a["command"]["cmd"].as_str().unwrap_or("?")),
             "history" => format!("go {} on {}", a["action"].as_str().unwrap_or("back"), tab_site(a)),
             "scroll" => format!("scroll {}", tab_site(a)),
+            "drag" => format!("drag {} onto {} on {}", if s("ref").is_empty() { s("selector") } else { format!("element {}", s("ref")) },
+                if s("to_ref").is_empty() { s("to_selector") } else { format!("element {}", s("to_ref")) }, tab_site(a)),
             crate::mcp::ASK_EACH_TIME => s("what"),
             other => {
                 // Claude's own tools (Bash, Edit …) via the permission prompt.
