@@ -646,6 +646,7 @@ pub struct ChatsConfig {
     pub worktree_copy: Vec<String>,
     pub closed_list: bool,
     pub from_space: String,
+    pub agent_menu: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

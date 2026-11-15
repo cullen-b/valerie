@@ -10319,7 +10319,21 @@ impl App {
     fn render_chat(&self) {
         let Some(v) = &self.chat_view else { return };
         let chat = self.active_chat.as_ref().and_then(|id| self.chats.iter().find(|c| &c.id == id));
-        let agents: Vec<&String> = self.config.agents.available.iter().filter(|(_, d)| d.is_some()).map(|(n, _)| n).collect();
+        // The chat's own agent and the default always show, so the menu can display what's picked.
+        let default_agent = self.config.agent_for("chat").0;
+        let picked = [chat.map(|c| c.agent.as_str()), Some(default_agent.as_str())];
+        let agents: Vec<&String> = self
+            .config
+            .agents
+            .available
+            .iter()
+            .filter(|(n, d)| {
+                d.as_ref().is_some_and(|d| {
+                    self.config.chats.agent_menu == "all" || !d.command.is_empty() || crate::config::installed(&d.cli) || picked.contains(&Some(n.as_str()))
+                })
+            })
+            .map(|(n, _)| n)
+            .collect();
         let models = self.agent_models();
         let data = json!({
             "chat": chat, "running": chat.is_some_and(|c| self.chat_running.contains(&c.id)),

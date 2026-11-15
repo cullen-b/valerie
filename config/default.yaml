@@ -319,6 +319,8 @@ chats:
   from_space: float        # a chat started from a space (the command bar, an AI action, ⌘N). one of: float (it opens in
                            # the middle of the window, over your space; Esc sends it on to Chats and you keep working,
                            # Shift+Esc goes to Chats with it) | chats (switch to the Chats space)
+  agent_menu: installed    # agents in the composer's agent menu. one of: installed (only ones on this computer, plus
+                           # any with their own `command`) | all (every agent under agents.available)
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
   sync: true               # sync chats between machines (encrypted with the sync passphrase). false = this machine only
