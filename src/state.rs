@@ -167,6 +167,9 @@ pub struct State {
     /// Last run time of each scheduled agent job.
     #[serde(default)]
     pub agent_last: BTreeMap<String, u64>,
+    /// One-time tips already shown (e.g. "send_to_chats"), so each appears once ever.
+    #[serde(default)]
+    pub tips_shown: std::collections::BTreeSet<String>,
     /// Sites where the user switched content blocking off.
     #[serde(default)]
     pub blocking_allow: Vec<String>,

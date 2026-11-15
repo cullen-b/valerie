@@ -366,7 +366,9 @@ go and `chats.worktree_copy` the untracked files (like `.env`) copied in. Change
 {{branch}} and {{base}}. The terminal panel (`toggle_terminal`, Ctrl+'; settings under `terminal_panel`) runs real shells
 along the bottom of the window; in a coding chat it opens in that chat's project or worktree.
 A chat started from a space floats in the middle of the window (`chats.from_space`: float | chats): Esc sends it on
-to Chats and the user stays in their space, Shift+Esc goes to Chats with it.
+to Chats and the user stays in their space, Shift+Esc goes to Chats with it. In the command bar, Shift+Enter on "Ask agent"
+sends the chat straight to Chats without showing it (`command_bar.shift_enter_to_chats`; a one-time tip says so,
+`command_bar.send_to_chats_tip`).
 Closed chats go to a folded "Closed" list at the bottom of the Chats sidebar (`chats.closed_list`); `reopen_chat`
 brings one back (a coding chat gets its worktree again).
 Spaces: right-click a space's icon to rename or remove it (`delete_space` archives its tabs and takes a space from

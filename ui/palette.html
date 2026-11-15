@@ -54,7 +54,7 @@ html.bar-only #list { max-height: 430px; }
 <div id="card">
   <div id="inputrow"><span class="glyph">⌕</span><span id="scope"></span><input id="q" spellcheck="false" autocomplete="off" placeholder="Search or enter URL…"></div>
   <div id="list"></div>
-  <div id="foot"><span><kbd>↑↓</kbd>navigate</span><span><kbd>↵</kbd>open</span><span><kbd>⇧↵</kbd>open in new tab</span><span><kbd>esc</kbd>close</span></div>
+  <div id="foot"><span><kbd>↑↓</kbd>navigate</span><span><kbd>↵</kbd><span id="foot-enter">open</span></span><span><kbd>⇧↵</kbd><span id="foot-shift">open in new tab</span></span><span><kbd>esc</kbd>close</span></div>
 </div>
 <script>
 // Mac symbols only on a Mac.
@@ -276,7 +276,7 @@ function draw() {
   list.innerHTML = "";
   if (!results.length) {
     if (D.options && D.options.empty_hint) list.innerHTML = '<div class="section">Type to search tabs, history, bookmarks and commands</div>';
-    return;
+    return foot();
   }
   results.forEach((r, i) => {
     const d = document.createElement("div"); d.className = "item" + (i === sel ? " sel" : "");
@@ -296,8 +296,15 @@ function draw() {
     d.onclick = (e) => choose(r, e.shiftKey);
     list.append(d);
   });
+  foot();
 }
-function mark() { [...list.children].forEach((c, i) => c.classList.toggle("sel", i === sel)); list.children[sel]?.scrollIntoView({ block: "nearest" }); }
+function mark() { [...list.children].forEach((c, i) => c.classList.toggle("sel", i === sel)); list.children[sel]?.scrollIntoView({ block: "nearest" }); foot(); }
+// On "Ask agent" the footer says what Enter and Shift+Enter do there.
+function foot() {
+  const ask = results[sel] && results[sel].kind === "agent" && (D.options || {}).shift_enter_to_chats !== false;
+  document.getElementById("foot-enter").textContent = ask ? "ask here" : "open";
+  document.getElementById("foot-shift").textContent = ask ? "send to Chats, keep browsing" : "open in new tab";
+}
 
 function choose(r, newTab) {
   if (!r) return;
@@ -306,6 +313,7 @@ function choose(r, newTab) {
   if ((r.kind === "agent" || r.kind === "customize") && !r.cmd) return;
   if (r.kind === "site") return enterScope(r.site);
   if (r.kind === "go") c = { cmd: "go", input: r.go, new_tab: nt };
+  else if (r.kind === "agent" && newTab && (D.options || {}).shift_enter_to_chats !== false) c = { ...r.cmd, background: true };
   else if (r.cmd) c = r.cmd;
   else if (r.tab != null) c = { cmd: "activate_tab", tab: r.tab };
   else if (r.url) c = { cmd: "go", input: r.url, new_tab: nt };

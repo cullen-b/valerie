@@ -351,6 +351,8 @@ pub struct CommandBarConfig {
     pub ask_agent_words: usize,
     pub ask_agent_starts: Vec<String>,
     pub customize_row: bool,
+    pub shift_enter_to_chats: bool,
+    pub send_to_chats_tip: bool,
     pub width: f64,
     pub top: f64,
     pub font_size: f64,
