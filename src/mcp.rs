@@ -246,7 +246,8 @@ pub const ASK_EACH_TIME: &str = "ask_each_time";
 
 /// What the agent is about to do, if it could spend money (or turn this check off). mcp.ask_before_paying.
 fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Option<String>, String> {
-    let key_press = name == "press_key" && matches!(args["key"].as_str(), Some("Enter" | "Return" | " " | "Space" | "Spacebar"));
+    let key = args["key"].as_str().map(|k| k.rsplit('+').next().unwrap_or(k).trim());
+    let key_press = name == "press_key" && matches!(key, Some("Enter" | "Return" | "" | "Space" | "Spacebar"));
     let submit = name == "type" && args["submit"].as_bool() == Some(true);
     if name != "click" && name != "set_setting" && name != "type" && !key_press {
         return Ok(None);
@@ -647,7 +648,7 @@ pub fn tools() -> Vec<Value> {
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
         tool("click", "Click an element by snapshot ref or CSS selector.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
-        tool("type", "Type text into an input/textarea/contenteditable by ref or selector. On a dropdown (<select>), text picks the option with that label or value.", json!({
+        tool("type", "Type text into an input, textarea, rich text box or code editor (CodeMirror, Monaco, online document editors) by ref or selector, or into whatever has the cursor. A ref on an editor's frame finds the editor inside it. Editors get the text pasted in as one edit, so whole documents with newlines work; clear: true replaces everything in the editor. On a dropdown (<select>), text picks the option with that label or value.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" },
             "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" } }), &["text"]),
         tool("hover", "Move the mouse onto an element by ref or selector, for menus and tooltips that open from scripts. A page's CSS :hover styles don't change (use check_page or eval_js to look at those).", json!({
@@ -655,7 +656,7 @@ pub fn tools() -> Vec<Value> {
         tool("upload_file", "Choose files for a file input (<input type=file>) by ref or selector, without the file picker. Files stay on this computer until the page sends them. Up to 20 MB in all.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
             "paths": { "type": "array", "items": { "type": "string" }, "description": "Files on this computer" } }), &["paths"]),
-        tool("press_key", "Dispatch a key (e.g. Enter, Escape, ArrowDown) to the focused element.",
+        tool("press_key", "Press a key or shortcut on the focused element: Enter, Escape, ArrowDown, or with modifiers like cmd+a, ctrl+shift+z, mod+z (⌘ on Mac, Ctrl elsewhere). Select all, undo and redo work in editors that don't handle them. To put text in, use type, not paste.",
              json!({ "tab": tab_prop(), "key": { "type": "string" } }), &["key"]),
         tool("scroll", "Scroll the page or scroll an element into view.", json!({
             "tab": tab_prop(), "direction": { "type": "string", "enum": ["up", "down", "top", "bottom"] }, "ref": { "type": "string" } }), &[]),
@@ -913,9 +914,118 @@ function pressTarget(hit, submits) {
     if (e.form) parts.push(e.form.getAttribute('action'), e.form.id, e.form.getAttribute('name'));
   }
   const c = nodes[nodes.length - 1];
+  // A text editor (or its frame), or a long block of page text that isn't a button, says what's written, not what a press does.
+  const editor = hit.isContentEditable || hit.tagName === 'TEXTAREA' || !!hit.querySelector('[contenteditable]:not([contenteditable=false]),textarea');
+  const prose = !submit.closest(pressable) && (editor || (hit.innerText || '').length > 300);
+  if (prose) parts.length = 0;
   const label = (c.innerText || c.value || c.getAttribute('aria-label') || c.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
   return { site: location.hostname || location.href, label, text: parts.filter(Boolean).map((p) => String(p).slice(0, 1000)).join(' \n '), sign: paymentSign(), card_field: hit.matches(CARD_FIELD) };
 }
+"#;
+
+/// Key events with the modifiers a shortcut names ("cmd+a", "Ctrl+Shift+Z", "mod+z" = ⌘ on Mac, Ctrl elsewhere).
+const KEYS_JS: &str = r#"
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+function keyEvent(spec) {
+  const parts = String(spec).split('+');
+  let key = parts.pop();
+  if (key === '' && parts.length) { parts.pop(); key = '+'; }
+  const mods = parts.map((m) => m.trim().toLowerCase());
+  const has = (...names) => mods.some((m) => names.includes(m));
+  const meta = has('cmd', 'command', 'meta', 'super', 'win') || (MAC && has('mod'));
+  const ctrl = has('ctrl', 'control') || (!MAC && has('mod'));
+  const alt = has('alt', 'option', 'opt'), shift = has('shift');
+  if (/^(space|spacebar)$/i.test(key)) key = ' ';
+  const named = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, ' ': 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
+  const one = key.length === 1;
+  if (one && /[a-z]/i.test(key)) key = shift ? key.toUpperCase() : key.toLowerCase();
+  const code = one && /[a-z]/i.test(key) ? 'Key' + key.toUpperCase() : one && /\d/.test(key) ? 'Digit' + key : key === ' ' ? 'Space' : key;
+  const keyCode = named[key] || (one ? key.toUpperCase().charCodeAt(0) : 0);
+  return { key, code, keyCode, which: keyCode, metaKey: meta, ctrlKey: ctrl, altKey: alt, shiftKey: shift, bubbles: true, cancelable: true, plain: !mods.length, command: (MAC ? meta : ctrl) && !alt };
+}
+function pressOn(e, spec) {
+  const o = keyEvent(spec);
+  const go = e.dispatchEvent(new KeyboardEvent('keydown', o));
+  e.dispatchEvent(new KeyboardEvent('keyup', o));
+  // A shortcut the page leaves alone does what the keyboard would.
+  const builtIn = o.command && { a: 'selectAll', z: o.shiftKey ? 'redo' : 'undo', y: 'redo' }[o.key.toLowerCase()];
+  if (go && builtIn) document.execCommand(builtIn);
+  return { go, o };
+}
+// Not requestAnimationFrame: hidden tabs never paint, so it would never fire.
+const nextFrame = () => new Promise((r) => setTimeout(r, 50));
+"#;
+
+const PRESS_KEY_JS: &str = r#"
+// Hidden tabs drop focus: then the keys go to the field `type` last wrote into.
+const last = window.__valerieTyped;
+const e = document.activeElement && document.activeElement !== document.body ? document.activeElement : last && last.isConnected ? last : document.body;
+const { go, o } = pressOn(e, A.key);
+if (go && o.key === 'Enter' && o.plain && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit());
+return 'pressed ' + A.key;
+"#;
+
+/// Writes into a field or a code/rich editor. Editors (CodeMirror, Monaco, ProseMirror, Typst's) take a paste event as
+/// one edit, without auto-indent or bracket closing mangling the text; plain fields get their value set.
+const TYPE_JS: &str = r#"
+return (async () => {
+const picked = find();
+const field = (x) => x instanceof HTMLInputElement || x instanceof HTMLTextAreaElement || x instanceof HTMLSelectElement || !!(x && x.isContentEditable);
+const focused = document.activeElement;
+// A ref often lands on an editor's frame or preview: write into the editor inside it, or the one with the cursor.
+const e = field(picked) ? picked : field(focused) && picked.contains(focused) ? focused
+  : picked.querySelector('textarea,[contenteditable]:not([contenteditable=false]),input:not([type=hidden])') || (field(focused) ? focused : null);
+if (!e) throw new Error('nothing to type into in ' + describe(picked) + ': click into the text box or editor, then call type without a ref');
+if (e !== focused) e.focus();
+let how = 'typed into ';
+if (e instanceof HTMLSelectElement) {
+  const o = [...e.options].find((o) => o.value === A.text || o.text.trim() === A.text.trim());
+  if (!o) throw new Error('no option ' + A.text + '; the options are: ' + [...e.options].map((o) => o.text.trim()).join(', '));
+  e.value = o.value; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+} else if (e.isContentEditable || e instanceof HTMLTextAreaElement) {
+  let root = e;
+  while (root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
+  const sel = getSelection();
+  // Where the text goes: everything with clear, else the cursor if it's in this editor, else the end.
+  if (e.isContentEditable && (A.clear || !sel.rangeCount || !root.contains(sel.anchorNode))) {
+    const r = document.createRange();
+    r.selectNodeContents(root);
+    if (!A.clear) r.collapse(false);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  if (A.clear) {
+    pressOn(e, 'mod+a');
+    await nextFrame();
+  }
+  let pasted = false;
+  try {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', A.text);
+    pasted = !e.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  } catch (err) {}
+  if (pasted) how = 'pasted into ';
+  else if (e.isContentEditable && !document.execCommand('insertText', false, A.text)) {
+    sel.deleteFromDocument();
+    sel.getRangeAt(0).insertNode(document.createTextNode(A.text));
+    root.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: A.text }));
+  }
+  else if (!e.isContentEditable) {
+    // A plain textarea (pages ignore a made-up paste): set its value the way React and friends notice.
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
+    e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await nextFrame();
+} else {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
+  e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+}
+window.__valerieTyped = e;
+if (A.submit) {
+  const { go } = pressOn(e, 'Enter');
+  if (go && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit());
+}
+return how + describe(e);
+})();
 "#;
 
 /// A click, typing or key from a tool has passed its own check (and maybe the user): a script's guard still running mustn't stop it.
@@ -1938,21 +2048,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 e.click(); return 'clicked ' + describe(e);"));
             eval(proxy, tab, &js)
         }
-        "type" => {
-            let js = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\nconst e = find(); e.focus(); \
-                if (e instanceof HTMLSelectElement) {{ const o = [...e.options].find((o) => o.value === A.text || o.text.trim() === A.text.trim()); \
-                  if (!o) throw new Error('no option ' + A.text + '; the options are: ' + [...e.options].map((o) => o.text.trim()).join(', ')); \
-                  e.value = o.value; e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); }} \
-                else if (e.isContentEditable) {{ if (A.clear) document.execCommand('selectAll'); document.execCommand('insertText', false, A.text); }} \
-                else {{ const proto = e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; \
-                  Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, (A.clear ? '' : e.value) + A.text); \
-                  e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); }} \
-                if (A.submit) {{ const opts = {{key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true}}; \
-                  const go = e.dispatchEvent(new KeyboardEvent('keydown', opts)); e.dispatchEvent(new KeyboardEvent('keyup', opts)); \
-                  if (go && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit()); }} \
-                return 'typed into ' + describe(e);"));
-            eval(proxy, tab, &js)
-        }
+        "type" => eval(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}"))),
         "hover" => {
             let js = with_args(&a, &format!("{FIND_JS}\nconst e = find(); e.scrollIntoView({{block: 'center'}}); const r = e.getBoundingClientRect(); \
                 const at = {{bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2}}; \
@@ -1985,14 +2081,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 return 'chose ' + e.files.length + ' file(s) for ' + describe(e);"));
             eval(proxy, tab, &js)
         }
-        "press_key" => {
-            let js = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{}", "const e = document.activeElement || document.body; \
-                const opts = {key: A.key, code: A.key, bubbles: true, cancelable: true}; \
-                const go = e.dispatchEvent(new KeyboardEvent('keydown', opts)); e.dispatchEvent(new KeyboardEvent('keyup', opts)); \
-                if (go && A.key === 'Enter' && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit()); \
-                return 'pressed ' + A.key;"));
-            eval(proxy, tab, &js)
-        }
+        "press_key" => eval(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{KEYS_JS}\n{PRESS_KEY_JS}"))),
         "scroll" => {
             let js = with_args(&a, &format!("{FIND_JS}\nif (A.ref) {{ const e = find(); e.scrollIntoView({{block: 'center'}}); return 'scrolled to ' + describe(e); }} \
                 const s = document.scrollingElement || document.documentElement; const h = innerHeight * 0.8; \
