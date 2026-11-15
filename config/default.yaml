@@ -101,6 +101,8 @@ sidebar:
   favorites: false         # a row of favorite tiles shared by every space, above the pinned tabs. Off: one Pinned
                            # section per space (favorites you had become pinned tabs in the space you're in). true | false
   pinned_hint: true        # "Drag here to pin" when a space has no pinned tabs
+  pinned_stay_on_top: true # pinned icon tiles stay at the top while the folders and tabs below them scroll. true | false
+                           # (false = they scroll away with the list)
   compact_pinned: folder   # pinned tabs in the icons-only sidebar. one of: folder (one icon; hover it to pick a tab) | icons (every tab shown)
   pinned_folder_icon: pin  # what that folder icon shows. one of: pin | star | favicons (the first four sites)
   kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them, and where folders live. Keep it on unless the user asks by name to hide it

@@ -271,6 +271,7 @@ pub struct SidebarConfig {
     pub space_name: bool,
     pub favorites: bool,
     pub pinned_hint: bool,
+    pub pinned_stay_on_top: bool,
     pub compact_pinned: String,
     pub pinned_folder_icon: String,
     pub kept_section: bool,

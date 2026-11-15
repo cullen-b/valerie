@@ -56,7 +56,9 @@ body.pointer .tile:hover { background: var(--active); }
 .tile img, .tile .letter { width: 20px; height: 20px; }
 .tile.unloaded img, .tile.unloaded .letter { filter: grayscale(.35); opacity: .7; }
 .tile .audio { position: absolute; right: 5px; top: 3px; font-size: 9px; color: var(--accent); }
-#scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin: 0 -4px; padding: 0 4px; will-change: transform; }
+#lists { flex: 1; min-height: 0; display: flex; flex-direction: column; will-change: transform; }
+#pins { flex: none; margin: 0 -4px; padding: 0 4px; }
+#scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin: 0 -4px; padding: 0 4px; }
 #scroll::-webkit-scrollbar { width: 0; }
 .space-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 8px; font-weight: 600; font-size: 13px; }
 .space-title .icon { color: var(--accent); flex: none; }
@@ -315,7 +317,7 @@ body.pointer #topbar .chip:hover { background: var(--hover); }
   <div id="url"></div>
   <div id="favorites" class="grid"></div>
   <div id="widgets"></div>
-  <div id="scroll"></div>
+  <div id="lists"><div id="pins"></div><div id="scroll"></div></div>
   <div id="nowplaying"></div>
   <div id="bottom"></div>
   <div id="resize"></div>
@@ -412,7 +414,7 @@ function locate(x, y) {
 }
 // Slide every row and tile from where it was to where it is now (after the dragged one moved in the DOM).
 function flip(change) {
-  const items = [...document.querySelectorAll("#scroll .row, #scroll .tile, #pinfly .row, #pinfly .tile")];
+  const items = [...document.querySelectorAll("#scroll .row, #scroll .tile, #pins .tile, #pinfly .row, #pinfly .tile")];
   const before = new Map(items.map((n) => [n, n.getBoundingClientRect()]));
   change();
   for (const n of items) {
@@ -1015,7 +1017,7 @@ function applyTheme(th) {
 // The new space's list slides in from the side it came from. It never starts invisible, so swiping fast through
 // several spaces still shows each one.
 function slideIn(dir) {
-  const sc = $("#scroll"), ms = S.layout.animation_ms;
+  const sc = $("#lists"), ms = S.layout.animation_ms;
   if (!ms) { sc.style.transition = "none"; sc.style.transform = ""; sc.style.opacity = ""; return; }
   sc.style.transition = "none";
   sc.style.transform = `translateX(${dir * 28}px)`; sc.style.opacity = "0.45";
@@ -1082,9 +1084,10 @@ function render(state) {
   const order = (O.order || []).concat(SIDEBAR_PARTS.filter((p) => !(O.order || []).includes(p)));
   const slot = Math.min(...SCROLLING.map((p) => order.indexOf(p)).filter((i) => i >= 0));
   for (const [part, sel] of Object.entries(FIXED)) { const i = order.indexOf(part); $(sel).style.order = String((i < 0 ? 50 : i) + 1); }
-  $("#scroll").style.order = String(slot + 1);
+  $("#lists").style.order = String(slot + 1);
   $("#drag").style.order = "0"; $("#resize").style.order = "99";
   const sc = $("#scroll"), top = sc.scrollTop; sc.innerHTML = "";
+  const pinTop = $("#pins"); pinTop.replaceChildren();
   const chatsOpen = !!(S.chats && S.chats.open);
   sc.classList.toggle("chats", chatsOpen);
   if (chatsOpen) renderChatList(sc);
@@ -1103,8 +1106,9 @@ function render(state) {
   const pinnedTabs = icons ? S.pinned.map((n, i) => [n, i]).filter(([n]) => n.type !== "folder") : [];
   const strayFavs = showFavRow ? [] : S.favorites;
   const pins = el("div");
+  let grid = null;
   if (pinnedTabs.length || strayFavs.length) {
-    const grid = el("div", "grid");
+    grid = el("div", "grid");
     zone(grid, { kind: "area", list: "pinned", index: S.pinned.length, payload: { section: "pinned" } });
     strayFavs.forEach((t, i) => { const f = tile(t, "fav", i); zone(f, { kind: "tile", list: "fav", index: i, payload: { favorite: true, tab: t.id } }); grid.append(f); });
     eachRun(S.pinned, (r) => {
@@ -1127,7 +1131,14 @@ function render(state) {
     const f = pinFolder([...strayFavs, ...flat(S.pinned)]);
     into("pinned").append(f); fly.append(...pins.childNodes);
     if (fly.classList.contains("open")) openFly(f);
-  } else { into("pinned").append(...pins.childNodes); fly.classList.remove("open"); }
+  } else {
+    // sidebar.pinned_stay_on_top: the icon grid (and a space name above it) sits outside the scrolling list.
+    if (grid && O.pinned_stay_on_top !== false) {
+      if (parts.space_name && order.indexOf("space_name") < order.indexOf("pinned")) pinTop.append(parts.space_name);
+      pinTop.append(grid);
+    }
+    into("pinned").append(...pins.childNodes); fly.classList.remove("open");
+  }
   if (O.kept_section !== false) {
     const kept = el("div", "kept" + (S.kept.length ? "" : " empty"));
     zone(kept, { kind: "area", list: "kept", index: S.kept.length, payload: { section: "kept" } });
@@ -1319,7 +1330,7 @@ $("#empty").onclick = (e) => { if (!$("#empty").classList.contains("plugin-start
 // so they're scaled back rather than read as a push.
 const swipe = { acc: 0, timer: 0, lock: 0, low: 0, armed: false, strong: false, prev: 0, last: 0, at: 0, done: 0 };
 function springBack() {
-  const sc = $("#scroll");
+  const sc = $("#lists");
   sc.style.transition = "transform .2s var(--ease), opacity .16s"; sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
 }
 // The command bar covers the sidebar while it's open, so it passes its swipes here with their time in `at`.
@@ -1342,7 +1353,7 @@ function swipeWheel(e) {
   }
   swipe.last = a; swipe.acc += dx;
   clearTimeout(swipe.timer);
-  const sc = $("#scroll");
+  const sc = $("#lists");
   if (Math.abs(swipe.acc) > dist) {
     const dir = Math.sign(swipe.acc);
     Object.assign(swipe, { acc: 0, lock: dir, armed: false, strong: false, done: now });
