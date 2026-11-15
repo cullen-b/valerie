@@ -7177,7 +7177,10 @@ impl App {
                 self.chats.insert(0, c);
                 self.show_chat_here();
             }
-            Command::NewChat { prompt, agent, folder, in_project } => {
+            Command::NewChat { prompt, agent, folder, in_project, background } => {
+                let from_bar = self.bar_open;
+                // Shift+Enter in the command bar: off to Chats while the user keeps browsing (moot when Chats is on screen).
+                let background = background && !self.chats_open && self.chats_block_rect().is_none();
                 // ⌘N in a coding chat: another chat on the same project.
                 let folder = folder.or_else(|| {
                     let open = self.active_chat.as_ref().filter(|_| in_project && self.chats_open)?;
@@ -7188,7 +7191,7 @@ impl App {
                     None => self.config.agent_for("chat").0,
                 };
                 // An empty chat that's already open is reused rather than piling up blank ones.
-                let reuse = self.active_chat.clone().filter(|id| self.chats.iter().any(|c| &c.id == id && c.messages.is_empty()));
+                let reuse = self.active_chat.clone().filter(|id| !background && self.chats.iter().any(|c| &c.id == id && c.messages.is_empty()));
                 let id = match reuse {
                     Some(id) => id,
                     None => {
@@ -7198,13 +7201,29 @@ impl App {
                         id
                     }
                 };
-                self.active_chat = Some(id.clone());
+                // A chat already floating over the space stays the one shown.
+                if !(background && self.chat_float) {
+                    self.active_chat = Some(id.clone());
+                }
                 if let Some(f) = folder {
                     self.set_chat_folder(&id, &f);
                 }
-                self.show_chat_here();
+                if background {
+                    self.close_bar();
+                    self.render();
+                } else {
+                    self.show_chat_here();
+                }
                 if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
                     self.send_chat(Some(id), p, agent, vec![]);
+                }
+                if background {
+                    self.toast(&format!("Sent to Chats: {name} is on it"));
+                } else if from_bar && self.config.command_bar.shift_enter_to_chats && self.config.command_bar.send_to_chats_tip
+                    && self.state.tips_shown.insert("send_to_chats".into())
+                {
+                    self.dirty = true;
+                    self.toast("Tip: Shift+Enter sends a question to Chats, so you can keep browsing while the agent works");
                 }
             }
             Command::SendChat { chat, text, agent, model, effort, access, plan, files } => {
@@ -8959,7 +8978,7 @@ impl App {
                     self.run_task(&t.name);
                 }
             }
-            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false }, elwt),
+            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false }, elwt),
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
@@ -10921,7 +10940,7 @@ impl App {
         let view = tab.and_then(|t| self.views.get(&t.id));
         if a.mode == "chat" {
             if !prompt.contains("{selection}") {
-                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false }, elwt);
+                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false }, elwt);
             }
             let Some(v) = view else { return self.toast("Open a page and select some text first") };
             let p = self.proxy.clone();
@@ -12464,6 +12483,8 @@ impl App {
             "run_command" => format!("run the browser command {}", a["command"]["cmd"].as_str().unwrap_or("?")),
             "history" => format!("go {} on {}", a["action"].as_str().unwrap_or("back"), tab_site(a)),
             "scroll" => format!("scroll {}", tab_site(a)),
+            "drag" => format!("drag {} onto {} on {}", if s("ref").is_empty() { s("selector") } else { format!("element {}", s("ref")) },
+                if s("to_ref").is_empty() { s("to_selector") } else { format!("element {}", s("to_ref")) }, tab_site(a)),
             crate::mcp::ASK_EACH_TIME => s("what"),
             other => {
                 // Claude's own tools (Bash, Edit …) via the permission prompt.

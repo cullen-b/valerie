@@ -179,6 +179,10 @@ command_bar:
                            # same from three words. [] = only by length
   customize_row: false     # a "Customize Valerie: …" row under "Ask agent" while you type; "!" then a request still
                            # customizes Valerie either way. true | false
+  shift_enter_to_chats: true  # Shift+Enter on "Ask agent" sends the chat to the Chats space and you keep browsing (Enter
+                           # opens it where you are). false = Shift+Enter does the same as Enter. true | false
+  send_to_chats_tip: true  # the first time you ask an agent from the command bar, one message says Shift+Enter sends it
+                           # to Chats instead (shown once, ever). true | false
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
   width: 680               # command bar width, pixels
   top: 18                  # how far down the window it opens, percent of the window height

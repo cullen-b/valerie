@@ -224,7 +224,7 @@ open. Never ask them to type a password or key into the note box: they put it in
 web_search return blocked with a tab when a page wants a person.\n\
 Working in the user's tabs: list_tabs gives tab ids; page tools default to the active tab. read_page reads a tab \
 (format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref (snapshot again \
-after the page changes). wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
+after the page changes); drag moves one onto another. wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
 eval_js runs JavaScript. Open tabs with activate: false unless the user wants to watch. run_command does anything a \
 keyboard shortcut can. When something fails, read_logs says why.";
 
@@ -496,6 +496,14 @@ fn tab_prop() -> Value {
     json!({ "type": "integer", "description": "Tab id from list_tabs. Defaults to the active tab." })
 }
 
+/// How an action answers the page's alert, confirm and prompt.
+fn with_dialog(mut props: Value) -> Value {
+    props["dialog"] = json!({ "type": "string", "enum": ["accept", "dismiss"],
+        "description": "How to answer a confirm or prompt the page shows meanwhile (default dismiss: Cancel)" });
+    props["dialog_text"] = json!({ "type": "string", "description": "With dialog: accept, the answer to a prompt (default: the one it suggests)" });
+    props
+}
+
 fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value {
     // Hints apps use to decide what needs the user's OK (MCP tool annotations).
     let mut hints = json!({ "readOnlyHint": LOOKING.contains(&name) });
@@ -644,24 +652,34 @@ pub fn tools() -> Vec<Value> {
         tool("read_page", "Read an open tab's URL, title and content: visible text (default), clean Markdown or HTML.", json!({
             "tab": tab_prop(), "max_chars": { "type": "integer", "default": 20000 },
             "format": { "type": "string", "enum": ["text", "markdown", "html"], "description": "Default text" } }), &[]),
-        tool("snapshot", "List the page's interactive elements with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too. Each has its label and, where it applies, href (same-site links as a path), value, checked, expanded, options (dropdowns), editor (a rich text or code editor), offscreen, and covered (what sits on top of it, e.g. an open dialog). other_site_frames lists embedded frames from another site, which these tools can't reach inside: open that address in its own tab to work in it. Refs reset on every snapshot.",
+        tool("snapshot", "List the page's interactive elements with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too. Only what's shown on the page is listed (not what sits in a closed menu or section). Each has its label and, where it applies, href (same-site links as a path), value (a list for a multiple-choice <select>), checked, expanded, options (dropdowns), editor (a rich text or code editor), disabled, readonly, offscreen, and covered (what sits on top of it, e.g. an open dialog). other_site_frames lists embedded frames from another site, which these tools can't reach inside: open that address in its own tab to work in it. truncated: true means there were more than 500. Refs reset on every snapshot.",
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
-        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would: on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new. Refuses when something covers it (a dialog or banner); force: true clicks anyway.", json!({
+        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would: on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new, opened a new tab, or showed an alert, confirm or prompt (answered by dialog). Refuses what a person couldn't click: something covered (a dialog or banner), hidden (in a closed menu or section) or disabled; force: true clicks covered, hidden and aria-disabled ones anyway. double: true double-clicks; button: right right-clicks (opens the page's own context menu).", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
-            "force": { "type": "boolean", "description": "Click even if something covers it" } }), &[]),
-        tool("type", "Type text into an input, textarea, rich text box or code editor (CodeMirror, Monaco, online document editors) by ref or selector, or into whatever has the cursor. A ref on an editor's frame finds the editor inside it. Editors get the text pasted in as one edit, so whole documents with newlines work; clear: true replaces everything in the editor. On a dropdown (<select>), text picks the option with that label or value.", json!({
+            "force": { "type": "boolean", "description": "Click even if something covers it or it isn't shown" },
+            "double": { "type": "boolean", "description": "Double-click" },
+            "button": { "type": "string", "enum": ["left", "right"], "description": "Default left" } })), &[]),
+        tool("type", "Type text into an input, textarea, rich text box or code editor (CodeMirror, Monaco, online document editors) by ref or selector, or into whatever has the cursor. A ref on an editor's frame finds the editor inside it. Editors get the text pasted in as one edit, so whole documents with newlines work; clear: true replaces everything in the editor. Date, time, color, number and slider fields always get the whole value replaced (dates as 2026-11-15, times as 14:30). Says what the field holds afterwards if that isn't what was typed (a length limit or a format the page applies). keys: true sends the text key by key, for fields that only react to key presses (formatted phone or card fields). On a dropdown (<select>), text picks the option with that label or value; on a multiple-choice one it adds that option to the selection.", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" },
-            "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" } }), &["text"]),
-        tool("hover", "Move the mouse onto an element by ref or selector, for menus and tooltips that open from scripts. A page's CSS :hover styles don't change (use check_page or eval_js to look at those).", json!({
-            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
+            "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" },
+            "keys": { "type": "boolean", "description": "Press each character as a key (keydown, keypress, input, keyup) instead of setting the text" } })), &["text"]),
+        tool("hover", "Move the mouse onto an element by ref or selector, for menus and tooltips that open from scripts. A page's CSS :hover styles don't change (use check_page or eval_js to look at those), so a menu that only opens on :hover stays closed: click its items with force: true.", json!({
+            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
+            "force": { "type": "boolean", "description": "Hover even if something covers it or it isn't shown" } }), &[]),
+        tool("drag", "Drag an element (ref or selector) onto another (to_ref or to_selector) the way a person would with the mouse: press on the first, move across, let go on the second. Works for drag-and-drop lists, boards and drop zones, both kinds pages use (draggable elements and pointer-driven ones). Refuses when either is covered or hidden, like click; force: true drags anyway.", json!({
+            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
+            "to_ref": { "type": "string" }, "to_selector": { "type": "string" },
+            "force": { "type": "boolean", "description": "Drag even if something covers them or they aren't shown" } }), &[]),
         tool("upload_file", "Choose files for a file input (<input type=file>) by ref or selector, without the file picker. Files stay on this computer until the page sends them. Up to 20 MB in all.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
             "paths": { "type": "array", "items": { "type": "string" }, "description": "Files on this computer" } }), &["paths"]),
         tool("press_key", "Press a key or shortcut on the focused element: Enter, Escape, ArrowDown, or with modifiers like cmd+a, ctrl+shift+z, mod+z (⌘ on Mac, Ctrl elsewhere). Select all, undo and redo work in editors that don't handle them. To put text in, use type, not paste.",
-             json!({ "tab": tab_prop(), "key": { "type": "string" } }), &["key"]),
-        tool("scroll", "Scroll the page or scroll an element into view.", json!({
-            "tab": tab_prop(), "direction": { "type": "string", "enum": ["up", "down", "top", "bottom"] }, "ref": { "type": "string" } }), &[]),
-        tool("wait_for", "Wait until a selector or text appears (and the page has loaded).", json!({
+             with_dialog(json!({ "tab": tab_prop(), "key": { "type": "string" } })), &["key"]),
+        tool("scroll", "Scroll the page, or with ref or selector and a direction the panel that element is in (a message list, a sidebar). \
+             Without ref, a page that doesn't scroll itself (mail and chat apps) has its biggest scrolling panel scrolled instead. \
+             ref or selector alone scrolls that element into view. Says where it got to (at_top, at_bottom) and if more loaded.", json!({
+            "tab": tab_prop(), "direction": { "type": "string", "enum": ["up", "down", "top", "bottom"] }, "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
+        tool("wait_for", "Wait until a selector or text appears (and the page has loaded), inside shadow DOM and same-origin frames too.", json!({
             "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
         tool("screenshot", "Capture what the tab looks like as a PNG image: the visible viewport, or with full_page the whole page top to bottom.",
              json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
@@ -692,8 +710,9 @@ pub fn tools() -> Vec<Value> {
              json!({ "command": { "type": "string", "description": "One line, as you'd type it" },
                      "folder": { "type": "string", "description": "Where to run it (default: your project folder)" } }), &["command"]),
         tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited. \
-             If it clicks, submits or sends something that looks like paying, Valerie stops it and says what to do instead.",
-             json!({ "tab": tab_prop(), "script": { "type": "string" } }), &["script"]),
+             If it clicks, submits or sends something that looks like paying, Valerie stops it and says what to do instead. If the \
+             page shows an alert, confirm or prompt meanwhile, it's answered by dialog and the result comes back as { result, dialogs }.",
+             with_dialog(json!({ "tab": tab_prop(), "script": { "type": "string" } })), &["script"]),
         tool("run_command", &format!(
             "Run any browser command, exactly like a keybinding would. Pass {{\"cmd\": name, ...options}}. No-option commands: {}. \
              With options: {}.",
@@ -849,15 +868,81 @@ fn unwrap_result(r: Value) -> Result<Value, String> {
     Ok(r.get("ok").cloned().unwrap_or(Value::Null))
 }
 
+/// Tabs open now, by id, with the tab a hidden one was opened from.
+fn open_tabs(proxy: &EventLoopProxy<UserEvent>) -> Option<Vec<Value>> {
+    call(proxy, "list_tabs", json!({})).ok()?.as_array().cloned()
+}
+
+/// Tabs that weren't open before, opened from `tab` (a hidden one says where it came from), as sentences.
+fn new_tabs(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, before: &Option<Vec<Value>>) -> Vec<String> {
+    let (Some(before), Some(now)) = (before, open_tabs(proxy)) else { return vec![] };
+    now.iter()
+        .filter(|t| !before.iter().any(|b| b["tab"] == t["tab"]))
+        .filter(|t| t["section"] != "hidden" || t["opened_from"].as_i64() == tab)
+        .map(|t| {
+            let hidden = if t["section"] == "hidden" { "hidden " } else { "" };
+            format!("It opened a new {hidden}tab: {} {} (use that tab id to work in it).", t["tab"], t["url"].as_str().unwrap_or(""))
+        })
+        .collect()
+}
+
+/// Start answering the page's alert, confirm and prompt for an action, as its `dialog` argument says.
+fn watch_dialogs(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, a: &Value) {
+    let plan = json!({ "dialog": a["dialog"], "dialog_text": a["dialog_text"] });
+    if let Err(e) = eval(proxy, tab, &with_args(&plan, &format!("{FIND_JS}\n{DIALOG_JS}"))) {
+        crate::log::line("mcp", format!("couldn't watch the page's dialogs: {e}"));
+    }
+}
+
+/// The page's alerts, confirms and prompts since `watch_dialogs`, as sentences (each said once).
+fn dialogs_seen(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, a: &Value) -> Vec<String> {
+    let seen = eval(proxy, tab, DIALOGS_SEEN_JS).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let dismissing = a["dialog"] == "dismiss";
+    seen.iter()
+        .map(|d| {
+            let said = d["message"].as_str().unwrap_or("").chars().take(300).collect::<String>();
+            match (d["kind"].as_str().unwrap_or(""), &d["answered"]) {
+                ("confirm", Value::Bool(true)) => format!("The page asked “{said}” (confirm) and got OK."),
+                ("confirm", _) => format!("The page asked “{said}” (confirm) and got Cancel.{}",
+                    if dismissing { "" } else { " To say OK, repeat this with dialog: \"accept\"." }),
+                ("prompt", Value::String(v)) => format!("The page asked “{said}” (prompt) and got “{v}”."),
+                ("prompt", _) => format!("The page asked “{said}” (prompt) and got Cancel.{}",
+                    if dismissing { "" } else { " To answer it, repeat this with dialog: \"accept\" and dialog_text." }),
+                _ => format!("The page showed an alert: “{said}” (it was closed with OK)."),
+            }
+        })
+        .collect()
+}
+
+/// An action's result with what else happened added: text gets the sentences, anything else is wrapped.
+fn with_notes(v: Value, notes: Vec<String>) -> Value {
+    if notes.is_empty() {
+        return v;
+    }
+    match v {
+        Value::String(text) => json!(format!("{text}\n{}", notes.join("\n"))),
+        other => json!({ "result": other, "notes": notes }),
+    }
+}
+
 /// Run a click, typing or key press, then wait (up to 4s) for the page to react: until nothing has changed for a
-/// moment, or a page it went to has loaded. Says where it ended up if the address changed.
-fn act(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, script: &str) -> Result<Value, String> {
-    let tab = match tab {
+/// moment, or a page it went to has loaded. Says where it ended up if the address changed, which tabs it opened and
+/// what the page asked in dialogs meanwhile.
+fn act(proxy: &EventLoopProxy<UserEvent>, a: &Value, script: &str) -> Result<Value, String> {
+    let tab = match a.get("tab").and_then(Value::as_i64) {
         Some(t) => Some(t),
-        None => call(proxy, "ensure_loaded", json!({ "tab": tab }))?["tab"].as_i64(),
+        None => call(proxy, "ensure_loaded", json!({ "tab": Value::Null }))?["tab"].as_i64(),
     };
+    let before = open_tabs(proxy);
+    watch_dialogs(proxy, tab, a);
     let _ = eval(proxy, tab, FRAMES_JS);
-    let done = eval(proxy, tab, &format!("{WATCH_JS}\n{script}"))?;
+    let done = match eval(proxy, tab, &format!("{WATCH_JS}\n{script}")) {
+        Ok(v) => v,
+        Err(e) => {
+            let notes = dialogs_seen(proxy, tab, a);
+            return Err(if notes.is_empty() { e } else { format!("{e}\n{}", notes.join("\n")) });
+        }
+    };
     let start = Instant::now();
     let mut last = Value::Null;
     while start.elapsed() < Duration::from_millis(4000) {
@@ -878,14 +963,17 @@ fn act(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, script: &str) -> Res
             break;
         }
     }
+    let mut notes = dialogs_seen(proxy, tab, a);
+    notes.extend(new_tabs(proxy, tab, &before));
     let moved = last["quiet"].is_null() || (last["was"].is_string() && last["was"] != last["url"]);
-    Ok(match (done, moved && last["url"].is_string()) {
+    let done = match (done, moved && last["url"].is_string()) {
         (Value::String(text), true) => {
             let title = last["title"].as_str().filter(|t| !t.is_empty() && last["was_title"].as_str() != Some(t));
             json!(format!("{text}\nThe page is now {}{}.", last["url"].as_str().unwrap_or(""), title.map(|t| format!(" “{t}”")).unwrap_or_default()))
         }
         (other, _) => other,
-    })
+    };
+    Ok(with_notes(done, notes))
 }
 
 fn wait_ready(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>) -> Result<Option<i64>, String> {
@@ -993,7 +1081,38 @@ function find() {
   if (!e) throw new Error(A.ref ? "no element with ref " + A.ref + " (take a new snapshot)" : "no element matches " + A.selector);
   return e;
 }
-function describe(e) { return (e.tagName.toLowerCase() + " " + (e.innerText || e.value || e.getAttribute("aria-label") || "").trim().slice(0, 80)).trim(); }
+function describe(e) {
+  // A field by its name, not its options or what's typed in it.
+  const field = /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName) && !/^(submit|button|reset|image)$/.test(e.type);
+  const name = field ? e.getAttribute("aria-label") || (e.labels && e.labels[0] && e.labels[0].innerText) || e.placeholder || e.name || (e.id ? '#' + e.id : '')
+    : e.innerText || e.value || e.getAttribute("aria-label");
+  return (e.tagName.toLowerCase() + " " + String(name || "").trim().replace(/\s+/g, " ").slice(0, 80)).trim();
+}
+// Whether a person could see `e` at all: laid out, not hidden, not in a closed <details> or menu, with some size.
+function rendered(e) {
+  if (e.checkVisibility && !e.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true })) return false;
+  const r = e.getBoundingClientRect();
+  return e.getClientRects().length > 0 && r.width > 0 && r.height > 0;
+}
+// display: contents has no box of its own (checkVisibility says no) but its children show.
+const drawn = (e) => !e.checkVisibility || e.checkVisibility() || getComputedStyle(e).display === 'contents';
+// The page's text, then what's in open shadow roots and same-origin frames (innerText leaves those out).
+function pageText() {
+  const parts = [];
+  for (const r of roots()) {
+    if (r.nodeType === 9) {
+      const f = r.defaultView && r.defaultView.frameElement;
+      if (r.body && (r === document || !f || drawn(f))) parts.push(r.body.innerText);
+      continue;
+    }
+    if (!drawn(r.host)) continue;
+    for (const n of r.childNodes) {
+      if (n.nodeType === 3) parts.push(n.data.trim());
+      else if (n.nodeType === 1 && !/^(STYLE|SCRIPT|TEMPLATE|SLOT|LINK)$/.test(n.tagName) && drawn(n)) parts.push(n.innerText);
+    }
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
 // `a` is `b` or inside it, through shadow roots.
 function within(a, b) { for (let n = a; n; n = n.parentNode || n.host) if (n === b) return true; return false; }
 // What's at the middle of `e` if it isn't `e` (or part of it, or its label): null when a click there reaches `e`.
@@ -1085,31 +1204,139 @@ function pressTarget(hit, submits) {
 }
 "#;
 
-/// A person's click or hover, event by event, at the middle of the element, on whatever is on top there.
+/// A person's click, hover or drag, event by event, at the middle of the element, on whatever is on top there.
 const POINTER_JS: &str = r#"
-function pointerAt(e, kinds) {
-  const a = aim(e);
-  if (a.covered && !A.force) throw new Error(describe(e) + ' is covered by ' + coverName(a.covered) + ', so a person couldn\'t click it. Deal with what\'s on top first (close it, or click that instead), or pass force: true if you\'re sure.');
-  const t = a.covered ? e : a.target, v = t.ownerDocument.defaultView;
-  const base = { bubbles: true, cancelable: true, composed: true, view: v, clientX: a.x, clientY: a.y, screenX: a.x, screenY: a.y, button: 0 };
-  const fire = (type, extra) => t.dispatchEvent(type.startsWith('pointer')
+// What a person couldn't do to `e`: it's disabled, or not shown on the page.
+function refuse(e, verb) {
+  const ctl = e.closest('button,input,select,textarea');
+  if (verb === 'click' && ctl && ctl.matches(':disabled')) throw new Error(describe(e) + ' is disabled, so clicking it does nothing. The page enables it once something else is done first (a required field, a choice); do that, then snapshot again.');
+  if (A.force) return;
+  if (verb === 'click' && e.closest('[aria-disabled=true]')) throw new Error(describe(e) + ' is marked disabled (aria-disabled), so the page will most likely ignore a click. Do what enables it first, or pass force: true if you\'re sure.');
+  if (!rendered(e)) throw new Error(describe(e) + ' isn\'t shown on the page (it\'s hidden, inside a closed menu or section, or has no size), so a person couldn\'t ' + verb + ' it. Open what holds it first: click the menu button, tab or summary that shows it, then snapshot again. hover doesn\'t open menus that only show on CSS :hover; for those, force: true does it anyway.');
+}
+function coveredError(e, a, verb) { return new Error(describe(e) + ' is covered by ' + coverName(a.covered) + ', so a person couldn\'t ' + verb + ' it. Deal with what\'s on top first (close it, or click that instead), or pass force: true if you\'re sure.'); }
+// Fires mouse and pointer events of one kind (`fire('mousedown', extra)`) at a point, as a mouse would.
+function firer(v, x, y) {
+  const base = { bubbles: true, cancelable: true, composed: true, view: v, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
+  return (t, type, extra) => t.dispatchEvent(type.startsWith('pointer')
     ? new v.PointerEvent(type, { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1, ...extra })
     : new v.MouseEvent(type, { ...base, ...extra }));
-  for (const k of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) fire(k, { bubbles: !k.endsWith('enter'), buttons: 0 });
+}
+function arrive(fire, t, buttons) { for (const k of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) fire(t, k, { bubbles: !k.endsWith('enter'), buttons }); }
+function pointerAt(e, verb) {
+  refuse(e, verb);
+  const a = aim(e);
+  if (a.covered && !A.force) throw coveredError(e, a, verb);
+  const t = a.covered ? e : a.target, f = firer(t.ownerDocument.defaultView, a.x, a.y);
+  const fire = (type, extra) => f(t, type, extra);
+  arrive(f, t, 0);
   return { t, fire };
 }
 function clickOn(e) {
-  const { t, fire } = pointerAt(e);
-  const down = fire('pointerdown', { buttons: 1 }) && fire('mousedown', { buttons: 1, detail: 1 });
-  // Like a real press: focus moves unless the page stopped the mousedown.
-  if (down) focusOn(t.closest('input,select,textarea,button,a[href],summary,[tabindex],[contenteditable]:not([contenteditable=false])'));
-  fire('pointerup', { buttons: 0 });
-  fire('mouseup', { buttons: 0, detail: 1 });
-  fire('click', { buttons: 0, detail: 1 });
-  return 'clicked ' + describe(e);
+  const { t, fire } = pointerAt(e, 'click');
+  const right = A.button === 'right', button = right ? 2 : 0, held = right ? 2 : 1;
+  const press = (detail) => {
+    const down = fire('pointerdown', { button, buttons: held }) && fire('mousedown', { button, buttons: held, detail });
+    // Like a real press: focus moves unless the page stopped the mousedown.
+    if (down && detail === 1) focusOn(t.closest('input,select,textarea,button,a[href],summary,[tabindex],[contenteditable]:not([contenteditable=false])'));
+    if (right) fire('contextmenu', { button, buttons: held, detail });
+    fire('pointerup', { button, buttons: 0 });
+    fire('mouseup', { button, buttons: 0, detail });
+    if (!right) fire('click', { buttons: 0, detail });
+  };
+  press(1);
+  if (A.double) { press(2); fire('dblclick', { button, buttons: 0, detail: 2 }); }
+  return (A.double ? 'double-clicked ' : right ? 'right-clicked ' : 'clicked ') + describe(e);
 }
-function hoverOn(e) { pointerAt(e); return 'hovering over ' + describe(e); }
+function hoverOn(e) { pointerAt(e, 'hover over'); return 'hovering over ' + describe(e); }
+// Press on `src`, move across in steps, let go on `dst`. A draggable source also gets the page's drag-and-drop events,
+// with one DataTransfer from dragstart to drop.
+function dragOn(src, dst) {
+  if (src.ownerDocument !== dst.ownerDocument) throw new Error('drag works within one page or frame: ' + describe(src) + ' and ' + describe(dst) + ' are in different ones');
+  refuse(src, 'drag'); refuse(dst, 'drop onto');
+  const a1 = aim(src);
+  if (a1.covered && !A.force) throw coveredError(src, a1, 'drag');
+  const a2 = aim(dst);
+  if (a2.covered && !A.force) throw coveredError(dst, a2, 'drop onto');
+  // Bringing the target into view can move the source.
+  const c1 = coverAt(src), x1 = c1.x == null ? a1.x : c1.x, y1 = c1.y == null ? a1.y : c1.y, x2 = a2.x, y2 = a2.y;
+  const D = src.ownerDocument, v = D.defaultView;
+  const s = c1.hit && within(c1.hit, src) ? c1.hit : src, t = a2.covered ? dst : a2.target;
+  const under = (x, y) => { let h = D.elementFromPoint(x, y); while (h && h.shadowRoot) { const i = h.shadowRoot.elementFromPoint(x, y); if (!i || i === h) break; h = i; } return h; };
+  arrive(firer(v, x1, y1), s, 0);
+  firer(v, x1, y1)(s, 'pointerdown', { buttons: 1 });
+  firer(v, x1, y1)(s, 'mousedown', { buttons: 1, detail: 1 });
+  // Checked after the press: some libraries make the item draggable on pointerdown.
+  let dragEl = null;
+  for (let n = s; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode().host || null)) if (n.draggable) { dragEl = n; break; }
+  const dt = new v.DataTransfer();
+  const dragEvent = (el, type, x, y) => el.dispatchEvent(new v.DragEvent(type, { bubbles: true, cancelable: !/^(dragleave|dragend)$/.test(type), composed: true, view: v, clientX: x, clientY: y, screenX: x, screenY: y, buttons: 1, dataTransfer: dt }));
+  const nudge = firer(v, x1 + 3, y1 + 3);
+  nudge(s, 'pointermove', { buttons: 1 }); nudge(s, 'mousemove', { buttons: 1 });
+  const html5 = !!dragEl && dragEvent(dragEl, 'dragstart', x1 + 3, y1 + 3);
+  let over = s, accepted = false;
+  const STEPS = 6;
+  for (let i = 1; i <= STEPS; i++) {
+    const x = x1 + (x2 - x1) * i / STEPS, y = y1 + (y2 - y1) * i / STEPS;
+    const here = i === STEPS ? t : under(x, y) || t, f = firer(v, x, y);
+    if (here !== over) {
+      f(over, 'pointerout', { buttons: 1 }); f(over, 'mouseout', { buttons: 1 });
+      for (const k of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter']) f(here, k, { bubbles: !k.endsWith('enter'), buttons: 1 });
+    }
+    f(here, 'pointermove', { buttons: 1 }); f(here, 'mousemove', { buttons: 1 });
+    if (html5) {
+      dragEvent(dragEl, 'drag', x, y);
+      if (here !== over) { dragEvent(here, 'dragenter', x, y); dragEvent(over, 'dragleave', x, y); }
+      accepted = !dragEvent(here, 'dragover', x, y);
+    }
+    over = here;
+  }
+  if (html5) {
+    if (accepted) dragEvent(t, 'drop', x2, y2);
+    dragEvent(dragEl, 'dragend', x2, y2);
+  }
+  firer(v, x2, y2)(t, 'pointerup', { buttons: 0 });
+  firer(v, x2, y2)(t, 'mouseup', { buttons: 0, detail: 1 });
+  return 'dragged ' + describe(src) + ' onto ' + describe(dst) + (html5 && !accepted ? ', but it didn\'t take the drop (nothing there accepts dragged things), so nothing may have moved' : '');
+}
 "#;
+
+/// Answers the page's alert, confirm and prompt while an agent's action is under way (until 5 seconds after it), as
+/// `A.dialog` says, and notes each one for the result. Otherwise the page gets the real ones. Every window and
+/// same-origin frame, once each.
+const DIALOG_JS: &str = r#"
+if (!window.__vgDialogs) Object.defineProperty(window, '__vgDialogs', { value: { until: 0, plan: {}, seen: [] } });
+const S = window.__vgDialogs;
+S.plan = { accept: A.dialog === 'accept', text: A.dialog_text };
+S.until = Date.now() + 60000;
+const wrap = (w) => {
+  if (!w || w.__vgDialogsOn) return;
+  Object.defineProperty(w, '__vgDialogsOn', { value: true });
+  const real = { alert: w.alert, confirm: w.confirm, prompt: w.prompt }, live = () => Date.now() < S.until;
+  const note = (o) => { if (S.seen.length < 20) S.seen.push(o); };
+  const said = (m) => m === undefined ? '' : String(m);
+  // A page that put its own dialogs in their place keeps them.
+  if (![real.alert, real.confirm, real.prompt].every((f) => typeof f === 'function' && /\[native code\]/.test(Function.prototype.toString.call(f)))) return;
+  w.alert = function alert(message) { if (!live()) return real.alert.apply(w, arguments); note({ kind: 'alert', message: said(message) }); };
+  w.confirm = function confirm(message) {
+    if (!live()) return real.confirm.apply(w, arguments);
+    note({ kind: 'confirm', message: said(message), answered: S.plan.accept });
+    return S.plan.accept;
+  };
+  w.prompt = function prompt(message, value) {
+    if (!live()) return real.prompt.apply(w, arguments);
+    const answer = S.plan.accept ? (S.plan.text != null ? String(S.plan.text) : said(value)) : null;
+    note({ kind: 'prompt', message: said(message), answered: answer });
+    return answer;
+  };
+};
+wrap(window);
+for (const r of roots()) if (r.nodeType === 9 && r.defaultView !== window) { try { wrap(r.defaultView); } catch (err) {} }
+return true;
+"#;
+
+/// The dialogs answered since the last look (each reported once); they go on being answered for 5 more seconds.
+const DIALOGS_SEEN_JS: &str = "const S = window.__vgDialogs; if (!S) return []; S.until = Date.now() + 5000; return S.seen.splice(0);";
 
 /// Tabs out of sight never draw, so a menu or dialog's closing animation never ends and it stays on the page, often with
 /// its overlay over everything. In those tabs, short animations (opening and closing ones, 1s or less) are finished
@@ -1179,6 +1406,16 @@ function selectAllIn(e) {
   const sel = D.defaultView.getSelection();
   sel.removeAllRanges(); sel.addRange(r);
 }
+// Without focus the browser's editing commands do nothing: change a field's text at its cursor directly.
+function editField(e, text, back, ahead, inputType) {
+  const W = e.ownerDocument.defaultView, a = e.selectionStart, b = e.selectionEnd;
+  if (a == null) {
+    // Fields with no cursor (email, number) change at the end.
+    const v = e.value, proto = e.tagName === 'TEXTAREA' ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, back < 0 ? v.slice(0, back) : v + text);
+  } else e.setRangeText(text, Math.max(0, a + back), Math.min(e.value.length, b + ahead), 'end');
+  e.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType, data: text || null }));
+}
 // Not requestAnimationFrame: hidden tabs never paint, so it would never fire.
 const nextFrame = () => new Promise((r) => setTimeout(r, 50));
 "#;
@@ -1187,13 +1424,6 @@ const PRESS_KEY_JS: &str = r#"
 const e = deepActive() || document.body;
 const { go, o } = pressOn(e, A.key);
 const bare = !o.metaKey && !o.ctrlKey && !o.altKey;
-// Without focus the browser's editing commands do nothing: change the field's text at its cursor directly.
-function edit(text, back, ahead, inputType) {
-  let a = e.selectionStart, b = e.selectionEnd;
-  if (a == null) { a = b = e.value.length; }
-  e.setRangeText(text, Math.max(0, a + back), Math.min(e.value.length, b + ahead), 'end');
-  e.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType, data: text || null }));
-}
 const D = e.ownerDocument, W = D.defaultView;
 const field = e.isContentEditable || e.tagName === 'TEXTAREA' || (e.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|file|range|color)$/.test(e.type));
 // What the key would do if the page lets it: real keys do this themselves, made-up ones don't.
@@ -1207,13 +1437,13 @@ if (go && bare) {
     // execCommand can say yes and do nothing when the page has no focus.
     const before = e.isContentEditable ? e.innerText : e.value;
     D.execCommand('insertText', false, o.key);
-    if ((e.isContentEditable ? e.innerText : e.value) === before && !e.isContentEditable) edit(o.key, 0, 0, 'insertText');
+    if ((e.isContentEditable ? e.innerText : e.value) === before && !e.isContentEditable) editField(e, o.key, 0, 0, 'insertText');
   } else if ((o.key === 'Backspace' || o.key === 'Delete') && field) {
     const before = e.value;
     D.execCommand(o.key === 'Backspace' ? 'delete' : 'forwardDelete');
     if (!e.isContentEditable && e.value === before) {
       const empty = e.selectionStart === e.selectionEnd;
-      edit('', o.key === 'Backspace' && empty ? -1 : 0, o.key === 'Delete' && empty ? 1 : 0, o.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward');
+      editField(e, '', o.key === 'Backspace' && empty ? -1 : 0, o.key === 'Delete' && empty ? 1 : 0, o.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward');
     }
   } else if (o.key === 'Enter' && (e.isContentEditable || e.tagName === 'TEXTAREA')) {
     D.execCommand(e.isContentEditable ? 'insertParagraph' : 'insertText', false, '\n');
@@ -1239,20 +1469,82 @@ const focused = deepActive();
 const e = field(picked) ? picked : field(focused) && picked.contains(focused) ? focused
   : picked.querySelector('textarea,[contenteditable]:not([contenteditable=false]),input:not([type=hidden])') || (field(focused) ? focused : null);
 if (!e) throw new Error('nothing to type into in ' + describe(picked) + ': click into the text box or editor, then call type without a ref');
+if (e.matches(':disabled')) throw new Error(describe(e) + ' is disabled, so it can\'t be typed into. The page enables it once something else is done first; do that, then snapshot again.');
+if (e.readOnly && tag(e) !== 'SELECT') throw new Error(describe(e) + ' is read-only: the page shows this value but won\'t take typing. Look for an edit button, or another field for it.');
 if (e !== focused) focusOn(e);
-let how = 'typed into ';
-const W = e.ownerDocument.defaultView;
+const name = describe(e);
+let how = 'typed into ', after = '';
+const W = e.ownerDocument.defaultView, D = e.ownerDocument;
+const plain = tag(e) === 'INPUT' || tag(e) === 'TEXTAREA', old = plain ? e.value : null;
+const setValue = (v) => Object.getOwnPropertyDescriptor(tag(e) === 'TEXTAREA' ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype, 'value').set.call(e, v);
+const changed = () => { e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true })); };
+// A script's value skips maxlength; a person's typing stops there.
+const fit = (before, add) => e.maxLength >= 0 && (before + add).length > e.maxLength ? before + add.slice(0, Math.max(0, e.maxLength - before.length)) : before + add;
+// Fields whose value is one whole thing: typing replaces it, written the way the browser takes it.
+const FORMAT = { date: 'YYYY-MM-DD, e.g. 2026-11-15', time: 'HH:MM in 24-hour time, e.g. 14:30', 'datetime-local': 'YYYY-MM-DDTHH:MM, e.g. 2026-11-15T14:30',
+  month: 'YYYY-MM, e.g. 2026-11', week: 'YYYY-Www, e.g. 2026-W46', color: '#rrggbb, e.g. #ff8800', range: 'a plain number, e.g. 70',
+  number: 'a plain number, e.g. 42 or 3.5 (no commas, units or spaces)' };
+const whole = tag(e) === 'INPUT' && FORMAT[e.type];
+let root = e;
+while (root.isContentEditable && root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
+// Each character as a key press, for fields that only listen to keys: the page can take it over at any step.
+async function typeKeys() {
+  const K = W.KeyboardEvent, I = W.InputEvent;
+  if (plain) { try { e.setSelectionRange(A.clear ? 0 : e.value.length, e.value.length); } catch (err) { if (A.clear) { setValue(''); changed(); } } }
+  else if (A.clear) selectAllIn(e);
+  const put = (t) => {
+    const sel = W.getSelection();
+    let r = sel.rangeCount && root.contains(sel.getRangeAt(0).commonAncestorContainer) ? sel.getRangeAt(0) : null;
+    if (!r) { r = D.createRange(); r.selectNodeContents(root); r.collapse(false); }
+    r.deleteContents();
+    const n = t === '\n' ? D.createElement('br') : D.createTextNode(t);
+    r.insertNode(n); r.setStartAfter(n); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+  };
+  for (const ch of A.text) {
+    const enter = ch === '\n', key = enter ? 'Enter' : ch, cc = enter ? 13 : ch.charCodeAt(0);
+    const code = enter ? 'Enter' : /^[a-z]$/i.test(ch) ? 'Key' + ch.toUpperCase() : /^\d$/.test(ch) ? 'Digit' + ch : ch === ' ' ? 'Space' : '';
+    const keyCode = enter ? 13 : /^[a-z\d ]$/i.test(ch) ? ch.toUpperCase().charCodeAt(0) : 0;
+    const o = { key, code, keyCode, which: keyCode, shiftKey: ch !== ch.toLowerCase(), bubbles: true, cancelable: true, composed: true };
+    if (e.dispatchEvent(new K('keydown', o)) && e.dispatchEvent(new K('keypress', { ...o, keyCode: cc, which: cc, charCode: cc })) && !(enter && tag(e) === 'INPUT')) {
+      const inputType = enter ? (e.isContentEditable ? 'insertParagraph' : 'insertLineBreak') : 'insertText', data = enter ? null : ch;
+      const full = plain && e.maxLength >= 0 && e.value.length - Math.abs((e.selectionEnd || 0) - (e.selectionStart || 0)) >= e.maxLength;
+      if (!full && e.dispatchEvent(new I('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType, data }))) {
+        if (plain) editField(e, enter ? '\n' : ch, 0, 0, inputType);
+        else { put(enter ? '\n' : ch); root.dispatchEvent(new I('input', { bubbles: true, composed: true, inputType, data })); }
+      }
+    }
+    e.dispatchEvent(new K('keyup', o));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
 if (tag(e) === 'SELECT') {
   const o = [...e.options].find((o) => o.value === A.text || o.text.trim() === A.text.trim());
   if (!o) throw new Error('no option ' + A.text + '; the options are: ' + [...e.options].map((o) => o.text.trim()).join(', '));
-  e.value = o.value; e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true }));
+  // A multiple-choice list keeps what's chosen and adds this (clear starts over).
+  if (e.multiple && A.clear) for (const x of e.options) x.selected = false;
+  o.selected = true;
+  changed();
+  how = 'chose “' + o.text.trim() + '” in ';
+  if (e.multiple) after = '; selected now: ' + [...e.selectedOptions].map((x) => '“' + x.text.trim() + '”').join(', ');
+} else if (whole) {
+  // Tried on a field of the same kind first, so a value the browser turns away doesn't blank the page's.
+  const t = A.text.trim(), probe = D.createElement('input');
+  probe.type = e.type;
+  for (const k of ['min', 'max', 'step']) if (e.hasAttribute(k)) probe.setAttribute(k, e.getAttribute(k));
+  probe.value = t;
+  const ok = e.type === 'color' ? probe.value === t.toLowerCase() : e.type === 'range' ? t !== '' && isFinite(Number(t)) : probe.value !== '' || t === '';
+  if (!ok) throw new Error('“' + A.text + '” isn\'t a value a ' + e.type + ' field takes, so ' + name + ' wasn\'t changed. Type it as ' + FORMAT[e.type] + '.');
+  setValue(t);
+  changed();
+} else if (A.keys) {
+  how = 'pressed the keys into ';
+  await typeKeys();
 } else if (e.isContentEditable || tag(e) === 'TEXTAREA') {
-  let root = e;
-  while (root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
   const sel = W.getSelection();
   // Where the text goes: everything with clear, else the cursor if it's in this editor, else the end.
   if (e.isContentEditable && (A.clear || !sel.rangeCount || !root.contains(sel.anchorNode))) {
-    const r = e.ownerDocument.createRange();
+    const r = D.createRange();
     r.selectNodeContents(root);
     if (!A.clear) r.collapse(false);
     sel.removeAllRanges(); sel.addRange(r);
@@ -1268,18 +1560,18 @@ if (tag(e) === 'SELECT') {
     pasted = !e.dispatchEvent(new W.ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   } catch (err) {}
   if (pasted) how = 'pasted into ';
-  else if (e.isContentEditable && (() => { const before = root.innerText; return !e.ownerDocument.execCommand('insertText', false, A.text) || (A.text && root.innerText === before); })()) {
+  else if (e.isContentEditable && (() => { const before = root.innerText; return !D.execCommand('insertText', false, A.text) || (A.text && root.innerText === before); })()) {
     // Only ever inside this editor, on a range of our own (a page without focus can drop the selection's).
     let r = sel.rangeCount && root.contains(sel.getRangeAt(0).commonAncestorContainer) ? sel.getRangeAt(0) : null;
-    if (!r) { r = e.ownerDocument.createRange(); r.selectNodeContents(root); if (!A.clear) r.collapse(false); }
+    if (!r) { r = D.createRange(); r.selectNodeContents(root); if (!A.clear) r.collapse(false); }
     r.deleteContents();
-    r.insertNode(e.ownerDocument.createTextNode(A.text));
+    r.insertNode(D.createTextNode(A.text));
     root.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType: 'insertText', data: A.text }));
   }
   else if (!e.isContentEditable) {
     // A plain textarea (pages ignore a made-up paste): set its value the way React and friends notice.
-    Object.getOwnPropertyDescriptor(W.HTMLTextAreaElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
-    e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true }));
+    setValue(fit(A.clear ? '' : e.value, A.text));
+    changed();
   }
   // clear means only the new text is left: if the editing command kept some of the old, put it in directly.
   const flat = (t) => String(t).replace(/\s+/g, ' ').trim();
@@ -1289,14 +1581,25 @@ if (tag(e) === 'SELECT') {
   }
   await nextFrame();
 } else {
-  Object.getOwnPropertyDescriptor(W.HTMLInputElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
-  e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true }));
+  setValue(fit(A.clear ? '' : e.value, A.text));
+  changed();
+}
+// What the field holds now, if the page (a length limit, a format) or the browser made it something else.
+if (plain && !how.startsWith('pasted')) {
+  await nextFrame();
+  const want = (A.clear || whole ? '' : old) + (whole ? A.text.trim() : A.text), now = e.value;
+  if (e.type === 'color' ? now.toLowerCase() !== want.toLowerCase() : now !== want) {
+    const show = (v) => !v ? 'nothing' : e.type === 'password' ? v.length + ' characters' : '“' + (v.length > 200 ? v.slice(0, 200) + '…' : v) + '”';
+    const hint = A.keys || whole ? '' : '. If it only takes key presses (formatted fields often do), repeat with keys: true';
+    after += now === old && want !== old ? ', but the field still holds ' + show(now) + ': it didn\'t take the text' + hint
+      : ', and the field now holds ' + show(now) + (now ? '' : hint);
+  }
 }
 if (A.submit) {
   const { go } = pressOn(e, 'Enter');
   if (go && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit());
 }
-return how + describe(e);
+return how + name + after;
 })();
 "#;
 
@@ -1382,6 +1685,58 @@ return { run(script) {
 } };
 "#;
 
+/// Scrolls the page, the panel an element is in, or (when the page itself doesn't scroll, as in mail and chat apps)
+/// its biggest scrolling panel; then waits a moment for more to load and says where it got to.
+const SCROLL_JS: &str = r#"
+const scrolls = (el) => el.scrollHeight > el.clientHeight + 1 && /(auto|scroll|overlay)/.test(el.ownerDocument.defaultView.getComputedStyle(el).overflowY);
+const pageOf = (el) => el.ownerDocument.scrollingElement || el.ownerDocument.documentElement;
+let box = null;
+if (A.ref || A.selector) {
+  const e = find();
+  if (!A.direction) { e.scrollIntoView({ block: 'center', behavior: 'instant' }); return 'scrolled to ' + describe(e); }
+  for (let n = e; n && n.nodeType === 1; n = n.parentElement || n.getRootNode().host || null) {
+    if (n === pageOf(n) || n === n.ownerDocument.body) break;
+    if (scrolls(n)) { box = n; break; }
+  }
+  if (!box) box = pageOf(e);
+} else {
+  const se = pageOf(document.documentElement), flow = (el) => el ? getComputedStyle(el).overflowY : 'visible';
+  const viewport = flow(document.documentElement) !== 'visible' ? flow(document.documentElement) : flow(document.body);
+  if (se.scrollHeight > innerHeight + 1 && !/hidden|clip/.test(viewport)) box = se;
+  else {
+    let most = 0;
+    for (const r of roots()) for (const el of r.querySelectorAll('*')) {
+      if (el.clientHeight < 50 || !scrolls(el)) continue;
+      const q = el.getBoundingClientRect(), W = el.ownerDocument.defaultView;
+      const seen = Math.max(0, Math.min(q.bottom, W.innerHeight) - Math.max(q.top, 0)) * Math.max(0, Math.min(q.right, W.innerWidth) - Math.max(q.left, 0));
+      if (seen > most) { most = seen; box = el; }
+    }
+    if (!box) box = se;
+  }
+}
+const page = box === pageOf(box), h = page ? box.ownerDocument.defaultView.innerHeight : box.clientHeight;
+const go = { down: () => box.scrollBy({ top: h * 0.8, behavior: 'instant' }), up: () => box.scrollBy({ top: -h * 0.8, behavior: 'instant' }),
+  top: () => box.scrollTo({ top: 0, behavior: 'instant' }), bottom: () => box.scrollTo({ top: box.scrollHeight, behavior: 'instant' }) }[A.direction || 'down'];
+if (!go) throw new Error('direction is one of up, down, top, bottom');
+const start = box.scrollHeight;
+go();
+return (async () => {
+  // A feed adds more once its end comes into view: wait until its height stops changing (or a moment if it doesn't).
+  let last = start, still = 0;
+  for (let t = 0; t < 3000; t += 100) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (box.scrollHeight !== last) { last = box.scrollHeight; still = 0; } else if (++still >= (last === start ? 6 : 3)) break;
+  }
+  const y = box.scrollTop, out = { scrollY: Math.round(y), scrollHeight: box.scrollHeight, viewport: Math.round(h), at_top: y <= 1, at_bottom: y + h >= box.scrollHeight - 2 };
+  if (!page) {
+    const label = box.getAttribute('aria-label');
+    out.scrolled = box.tagName.toLowerCase() + (box.id ? '#' + box.id : box.classList[0] ? '.' + box.classList[0] : '') + (label ? ' “' + label.slice(0, 60) + '”' : '') + (box.ownerDocument !== document ? ' (in a frame)' : '');
+  }
+  if (box.scrollHeight > start) out.loaded_more = true;
+  return out;
+})();
+"#;
+
 const SNAPSHOT_JS: &str = r#"
 const CLICKY = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=treeitem],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[onclick],[tabindex]:not([tabindex="-1"])';
 const clean = (t) => String(t || '').trim().replace(/\s+/g, ' ');
@@ -1397,12 +1752,13 @@ function nameOf(e) {
 }
 document.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
 for (const r of roots()) if (r !== document) r.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
-let n = 0, scanned = 0;
+let n = 0, scanned = 0, capped = false;
 const out = [], closedFrames = [];
 // Depth first in page order, into shadow roots and same-origin frames (ox, oy: where that frame sits on screen).
 function visit(parent, ox, oy, inFrame) {
   for (const e of parent.children) {
-    if (n >= 500 || ++scanned > 40000) return;
+    if (capped) return;
+    if (++scanned > 40000) { capped = true; return; }
     const s = getComputedStyle(e);
     if (s.display === 'none') continue;
     const editor = e.isContentEditable && !(e.parentElement && e.parentElement.isContentEditable);
@@ -1423,6 +1779,8 @@ function visit(parent, ox, oy, inFrame) {
 function add(e, s, ox, oy, inFrame, editor, clicky) {
   const r = e.getBoundingClientRect();
   if (r.width < 1 || r.height < 1) return;
+  // Not drawn at all, e.g. inside a closed <details>.
+  if (e.checkVisibility && !e.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true })) return;
   // A page's own 1px helper fields, hidden from everyone; real checkboxes hidden behind a styled label stay.
   if (r.width <= 1 && r.height <= 1 && !/^(checkbox|radio)$/.test(e.type) && (e.getAttribute('aria-hidden') === 'true' || e.tabIndex < 0)) return;
   // A pointer cursor alone counts only for something with words or a picture; else it's decoration.
@@ -1430,6 +1788,7 @@ function add(e, s, ox, oy, inFrame, editor, clicky) {
   const top = { x: ox + r.left, y: oy + r.top };
   const inView = top.y + r.height > 0 && top.y < innerHeight && top.x + r.width > 0 && top.x < innerWidth;
   if (A.only_in_view && !inView) return;
+  if (n >= 500) { capped = true; return; }
   const ref = String(++n);
   e.setAttribute('data-valerie-ref', ref);
   const o = { ref, tag: e.tagName.toLowerCase(), label: nameOf(e) };
@@ -1437,7 +1796,7 @@ function add(e, s, ox, oy, inFrame, editor, clicky) {
   if (role) o.role = role;
   if (e.type && e.tagName !== 'BUTTON' && e.tagName !== 'SELECT') o.type = e.type;
   if (editor) o.editor = true;
-  if (e.tagName === 'SELECT') { o.value = clean(e.selectedOptions[0] && e.selectedOptions[0].text); o.options = [...e.options].slice(0, 30).map((x) => clean(x.text)); }
+  if (e.tagName === 'SELECT') { o.value = e.multiple ? [...e.selectedOptions].map((x) => clean(x.text)) : clean(e.selectedOptions[0] && e.selectedOptions[0].text); o.options = [...e.options].slice(0, 30).map((x) => clean(x.text)); }
   else if (/^(checkbox|radio)$/.test(e.type)) o.checked = e.checked;
   else if (e.type === 'password') { if (e.value) o.value = '(filled)'; }
   else if (/^(INPUT|TEXTAREA)$/.test(e.tagName)) { if (e.value) o.value = e.value.slice(0, 100); }
@@ -1453,6 +1812,7 @@ function add(e, s, ox, oy, inFrame, editor, clicky) {
     o.href = h.length > 150 ? h.slice(0, 150) + '…' : h;
   }
   if (e.disabled || e.getAttribute('aria-disabled') === 'true') o.disabled = true;
+  if (e.readOnly === true && /^(INPUT|TEXTAREA)$/.test(e.tagName)) o.readonly = true;
   if (inFrame) o.in_frame = true;
   if (!inView) o.offscreen = true;
   else {
@@ -1466,6 +1826,10 @@ const result = { url: location.href, title: document.title, elements: out };
 if (out.some((o) => o.covered)) result.note = 'covered says what sits on top of an element (a dialog, menu, banner or another link): deal with that first';
 // Another site's frame (an embedded editor, a payment form, a video) can't be reached from here: open its address instead.
 if (closedFrames.length) result.other_site_frames = [...new Set(closedFrames)].slice(0, 10);
+if (capped) {
+  result.truncated = true;
+  result.note = (result.note ? result.note + '. ' : '') + 'There are more elements than this list holds: snapshot with only_in_view: true for what\'s on screen, or scroll and snapshot again';
+}
 return result;
 "#;
 
@@ -1482,7 +1846,7 @@ if (document.contentType === 'application/pdf') {
   })();
 }
 const abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return ''; } };
-const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'OBJECT', 'EMBED', 'HEAD', 'BUTTON', 'SELECT', 'INPUT', 'TEXTAREA', 'DIALOG', 'VALERIE-UI']);
+const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'OBJECT', 'EMBED', 'HEAD', 'BUTTON', 'SELECT', 'INPUT', 'TEXTAREA', 'DIALOG', 'VALERIE-UI']);
 const CHROME = new Set(['NAV', 'FOOTER', 'ASIDE', 'HEADER']);
 const CHROME_ROLES = /^(navigation|banner|contentinfo|complementary|search|menu|menubar|dialog|alertdialog)$/;
 const len = (e) => (e && e.innerText || '').trim().length;
@@ -1493,10 +1857,12 @@ if (A.main_only !== false) {
   if (main && len(main) > 200) root = main;
   else if (articles[0] && len(articles[0]) > 200) root = articles[0];
 }
-const hidden = (e) => e.hidden || e.getAttribute('aria-hidden') === 'true' || (e.checkVisibility ? !e.checkVisibility() : getComputedStyle(e).display === 'none');
+// A <slot> draws no box of its own; what's put in it is checked by itself.
+const hidden = (e) => e.tagName !== 'SLOT' && (e.hidden || e.getAttribute('aria-hidden') === 'true' || (e.checkVisibility ? !e.checkVisibility() && getComputedStyle(e).display !== 'contents' : getComputedStyle(e).display === 'none'));
 const skip = (e) => SKIP.has(e.tagName) || hidden(e) || (A.main_only !== false && e !== root && (CHROME.has(e.tagName) && !e.closest('article') || CHROME_ROLES.test(e.getAttribute('role') || '')));
 const inline = (s) => s.replace(/\s*\n\s*/g, ' ').trim();
-function kids(e, ctx) { let out = ''; for (const c of e.childNodes) out += md(c, ctx); return out; }
+// An element with an open shadow root shows that instead of its children (they appear where its <slot>s are).
+function kids(e, ctx) { let out = ''; for (const c of (e.shadowRoot || e).childNodes) out += md(c, ctx); return out; }
 function list(e, ctx) {
   let i = Number(e.getAttribute('start') || 1), out = '\n\n';
   for (const li of e.children) {
@@ -1524,6 +1890,15 @@ function md(n, ctx) {
       const s = inline(kids(n, ctx)); return s ? '\n\n' + '#'.repeat(+t[1]) + ' ' + s + '\n\n' : '';
     }
     case 'BR': return '\n';
+    case 'SLOT': {
+      const put = n.assignedNodes({ flatten: true });
+      if (!put.length) return kids(n, ctx);
+      let out = ''; for (const c of put) out += md(c, ctx); return out;
+    }
+    case 'IFRAME': case 'FRAME': {
+      let d = null; try { d = n.contentDocument; } catch (err) {}
+      return d && d.body ? '\n\n' + kids(d.body, ctx) + '\n\n' : '';
+    }
     case 'HR': return '\n\n---\n\n';
     case 'A': {
       const s = inline(kids(n, ctx)), h = n.getAttribute('href') || '';
@@ -2359,9 +2734,9 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 o["max_chars"] = json!(a["max_chars"].as_u64().unwrap_or(20000));
                 return eval(proxy, tab, &with_args(&o, MARKDOWN_JS));
             }
-            let js = with_args(&json!({ "max": a["max_chars"].as_u64().unwrap_or(20000), "html": format == "html" }),
-                "const body = A.html ? document.documentElement.outerHTML : (document.body ? document.body.innerText : ''); \
-                return { url: location.href, title: document.title, truncated: body.length > A.max, content: body.slice(0, A.max) };");
+            let js = with_args(&json!({ "max": a["max_chars"].as_u64().unwrap_or(20000), "html": format == "html" }), &format!("{FIND_JS}\n\
+                const body = A.html ? document.documentElement.outerHTML : pageText(); \
+                return {{ url: location.href, title: document.title, truncated: body.length > A.max, content: body.slice(0, A.max) }};"));
             eval(proxy, tab, &js)
         }
         "read_console" => {
@@ -2375,9 +2750,17 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let tab = wait_ready(proxy, tab)?;
             eval(proxy, tab, &with_args(&a, &format!("{FINISH_ANIMATIONS_JS}\n{FIND_JS}\n{SNAPSHOT_JS}")))
         }
-        "click" => act(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"))),
-        "type" => act(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}"))),
+        "click" => act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"))),
+        "type" => act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}"))),
         "hover" => eval(proxy, tab, &with_args(&a, &format!("{FIND_JS}\n{POINTER_JS}\nreturn hoverOn(find());"))),
+        "drag" => {
+            if a["to_ref"].is_null() && a["to_selector"].is_null() {
+                return Err("say where to drag it: to_ref (from snapshot) or to_selector".into());
+            }
+            let to = "const to = A.to_ref ? deepQuery('[data-valerie-ref=\"' + CSS.escape(String(A.to_ref)) + '\"]') : deepQuery(A.to_selector); \
+                if (!to) throw new Error(A.to_ref ? 'no element with ref ' + A.to_ref + ' (take a new snapshot)' : 'no element matches ' + A.to_selector);";
+            act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nconst from = find();\n{to}\nreturn dragOn(from, to);")))
+        }
         "upload_file" => {
             let mut files = Vec::new();
             let mut total = 0;
@@ -2402,19 +2785,13 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 return 'chose ' + e.files.length + ' file(s) for ' + describe(e);"));
             eval(proxy, tab, &js)
         }
-        "press_key" => act(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{PRESS_KEY_JS}"))),
-        "scroll" => {
-            let js = with_args(&a, &format!("{FIND_JS}\nif (A.ref) {{ const e = find(); e.scrollIntoView({{block: 'center'}}); return 'scrolled to ' + describe(e); }} \
-                const s = document.scrollingElement || document.documentElement; const h = innerHeight * 0.8; \
-                ({{down: () => s.scrollBy(0, h), up: () => s.scrollBy(0, -h), top: () => s.scrollTo(0, 0), bottom: () => s.scrollTo(0, s.scrollHeight)}}[A.direction || 'down'])(); \
-                return {{ scrollY: s.scrollTop, scrollHeight: s.scrollHeight, viewport: innerHeight }};"));
-            eval(proxy, tab, &js)
-        }
+        "press_key" => act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{PRESS_KEY_JS}"))),
+        "scroll" => eval(proxy, tab, &with_args(&a, &format!("{FIND_JS}\n{SCROLL_JS}"))),
         "wait_for" => {
             let tab = wait_ready(proxy, tab)?;
             let timeout = Duration::from_millis(a["timeout_ms"].as_u64().unwrap_or(10_000));
-            let js = with_args(&a, "if (A.selector && !document.querySelector(A.selector)) return false; \
-                if (A.text && !(document.body && document.body.innerText.includes(A.text))) return false; return true;");
+            let js = with_args(&a, &format!("{FIND_JS}\nif (A.selector && !deepQuery(A.selector)) return false; \
+                if (A.text && !pageText().includes(A.text)) return false; return true;"));
             let start = Instant::now();
             loop {
                 if eval(proxy, tab, &js)? == Value::Bool(true) {
@@ -2441,7 +2818,16 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         }
         "eval_js" => {
             let tab = wait_ready(proxy, tab)?;
-            run_script(a["script"].as_str().unwrap_or(""), tab, proxy)
+            watch_dialogs(proxy, tab, &a);
+            let out = run_script(a["script"].as_str().unwrap_or(""), tab, proxy);
+            let notes = dialogs_seen(proxy, tab, &a);
+            match out {
+                // The script's own value stays as it was, beside what the page asked.
+                Ok(v) if notes.is_empty() => Ok(v),
+                Ok(v) => Ok(json!({ "result": v, "dialogs": notes })),
+                Err(e) if notes.is_empty() => Err(e),
+                Err(e) => Err(format!("{e}\n{}", notes.join("\n"))),
+            }
         }
         _ => Err(format!("unknown tool {name}; the tools are: {}", tool_names().join(", "))),
     }
@@ -2505,6 +2891,7 @@ mod tests {
         let tools = tools["tools"].as_array().unwrap();
         let always = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap()["_meta"]["anthropic/alwaysLoad"] == json!(true);
         assert!(always("web_search") && always("fetch_page") && !always("click"));
+        assert!(tools.iter().any(|t| t["name"] == "drag" && t["annotations"]["readOnlyHint"] == json!(false)), "drag changes the page");
         assert!(catalog_answer("tools/call", &json!({}), &who).is_none());
     }
 
