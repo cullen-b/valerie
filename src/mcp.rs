@@ -644,10 +644,11 @@ pub fn tools() -> Vec<Value> {
         tool("read_page", "Read an open tab's URL, title and content: visible text (default), clean Markdown or HTML.", json!({
             "tab": tab_prop(), "max_chars": { "type": "integer", "default": 20000 },
             "format": { "type": "string", "enum": ["text", "markdown", "html"], "description": "Default text" } }), &[]),
-        tool("snapshot", "List the page's interactive elements with refs for click/type. Refs reset on every snapshot.",
+        tool("snapshot", "List the page's interactive elements with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too. Each has its label and, where it applies, href (same-site links as a path), value, checked, expanded, options (dropdowns), editor (a rich text or code editor), offscreen, and covered (what sits on top of it, e.g. an open dialog). other_site_frames lists embedded frames from another site, which these tools can't reach inside: open that address in its own tab to work in it. Refs reset on every snapshot.",
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
-        tool("click", "Click an element by snapshot ref or CSS selector.", json!({
-            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
+        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would: on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new. Refuses when something covers it (a dialog or banner); force: true clicks anyway.", json!({
+            "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
+            "force": { "type": "boolean", "description": "Click even if something covers it" } }), &[]),
         tool("type", "Type text into an input, textarea, rich text box or code editor (CodeMirror, Monaco, online document editors) by ref or selector, or into whatever has the cursor. A ref on an editor's frame finds the editor inside it. Editors get the text pasted in as one edit, so whole documents with newlines work; clear: true replaces everything in the editor. On a dropdown (<select>), text picks the option with that label or value.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" },
             "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" } }), &["text"]),
@@ -848,6 +849,45 @@ fn unwrap_result(r: Value) -> Result<Value, String> {
     Ok(r.get("ok").cloned().unwrap_or(Value::Null))
 }
 
+/// Run a click, typing or key press, then wait (up to 4s) for the page to react: until nothing has changed for a
+/// moment, or a page it went to has loaded. Says where it ended up if the address changed.
+fn act(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, script: &str) -> Result<Value, String> {
+    let tab = match tab {
+        Some(t) => Some(t),
+        None => call(proxy, "ensure_loaded", json!({ "tab": tab }))?["tab"].as_i64(),
+    };
+    let _ = eval(proxy, tab, FRAMES_JS);
+    let done = eval(proxy, tab, &format!("{WATCH_JS}\n{script}"))?;
+    let start = Instant::now();
+    let mut last = Value::Null;
+    while start.elapsed() < Duration::from_millis(4000) {
+        std::thread::sleep(Duration::from_millis(100));
+        let check = &format!("{FINISH_ANIMATIONS_JS}\nconst m = window.__vgMut; \
+            const busy = [...document.querySelectorAll('[aria-busy=true],[role=progressbar],[class*=spinner i],[class*=loading i]')].some((e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'); \
+            return {{ url: location.href, title: document.title, ready: document.readyState, quiet: m ? performance.now() - m.at : null, was: m ? m.url : null, was_title: m ? m.title : null, busy }};");
+        let Ok(v) = eval_for(proxy, tab, check, 2) else { continue };
+        let ready = v["ready"] == "complete";
+        // A site that changes its address itself (GitHub, YouTube) sets the new title a moment later.
+        let title_pending = v["was"].is_string() && v["was"] != v["url"] && v["was_title"] == v["title"] && start.elapsed() < Duration::from_millis(2000);
+        let settled = match v["quiet"].as_f64() {
+            Some(q) => q >= 300.0 && ready && v["busy"] != true && !title_pending,
+            None => ready && start.elapsed() > Duration::from_millis(400),
+        };
+        last = v;
+        if settled {
+            break;
+        }
+    }
+    let moved = last["quiet"].is_null() || (last["was"].is_string() && last["was"] != last["url"]);
+    Ok(match (done, moved && last["url"].is_string()) {
+        (Value::String(text), true) => {
+            let title = last["title"].as_str().filter(|t| !t.is_empty() && last["was_title"].as_str() != Some(t));
+            json!(format!("{text}\nThe page is now {}{}.", last["url"].as_str().unwrap_or(""), title.map(|t| format!(" “{t}”")).unwrap_or_default()))
+        }
+        (other, _) => other,
+    })
+}
+
 fn wait_ready(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>) -> Result<Option<i64>, String> {
     let t = call(proxy, "ensure_loaded", json!({ "tab": tab }))?;
     let tab = t["tab"].as_i64();
@@ -860,7 +900,39 @@ fn wait_ready(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>) -> Result<Opt
         }
         std::thread::sleep(Duration::from_millis(150));
     }
+    // Let a hidden page that waits on animation frames draw before it's read or pictured.
+    if eval(proxy, tab, FRAMES_JS) == Ok(Value::Bool(true)) {
+        std::thread::sleep(Duration::from_millis(250));
+    }
     Ok(tab)
+}
+
+/// A file's type from its name, for upload_file (sites check it: an image uploader turns away "").
+fn file_type(name: &str) -> &'static str {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "heic" => "image/heic",
+        "pdf" => "application/pdf",
+        "txt" | "md" | "typ" => "text/plain",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "zip" => "application/zip",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "",
+    }
 }
 
 /// Prefix page scripts with their arguments as a JS literal.
@@ -869,12 +941,102 @@ fn with_args(args: &Value, body: &str) -> String {
 }
 
 const FIND_JS: &str = r#"
+// The page, its open shadow roots and same-origin frames, in that order: sites built from web components or frames
+// keep their buttons there.
+function* roots(start) {
+  const stack = [start || document];
+  while (stack.length) {
+    const root = stack.shift();
+    yield root;
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) stack.push(el.shadowRoot);
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') { try { if (el.contentDocument) stack.push(el.contentDocument); } catch (err) {} }
+    }
+  }
+}
+function deepQuery(sel) {
+  const first = document.querySelector(sel);
+  if (first) return first;
+  for (const r of roots()) { const e = r.querySelector(sel); if (e) return e; }
+  return null;
+}
+function deepActive() {
+  const real = realActive(), mine = window.__vgFocus;
+  return (!real || real === document.body || real === document.documentElement) && mine && mine.isConnected ? mine : real;
+}
+// Pages in a background tab or an unfocused window don't take focus: Valerie tells the element itself (focus and
+// focusin, blur on the last one) and remembers it, so keys and typing go there.
+function focusOn(el) {
+  if (!el || !el.focus) return;
+  el.focus({ preventScroll: true });
+  const prev = window.__vgFocus;
+  if (realActive() === el) { window.__vgFocus = el; return; }
+  if (prev === el && el.isConnected) return;
+  const F = el.ownerDocument.defaultView.FocusEvent;
+  if (prev && prev.isConnected) { prev.dispatchEvent(new F('blur', { relatedTarget: el })); prev.dispatchEvent(new F('focusout', { bubbles: true, composed: true, relatedTarget: el })); }
+  window.__vgFocus = el;
+  el.dispatchEvent(new F('focus', { relatedTarget: prev || null }));
+  el.dispatchEvent(new F('focusin', { bubbles: true, composed: true, relatedTarget: prev || null }));
+}
+function realActive() {
+  let a = document.activeElement;
+  for (;;) {
+    let inner = null;
+    if (a && a.shadowRoot) inner = a.shadowRoot.activeElement;
+    else if (a && a.contentDocument) { try { inner = a.contentDocument.activeElement; } catch (err) {} }
+    if (!inner || inner === a) return a;
+    a = inner;
+  }
+}
 function find() {
-  const e = A.ref ? document.querySelector('[data-valerie-ref="' + CSS.escape(String(A.ref)) + '"]') : A.selector ? document.querySelector(A.selector) : document.activeElement;
+  const e = A.ref ? deepQuery('[data-valerie-ref="' + CSS.escape(String(A.ref)) + '"]') : A.selector ? deepQuery(A.selector) : deepActive();
   if (!e) throw new Error(A.ref ? "no element with ref " + A.ref + " (take a new snapshot)" : "no element matches " + A.selector);
   return e;
 }
 function describe(e) { return (e.tagName.toLowerCase() + " " + (e.innerText || e.value || e.getAttribute("aria-label") || "").trim().slice(0, 80)).trim(); }
+// `a` is `b` or inside it, through shadow roots.
+function within(a, b) { for (let n = a; n; n = n.parentNode || n.host) if (n === b) return true; return false; }
+// What's at the middle of `e` if it isn't `e` (or part of it, or its label): null when a click there reaches `e`.
+function coverAt(e) {
+  const r = e.getBoundingClientRect();
+  if (r.width === 0) return { hit: null, cover: null };
+  const x = r.left + r.width / 2, y = r.top + r.height / 2, root = e.getRootNode();
+  let hit = (root.elementFromPoint ? root : e.ownerDocument).elementFromPoint(x, y);
+  while (hit && hit.shadowRoot) { const inner = hit.shadowRoot.elementFromPoint(x, y); if (!inner || inner === hit) break; hit = inner; }
+  const label = hit && hit.closest && hit.closest('label');
+  const ok = !hit || within(hit, e) || within(e, hit) || (label && label.control === e);
+  return { x, y, hit, cover: ok ? null : hit };
+}
+// A sticky header or bar over the edge of the screen, not something over the page: scrolling gets past it.
+function edgeBar(hit) {
+  const W = hit.ownerDocument.defaultView;
+  for (let n = hit; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode() && n.getRootNode().host)) {
+    const pos = W.getComputedStyle(n).position;
+    if (pos === 'fixed' || pos === 'sticky') { const r = n.getBoundingClientRect(); return r.width * r.height < W.innerWidth * W.innerHeight * 0.4; }
+  }
+  return false;
+}
+// Says what's on top, for the agent: the open dialog, or the covering thing's words.
+function coverName(hit) {
+  const D = hit.ownerDocument, clean = (t) => String(t || '').trim().replace(/\s+/g, ' ').slice(0, 50);
+  const d = hit.closest('[role=dialog],[role=alertdialog],[aria-modal=true],dialog') || D.querySelector('[role=dialog]:not([data-state=closed]),[role=alertdialog],[aria-modal=true],dialog[open]');
+  if (d) {
+    const by = d.getAttribute('aria-labelledby'), h = by && D.getElementById(by.split(' ')[0]) || d.querySelector('h1,h2,h3,[role=heading]');
+    const name = clean(d.getAttribute('aria-label') || (h && h.innerText));
+    return 'a dialog' + (name ? ' “' + name + '”' : '');
+  }
+  const text = clean(hit.innerText || hit.getAttribute('aria-label') || hit.getAttribute('title'));
+  return text ? hit.tagName.toLowerCase() + ' “' + text + '”' : 'an overlay (an empty ' + hit.tagName.toLowerCase() + ')';
+}
+// Where a person's pointer would land on `e` (scrolled into view first, and clear of sticky bars), and what's on top.
+function aim(e) {
+  const view = e.ownerDocument.defaultView;
+  const r = e.getBoundingClientRect();
+  if (r.bottom <= 0 || r.top >= view.innerHeight || r.right <= 0 || r.left >= view.innerWidth) e.scrollIntoView({ block: 'center', inline: 'center' });
+  let c = coverAt(e);
+  if (c.cover && edgeBar(c.cover)) { e.scrollIntoView({ block: 'center', inline: 'center' }); c = coverAt(e); }
+  return { view, x: c.x || 0, y: c.y || 0, hit: c.hit, target: c.hit && within(c.hit, e) ? c.hit : e, covered: c.cover };
+}
 "#;
 
 /// How a page shows it takes payment, and what a click (or Enter on a form) would press, in every word a site might
@@ -909,7 +1071,7 @@ function pressTarget(hit, submits) {
   for (const e of nodes) {
     parts.push(e.innerText, e.textContent);
     if (e.matches('input[type=submit],input[type=button],input[type=image]')) parts.push(e.value);
-    for (const a of e.attributes) if (!/^(style|data-valerie-ref)$/.test(a.name)) parts.push(a.name.startsWith('data-') || a.name.startsWith('aria-') || /^(id|class|name|title|alt|href|action|formaction|value|onclick)$/.test(a.name) ? a.value : '');
+    for (const a of e.attributes) if (!/^(style|data-valerie-ref)$/.test(a.name)) parts.push(a.name.startsWith('data-') || a.name.startsWith('aria-') || /^(id|name|title|alt|href|action|formaction|value|onclick)$/.test(a.name) ? a.value : '');
     for (const i of e.querySelectorAll ? e.querySelectorAll('img[alt],[aria-label],[title]') : []) parts.push(i.getAttribute('alt'), i.getAttribute('aria-label'), i.getAttribute('title'));
     if (e.form) parts.push(e.form.getAttribute('action'), e.form.id, e.form.getAttribute('name'));
   }
@@ -922,6 +1084,57 @@ function pressTarget(hit, submits) {
   return { site: location.hostname || location.href, label, text: parts.filter(Boolean).map((p) => String(p).slice(0, 1000)).join(' \n '), sign: paymentSign(), card_field: hit.matches(CARD_FIELD) };
 }
 "#;
+
+/// A person's click or hover, event by event, at the middle of the element, on whatever is on top there.
+const POINTER_JS: &str = r#"
+function pointerAt(e, kinds) {
+  const a = aim(e);
+  if (a.covered && !A.force) throw new Error(describe(e) + ' is covered by ' + coverName(a.covered) + ', so a person couldn\'t click it. Deal with what\'s on top first (close it, or click that instead), or pass force: true if you\'re sure.');
+  const t = a.covered ? e : a.target, v = t.ownerDocument.defaultView;
+  const base = { bubbles: true, cancelable: true, composed: true, view: v, clientX: a.x, clientY: a.y, screenX: a.x, screenY: a.y, button: 0 };
+  const fire = (type, extra) => t.dispatchEvent(type.startsWith('pointer')
+    ? new v.PointerEvent(type, { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1, ...extra })
+    : new v.MouseEvent(type, { ...base, ...extra }));
+  for (const k of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) fire(k, { bubbles: !k.endsWith('enter'), buttons: 0 });
+  return { t, fire };
+}
+function clickOn(e) {
+  const { t, fire } = pointerAt(e);
+  const down = fire('pointerdown', { buttons: 1 }) && fire('mousedown', { buttons: 1, detail: 1 });
+  // Like a real press: focus moves unless the page stopped the mousedown.
+  if (down) focusOn(t.closest('input,select,textarea,button,a[href],summary,[tabindex],[contenteditable]:not([contenteditable=false])'));
+  fire('pointerup', { buttons: 0 });
+  fire('mouseup', { buttons: 0, detail: 1 });
+  fire('click', { buttons: 0, detail: 1 });
+  return 'clicked ' + describe(e);
+}
+function hoverOn(e) { pointerAt(e); return 'hovering over ' + describe(e); }
+"#;
+
+/// Tabs out of sight never draw, so a menu or dialog's closing animation never ends and it stays on the page, often with
+/// its overlay over everything. In those tabs, short animations (opening and closing ones, 1s or less) are finished
+/// and their end announced. Longer ones (a toast's countdown) and scroll-driven ones are left alone.
+const FINISH_ANIMATIONS_JS: &str = r#"
+if (document.visibilityState === 'hidden' && document.getAnimations) {
+  for (const a of document.getAnimations()) {
+    try {
+      const el = a.effect && a.effect.target, t = a.effect && a.effect.getComputedTiming();
+      if (!el || a.playState !== 'running' || a.timeline !== document.timeline || !(t.endTime <= 1000)) continue;
+      a.finish();
+      const W = el.ownerDocument.defaultView;
+      if (a.animationName) el.dispatchEvent(new W.AnimationEvent('animationend', { animationName: a.animationName, bubbles: true }));
+      else if (a.transitionProperty) el.dispatchEvent(new W.TransitionEvent('transitionend', { propertyName: a.transitionProperty, bubbles: true }));
+    } catch (err) {}
+  }
+}
+"#;
+
+/// In a tab the user has in the background, an agent's page still draws while it works there (content.js timerFrames;
+/// tabs no one sees have it from the start). True when it was just turned on, and nudges the page to draw again.
+const FRAMES_JS: &str = "if (document.visibilityState !== 'hidden' || !window.__valerie || !__valerie.timerFrames || !__valerie.timerFrames()) return false; dispatchEvent(new Event('resize')); return true;";
+
+/// Notes DOM changes after an action, so `act` can wait until the page has reacted.
+const WATCH_JS: &str = "if (!window.__vgMut) { const m = window.__vgMut = { at: 0 }; new MutationObserver(() => { m.at = performance.now(); }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); } window.__vgMut.at = performance.now(); window.__vgMut.url = location.href; window.__vgMut.title = document.title;";
 
 /// Key events with the modifiers a shortcut names ("cmd+a", "Ctrl+Shift+Z", "mod+z" = ⌘ on Mac, Ctrl elsewhere).
 const KEYS_JS: &str = r#"
@@ -945,24 +1158,72 @@ function keyEvent(spec) {
 }
 function pressOn(e, spec) {
   const o = keyEvent(spec);
-  const go = e.dispatchEvent(new KeyboardEvent('keydown', o));
-  e.dispatchEvent(new KeyboardEvent('keyup', o));
+  const K = e.ownerDocument.defaultView.KeyboardEvent;
+  const go = e.dispatchEvent(new K('keydown', o));
+  e.dispatchEvent(new K('keyup', o));
   // A shortcut the page leaves alone does what the keyboard would.
   const builtIn = o.command && { a: 'selectAll', z: o.shiftKey ? 'redo' : 'undo', y: 'redo' }[o.key.toLowerCase()];
-  if (go && builtIn) document.execCommand(builtIn);
+  if (go && builtIn === 'selectAll') selectAllIn(e);
+  else if (go && builtIn) e.ownerDocument.execCommand(builtIn);
   return { go, o };
+}
+// Select all inside a field or editor, never the whole page (what the browser does when the page has no focus).
+function selectAllIn(e) {
+  const D = e.ownerDocument;
+  if (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') { try { e.setSelectionRange(0, e.value.length); } catch (err) { e.select(); } return; }
+  if (!e.isContentEditable) return D.execCommand('selectAll');
+  let root = e;
+  while (root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
+  const r = D.createRange();
+  r.selectNodeContents(root);
+  const sel = D.defaultView.getSelection();
+  sel.removeAllRanges(); sel.addRange(r);
 }
 // Not requestAnimationFrame: hidden tabs never paint, so it would never fire.
 const nextFrame = () => new Promise((r) => setTimeout(r, 50));
 "#;
 
 const PRESS_KEY_JS: &str = r#"
-// Hidden tabs drop focus: then the keys go to the field `type` last wrote into.
-const last = window.__valerieTyped;
-const e = document.activeElement && document.activeElement !== document.body ? document.activeElement : last && last.isConnected ? last : document.body;
+const e = deepActive() || document.body;
 const { go, o } = pressOn(e, A.key);
-if (go && o.key === 'Enter' && o.plain && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit());
-return 'pressed ' + A.key;
+const bare = !o.metaKey && !o.ctrlKey && !o.altKey;
+// Without focus the browser's editing commands do nothing: change the field's text at its cursor directly.
+function edit(text, back, ahead, inputType) {
+  let a = e.selectionStart, b = e.selectionEnd;
+  if (a == null) { a = b = e.value.length; }
+  e.setRangeText(text, Math.max(0, a + back), Math.min(e.value.length, b + ahead), 'end');
+  e.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType, data: text || null }));
+}
+const D = e.ownerDocument, W = D.defaultView;
+const field = e.isContentEditable || e.tagName === 'TEXTAREA' || (e.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|file|range|color)$/.test(e.type));
+// What the key would do if the page lets it: real keys do this themselves, made-up ones don't.
+if (go && bare) {
+  if (o.key === 'Tab') {
+    const all = [...D.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,summary,[tabindex],[contenteditable]:not([contenteditable=false])')]
+      .filter((x) => x.tabIndex >= 0 && !x.disabled && x.getClientRects().length && getComputedStyle(x).visibility !== 'hidden');
+    const i = all.indexOf(e), next = all[(i + (o.shiftKey ? -1 : 1) + all.length) % all.length];
+    if (next) focusOn(next);
+  } else if (o.key.length === 1 && field) {
+    // execCommand can say yes and do nothing when the page has no focus.
+    const before = e.isContentEditable ? e.innerText : e.value;
+    D.execCommand('insertText', false, o.key);
+    if ((e.isContentEditable ? e.innerText : e.value) === before && !e.isContentEditable) edit(o.key, 0, 0, 'insertText');
+  } else if ((o.key === 'Backspace' || o.key === 'Delete') && field) {
+    const before = e.value;
+    D.execCommand(o.key === 'Backspace' ? 'delete' : 'forwardDelete');
+    if (!e.isContentEditable && e.value === before) {
+      const empty = e.selectionStart === e.selectionEnd;
+      edit('', o.key === 'Backspace' && empty ? -1 : 0, o.key === 'Delete' && empty ? 1 : 0, o.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward');
+    }
+  } else if (o.key === 'Enter' && (e.isContentEditable || e.tagName === 'TEXTAREA')) {
+    D.execCommand(e.isContentEditable ? 'insertParagraph' : 'insertText', false, '\n');
+  } else if ((o.key === 'Enter' && e.matches('button,a[href],summary,[role=button],[role=link],input[type=submit],input[type=button]')) || (o.key === ' ' && e.matches('button,summary,[role=button],input[type=checkbox],input[type=radio],[role=checkbox],[role=switch]'))) {
+    e.click();
+  } else if (o.key === 'Enter' && e.form && e.tagName === 'INPUT') {
+    e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit();
+  }
+}
+return 'pressed ' + A.key + (e !== document.body ? ' on ' + describe(e) : '');
 "#;
 
 /// Writes into a field or a code/rich editor. Editors (CodeMirror, Monaco, ProseMirror, Typst's) take a paste event as
@@ -970,25 +1231,28 @@ return 'pressed ' + A.key;
 const TYPE_JS: &str = r#"
 return (async () => {
 const picked = find();
-const field = (x) => x instanceof HTMLInputElement || x instanceof HTMLTextAreaElement || x instanceof HTMLSelectElement || !!(x && x.isContentEditable);
-const focused = document.activeElement;
+// Tag names, not instanceof: a field inside a frame has that frame's own HTMLInputElement.
+const tag = (x) => (x && x.tagName) || '';
+const field = (x) => /^(INPUT|TEXTAREA|SELECT)$/.test(tag(x)) || !!(x && x.isContentEditable);
+const focused = deepActive();
 // A ref often lands on an editor's frame or preview: write into the editor inside it, or the one with the cursor.
 const e = field(picked) ? picked : field(focused) && picked.contains(focused) ? focused
   : picked.querySelector('textarea,[contenteditable]:not([contenteditable=false]),input:not([type=hidden])') || (field(focused) ? focused : null);
 if (!e) throw new Error('nothing to type into in ' + describe(picked) + ': click into the text box or editor, then call type without a ref');
-if (e !== focused) e.focus();
+if (e !== focused) focusOn(e);
 let how = 'typed into ';
-if (e instanceof HTMLSelectElement) {
+const W = e.ownerDocument.defaultView;
+if (tag(e) === 'SELECT') {
   const o = [...e.options].find((o) => o.value === A.text || o.text.trim() === A.text.trim());
   if (!o) throw new Error('no option ' + A.text + '; the options are: ' + [...e.options].map((o) => o.text.trim()).join(', '));
-  e.value = o.value; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
-} else if (e.isContentEditable || e instanceof HTMLTextAreaElement) {
+  e.value = o.value; e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true }));
+} else if (e.isContentEditable || tag(e) === 'TEXTAREA') {
   let root = e;
   while (root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
-  const sel = getSelection();
+  const sel = W.getSelection();
   // Where the text goes: everything with clear, else the cursor if it's in this editor, else the end.
   if (e.isContentEditable && (A.clear || !sel.rangeCount || !root.contains(sel.anchorNode))) {
-    const r = document.createRange();
+    const r = e.ownerDocument.createRange();
     r.selectNodeContents(root);
     if (!A.clear) r.collapse(false);
     sel.removeAllRanges(); sel.addRange(r);
@@ -999,27 +1263,35 @@ if (e instanceof HTMLSelectElement) {
   }
   let pasted = false;
   try {
-    const dt = new DataTransfer();
+    const dt = new W.DataTransfer();
     dt.setData('text/plain', A.text);
-    pasted = !e.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    pasted = !e.dispatchEvent(new W.ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   } catch (err) {}
   if (pasted) how = 'pasted into ';
-  else if (e.isContentEditable && !document.execCommand('insertText', false, A.text)) {
-    sel.deleteFromDocument();
-    sel.getRangeAt(0).insertNode(document.createTextNode(A.text));
-    root.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: A.text }));
+  else if (e.isContentEditable && (() => { const before = root.innerText; return !e.ownerDocument.execCommand('insertText', false, A.text) || (A.text && root.innerText === before); })()) {
+    // Only ever inside this editor, on a range of our own (a page without focus can drop the selection's).
+    let r = sel.rangeCount && root.contains(sel.getRangeAt(0).commonAncestorContainer) ? sel.getRangeAt(0) : null;
+    if (!r) { r = e.ownerDocument.createRange(); r.selectNodeContents(root); if (!A.clear) r.collapse(false); }
+    r.deleteContents();
+    r.insertNode(e.ownerDocument.createTextNode(A.text));
+    root.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType: 'insertText', data: A.text }));
   }
   else if (!e.isContentEditable) {
     // A plain textarea (pages ignore a made-up paste): set its value the way React and friends notice.
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
-    e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+    Object.getOwnPropertyDescriptor(W.HTMLTextAreaElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
+    e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true }));
+  }
+  // clear means only the new text is left: if the editing command kept some of the old, put it in directly.
+  const flat = (t) => String(t).replace(/\s+/g, ' ').trim();
+  if (A.clear && !pasted && e.isContentEditable && flat(root.innerText) !== flat(A.text)) {
+    root.textContent = A.text;
+    root.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: A.text }));
   }
   await nextFrame();
 } else {
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
-  e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+  Object.getOwnPropertyDescriptor(W.HTMLInputElement.prototype, 'value').set.call(e, (A.clear ? '' : e.value) + A.text);
+  e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true }));
 }
-window.__valerieTyped = e;
 if (A.submit) {
   const { go } = pressOn(e, 'Enter');
   if (go && e.form) (e.form.requestSubmit ? e.form.requestSubmit() : e.form.submit());
@@ -1111,28 +1383,90 @@ return { run(script) {
 "#;
 
 const SNAPSHOT_JS: &str = r#"
-const sel = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=option],[role=textbox],[role=combobox],[contenteditable=true],[onclick]';
-document.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
-let n = 0; const out = [];
-for (const e of document.querySelectorAll(sel)) {
-  const r = e.getBoundingClientRect();
-  if (r.width < 1 || r.height < 1) continue;
-  const s = getComputedStyle(e);
-  if (s.visibility === 'hidden' || s.display === 'none') continue;
-  const inView = r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
-  if (A.only_in_view && !inView) continue;
-  const ref = String(++n); e.setAttribute('data-valerie-ref', ref);
-  const label = (e.getAttribute('aria-label') || e.innerText || e.value || e.title || e.placeholder || e.name || '').trim().replace(/\s+/g, ' ').slice(0, 100);
-  const o = { ref, tag: e.tagName.toLowerCase(), label };
-  if (e.getAttribute('role')) o.role = e.getAttribute('role');
-  if (e.type && e.tagName !== 'BUTTON') o.type = e.type;
-  if (e.href) o.href = e.href;
-  if (e.disabled) o.disabled = true;
-  if (!inView) o.offscreen = true;
-  out.push(o);
-  if (n >= 500) break;
+const CLICKY = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=treeitem],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[onclick],[tabindex]:not([tabindex="-1"])';
+const clean = (t) => String(t || '').trim().replace(/\s+/g, ' ');
+function nameOf(e) {
+  const root = e.getRootNode(), byId = (id) => (root.getElementById ? root.getElementById(id) : e.ownerDocument.getElementById(id));
+  let n = e.getAttribute('aria-label');
+  if (!n && e.getAttribute('aria-labelledby')) n = e.getAttribute('aria-labelledby').split(/\s+/).map((id) => { const l = byId(id); return l ? l.innerText || l.textContent : ''; }).join(' ');
+  if (!n && e.labels && e.labels.length) n = [...e.labels].map((l) => l.innerText || l.textContent).join(' ');
+  const field = /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
+  if (!n && field) n = e.placeholder || e.title || (/^(submit|button|reset)$/.test(e.type) ? e.value : '') || e.getAttribute('aria-placeholder') || e.name;
+  if (!n && !field) n = (e.isContentEditable ? '' : e.innerText) || e.title || e.getAttribute('aria-placeholder') || [...e.querySelectorAll('img[alt],[title]')].map((i) => i.getAttribute('alt') || i.getAttribute('title')).join(' ');
+  return clean(n).slice(0, 100);
 }
-return { url: location.href, title: document.title, elements: out };
+document.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
+for (const r of roots()) if (r !== document) r.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
+let n = 0, scanned = 0;
+const out = [], closedFrames = [];
+// Depth first in page order, into shadow roots and same-origin frames (ox, oy: where that frame sits on screen).
+function visit(parent, ox, oy, inFrame) {
+  for (const e of parent.children) {
+    if (n >= 500 || ++scanned > 40000) return;
+    const s = getComputedStyle(e);
+    if (s.display === 'none') continue;
+    const editor = e.isContentEditable && !(e.parentElement && e.parentElement.isContentEditable);
+    const pointer = s.cursor === 'pointer' && !(e.parentElement && getComputedStyle(e.parentElement).cursor === 'pointer');
+    const clicky = e.matches(CLICKY) || editor;
+    if ((clicky || pointer) && s.visibility !== 'hidden') add(e, s, ox, oy, inFrame, editor, clicky);
+    if (e.isContentEditable && !editor) continue;
+    if (e.shadowRoot) visit(e.shadowRoot, ox, oy, inFrame);
+    if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
+      let d = null; try { d = e.contentDocument; } catch (err) {}
+      const fr = e.getBoundingClientRect();
+      if (d && d.body) visit(d.body, ox + fr.left + e.clientLeft, oy + fr.top + e.clientTop, true);
+      else if (fr.width > 60 && fr.height > 40 && e.src && /^https?:/.test(e.src)) closedFrames.push(e.src);
+    }
+    visit(e, ox, oy, inFrame);
+  }
+}
+function add(e, s, ox, oy, inFrame, editor, clicky) {
+  const r = e.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return;
+  // A page's own 1px helper fields, hidden from everyone; real checkboxes hidden behind a styled label stay.
+  if (r.width <= 1 && r.height <= 1 && !/^(checkbox|radio)$/.test(e.type) && (e.getAttribute('aria-hidden') === 'true' || e.tabIndex < 0)) return;
+  // A pointer cursor alone counts only for something with words or a picture; else it's decoration.
+  if (!clicky && !(e.innerText || '').trim() && !e.querySelector('svg,img') && !e.getAttribute('aria-label')) return;
+  const top = { x: ox + r.left, y: oy + r.top };
+  const inView = top.y + r.height > 0 && top.y < innerHeight && top.x + r.width > 0 && top.x < innerWidth;
+  if (A.only_in_view && !inView) return;
+  const ref = String(++n);
+  e.setAttribute('data-valerie-ref', ref);
+  const o = { ref, tag: e.tagName.toLowerCase(), label: nameOf(e) };
+  const role = e.getAttribute('role');
+  if (role) o.role = role;
+  if (e.type && e.tagName !== 'BUTTON' && e.tagName !== 'SELECT') o.type = e.type;
+  if (editor) o.editor = true;
+  if (e.tagName === 'SELECT') { o.value = clean(e.selectedOptions[0] && e.selectedOptions[0].text); o.options = [...e.options].slice(0, 30).map((x) => clean(x.text)); }
+  else if (/^(checkbox|radio)$/.test(e.type)) o.checked = e.checked;
+  else if (e.type === 'password') { if (e.value) o.value = '(filled)'; }
+  else if (/^(INPUT|TEXTAREA)$/.test(e.tagName)) { if (e.value) o.value = e.value.slice(0, 100); }
+  else if (editor) o.value = clean(e.innerText).slice(0, 100);
+  for (const [k, attr] of [['checked', 'aria-checked'], ['expanded', 'aria-expanded'], ['selected', 'aria-selected'], ['pressed', 'aria-pressed']]) {
+    const v = e.getAttribute(attr);
+    if (v === 'true' || v === 'false') o[k] = v === 'true';
+  }
+  // Short: same-site links as a path, and no 2,000-character ad redirects (click by ref; read_page links has them whole).
+  if (e.href) {
+    let h = String(e.href);
+    try { const u = new URL(h); if (u.origin === location.origin) h = u.pathname + u.search + u.hash; } catch (err) {}
+    o.href = h.length > 150 ? h.slice(0, 150) + '…' : h;
+  }
+  if (e.disabled || e.getAttribute('aria-disabled') === 'true') o.disabled = true;
+  if (inFrame) o.in_frame = true;
+  if (!inView) o.offscreen = true;
+  else {
+    const c = coverAt(e).cover;
+    if (c && !edgeBar(c)) o.covered = coverName(c);
+  }
+  out.push(o);
+}
+visit(document.body || document.documentElement, 0, 0, false);
+const result = { url: location.href, title: document.title, elements: out };
+if (out.some((o) => o.covered)) result.note = 'covered says what sits on top of an element (a dialog, menu, banner or another link): deal with that first';
+// Another site's frame (an embedded editor, a payment form, a video) can't be reached from here: open its address instead.
+if (closedFrames.length) result.other_site_frames = [...new Set(closedFrames)].slice(0, 10);
+return result;
 "#;
 
 /// The page (or its main content with `A.main_only`) as Markdown, text or HTML; `A.links` adds every link on the page.
@@ -2039,24 +2373,11 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         }
         "snapshot" => {
             let tab = wait_ready(proxy, tab)?;
-            eval(proxy, tab, &with_args(&a, SNAPSHOT_JS))
+            eval(proxy, tab, &with_args(&a, &format!("{FINISH_ANIMATIONS_JS}\n{FIND_JS}\n{SNAPSHOT_JS}")))
         }
-        "click" => {
-            let js = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\nconst e = find(); e.scrollIntoView({{block: 'center'}}); \
-                if (e.focus) e.focus({{preventScroll: true}}); \
-                for (const t of ['pointerdown','mousedown','pointerup','mouseup']) e.dispatchEvent(new MouseEvent(t, {{bubbles: true, cancelable: true, view: window}})); \
-                e.click(); return 'clicked ' + describe(e);"));
-            eval(proxy, tab, &js)
-        }
-        "type" => eval(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}"))),
-        "hover" => {
-            let js = with_args(&a, &format!("{FIND_JS}\nconst e = find(); e.scrollIntoView({{block: 'center'}}); const r = e.getBoundingClientRect(); \
-                const at = {{bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2}}; \
-                for (const t of ['pointerover','pointerenter']) e.dispatchEvent(new PointerEvent(t, at)); \
-                for (const t of ['mouseover','mouseenter','pointermove','mousemove']) e.dispatchEvent(t[0] === 'p' ? new PointerEvent(t, at) : new MouseEvent(t, at)); \
-                return 'hovering over ' + describe(e);"));
-            eval(proxy, tab, &js)
-        }
+        "click" => act(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"))),
+        "type" => act(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}"))),
+        "hover" => eval(proxy, tab, &with_args(&a, &format!("{FIND_JS}\n{POINTER_JS}\nreturn hoverOn(find());"))),
         "upload_file" => {
             let mut files = Vec::new();
             let mut total = 0;
@@ -2067,21 +2388,21 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                     return Err("those files are over 20 MB in all".into());
                 }
                 let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                files.push(json!({ "name": name, "data": base64(&bytes) }));
+                files.push(json!({ "name": name, "data": base64(&bytes), "type": file_type(&name) }));
             }
             if files.is_empty() {
                 return Err("paths lists no files".into());
             }
             let args = json!({ "ref": a["ref"], "selector": a["selector"], "files": files });
             let js = with_args(&args, &format!("{FIND_JS}\nconst e = find(); \
-                if (!(e instanceof HTMLInputElement) || e.type !== 'file') throw new Error('that is not a file input: ' + describe(e)); \
-                const list = new DataTransfer(); \
-                for (const f of A.files) list.items.add(new File([Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0))], f.name)); \
-                e.files = list.files; e.dispatchEvent(new Event('input', {{bubbles: true}})); e.dispatchEvent(new Event('change', {{bubbles: true}})); \
+                if (e.tagName !== 'INPUT' || e.type !== 'file') throw new Error('that is not a file input: ' + describe(e)); \
+                const W = e.ownerDocument.defaultView, list = new W.DataTransfer(); \
+                for (const f of A.files) list.items.add(new W.File([Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0))], f.name, {{ type: f.type }})); \
+                e.files = list.files; e.dispatchEvent(new W.Event('input', {{bubbles: true}})); e.dispatchEvent(new W.Event('change', {{bubbles: true}})); \
                 return 'chose ' + e.files.length + ' file(s) for ' + describe(e);"));
             eval(proxy, tab, &js)
         }
-        "press_key" => eval(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{KEYS_JS}\n{PRESS_KEY_JS}"))),
+        "press_key" => act(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{PRESS_KEY_JS}"))),
         "scroll" => {
             let js = with_args(&a, &format!("{FIND_JS}\nif (A.ref) {{ const e = find(); e.scrollIntoView({{block: 'center'}}); return 'scrolled to ' + describe(e); }} \
                 const s = document.scrollingElement || document.documentElement; const h = innerHeight * 0.8; \

@@ -1684,6 +1684,10 @@ impl App {
         c["space"] = json!(self.space_name(space));
         // Its own space's accent, so switching spaces doesn't have to tell every page.
         c["accent"] = json!(self.theme_for(space).accent);
+        // A tab no one sees (an agent's, or one fetch_page reads): pages there still draw (content.js timerFrames).
+        if let Target::Tab(id) = target {
+            c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
+        }
         c
     }
 
