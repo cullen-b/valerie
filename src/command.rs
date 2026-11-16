@@ -358,6 +358,7 @@ pub enum Command {
     HideElement,
     /// Bring back everything hidden with hide_element on this site.
     ShowHiddenElements,
+    ForgetCookieChoice,
     /// Open the page in the translation service from `translate`.
     TranslatePage,
     /// Copy "[title](url)" for the current page.
@@ -871,6 +872,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("reader_view", "Reader View"),
     ("hide_element", "Hide an Element on This Site…"),
     ("show_hidden_elements", "Show Hidden Elements on This Site"),
+    ("forget_cookie_choice", "Forget My Cookie Pop-up Answer on This Site"),
     ("translate_page", "Translate Page"),
     ("copy_markdown_link", "Copy Link as Markdown"),
     ("copy_link_to_highlight", "Copy Link to Highlighted Text"),

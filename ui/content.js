@@ -1503,9 +1503,32 @@ const CMPS = [
 const REJECT_TEXT = /^(reject|decline|deny|refuse)( all| optional)?( cookies)?$|^(use |allow )?(only )?(strictly )?(necessary|essential|required)( cookies)?( only)?$/i;
 function cookieBanners() {
   const mode = (cfg.privacy || {}).cookie_banners;
+const ACCEPT_TEXT = /^(accept|allow|agree|ok|okay|got it|i agree|i accept|i understand|understood)( all)?( cookies)?[.!]?$/i;
+const BUTTONS = "button, a[role=button], [role=button], input[type=button], input[type=submit]";
+const buttonText = (b) => ((b.tagName === "INPUT" ? b.value : b.textContent) || "").trim().replace(/\s+/g, " ");
+// The cookie banner a button sits in: something named cookie/consent/gdpr, or the first pop-up or pinned bar around it if its words mention cookies.
+function cookieBannerOf(el) {
+  for (let e = el.parentElement, i = 0; e && e !== document.body && i < 12; e = e.parentElement, i++) {
+    if (/cookie|consent|gdpr/i.test(e.id + " " + (typeof e.className === "string" ? e.className : ""))) return e;
+    if (e.matches("dialog, [role=dialog], [role=alertdialog], [aria-modal=true]") || /fixed|sticky/.test(getComputedStyle(e).position)) {
+      const t = e.textContent; return t.length < 4000 && /cookie/i.test(t) ? e : null;
+    }
+  }
+  return null;
+}
+// The button the user told Valerie to click on this site's banner (privacy.offer_cookie_help).
+const cookieRule = () => (cfg.cookie_buttons || {})[location.hostname.replace(/^www\./, "").toLowerCase()];
+function learnedButton(rule) {
+  let list = [];
+  try { list = [...document.querySelectorAll(rule.selector || BUTTONS)]; } catch (_) { return null; }
+  const want = (rule.text || "").toLowerCase();
+  return list.find((b) => (rule.selector || buttonText(b).toLowerCase() === want) && b.getClientRects().length && cookieBannerOf(b));
+}
   if (!mode || mode === "off" || !document.documentElement) return;
   if (!document.getElementById("__valerie_cmp")) {
     const st = document.createElement("style"); st.id = "__valerie_cmp";
+  const rule = cookieRule();
+  if (rule) { const b = document.body && learnedButton(rule); if (b) b.click(); return !!b; }
     st.textContent = CMPS.map((c) => c[0]).join(",\n") + " { display: none !important; }";
     document.documentElement.appendChild(st);
   }
@@ -1521,17 +1544,40 @@ function cookieBanners() {
     if (b) { b.click(); done = true; }
   }
   if (!done) {
-    // Unknown tools: a "Reject all" / "Only necessary" button inside something named cookie/consent/gdpr.
-    const scope = document.querySelectorAll("[id*=cookie i], [class*=cookie i], [id*=consent i], [class*=consent i], [id*=gdpr i], [class*=gdpr i]");
-    for (const s of scope) {
-      const b = [...s.querySelectorAll("button, a[role=button], [role=button]")].find((x) => REJECT_TEXT.test(x.textContent.trim()));
-      if (b) { b.click(); done = true; break; }
-    }
+    // Unknown tools: a "Reject all" / "Only necessary" button in a cookie banner.
+    const b = [...document.querySelectorAll(BUTTONS)].find((x) => REJECT_TEXT.test(buttonText(x)) && x.getClientRects().length && cookieBannerOf(x));
+    if (b) { b.click(); done = true; }
   }
   return done;
 }
 // Banners load late, so keep looking for a few seconds after load, then stop watching.
 {
+// The user answered a cookie banner Valerie didn't: tell Valerie, which may offer to answer it the same way next time.
+document.addEventListener("click", (e) => {
+  const p = cfg.privacy || {};
+  if (!e.isTrusted || !p.offer_cookie_help || (p.cookie_banners || "off") === "off" || cookieRule()) return;
+  const b = e.target instanceof Element && e.target.closest(BUTTONS);
+  const text = b && buttonText(b);
+  if (!text || text.length > 40 || !(REJECT_TEXT.test(text) || ACCEPT_TEXT.test(text)) || !cookieBannerOf(b)) return;
+  const id = b.getAttribute("data-testid");
+  const selector = id ? `[data-testid="${CSS.escape(id)}"]` : b.id && !/\d{3}|:/.test(b.id) ? "#" + CSS.escape(b.id) : "";
+  post({ t: "cookie_click", text, selector });
+}, true);
+function cookieOffer(text, site, nonce) {
+  if (!document.documentElement) return;
+  const box = document.createElement("div"); box.className = "save";
+  const p = document.createElement("p"); p.textContent = tr(`Click “${text}” on ${site}'s cookie pop-up for you from now on?`);
+  box.append(p);
+  const button = (label, cls, msg) => {
+    const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
+    b.addEventListener("click", (e) => { if (!e.isTrusted) return; box.remove(); if (msg) post(msg); });
+    box.append(b);
+  };
+  button("Do it for me", "primary", { t: "cookie_learn", nonce });
+  button("No thanks", "", null);
+  ui().appendChild(box);
+  setTimeout(() => box.remove(), 15000);
+}
   let tries = 0, timer = 0, finished = false;
   const look = () => { timer = 0; if (!finished && (cookieBanners() || ++tries > 20)) { finished = true; cmpWatch.disconnect(); } };
   const cmpWatch = new MutationObserver(() => { if (!timer) timer = setTimeout(look, 400); });
@@ -1913,7 +1959,7 @@ Object.defineProperty(window, "__valerie", {
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, toast, find: openFind, findStep, hints: startHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
-    fill, offerSave,
+    fill, offerSave, cookieOffer,
     consoleLines: () => consoleKept.slice(),
     timerFrames,
     network: (o) => {

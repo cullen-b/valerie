@@ -101,6 +101,14 @@ pub struct Space {
     pub pinned_hash: Option<String>,
 }
 
+/// A cookie pop-up button: found by `selector` when the site gives it a stable one, otherwise by its words.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CookieButton {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub selector: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Archived {
     pub url: String,
@@ -216,6 +224,12 @@ pub struct State {
     /// Sites where the user turned Valerie's dark mode on (true) or off (false), overriding pages.dark_mode.
     #[serde(default)]
     pub dark_sites: BTreeMap<String, bool>,
+    /// The cookie pop-up button Valerie clicks for the user on each site (they said "Do it for me").
+    #[serde(default)]
+    pub cookie_buttons: BTreeMap<String, CookieButton>,
+    /// Sites where Valerie already offered to answer the cookie pop-up, so it never asks twice.
+    #[serde(default)]
+    pub cookie_offered: std::collections::BTreeSet<String>,
     /// How much history, archive and closed tabs to keep (from the `history` settings; not saved).
     #[serde(skip)]
     pub limits: Limits,
