@@ -1501,8 +1501,6 @@ const CMPS = [
   ["#gdpr-cookie-message, #cookie-notice, #cookieConsent, #cookie-banner, .cookie-banner, #CookieBanner", null],
 ];
 const REJECT_TEXT = /^(reject|decline|deny|refuse)( all| optional)?( cookies)?$|^(use |allow )?(only )?(strictly )?(necessary|essential|required)( cookies)?( only)?$/i;
-function cookieBanners() {
-  const mode = (cfg.privacy || {}).cookie_banners;
 const ACCEPT_TEXT = /^(accept|allow|agree|ok|okay|got it|i agree|i accept|i understand|understood)( all)?( cookies)?[.!]?$/i;
 const BUTTONS = "button, a[role=button], [role=button], input[type=button], input[type=submit]";
 const buttonText = (b) => ((b.tagName === "INPUT" ? b.value : b.textContent) || "").trim().replace(/\s+/g, " ");
@@ -1524,11 +1522,13 @@ function learnedButton(rule) {
   const want = (rule.text || "").toLowerCase();
   return list.find((b) => (rule.selector || buttonText(b).toLowerCase() === want) && b.getClientRects().length && cookieBannerOf(b));
 }
+function cookieBanners() {
+  const mode = (cfg.privacy || {}).cookie_banners;
   if (!mode || mode === "off" || !document.documentElement) return;
-  if (!document.getElementById("__valerie_cmp")) {
-    const st = document.createElement("style"); st.id = "__valerie_cmp";
   const rule = cookieRule();
   if (rule) { const b = document.body && learnedButton(rule); if (b) b.click(); return !!b; }
+  if (!document.getElementById("__valerie_cmp")) {
+    const st = document.createElement("style"); st.id = "__valerie_cmp";
     st.textContent = CMPS.map((c) => c[0]).join(",\n") + " { display: none !important; }";
     document.documentElement.appendChild(st);
   }
@@ -1550,8 +1550,6 @@ function learnedButton(rule) {
   }
   return done;
 }
-// Banners load late, so keep looking for a few seconds after load, then stop watching.
-{
 // The user answered a cookie banner Valerie didn't: tell Valerie, which may offer to answer it the same way next time.
 document.addEventListener("click", (e) => {
   const p = cfg.privacy || {};
@@ -1578,6 +1576,8 @@ function cookieOffer(text, site, nonce) {
   ui().appendChild(box);
   setTimeout(() => box.remove(), 15000);
 }
+// Banners load late, so keep looking for a few seconds after load, then stop watching.
+{
   let tries = 0, timer = 0, finished = false;
   const look = () => { timer = 0; if (!finished && (cookieBanners() || ++tries > 20)) { finished = true; cmpWatch.disconnect(); } };
   const cmpWatch = new MutationObserver(() => { if (!timer) timer = setTimeout(look, 400); });
