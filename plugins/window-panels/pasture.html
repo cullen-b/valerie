@@ -1,0 +1,220 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pasture</title>
+<!-- Every tab is a sheep. Click one to go to its tab, middle-click or × to send it home, the gate makes a new tab.
+     A template for "show my tabs as anything": read valerie.state, draw, and act with run_command. -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    --sky: #cfe8f3; --hill: #a9d27a; --grass: #8cc05c; --grass-deep: #6fa443; --wool: #f8f4ea; --wool-edge: #e2dccd;
+    --face: #3b3330; --sign: #c79a5e; --sign-dark: #8a6436; --ink: #2f2a22; --ribbon: #d8433b; --bell: #e8b93a;
+    font: 600 11.5px/1.2 ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif; color: var(--ink);
+    user-select: none; -webkit-user-select: none; cursor: default;
+    background:
+      radial-gradient(120% 70% at 30% 118%, var(--grass-deep), transparent 60%),
+      radial-gradient(90% 60% at 85% 120%, var(--grass-deep), transparent 55%),
+      linear-gradient(var(--sky) 0, var(--sky) 18%, var(--hill) 18.5%, var(--grass) 55%, var(--grass-deep));
+  }
+  body.dark {
+    --sky: #1d2440; --hill: #2f4a35; --grass: #2b4430; --grass-deep: #1e3324; --wool: #e9e6f0; --wool-edge: #b9b5c8;
+    --face: #1b1720; --sign: #7a5a3a; --sign-dark: #4d3721; --ink: #f1ecdf;
+  }
+  #moon { position: absolute; right: 120px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: #f4eed2; box-shadow: 0 0 12px #f4eed288; display: none; }
+  body.dark #moon { display: block; }
+  #field { position: absolute; inset: 0; }
+  #fence { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
+  body.mac #fence { width: 80px; }
+  #fence svg { position: absolute; left: 4px; bottom: 12px; width: 72px; height: 30px; }
+
+  .sheep { position: absolute; left: 0; top: 0; width: 56px; height: 46px; padding: 0; border: 0; background: none; transform-origin: 28px 40px; will-change: transform; }
+  .sheep svg { position: absolute; left: 4px; top: 4px; width: 48px; height: 38px; overflow: visible; filter: drop-shadow(0 2px 0 rgba(0,0,0,.12)); }
+  .sheep .flip { transition: transform .25s; transform-origin: 24px 19px; }
+  .sheep.left .flip { transform: scaleX(-1); }
+  .sheep .tag { position: absolute; left: 21px; top: 15px; width: 15px; height: 15px; border-radius: 4px; background: #fff; box-shadow: 0 0 0 1.5px var(--wool-edge); display: grid; place-items: center; overflow: hidden; }
+  .sheep .tag img { width: 12px; height: 12px; }
+  .sheep .label {
+    position: absolute; left: 50%; top: 44px; transform: translateX(-50%); max-width: 150px; padding: 2px 7px 3px; border-radius: 4px;
+    background: var(--sign); color: #2b1d0c; box-shadow: 0 1px 0 var(--sign-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    opacity: 0; transition: opacity .15s; pointer-events: none;
+  }
+  .sheep:hover .label, .sheep.on .label, .sheep:focus-visible .label { opacity: 1; }
+  .sheep.on { z-index: 5; }
+  .sheep:hover { z-index: 6; }
+  .sheep .home { position: absolute; right: -2px; top: -4px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: var(--sign); color: #2b1d0c; font: 700 12px/18px system-ui; opacity: 0; transition: opacity .15s; }
+  .sheep:hover .home, .sheep .home:focus-visible { opacity: 1; }
+  .sheep .home:hover { background: #e9b678; }
+  .sheep .note { position: absolute; left: 40px; top: -8px; font-size: 13px; color: var(--ink); display: none; }
+  .sheep.playing .note { display: block; animation: bob 1.2s ease-in-out infinite; }
+  .sheep.loading svg { animation: hop .5s ease-in-out infinite; }
+  @keyframes hop { 50% { transform: translateY(-5px); } }
+  @keyframes bob { 50% { transform: translateY(-3px) rotate(8deg); } }
+  button:focus-visible, .sheep:focus-visible { outline: 2px solid var(--ribbon); outline-offset: 2px; border-radius: 8px; }
+
+  #gate { position: absolute; right: 10px; bottom: 10px; width: 54px; height: 40px; border: 0; padding: 0; background: none; }
+  #gate svg { width: 100%; height: 100%; }
+  #gate .sign { position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); padding: 1px 6px 2px; border-radius: 3px; background: var(--sign); color: #2b1d0c; white-space: nowrap; opacity: 0; transition: opacity .15s; }
+  #gate:hover .sign, #gate:focus-visible .sign { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .sheep.loading svg, .sheep.playing .note { animation: none; } .sheep .flip { transition: none; } }
+</style>
+</head>
+<body>
+<div id="moon"></div>
+<div id="field"></div>
+<div id="fence"></div>
+<button id="gate" aria-label="New tab"><span class="sign">New lamb</span></button>
+<script>
+  const NS = "http://www.w3.org/2000/svg";
+  const field = document.getElementById("field");
+  const command = (c) => valerie.call("run_command", { command: c });
+  const flat = (nodes) => (nodes || []).flatMap((n) => n.type === "folder" ? flat(n.children) : [n]);
+  const mac = /Mac/.test(navigator.platform);
+  const still = matchMedia("(prefers-reduced-motion: reduce)");
+  const dark = matchMedia("(prefers-color-scheme: dark)");
+  document.body.classList.toggle("mac", mac);
+  const night = () => document.body.classList.toggle("dark", (valerie.props || {}).night === true || ((valerie.props || {}).night !== false && dark.matches));
+  dark.addEventListener("change", night);
+  night();
+
+  function svg(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (parent) parent.append(e);
+    return e;
+  }
+  // A sheep: woolly cloud, dark face and legs. The one you're on wears a ribbon and bell.
+  function drawSheep() {
+    const s = svg("svg", { viewBox: "0 0 48 38" });
+    const g = svg("g", { class: "flip" }, s);
+    for (const x of [14, 22, 30]) svg("line", { x1: x, y1: 26, x2: x - 1, y2: 36, stroke: "var(--face)", "stroke-width": 3, "stroke-linecap": "round" }, g);
+    svg("line", { x1: 36, y1: 26, x2: 37, y2: 36, stroke: "var(--face)", "stroke-width": 3, "stroke-linecap": "round" }, g);
+    for (const [cx, cy, r] of [[12, 18, 8], [20, 12, 9], [30, 12, 9], [36, 19, 8], [26, 24, 9], [16, 24, 8], [24, 17, 10]])
+      svg("circle", { cx, cy, r, fill: "var(--wool)", stroke: "var(--wool-edge)", "stroke-width": 1 }, g);
+    svg("ellipse", { cx: 42, cy: 14, rx: 6, ry: 7.5, fill: "var(--face)" }, g);
+    svg("ellipse", { cx: 37.5, cy: 10, rx: 3, ry: 1.6, fill: "var(--face)", transform: "rotate(-25 37.5 10)" }, g);
+    svg("circle", { cx: 44, cy: 12.5, r: 1.1, fill: "#fff" }, g);
+    const ribbon = svg("g", { class: "ribbon", visibility: "hidden" }, g);
+    svg("path", { d: "M36 18.5 Q40 22 44 19", stroke: "var(--ribbon)", "stroke-width": 2.4, fill: "none", "stroke-linecap": "round" }, ribbon);
+    svg("circle", { cx: 40, cy: 23.5, r: 2.6, fill: "var(--bell)", stroke: "#a77b12", "stroke-width": .8 }, ribbon);
+    return s;
+  }
+
+  const flock = new Map(); // tab id → { el, x, y, tx, ty, wait, left }
+  let settled = false; // after the first draw, new sheep walk in through the gate
+  const W = () => field.clientWidth, H = () => field.clientHeight;
+  const minX = () => (mac ? 84 : 6), maxX = () => Math.max(minX() + 10, W() - 120);
+  const minY = () => Math.max(4, H() * 0.18 - 6), maxY = () => Math.max(minY() + 4, H() - 62);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  function pick(sh) { sh.tx = rand(minX(), maxX()); sh.ty = rand(minY(), maxY()); sh.wait = rand(60, 360); }
+
+  function addSheep(t) {
+    const el = document.createElement("div");
+    el.className = "sheep";
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.append(drawSheep());
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    const label = document.createElement("span");
+    label.className = "label";
+    const note = document.createElement("span");
+    note.className = "note";
+    note.textContent = "♪";
+    const home = document.createElement("button");
+    home.className = "home";
+    home.textContent = "×";
+    home.title = "Send home (close tab)";
+    home.setAttribute("aria-label", "Close tab");
+    el.append(tag, label, note, home);
+    // New lambs come in through the gate; on first draw the flock is already grazing.
+    const entering = settled;
+    const sh = { el, tag, label, favicon: false, x: entering ? W() - 70 : rand(minX(), maxX()), y: entering ? maxY() : rand(minY(), maxY()), left: entering, id: t.id };
+    pick(sh);
+    if (entering) sh.wait = 0;
+    el.addEventListener("click", () => command({ cmd: "activate_tab", tab: sh.id }));
+    el.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); command({ cmd: "activate_tab", tab: sh.id }); } });
+    el.addEventListener("auxclick", (e) => { if (e.button === 1) command({ cmd: "close_tab", tab: sh.id }); });
+    home.addEventListener("click", (e) => { e.stopPropagation(); command({ cmd: "close_tab", tab: sh.id }); });
+    field.append(el);
+    flock.set(t.id, sh);
+    return sh;
+  }
+
+  function draw() {
+    const s = valerie.state;
+    if (!s) return;
+    const tabs = [...flat(s.pinned), ...flat(s.kept), ...(s.today || [])];
+    const ids = new Set(tabs.map((t) => t.id));
+    for (const [id, sh] of flock) if (!ids.has(id)) { sh.el.remove(); flock.delete(id); }
+    const crowd = tabs.length > 24 ? .7 : tabs.length > 12 ? .85 : 1;
+    for (const t of tabs) {
+      const sh = flock.get(t.id) || addSheep(t);
+      const name = t.title || t.url || "New tab";
+      sh.label.textContent = name;
+      sh.el.title = name;
+      sh.el.setAttribute("aria-label", name + (t.id === s.active ? " (current tab)" : ""));
+      sh.el.classList.toggle("on", t.id === s.active);
+      sh.el.classList.toggle("loading", !!t.loading);
+      sh.el.classList.toggle("playing", !!t.playing && !t.muted);
+      sh.el.querySelector(".ribbon").setAttribute("visibility", t.id === s.active ? "visible" : "hidden");
+      sh.scale = (t.id === s.active ? 1.15 : 1) * crowd;
+      if (sh.favicon !== t.favicon) {
+        sh.favicon = t.favicon;
+        if (t.favicon) { const i = document.createElement("img"); i.src = t.favicon; i.alt = ""; i.width = i.height = 12; i.addEventListener("error", () => { sh.tag.style.display = "none"; }, { once: true }); sh.tag.replaceChildren(i); sh.tag.style.display = ""; }
+        else sh.tag.style.display = "none";
+      }
+      place(sh);
+    }
+    settled = true;
+  }
+  function place(sh) {
+    sh.el.classList.toggle("left", sh.left);
+    sh.el.style.transform = `translate(${sh.x.toFixed(1)}px, ${sh.y.toFixed(1)}px) scale(${sh.scale || 1})`;
+    sh.el.style.zIndex = sh.el.classList.contains("on") ? 5 : Math.round(sh.y);
+  }
+  // Graze, amble somewhere, graze again. Sheep under the pointer stand still so they're easy to click.
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(64, now - last) / 16.7;
+    last = now;
+    if (!still.matches) {
+      for (const sh of flock.values()) {
+        if (sh.el.matches(":hover, :focus-within")) continue;
+        if (sh.wait > 0) { sh.wait -= dt; continue; }
+        const dx = sh.tx - sh.x, dy = sh.ty - sh.y, d = Math.hypot(dx, dy);
+        if (d < 1.5) { pick(sh); continue; }
+        const step = Math.min(d, 0.45 * dt);
+        sh.x += (dx / d) * step;
+        sh.y += (dy / d) * step;
+        if (Math.abs(dx) > 2) sh.left = dx < 0;
+        place(sh);
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // A bit of fence keeps the flock clear of the window buttons on a Mac.
+  if (mac) {
+    const fs = svg("svg", { viewBox: "0 0 72 30" });
+    for (const y of [9, 19]) svg("rect", { x: 0, y, width: 72, height: 3, rx: 1, fill: "var(--sign)" }, fs);
+    for (const x of [4, 36, 66]) svg("rect", { x, y: 3, width: 4, height: 27, rx: 1, fill: "var(--sign-dark)" }, fs);
+    document.getElementById("fence").append(fs);
+  }
+  const gate = document.getElementById("gate");
+  const gs = svg("svg", { viewBox: "0 0 54 40" });
+  for (const x of [3, 51]) svg("rect", { x: x - 3, y: 4, width: 6, height: 36, rx: 1.5, fill: "var(--sign-dark)" }, gs);
+  for (const y of [10, 20, 30]) svg("rect", { x: 4, y, width: 46, height: 4, rx: 1, fill: "var(--sign)" }, gs);
+  svg("path", { d: "M6 32 L48 11", stroke: "var(--sign)", "stroke-width": 4, "stroke-linecap": "round" }, gs);
+  gate.prepend(gs);
+  gate.addEventListener("click", () => command({ cmd: "new_tab" }));
+  field.addEventListener("mousedown", (e) => { if (e.button === 0 && e.target === field) valerie.dragWindow(); });
+
+  valerie.on("state", draw);
+  addEventListener("resize", () => { for (const sh of flock.values()) { sh.x = Math.min(Math.max(sh.x, minX()), maxX()); sh.y = Math.min(Math.max(sh.y, minY()), maxY()); pick(sh); place(sh); } });
+  draw();
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>

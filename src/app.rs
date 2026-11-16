@@ -4246,6 +4246,9 @@ impl App {
         let folder_section = if section == "pinned" || !self.config.sidebar.kept_section { "pinned" } else { "kept" };
         e.push(item("New Folder…", json!({ "cmd": "prompt", "label": "Folder name", "value": "New Folder", "then": { "cmd": "new_folder", "section": folder_section }, "field": "name" })));
         e.push(item(if keeps { "Unload Tab" } else { "Close Tab" }, json!({ "cmd": "close_tab", "tab": tab })));
+        if keeps {
+            e.push(item("Close and Remove from Sidebar", json!({ "cmd": "delete_items", "tabs": [tab] })));
+        }
         let ctx: std::collections::BTreeMap<String, String> = [("tab".to_string(), t.url.clone())].into();
         e.extend(self.plugin_menu_items(&["tab"], &ctx));
         self.popup(e, x, y);

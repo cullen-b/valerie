@@ -108,6 +108,8 @@ sidebar:
   kept_section: true       # the Kept list under the pinned icons: tabs that stay until you remove them, and where folders live. Keep it on unless the user asks by name to hide it
   minus_for_saved_tabs: true   # pinned and kept tabs show − instead of ×: it closes the page but keeps the tab in the
                            # sidebar (× on a pinned tab does the same). false = × everywhere
+  remove_closed_saved_tabs: true # a closed (unloaded) pinned or kept row shows × on hover: it removes the tab from the
+                           # sidebar. So − then × (pointer still on the row) closes it for good. false = no button once closed
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
@@ -589,6 +591,10 @@ routes:
 # Modifiers: CmdOrCtrl (⌘ on Mac, Ctrl elsewhere), Cmd, Ctrl, Alt, Shift. Set a shortcut to null to turn it off.
 # On Windows and Linux, the Ctrl+1 to Ctrl+5 space shortcuts below are Alt+1 to Alt+5 (Ctrl+1 is the first tab there).
 # A key sequence is keys separated by spaces: "CmdOrCtrl+K CmdOrCtrl+S" means ⌘K, then ⌘S.
+# Shortcuts as in the browser someone used before: ⌘T new tab, ⌘D bookmark, ⌘J / ⌘Y downloads and history, ⌘N new
+# window, Ctrl+Tab next tab... Valerie's own moved to ⌥: ⌥⌘J chats, ⌥⌘K command bar, ⌥⌘S sidebar. The keybindings
+# below still win over it. `valerie effective-config` shows the result. one of: valerie | chrome | edge | firefox | safari
+shortcuts_like: valerie
 keybindings:
   "CmdOrCtrl+D": open_command_bar
   # "CmdOrCtrl+T": new_tab           # off by default; uncomment to open the command bar with ⌘T as well

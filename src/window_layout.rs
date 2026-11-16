@@ -17,6 +17,11 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("workbench", include_str!("../ui/layouts/workbench.yaml")),
     ("tab-strip", include_str!("../ui/layouts/tab-strip.yaml")),
     ("valerie-98", include_str!("../ui/layouts/valerie-98.yaml")),
+    ("like-chrome", include_str!("../ui/layouts/like-chrome.yaml")),
+    ("like-edge", include_str!("../ui/layouts/like-edge.yaml")),
+    ("like-firefox", include_str!("../ui/layouts/like-firefox.yaml")),
+    ("like-safari", include_str!("../ui/layouts/like-safari.yaml")),
+    ("pasture", include_str!("../ui/layouts/pasture.yaml")),
 ];
 
 /// The settings sections a layout may bring: how the window looks, never what Valerie is allowed to do. Layouts arrive

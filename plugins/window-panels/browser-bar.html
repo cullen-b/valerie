@@ -1,0 +1,346 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Browser Bar</title>
+<!-- The tab strip, toolbar and bookmarks bar of the browser someone came from. props: style (chrome | edge | firefox |
+     safari), role (bar | bookmarks), appearance (system | light | dark). Used by the like-* layouts. -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    display: flex; flex-direction: column; background: var(--frame); color: var(--fg);
+    font: 12px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-user-select: none; cursor: default;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; padding: 0; }
+  button:focus-visible, input:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  /* ---------- palettes ---------- */
+  body.chrome.light  { --frame: #dfe3e8; --toolbar: #fff; --tab-on: #fff; --tab-hover: #eceff2; --fg: #1f1f1f; --dim: #474747; --field: #e9eef6; --field-on: #fff; --line: #c4c7c5; --accent: #0b57d0; --btn-hover: rgba(31,31,31,.08); }
+  body.chrome.dark   { --frame: #1f1f1f; --toolbar: #35363a; --tab-on: #35363a; --tab-hover: #2b2b2e; --fg: #e3e3e3; --dim: #c4c7c5; --field: #202124; --field-on: #202124; --line: #4a4a4e; --accent: #a8c7fa; --btn-hover: rgba(227,227,227,.1); }
+  body.edge.light    { --frame: #f3f3f3; --toolbar: #fff; --tab-on: #fff; --tab-hover: #e9e9e9; --fg: #1b1b1b; --dim: #5d5d5d; --field: #f3f3f3; --field-on: #fff; --line: #e0e0e0; --accent: #0f6cbd; --btn-hover: rgba(0,0,0,.06); }
+  body.edge.dark     { --frame: #202020; --toolbar: #2c2c2c; --tab-on: #2c2c2c; --tab-hover: #2a2a2a; --fg: #f3f3f3; --dim: #c8c8c8; --field: #1f1f1f; --field-on: #1f1f1f; --line: #3d3d3d; --accent: #4cc2ff; --btn-hover: rgba(255,255,255,.08); }
+  body.firefox.light { --frame: #f0f0f4; --toolbar: #f9f9fb; --tab-on: #fff; --tab-hover: #e0e0e6; --fg: #15141a; --dim: #5b5b66; --field: #f0f0f4; --field-on: #fff; --line: #e0e0e6; --accent: #0061e0; --btn-hover: rgba(21,20,26,.08); }
+  body.firefox.dark  { --frame: #1c1b22; --toolbar: #2b2a33; --tab-on: #42414d; --tab-hover: #2b2a33; --fg: #fbfbfe; --dim: #bfbfc9; --field: #1c1b22; --field-on: #42414d; --line: #0c0c0d; --accent: #00ddff; --btn-hover: rgba(251,251,254,.1); }
+  body.safari.light  { --frame: #dcdcdc; --toolbar: #f5f5f5; --tab-on: #f5f5f5; --tab-hover: #d2d2d2; --fg: #262626; --dim: #6e6e73; --field: rgba(0,0,0,.055); --field-on: #fff; --line: #c8c8c8; --accent: #0a84ff; --btn-hover: rgba(0,0,0,.06); }
+  body.safari.dark   { --frame: #1e1e1e; --toolbar: #323232; --tab-on: #323232; --tab-hover: #2a2a2a; --fg: #e6e6e6; --dim: #9a9a9f; --field: rgba(255,255,255,.08); --field-on: #1e1e1e; --line: #111; --accent: #0a84ff; --btn-hover: rgba(255,255,255,.08); }
+
+  /* ---------- rows ---------- */
+  .row { display: flex; align-items: center; flex: none; min-width: 0; }
+  #strip { height: 41px; align-items: flex-end; padding: 0 8px; gap: 0; }
+  body.mac #strip { padding-left: 78px; }
+  #toolbar { height: 41px; padding: 0 6px; gap: 2px; background: var(--toolbar); }
+  #tabs { display: flex; align-items: flex-end; min-width: 0; flex: 0 1 auto; height: 100%; }
+  .drag { flex: 1; align-self: stretch; min-width: 32px; }
+
+  /* toolbar buttons */
+  .btn { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--dim); flex: none; }
+  .btn:hover { background: var(--btn-hover); color: var(--fg); }
+  .btn:disabled { opacity: .4; }
+  .btn.on svg { fill: var(--accent); stroke: var(--accent); }
+
+  /* address field */
+  #field { flex: 1; display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 6px; padding: 0 6px 0 12px; border-radius: 16px; background: var(--field); color: var(--dim); min-width: 80px; }
+  #field:focus-within { background: var(--field-on); box-shadow: 0 0 0 2px var(--accent); }
+  #field input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; color: var(--fg); font: 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 0; }
+  #field input::placeholder { color: var(--dim); }
+  #field .btn { width: 26px; height: 26px; }
+
+  /* tabs: shared */
+  .tab { position: relative; display: flex; align-items: center; gap: 8px; flex: 0 1 240px; min-width: 44px; height: 34px; padding: 0 8px 0 12px; color: var(--dim); }
+  .tab .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent); }
+  .tab.on { color: var(--fg); }
+  .tab .ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; }
+  .tab .ic img { width: 16px; height: 16px; border-radius: 3px; }
+  .tab .x { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; flex: none; color: var(--dim); }
+  .tab .x svg { width: 11px; height: 11px; stroke-width: 2.2; }
+  .tab .x:hover { background: var(--btn-hover); color: var(--fg); }
+  .tab.icon { flex: 0 0 auto; min-width: 0; padding: 0 12px; }
+  .tab.icon .name, .tab.icon .x { display: none; }
+  .tab.narrow .name { display: none; }
+  .tab.narrow:not(.on) .x { display: none; }
+  .tab.narrow { justify-content: center; padding: 0 4px; }
+  #new { margin: 0 0 4px 4px; width: 28px; height: 28px; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2.4s; } }
+
+  /* Chrome: tabs join the toolbar, with curved feet, and a hairline between the ones that don't. */
+  body.chrome .tab { border-radius: 10px 10px 0 0; margin-bottom: 0; }
+  body.chrome .tab:not(.on):hover { background: var(--tab-hover); height: 30px; margin-bottom: 4px; border-radius: 8px; }
+  body.chrome .tab.on { background: var(--tab-on); }
+  body.chrome .tab.on::before, body.chrome .tab.on::after { content: ""; position: absolute; bottom: 0; width: 10px; height: 10px; }
+  body.chrome .tab.on::before { left: -10px; background: radial-gradient(circle at 0 0, transparent 10px, var(--tab-on) 10.5px); }
+  body.chrome .tab.on::after { right: -10px; background: radial-gradient(circle at 100% 0, transparent 10px, var(--tab-on) 10.5px); }
+  body.chrome .tab:not(.on) + .tab:not(.on):not(:hover)::before { content: ""; position: absolute; left: 0; top: 9px; height: 16px; width: 1px; background: var(--line); }
+  body.chrome .tab:hover + .tab::before { display: none; }
+
+  /* Edge: rounded cards floating on the strip, the one you're on lifted with a shadow. */
+  body.edge #strip { align-items: center; height: 40px; }
+  body.edge .tab { height: 30px; border-radius: 8px; margin: 0 1px; }
+  body.edge .tab:not(.on):hover { background: var(--tab-hover); }
+  body.edge .tab.on { background: var(--tab-on); box-shadow: 0 0 0 .5px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.14); }
+  body.edge #new { margin: 0 0 0 4px; border-radius: 8px; }
+  body.edge #field { border-radius: 8px; }
+  body.edge #toolbar { border-bottom: 1px solid var(--line); }
+
+  /* Firefox: tabs float as little rounded boxes, the address bar is square-ish. */
+  body.firefox #strip { align-items: center; height: 44px; padding-top: 2px; }
+  body.firefox .tab { height: 36px; border-radius: 4px; margin: 0 2px; }
+  body.firefox .tab:not(.on):hover { background: var(--tab-hover); }
+  body.firefox .tab.on { background: var(--tab-on); box-shadow: 0 0 4px rgba(0,0,0,.25); }
+  body.firefox #new { margin: 0 0 0 4px; border-radius: 4px; }
+  body.firefox #field { border-radius: 4px; }
+  body.firefox .btn { border-radius: 4px; }
+  body.firefox #toolbar { border-bottom: 1px solid var(--line); }
+
+  /* Safari: one tall toolbar with the address in the middle, then even tabs with centred titles. */
+  body.safari #toolbar { height: 52px; order: -1; padding: 0 10px; gap: 4px; }
+  body.safari.mac #toolbar { padding-left: 84px; }
+  body.safari #strip { height: 30px; align-items: stretch; padding: 0; background: var(--frame); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  body.safari.mac #strip { padding-left: 0; }
+  body.safari #tabs { flex: 1; align-items: stretch; }
+  body.safari .tab { flex: 1 1 0; height: auto; max-width: none; justify-content: center; padding: 0 26px; border-radius: 0; }
+  body.safari .tab + .tab { border-left: 1px solid var(--line); }
+  body.safari .tab.on { background: var(--tab-on); }
+  body.safari .tab:not(.on):hover { background: var(--tab-hover); }
+  body.safari .tab .name { flex: 0 1 auto; text-align: center; -webkit-mask-image: none; mask-image: none; text-overflow: ellipsis; }
+  body.safari .tab .x { position: absolute; left: 6px; opacity: 0; }
+  body.safari .tab:hover .x { opacity: 1; }
+  body.safari #new, body.safari #strip .drag { display: none; }
+  body.safari .btn { border-radius: 6px; width: 30px; height: 28px; }
+  body.safari #field { flex: 0 1 560px; margin: 0 auto; border-radius: 8px; height: 30px; padding: 0 6px 0 10px; }
+  body.safari #field input { text-align: center; font-size: 13px; }
+  body.safari #field:focus-within input { text-align: left; }
+  body.safari .spacer { flex: 1; }
+
+  /* ---------- bookmarks bar ---------- */
+  #marks { height: 100%; padding: 0 8px; gap: 2px; background: var(--toolbar); border-bottom: 1px solid var(--line); overflow: hidden; }
+  .mark { display: flex; align-items: center; gap: 6px; max-width: 180px; height: 26px; padding: 0 8px; border-radius: 13px; color: var(--fg); flex: none; }
+  .mark:hover { background: var(--btn-hover); }
+  .mark img { width: 16px; height: 16px; border-radius: 3px; }
+  .mark span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  body.firefox .mark, body.edge .mark, body.safari .mark { border-radius: 4px; }
+  .mark.back { color: var(--dim); }
+</style>
+</head>
+<body>
+<script>
+  const props = valerie.props || {};
+  const STYLES = ["chrome", "edge", "firefox", "safari"];
+  const style = STYLES.includes(props.style) ? props.style : "chrome";
+  const role = props.role === "bookmarks" ? "bookmarks" : "bar";
+  const command = (c) => valerie.call("run_command", { command: c });
+  const flat = (nodes) => (nodes || []).flatMap((n) => n.type === "folder" ? flat(n.children) : [n]);
+  document.body.classList.add(style, /Mac/.test(navigator.platform) ? "mac" : "other");
+
+  // Light or dark: as the layout says, else as the computer is.
+  const dark = matchMedia("(prefers-color-scheme: dark)");
+  function appearance() {
+    const want = props.appearance === "light" || props.appearance === "dark" ? props.appearance : (dark.matches ? "dark" : "light");
+    document.body.classList.toggle("dark", want === "dark");
+    document.body.classList.toggle("light", want !== "dark");
+  }
+  dark.addEventListener("change", appearance);
+  appearance();
+
+  const NS = "http://www.w3.org/2000/svg";
+  const ICONS = {
+    back: style === "safari" ? "M15 5l-7 7 7 7" : "M19 12H5M11 6l-6 6 6 6",
+    forward: style === "safari" ? "M9 5l7 7-7 7" : "M5 12h14M13 6l6 6-6 6",
+    reload: "M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4.5H15",
+    stop: "M6.5 6.5l11 11M17.5 6.5l-11 11",
+    star: "M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.7L12 16.8l-5.1 2.7 1-5.7-4.1-4 5.7-.8z",
+    puzzle: "M10 4.5a2 2 0 0 1 4 0V6h4v4h-1.5a2 2 0 0 0 0 4H18v4h-4v-1.5a2 2 0 0 0-4 0V18H6v-4h1.5a2 2 0 0 0 0-4H6V6h4z",
+    dotsv: "M12 5.5h.01M12 12h.01M12 18.5h.01",
+    dotsh: "M5.5 12h.01M12 12h.01M18.5 12h.01",
+    menu: "M4.5 7h15M4.5 12h15M4.5 17h15",
+    sidebar: "M4 5.5h16v13H4zM9.5 5.5v13",
+    share: "M12 3.5v11M8 7.5l4-4 4 4M7 11H5.5v9h13v-9H17",
+    plus: "M12 5v14M5 12h14",
+    overview: "M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z",
+    lock: "M8 11V8.5a4 4 0 0 1 8 0V11M6.5 11h11v8.5h-11z",
+    globe: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM3.5 12h17M12 3.5c2.8 3.3 2.8 13.7 0 17M12 3.5c-2.8 3.3-2.8 13.7 0 17",
+    folder: "M3.5 7a1 1 0 0 1 1-1h4.8l2 2h8.2a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z",
+    x: "M7 7l10 10M17 7L7 17",
+  };
+  function icon(name) {
+    const s = document.createElementNS(NS, "svg");
+    s.setAttribute("viewBox", "0 0 24 24");
+    s.setAttribute("aria-hidden", "true");
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", ICONS[name]);
+    if (name.startsWith("dots")) p.setAttribute("stroke-width", "3.2");
+    s.append(p);
+    return s;
+  }
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function button(name, label, onClick) {
+    const b = el("button", "btn");
+    b.title = label;
+    b.setAttribute("aria-label", label);
+    b.append(icon(name));
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  function favicon(t) {
+    if (t.loading) return el("span", "spin");
+    if (!t.favicon) return icon("globe");
+    const i = document.createElement("img");
+    i.src = t.favicon;
+    i.alt = "";
+    i.width = i.height = 16;
+    i.addEventListener("error", () => i.replaceWith(icon("globe")), { once: true });
+    return i;
+  }
+  // What each browser shows of an address when you aren't editing it.
+  function shown(url) {
+    if (!url) return "";
+    if (/^valerie:|^about:/.test(url)) return "";
+    try {
+      const u = new URL(url);
+      if (style === "safari") return u.hostname.replace(/^www\./, "");
+      if (style === "edge") return url;
+      return (u.host + u.pathname + u.search + u.hash).replace(/^www\./, "").replace(/\/$/, "");
+    } catch { return url; }
+  }
+
+  // ---------- the tab strip and toolbar ----------
+  let tabsEl, field, input, starBtn, reloadBtn;
+  function buildBar() {
+    const strip = el("div", "row");
+    strip.id = "strip";
+    tabsEl = el("div");
+    tabsEl.id = "tabs";
+    const add = button("plus", "New Tab", () => command({ cmd: "new_tab" }));
+    add.id = "new";
+    const drag = el("div", "drag");
+    drag.addEventListener("mousedown", (e) => { if (e.button === 0) valerie.dragWindow(); });
+    strip.append(tabsEl, add, drag);
+
+    const bar = el("div", "row");
+    bar.id = "toolbar";
+    field = el("label");
+    field.id = "field";
+    input = document.createElement("input");
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.name = "address";
+    input.placeholder = style === "safari" ? "Search or enter website name" : style === "firefox" ? "Search or enter address" : style === "edge" ? "Search or enter web address" : "Search Google or type a URL";
+    input.setAttribute("aria-label", "Address and search bar");
+    input.addEventListener("focus", () => { input.value = valerie.state?.url && !/^valerie:/.test(valerie.state.url) ? valerie.state.url : ""; input.select(); });
+    input.addEventListener("blur", () => { input.value = shown(valerie.state?.url); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && input.value.trim()) { command({ cmd: "go", input: input.value.trim(), new_tab: e.metaKey || e.altKey }); input.blur(); }
+      if (e.key === "Escape") input.blur();
+    });
+    starBtn = button("star", "Add this page to favorites", () => command({ cmd: "toggle_favorite" }));
+    reloadBtn = button("reload", "Reload", () => command({ cmd: valerie.state?.active && activeTab()?.loading ? "stop" : "reload" }));
+    const back = button("back", "Back", () => command({ cmd: "back" }));
+    const fwd = button("forward", "Forward", () => command({ cmd: "forward" }));
+    if (style === "safari") {
+      field.append(input, reloadBtn);
+      const left = [button("sidebar", "Show sidebar", () => command({ cmd: "toggle_sidebar" })), back, fwd];
+      const right = [button("share", "Share", () => command({ cmd: "share_page" })), button("plus", "New Tab", () => command({ cmd: "new_tab" })), button("overview", "Show all tabs", () => command({ cmd: "open_command_bar" }))];
+      const gap = () => { const d = el("div", "spacer drag"); d.addEventListener("mousedown", (e) => { if (e.button === 0) valerie.dragWindow(); }); return d; };
+      bar.append(...left, gap(), field, gap(), ...right);
+    } else {
+      const lead = el("span");
+      lead.append(icon("lock"));
+      lead.style.display = "grid";
+      field.append(lead, input, starBtn);
+      const more = style === "chrome" ? button("dotsv", "Customize and control", () => command({ cmd: "open_command_bar" }))
+        : style === "edge" ? button("dotsh", "Settings and more", () => command({ cmd: "open_command_bar" }))
+        : button("menu", "Open application menu", () => command({ cmd: "open_command_bar" }));
+      bar.append(back, fwd, reloadBtn, field, button("puzzle", "Extensions", () => command({ cmd: "extensions" })), more);
+    }
+    document.body.append(strip, bar);
+  }
+  function activeTab() {
+    const s = valerie.state;
+    return s && [...flat(s.pinned), ...flat(s.kept), ...(s.today || [])].find((t) => t.id === s.active);
+  }
+  function drawBar() {
+    const s = valerie.state;
+    if (!s) return;
+    // Pinned tabs that are open sit first as icons, as pinned tabs do elsewhere; then kept, then today's in list order.
+    const pinned = [...(s.favorites || []), ...flat(s.pinned)].filter((t) => t.loaded || t.id === s.active);
+    const rest = [...flat(s.kept), ...(s.today || [])];
+    const all = [...pinned.map((t) => [t, true]), ...rest.map((t) => [t, false])];
+    const narrow = tabsEl.clientWidth && all.length * 72 > tabsEl.parentElement.clientWidth - 140;
+    tabsEl.replaceChildren(...all.map(([t, isPinned]) => {
+      const name = t.title || shown(t.url) || "New Tab";
+      const b = el("div", "tab" + (t.id === s.active ? " on" : "") + (isPinned && style !== "safari" ? " icon" : "") + (narrow ? " narrow" : ""));
+      b.title = name;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(t.id === s.active));
+      const ic = el("span", "ic");
+      ic.append(favicon(t));
+      const x = el("button", "x");
+      x.setAttribute("aria-label", "Close tab");
+      x.append(icon("x"));
+      x.addEventListener("mousedown", (e) => e.stopPropagation());
+      x.addEventListener("click", (e) => { e.stopPropagation(); command({ cmd: "close_tab", tab: t.id }); });
+      b.append(ic, el("span", "name", name), x);
+      b.addEventListener("mousedown", (e) => { if (e.button === 0) command({ cmd: "activate_tab", tab: t.id }); });
+      b.tabIndex = 0;
+      b.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === b) { e.preventDefault(); command({ cmd: "activate_tab", tab: t.id }); } });
+      b.addEventListener("auxclick", (e) => { if (e.button === 1) command({ cmd: "close_tab", tab: t.id }); });
+      return b;
+    }));
+    if (document.activeElement !== input) input.value = shown(s.url);
+    const fav = [...(s.favorites || []), ...flat(s.pinned)].some((t) => t.id === s.active); // ⌘D pins when favorites are off
+    starBtn.classList.toggle("on", fav);
+    starBtn.title = fav ? "Remove from favorites" : "Add this page to favorites";
+    const loading = activeTab()?.loading;
+    reloadBtn.replaceChildren(icon(loading ? "stop" : "reload"));
+    reloadBtn.title = loading ? "Stop loading" : "Reload";
+  }
+
+  // ---------- the bookmarks bar: favorites, then pinned tabs and folders ----------
+  let marks, openFolder = null;
+  function buildMarks() {
+    marks = el("div", "row");
+    marks.id = "marks";
+    document.body.append(marks);
+  }
+  function markButton(label, child, onClick, cls) {
+    const b = el("button", "mark" + (cls ? " " + cls : ""));
+    b.title = label;
+    b.append(child, el("span", null, label));
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  function drawMarks() {
+    const s = valerie.state;
+    if (!s) return;
+    const findFolder = (nodes) => { for (const n of nodes || []) { if (n.type === "folder") { if (n.id === openFolder) return n; const f = findFolder(n.children); if (f) return f; } } return null; };
+    const folder = openFolder != null ? findFolder(s.pinned) || findFolder(s.kept) : null;
+    if (!folder) openFolder = null;
+    const items = folder ? folder.children : [...(s.favorites || []), ...(s.pinned || [])];
+    const out = [];
+    if (folder) out.push(markButton(folder.name || "Folder", icon("back"), () => { openFolder = null; drawMarks(); }, "back"));
+    for (const n of items) {
+      if (n.type === "folder") out.push(markButton(n.name || "Folder", icon("folder"), () => { openFolder = n.id; drawMarks(); }));
+      else out.push(markButton(n.title || shown(n.url) || "Tab", favicon({ ...n, loading: false }), () => command({ cmd: "activate_tab", tab: n.id })));
+    }
+    const drag = el("div", "drag");
+    drag.addEventListener("mousedown", (e) => { if (e.button === 0) valerie.dragWindow(); });
+    marks.replaceChildren(...out, drag);
+  }
+
+  const draw = role === "bookmarks" ? drawMarks : drawBar;
+  if (role === "bookmarks") buildMarks(); else buildBar();
+  valerie.on("state", draw);
+  addEventListener("resize", draw);
+  draw();
+</script>
+</body>
+</html>

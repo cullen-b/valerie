@@ -364,6 +364,8 @@ const BUNDLED: &[(&str, &[(&str, &str)])] = &[
             ("tab-strip.html", include_str!("../plugins/window-panels/tab-strip.html")),
             ("outline.html", include_str!("../plugins/window-panels/outline.html")),
             ("retro.html", include_str!("../plugins/window-panels/retro.html")),
+            ("browser-bar.html", include_str!("../plugins/window-panels/browser-bar.html")),
+            ("pasture.html", include_str!("../plugins/window-panels/pasture.html")),
         ],
     ),
 ];

@@ -1,0 +1,17 @@
+title: Pasture
+description: Your tabs are sheep in a meadow. Click one to go to it, × sends it home, the gate makes a new tab.
+settings:
+  window: { traffic_lights: show }
+  layout: { corner_radius: 0 }
+window:
+  gap: 0
+  column:
+    - panel: window-panels/pasture
+      id: pasture
+      props: {}                 # night: true | false to stop following the computer's light or dark look
+      size: 130
+      min: 90
+      max: 420
+      radius: 0
+    - part: pages
+      radius: 0

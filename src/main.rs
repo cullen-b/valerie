@@ -229,6 +229,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["window", "tab"].contains(&c.links.popups.as_str()) {
                 problems.push(format!("links: popups is {:?}; use window or tab", c.links.popups));
             }
+            if !config::SHORTCUTS_LIKE.contains(&c.shortcuts_like.as_str()) {
+                problems.push(format!("shortcuts_like is {:?}; use one of {}", c.shortcuts_like, config::SHORTCUTS_LIKE.join(", ")));
+            }
             if !["floating", "classic"].contains(&c.links.popup_look.as_str()) {
                 problems.push(format!("links: popup_look is {:?}; use floating or classic", c.links.popup_look));
             }

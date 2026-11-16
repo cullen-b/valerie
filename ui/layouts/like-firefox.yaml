@@ -1,0 +1,21 @@
+title: Like Firefox
+description: "Tabs, toolbar and bookmarks bar where Firefox has them, for anyone coming from it. Pair it with shortcuts_like: firefox."
+settings:
+  window: { traffic_lights: show }
+  layout: { corner_radius: 0 }
+window:
+  gap: 0
+  column:
+    - panel: window-panels/browser-bar
+      id: toolbar
+      props: { style: firefox }     # appearance: light | dark to stop following the computer
+      size: 85
+      radius: 0
+    - panel: window-panels/browser-bar
+      id: bookmarks             # the bookmarks bar: favorites, then pinned tabs and folders (⌘⇧B with shortcuts_like)
+      props: { style: firefox, role: bookmarks }
+      size: 32
+      radius: 0
+      hidden: false
+    - part: pages
+      radius: 0

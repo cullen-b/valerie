@@ -670,6 +670,7 @@ function tile(t, list, index) {
   preloadOnHover(f, t);
   return f;
 }
+const minusAt = new Map();
 function tabRow(t, list, index) {
   const r = el("div", "row");
   r.classList.toggle("active", isActive(t));
@@ -678,12 +679,19 @@ function tabRow(t, list, index) {
   r.classList.toggle("loading", !!t.loading);
   r.append(icon(t), el("div", "title", tabTitle(t)));
   if (t.playing) r.append(audio(t));
-  // Pinned and kept tabs get − (close the page, keep the tab); there's nothing to close once it's closed.
+  // Pinned and kept tabs get − (close the page, keep the tab); once closed, × removes them (sidebar.remove_closed_saved_tabs).
   const minus = t.pinned && S.sidebar.minus_for_saved_tabs !== false;
-  const x = el("div", "x" + (minus ? " minus" : ""), minus ? "−" : "×");
-  x.title = t.pinned ? "Close (keeps it in the sidebar)" : "Close";
-  x.onclick = (e) => { e.stopPropagation(); closeHere([t.id]); };
-  if (!(minus && !t.loaded)) r.append(x);
+  const remove = t.pinned && !t.loaded && S.sidebar.remove_closed_saved_tabs !== false;
+  const x = el("div", "x" + (minus && !remove ? " minus" : ""), minus && !remove ? "−" : "×");
+  x.title = remove ? "Remove from the sidebar" : t.pinned ? "Close (keeps it in the sidebar)" : "Close";
+  x.onclick = (e) => {
+    e.stopPropagation();
+    // A double click on − shouldn't also hit the × that replaces it.
+    if (remove) { if (performance.now() - (minusAt.get(t.id) || -1e9) > 500) cmd({ cmd: "delete_items", tabs: [t.id] }); return; }
+    if (t.pinned) minusAt.set(t.id, performance.now());
+    closeHere([t.id]);
+  };
+  if (remove || !(minus && !t.loaded)) r.append(x);
   r.title = t.url;
   r.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
   r.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
