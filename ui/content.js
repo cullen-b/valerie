@@ -1495,6 +1495,7 @@ const CMPS = [
   ["#cookie-law-info-bar, .cli-modal", "#cookie_action_close_header_reject"],
   [".cc-window.cc-banner, .cc-window.cc-floating", ".cc-deny"],
   [".fc-consent-root", ".fc-cta-do-not-consent"],
+  ["[data-testid='page-layout.banner']:has([data-testid=only-necessary-button])", "[data-testid=only-necessary-button]"], // Atlassian (Jira, Confluence)
   ["#usercentrics-root, #usercentrics-cmp-ui", null],
   ["#sp_message_container_0, [id^=sp_message_container]", null],
   ["#gdpr-cookie-message, #cookie-notice, #cookieConsent, #cookie-banner, .cookie-banner, #CookieBanner", null],
