@@ -715,6 +715,7 @@ function tickTitles() {
   r && r.querySelectorAll(".title").forEach((t) => tickTitle(t, hoverSince));
 }
 function tickTitle(t, since) {
+  if (t._settle) restoreTitle(t);
   if (t.classList.contains("ticking") || t.scrollWidth <= t.clientWidth + 1) return;
   const O = S.sidebar, speed = Math.min(200, Math.max(5, +O.title_scroll_speed || 30)), bounce = O.title_scroll_style === "bounce";
   const text = t.textContent, gap = 36, tick = el("span", "tick", text);
@@ -728,8 +729,22 @@ function tickTitle(t, since) {
     `--tick-delay:${delay}s;animation-timing-function:${bounce ? "ease-in-out" : "linear"};` +
     (bounce ? "animation-direction:alternate;" : "");
 }
+function restoreTitle(t) {
+  t._settle?.cancel(); t._settle = null; t.classList.remove("ticking"); t.textContent = t._text ?? t.textContent;
+}
+// Leaving a row glides its title back to the start (a loop goes on to the next copy if that's closer) instead of snapping.
 function untickTitles() {
-  document.querySelectorAll("#sidebar .title.ticking").forEach((t) => { t.classList.remove("ticking"); t.textContent = t._text ?? t.textContent; });
+  document.querySelectorAll("#sidebar .title.ticking").forEach((t) => {
+    const tick = t.querySelector(".tick");
+    if (t._settle || !tick) return;
+    const x = new DOMMatrixReadOnly(getComputedStyle(tick).transform).m41, d = parseFloat(tick.style.getPropertyValue("--tick-d")) || 0;
+    const loop = tick.style.getPropertyValue("--tick-name") === "tick-loop", to = loop && -x > d / 2 ? -d : 0, dist = Math.abs(to - x);
+    if (dist < 1 || matchMedia("(prefers-reduced-motion: reduce)").matches) return restoreTitle(t);
+    tick.style.animation = "none"; tick.style.transform = `translateX(${x}px)`;
+    t._settle = tick.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${to}px)` }],
+      { duration: Math.min(450, Math.max(180, dist * 2.5)), easing: "cubic-bezier(.22,.8,.3,1)", fill: "forwards" });
+    t._settle.onfinish = () => { t._settle = null; restoreTitle(t); };
+  });
 }
 $("#sidebar").addEventListener("mouseover", (e) => {
   if (!S || scrollMode() !== "hover") return;
