@@ -505,6 +505,9 @@ links:
   option_click: split
   cmd_shift_click: new_tab
   option_shift_click: peek
+  open_below_current_tab: true  # tabs opened from a link (the clicks above, right-click "Open Link in New Tab", links that
+                           # open a new window) go right below the tab they came from. true | false (false = where
+                           # tabs.new_tab_position says)
   context_menu: true       # Valerie's right-click menu on links (hold shift while right-clicking for the system menu)
   show_url_on_hover: true  # show where a link goes in the bottom corner while you hover it
   popups: window           # pop-up windows a site opens at a set size, like "Sign in with Google". one of:

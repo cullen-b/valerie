@@ -42,6 +42,9 @@ pub struct Tab {
     /// The tab's last-played video/audio: "playing" | "paused" (drives the sidebar mini player).
     #[serde(default, skip)]
     pub media: Option<String>,
+    /// The tab a link opened this one from, so several links from one page line up below it in order.
+    #[serde(default, skip)]
+    pub opener: Option<TabId>,
 }
 
 impl Tab {
@@ -509,6 +512,29 @@ impl State {
             today.insert(0, id);
         } else {
             today.push(id);
+        }
+        id
+    }
+
+    /// A tab opened from a link in `from`: right below `from` (after tabs it already opened) when `from` is a Today tab
+    /// in this space, otherwise at the top of Today, just under the saved tabs.
+    pub fn add_tab_below(&mut self, space: usize, url: &str, from: TabId) -> TabId {
+        let id = self.add_tab(space, url, true);
+        let today = &mut self.spaces[space].today;
+        today.remove(0);
+        let pos = match today.iter().position(|t| *t == from) {
+            Some(i) => {
+                let mut j = i + 1;
+                while j < today.len() && self.tabs.get(&today[j]).and_then(|t| t.opener) == Some(from) {
+                    j += 1;
+                }
+                j
+            }
+            None => 0,
+        };
+        today.insert(pos, id);
+        if let Some(t) = self.tabs.get_mut(&id) {
+            t.opener = Some(from);
         }
         id
     }
@@ -1114,6 +1140,20 @@ mod tests {
         let mut s = State::default();
         s.spaces.push(Space { name: "A".into(), ..Default::default() });
         s
+    }
+
+    /// Links open right below their tab, in the order they were opened; from a saved tab, at the top of Today.
+    #[test]
+    fn link_tabs_open_below_their_tab() {
+        let mut s = state();
+        let [a, b] = ["a", "b"].map(|u| s.add_tab(0, &format!("https://{u}"), false));
+        let x = s.add_tab_below(0, "https://x", a);
+        let y = s.add_tab_below(0, "https://y", a);
+        let z = s.add_tab_below(0, "https://z", x);
+        assert_eq!(s.spaces[0].today, vec![a, x, z, y, b]);
+        s.pin(b);
+        let w = s.add_tab_below(0, "https://w", b);
+        assert_eq!(s.spaces[0].today, vec![w, a, x, z, y]);
     }
 
     /// Only pinned, kept and favorite tabs unopened for the whole period count; keeping one restarts its clock, and a

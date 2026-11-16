@@ -326,6 +326,7 @@ pub struct LinksConfig {
     pub show_url_on_hover: bool,
     pub popups: String,
     pub popup_look: String,
+    pub open_below_current_tab: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
