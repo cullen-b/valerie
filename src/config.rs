@@ -911,6 +911,8 @@ pub struct LittleWindowConfig {
     pub open_links_alone: bool,
     pub keep_one_ready: bool,
     pub remember_size: bool,
+    #[serde(default = "yes")]
+    pub loading_line: bool,
     pub width: f64,
     pub height: f64,
 }
