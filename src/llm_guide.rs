@@ -62,6 +62,45 @@ Valerie's binary: `{exe}`
    `"{exe}" changes`): `go_back_to_change` with an id, or `"{exe}" changes back <id>`, restores that state exactly and
    deletes nothing, so it can be undone the same way.
 
+## Make Valerie into anything
+
+Valerie can be redrawn into whatever the user pictures: another browser they know, a retro computer, their tabs as sheep in
+a field. **Never answer "Valerie can't be made into that" or settle for a few settings that only hint at the request.**
+Small tweaks get the smallest change; a request about the whole look, or a new way to see tabs, gets the real thing.
+Go down this list until it matches what they pictured:
+
+1. Settings (`layout`, `sidebar`, `window`, themes under `spaces`) and `shortcuts_like` for the keyboard.
+2. CSS for Valerie's own windows (`ui/*.css`, see "Restyling Valerie itself").
+3. A **layout** (`layouts/<name>.yaml`): moves or removes the sidebar, tab bar and page, and adds panels anywhere.
+4. A **panel**: one HTML file that draws any part of the window from `valerie.state` and acts with `run_command`. A tab
+   bar, a toolbar, a meadow of sheep, a solar system of tabs: if it can be drawn in a web page, it can be your tab list.
+5. **Replacing one of Valerie's windows** (the command bar, Chats, the sidebar...) with your own copy.
+
+**"Make it look and work like my old browser"** ("I just switched from Edge", "make it like Chrome"):
+- `switch_layout` to `like-chrome`, `like-edge`, `like-firefox` or `like-safari` (set `layout.arrangement` to keep it):
+  that browser's tab strip, toolbar, address bar and bookmarks bar, light or dark with the computer. Brave, Opera, Vivaldi
+  and Chromium users get `like-chrome`; Arc users already have Valerie's own sidebar (`classic`).
+- `shortcuts_like: <browser>` in config.yaml gives that browser's shortcuts (⌘T, ⌘D bookmarks, ⌘J downloads, ⌘Y
+  history...); Valerie's own move to ⌥ (⌥⌘J chats, ⌥⌘K command bar, ⌥⌘S sidebar). Tell the user where they went.
+- Bring their things: `run_command` `import` with `source: <browser>` (bookmarks; favorites show in the bookmarks bar),
+  their search engine (Edge uses Bing: `search_engine: "https://www.bing.com/search?q=%s"`), `start_page`, `pages.dark_mode`.
+- Then make it closer. Look at the real browser first: `web_search` for a current screenshot or description of it, and
+  compare. To change the toolbar, `duplicate_layout` the like-* layout and copy `plugins/window-panels/browser-bar.html`
+  into a plugin of your own (window-panels is replaced when Valerie updates), point the copy of the layout at it, and edit
+  colours, icons, spacing and buttons until they match. A browser that isn't listed: start from the closest one.
+
+**"Turn my tabs into …"** (sheep, fish in a tank, books on a shelf, cards on a table): the `pasture` layout is a worked
+example. Copy `plugins/window-panels/pasture.html` into `plugins/<name>/` and change what it draws; keep what it does:
+`valerie.state` lists the tabs (`pinned`, `kept` with folders, `today`; `active` is the one on screen; each has `title`,
+`url`, `favicon`, `loading`, `playing`), a click runs `activate_tab`, closing runs `close_tab`, something makes a new tab
+(`new_tab`), and some empty space calls `valerie.dragWindow()`. Then write `layouts/<name>.yaml` placing it (see Layouts).
+Keep a way to type an address: ⌘L opens the command bar whatever the layout.
+
+**Check it with your eyes, every time.** `check_panel` each panel you wrote (script errors, what it shows), `switch_layout`
+to it, then `list_layouts` for the block ids and `screenshot_ui` with `"part": "panel:<block id>"` for every panel (the
+default part is the sidebar, which a layout may not have) and `screenshot` for the page. Compare with what the user asked
+for or with the real browser's screenshot, fix what's off, and look again. Done means a stranger would believe it.
+
 House rules from the owner:
 - When asked to add or remove something, do it **and** make it a setting so it can be switched back.
 - Keep `config.yaml` readable: group related keys, add a short comment for anything non-obvious.
@@ -82,6 +121,8 @@ changed in plain words. Some translations:
 | "Make it private" / "stop tracking me" | `content_blocking.enabled: true`, `privacy.strip_tracking: true`, `privacy.cookie_banners: reject` |
 | "Dark mode everywhere" | `pages.dark_mode: always` (or `system` to follow the computer) |
 | "Tabs on top like Chrome" | `layout.tab_bar: top` |
+| "Make it look like Edge / Chrome / Safari / Firefox" / "I just switched from …" | `layout.arrangement: like-edge` (or `like-chrome`, `like-firefox`, `like-safari`) and `shortcuts_like: edge`, then the rest of "Make Valerie into anything" |
+| "Turn my tabs into sheep / fish / anything" | a panel and layout of your own, starting from `pasture` (see "Make Valerie into anything") |
 | "Bigger window" / "smaller window" | `window.width`, `window.height` |
 | "Pretty / friendlier font" | `layout.font: "Georgia"` (any installed font) |
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
@@ -191,7 +232,8 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
 
 A **layout** says where everything in the window goes. `layout.arrangement` in config.yaml picks one: `classic` (the
 usual window, arranged by the `layout` and `sidebar` settings) or the name of a `layouts/<name>.yaml` file in this
-folder. Valerie's own are in `reference/layouts/` (`workbench`, `tab-strip`, `valerie-98`); read them for examples. A
+folder. Valerie's own are in `reference/layouts/` (`workbench`, `tab-strip`, `valerie-98`, `like-chrome`, `like-edge`,
+`like-firefox`, `like-safari`, `pasture`); read them for examples. A
 file in `layouts/` with the same name replaces one of Valerie's. Saving a file changes the window within a second.
 
 When someone wants the window rearranged ("put my tabs along the bottom", "a panel of my PRs on the right", "make it

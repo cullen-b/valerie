@@ -708,13 +708,16 @@ pub fn browser_preamble(def: &AgentDef, context: &str, offer_share: bool, scratc
          Open any tabs you need in the background and don't close or change the user's tabs unless they ask. Never submit \
          purchases, payments or other irreversible forms without the user saying so in this conversation; stop and ask \
          instead. When something in Valerie didn't work, read its log with read_logs; to change one of Valerie's settings, \
-         use get_settings and set_setting. To add something no setting covers (like changing how a site behaves), make a \
-         Valerie plugin (it works on every platform; a browser extension only on macOS 15.4+): read the guide at {} \
-         first, and search the marketplace before making a new one.{share}{situation} Your working folder, {}, is a scratch \
-         folder the user never looks in: save files they should keep in their Downloads folder (or where they say) and give \
-         the full path. Answer in plain, short Markdown.{context}",
-        guide.display(),
+         use get_settings and set_setting. When the user wants Valerie itself to look or work differently in a bigger way \
+         than a setting or two (like another browser they know, a new way to show their tabs, anything playful or odd), read \
+         \"Make Valerie into anything\" in the guide at {guide} first: layouts, panels and replaced windows can redraw any \
+         part of the window, so build what they pictured, check it with screenshot_ui, and never say Valerie can't. To \
+         add something no setting covers (like changing how a site behaves), make a Valerie plugin (it works on every \
+         platform; a browser extension only on macOS 15.4+): read the guide first, and search the marketplace before \
+         making a new one.{share}{situation} Your working folder, {}, is a scratch folder the user never looks in: save \
+         files they should keep in their Downloads folder (or where they say) and give the full path. Answer in plain, short Markdown.{context}",
         scratch.display(),
+        guide = guide.display(),
         situation = situation(access),
         context = if context.is_empty() {
             String::new()

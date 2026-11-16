@@ -1,0 +1,21 @@
+title: Like Edge
+description: "Tabs, toolbar and bookmarks bar where Edge has them, for anyone coming from it. Pair it with shortcuts_like: edge."
+settings:
+  window: { traffic_lights: show }
+  layout: { corner_radius: 0 }
+window:
+  gap: 0
+  column:
+    - panel: window-panels/browser-bar
+      id: toolbar
+      props: { style: edge }     # appearance: light | dark to stop following the computer
+      size: 81
+      radius: 0
+    - panel: window-panels/browser-bar
+      id: bookmarks             # the bookmarks bar: favorites, then pinned tabs and folders (⌘⇧B with shortcuts_like)
+      props: { style: edge, role: bookmarks }
+      size: 32
+      radius: 0
+      hidden: false
+    - part: pages
+      radius: 0

@@ -52,6 +52,8 @@ pub struct Config {
     pub routes: Vec<Route>,
     /// Host pattern → profile that site always uses.
     pub site_profiles: BTreeMap<String, Option<String>>,
+    /// Another browser's shortcuts laid over Valerie's (see `shortcuts_like_keys`).
+    pub shortcuts_like: String,
     pub keybindings: BTreeMap<String, Option<Binding>>,
     pub vim: VimConfig,
     pub mcp: McpConfig,
@@ -276,6 +278,7 @@ pub struct SidebarConfig {
     pub pinned_folder_icon: String,
     pub kept_section: bool,
     pub minus_for_saved_tabs: bool,
+    pub remove_closed_saved_tabs: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
     pub clear_button: String,
@@ -1486,6 +1489,92 @@ pub fn unknown_keys(user_text: &str) -> Vec<String> {
     out
 }
 
+/// What `shortcuts_like` takes.
+pub const SHORTCUTS_LIKE: &[&str] = &["valerie", "chrome", "edge", "firefox", "safari"];
+
+/// The keybindings another browser's users expect, laid over Valerie's defaults; Valerie's own move to ⌥.
+pub fn shortcuts_like_keys(browser: &str) -> Option<Value> {
+    let mac = cfg!(target_os = "macos");
+    // Every browser: new tab and window, bookmark, save, open, Ctrl+Tab in order. Valerie's own move to ⌥ / Alt.
+    let common = r#"
+"CmdOrCtrl+T": new_tab
+"CmdOrCtrl+N": new_window
+"CmdOrCtrl+D": toggle_favorite
+"CmdOrCtrl+S": save_page
+"CmdOrCtrl+O": open_file
+"CmdOrCtrl+U": view_source
+"Ctrl+Tab": next_tab
+"CmdOrCtrl+Shift+B": { cmd: toggle_block, id: bookmarks }
+"CmdOrCtrl+Alt+J": open_chats
+"CmdOrCtrl+Alt+K": open_command_bar
+"CmdOrCtrl+Alt+S": toggle_sidebar
+"CmdOrCtrl+Alt+N": { cmd: new_chat, in_project: true }
+"CmdOrCtrl+Alt+O": move_to_main_window
+"#;
+    let own = match (browser, mac) {
+        ("valerie", _) => return None,
+        ("chrome" | "edge", true) => r#"
+"CmdOrCtrl+Y": history
+"CmdOrCtrl+Shift+J": downloads
+"CmdOrCtrl+Alt+L": downloads
+"CmdOrCtrl+Shift+Backspace": clear_cache_and_cookies
+"CmdOrCtrl+Alt+Right": next_tab
+"CmdOrCtrl+Alt+Left": prev_tab
+"#,
+        ("chrome" | "edge", false) => r#"
+"Ctrl+H": history
+"Ctrl+J": downloads
+"Ctrl+Shift+Delete": clear_cache_and_cookies
+"Ctrl+K": { cmd: open_command_bar, mode: current }
+"Ctrl+E": { cmd: open_command_bar, mode: current }
+"Ctrl+Shift+I": dev_tools
+"F12": dev_tools
+"F5": reload
+"Alt+Left": back
+"Alt+Right": forward
+"#,
+        ("firefox", true) => r#"
+"CmdOrCtrl+Shift+H": history
+"CmdOrCtrl+Shift+J": downloads
+"CmdOrCtrl+Shift+P": new_private_window
+"CmdOrCtrl+Shift+Backspace": clear_cache_and_cookies
+"CmdOrCtrl+B": toggle_sidebar
+"CmdOrCtrl+K": { cmd: open_command_bar, mode: current }
+"CmdOrCtrl+Alt+Right": next_tab
+"CmdOrCtrl+Alt+Left": prev_tab
+"#,
+        ("firefox", false) => r#"
+"Ctrl+H": history
+"Ctrl+J": downloads
+"Ctrl+Shift+Y": downloads
+"Ctrl+Shift+P": new_private_window
+"Ctrl+Shift+Delete": clear_cache_and_cookies
+"Ctrl+B": toggle_sidebar
+"Ctrl+K": { cmd: open_command_bar, mode: current }
+"Ctrl+E": { cmd: open_command_bar, mode: current }
+"Ctrl+Shift+I": dev_tools
+"F12": dev_tools
+"F5": reload
+"Alt+Left": back
+"Alt+Right": forward
+"#,
+        ("safari", _) => r#"
+"CmdOrCtrl+Y": history
+"CmdOrCtrl+Alt+L": downloads
+"CmdOrCtrl+Shift+L": toggle_sidebar
+"CmdOrCtrl+Shift+R": reader_view
+"CmdOrCtrl+Alt+R": hard_reload
+"CmdOrCtrl+Shift+]": next_tab
+"CmdOrCtrl+Shift+[": prev_tab
+"CmdOrCtrl+Alt+E": clear_cache
+"#,
+        _ => return None,
+    };
+    // Edge's vertical tabs switch.
+    let edge = if browser == "edge" { "\"CmdOrCtrl+Shift+Comma\": toggle_tab_bar_position\n" } else { "" };
+    serde_yaml::from_str(&format!("{common}{own}{edge}")).ok()
+}
+
 pub fn merge(base: &mut Value, over: Value) {
     match (base, over) {
         (Value::Mapping(b), Value::Mapping(o)) => {
@@ -1545,6 +1634,12 @@ impl Config {
     pub fn merged_shared(text: &str) -> Result<Value> {
         let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
         let user: Value = serde_yaml::from_str(text)?;
+        // Defaults, then the old browser's shortcuts, then the user's own keybindings.
+        if let Some(keys) = user.get("shortcuts_like").and_then(|v| v.as_str()).and_then(shortcuts_like_keys) {
+            let mut over = serde_yaml::Mapping::new();
+            over.insert("keybindings".into(), keys);
+            merge(&mut base, Value::Mapping(over));
+        }
         if !user.is_null() {
             merge(&mut base, user);
         }
@@ -1646,6 +1741,26 @@ mod tests {
         let flipped = k("spaces:\n  - name: A\n    settings: { sidebar: { kept_section: false } }\nsidebar:\n  kept_section: false\n");
         assert!(Config::parse(&flipped).unwrap().sidebar.kept_section);
         assert!(!flipped.contains("false"));
+    }
+
+    /// Each browser's shortcuts parse into real commands, sit over Valerie's, and the user's own keybindings still win.
+    #[test]
+    fn shortcuts_like_other_browsers() {
+        for b in super::SHORTCUTS_LIKE.iter().filter(|b| **b != "valerie") {
+            let c = Config::parse(&format!("shortcuts_like: {b}\n")).unwrap_or_else(|e| panic!("{b}: {e}"));
+            let cmd = |k: &str| c.keybindings.get(k).cloned().flatten().and_then(|b| b.command()).map(|c| format!("{c:?}"));
+            assert!(cmd("CmdOrCtrl+T").is_some_and(|c| c.contains("NewTab")), "{b}: ⌘T");
+            assert!(cmd("CmdOrCtrl+Alt+J").is_some_and(|c| c.contains("OpenChats")), "{b}: chats lost");
+            for (k, v) in &c.keybindings {
+                assert!(v.as_ref().map_or(true, |b| b.command().is_some()), "{b}: {k} names no command");
+            }
+        }
+        let c = Config::parse("shortcuts_like: chrome\nkeybindings:\n  \"CmdOrCtrl+D\": open_command_bar\n").unwrap();
+        let d = |c: &Config| format!("{:?}", c.keybindings["CmdOrCtrl+D"].as_ref().and_then(|b| b.command()));
+        assert!(d(&c).contains("OpenCommandBar") && d(&Config::defaults()).contains("OpenCommandBar"));
+        assert!(d(&Config::parse("shortcuts_like: edge
+").unwrap()).contains("ToggleFavorite"));
+        assert!(super::shortcuts_like_keys("valerie").is_none());
     }
 
     /// Older settings files said true or false; they still load, as always and never.
