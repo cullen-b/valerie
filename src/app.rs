@@ -605,10 +605,10 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
 }
 
 /// Built-in pages: what Valerie shows at valerie://page/<name> unless the config folder's pages/ has one by that name.
-const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes"];
+const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes", "saved-settings"];
 
 /// Tools only built-in pages (and pages that list them) can use: they act on files Valerie downloaded.
-const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change"];
+const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change", "list_saved_settings", "save_settings", "switch_settings", "delete_saved_settings"];
 
 fn pages_dir() -> PathBuf {
     config::config_dir().join("pages")
@@ -1166,6 +1166,7 @@ pub fn ui(name: &str) -> String {
         "pages/downloads.html" => include_str!("../ui/pages/downloads.html"),
         "pages/history.html" => include_str!("../ui/pages/history.html"),
         "pages/changes.html" => include_str!("../ui/pages/changes.html"),
+        "pages/saved-settings.html" => include_str!("../ui/pages/saved-settings.html"),
         _ => "",
     }
     .to_string()
@@ -4098,6 +4099,13 @@ impl App {
             }
             items.push(json!({ "kind": "task", "title": format!("Run {} now", t.name), "sub": t.want, "icon": "⚙", "cmd": { "cmd": "run_task", "name": t.name } }));
         }
+        if self.config.saved_settings.in_command_bar {
+            let current = crate::saved_settings::current();
+            for n in crate::saved_settings::list() {
+                let sub = if current.as_deref() == Some(n.as_str()) { "Saved settings · in use" } else { "Saved settings" };
+                items.push(json!({ "kind": "settings", "title": format!("Switch to Settings: {n}"), "sub": sub, "icon": "⚙", "cmd": { "cmd": "switch_settings", "name": n } }));
+            }
+        }
         for w in &self.state.watches {
             items.push(json!({ "kind": "watch", "title": format!("Stop watching: {}", w.title), "sub": w.condition, "icon": "◉", "cmd": { "cmd": "stop_watching", "id": w.id } }));
         }
@@ -4852,18 +4860,21 @@ impl App {
         let app_menu = Submenu::new(name_of("Valerie"), true);
         let settings = MenuItem::with_id("settings", "Settings…", true, None);
         cmds.insert(settings.id().clone(), Command::OpenConfig);
+        let saved = MenuItem::with_id("saved_settings", "Saved Settings…", true, None);
+        cmds.insert(saved.id().clone(), Command::SavedSettings);
         let quit = MenuItem::with_id("quit", "Quit Valerie", true, mc.quit_shortcut.parse().ok());
         cmds.insert(quit.id().clone(), Command::Quit);
         let _ = app_menu.append_items(&[
             &PredefinedMenuItem::about(None, None),
             &PredefinedMenuItem::separator(),
             &settings,
+            &saved,
             &PredefinedMenuItem::separator(),
             &quit,
         ]);
         // Mac menu items. Elsewhere they do nothing or take Ctrl+H and Ctrl+M from the page.
         #[cfg(target_os = "macos")]
-        let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 4);
+        let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 5);
         // Menus by their English names, in the bar's order; menu.commands can add new ones (before Window).
         let browser = mc.browser_menus;
         let names: Vec<&str> = if browser {
@@ -6970,11 +6981,12 @@ impl App {
                     None => self.toast("That file is no longer there"),
                 }
             }
-            Command::Downloads | Command::History | Command::ChangeHistory | Command::OpenPage { .. } => {
+            Command::Downloads | Command::History | Command::ChangeHistory | Command::SavedSettings | Command::OpenPage { .. } => {
                 let name = match &cmd {
                     Command::Downloads => "downloads".to_string(),
                     Command::History => "history".to_string(),
                     Command::ChangeHistory => "changes".to_string(),
+                    Command::SavedSettings => "saved-settings".to_string(),
                     Command::OpenPage { name } => name.trim().to_string(),
                     _ => unreachable!(),
                 };
@@ -7760,6 +7772,30 @@ impl App {
             Command::UndoCustomization => {
                 self.close_bar();
                 self.undo_customization();
+            }
+            Command::SaveSettings { name: None } => {
+                let name = crate::saved_settings::current().unwrap_or_default();
+                self.open_prompt("Save settings as", &name, json!({ "cmd": "save_settings" }), "name");
+            }
+            Command::SaveSettings { name: Some(name) } => {
+                self.close_bar();
+                if let Err(e) = self.saved_settings_op("save_settings", &json!({ "name": name })) {
+                    self.toast(&format!("Couldn't save the settings: {e}"));
+                }
+            }
+            Command::SwitchSettings { name } => {
+                self.close_bar();
+                let Some(name) = name.or_else(crate::saved_settings::next) else {
+                    return self.toast("No saved settings yet: Save Settings As… keeps the ones in use");
+                };
+                if let Err(e) = self.saved_settings_op("switch_settings", &json!({ "name": name })) {
+                    self.toast(&format!("Couldn't switch settings: {e}"));
+                }
+            }
+            Command::DeleteSavedSettings { name } => {
+                if let Err(e) = self.saved_settings_op("delete_saved_settings", &json!({ "name": name })) {
+                    self.toast(&format!("Couldn't delete the saved settings: {e}"));
+                }
             }
             Command::GoBackToChange { id } => {
                 self.close_bar();
@@ -12814,6 +12850,27 @@ impl App {
         }
     }
 
+    /// Save, switch, delete or list saved settings (`src/saved_settings.rs`), for commands and the Saved Settings page.
+    fn saved_settings_op(&mut self, op: &str, args: &Value) -> Result<Value, String> {
+        use crate::saved_settings as saved;
+        let name = args["name"].as_str().unwrap_or("");
+        let done = match op {
+            "list_saved_settings" => return Ok(saved::summary()),
+            "save_settings" => saved::save(name).map(|n| format!("Saved these settings as {n:?}")),
+            "switch_settings" => saved::switch(name, self.config.saved_settings.keep_changes).map(|n| {
+                self.reload_config();
+                format!("Switched to the settings {n:?}")
+            }),
+            "delete_saved_settings" => saved::delete(name).map(|n| format!("Deleted the saved settings {n:?}")),
+            _ => return Err(format!("unknown {op}")),
+        }
+        .map_err(|e| format!("{e:#}"))?;
+        crate::log::line("settings", &done);
+        self.toast(&done);
+        self.pages_changed("saved_settings");
+        Ok(json!({ "done": done, "saved": saved::list(), "current": saved::current() }))
+    }
+
     /// Put the settings, plugins and looks back exactly as they were at a change in the history.
     fn go_back_to_change(&mut self, id: &str) -> Result<String, String> {
         let entry = crate::history::go_back(id)?;
@@ -13263,6 +13320,7 @@ impl App {
             }
             "list_changes" => Ok(json!(crate::history::entries().into_iter().rev().take(500).collect::<Vec<_>>())),
             "go_back_to_change" => self.go_back_to_change(args["id"].as_str().unwrap_or("")).map(|why| json!(why)),
+            "list_saved_settings" | "save_settings" | "switch_settings" | "delete_saved_settings" => self.saved_settings_op(op, args),
             "forget_download" => {
                 let before = self.state.downloads.len();
                 self.state.downloads.retain(|d| if path.is_empty() { d.state == "downloading" } else { d.path != path });
