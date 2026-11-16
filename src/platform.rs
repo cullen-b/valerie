@@ -209,6 +209,27 @@ mod mac {
         }
     }
 
+    /// Back under every other view, but above the frosted glass when there is some.
+    pub fn send_to_back(wv: &WebView) {
+        let v = ptr(wv);
+        unsafe {
+            let sup: *mut AnyObject = msg_send![v, superview];
+            if sup.is_null() {
+                return;
+            }
+            let glass = EFFECT.with(|e| e.get());
+            let glass_here = !glass.is_null() && {
+                let gs: *mut AnyObject = msg_send![glass, superview];
+                gs == sup
+            };
+            if glass_here {
+                let _: () = msg_send![sup, addSubview: v, positioned: 1isize, relativeTo: glass];
+            } else {
+                let _: () = msg_send![sup, addSubview: v, positioned: -1isize, relativeTo: std::ptr::null_mut::<AnyObject>()];
+            }
+        }
+    }
+
     pub fn round_corners(wv: &WebView, radius: f64, corners: super::Corners) {
         // CACornerMask bits: MinXMinY=1, MaxXMinY=2, MinXMaxY=4, MaxXMaxY=8.
         let v = ptr(wv);
@@ -249,6 +270,7 @@ mod mac {
                 Follow::Top => (false, true, false, false, false, true),
                 Follow::Bottom => (false, true, false, true, false, false),
                 Follow::TopRight => (true, false, false, false, false, true),
+                Follow::Side { right } => (right, false, !right, false, true, false),
             };
             let flipped: bool = msg_send![sup, isFlipped];
             let (min_y, max_y) = if flipped { (t, b) } else { (b, t) };
@@ -1566,6 +1588,27 @@ mod mac {
         }
     }
 
+    /// Move the window's top edge up by `dy` points (down when negative) in one step, the bottom staying put; false
+    /// when growing would pass the top of the screen's usable area.
+    pub fn grow_window_top(window: &tao::window::Window, dy: f64) -> bool {
+        use objc2_foundation::NSRect;
+        use tao::platform::macos::WindowExtMacOS;
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            let mut frame: NSRect = msg_send![w, frame];
+            let screen: *mut AnyObject = msg_send![w, screen];
+            if dy > 0.0 && !screen.is_null() {
+                let usable: NSRect = msg_send![screen, visibleFrame];
+                if frame.origin.y + frame.size.height + dy > usable.origin.y + usable.size.height + 0.5 {
+                    return false;
+                }
+            }
+            frame.size.height += dy;
+            let _: () = msg_send![w, setFrame: frame, display: true];
+        }
+        true
+    }
+
     /// Do what System Settings says a title-bar double-click does: zoom (also for "Fill"), minimize or nothing.
     pub fn title_bar_double_click(window: &tao::window::Window) {
         use tao::platform::macos::WindowExtMacOS;
@@ -1594,6 +1637,48 @@ mod mac {
                 let btn: *mut AnyObject = msg_send![w, standardWindowButton: b];
                 if !btn.is_null() {
                     let _: () = msg_send![btn, setHidden: hidden];
+                }
+            }
+        }
+    }
+
+    /// Moves the red / yellow / green buttons so their centres sit `centre` points below the window's top, shifting
+    /// them right by as much as they move down so the gaps to the top and left edges stay equal to each other.
+    pub fn place_traffic_lights(window: &tao::window::Window, centre: f64) {
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+        use std::sync::OnceLock;
+        use tao::platform::macos::WindowExtMacOS;
+        static DEFAULT: OnceLock<(f64, f64)> = OnceLock::new(); // where macOS first put the close button: (left, top)
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            let close: *mut AnyObject = msg_send![w, standardWindowButton: 0usize];
+            let mini: *mut AnyObject = msg_send![w, standardWindowButton: 1usize];
+            if close.is_null() || mini.is_null() {
+                return;
+            }
+            let bar: *mut AnyObject = msg_send![close, superview];
+            let container: *mut AnyObject = if bar.is_null() { bar } else { msg_send![bar, superview] };
+            if container.is_null() {
+                return;
+            }
+            let win_frame: NSRect = msg_send![w, frame];
+            let b: NSRect = msg_send![close, frame];
+            let m: NSRect = msg_send![mini, frame];
+            let spacing = m.origin.x - b.origin.x;
+            let &(left, top) = DEFAULT.get_or_init(|| {
+                let r: NSRect = msg_send![bar, convertRect: b, toView: std::ptr::null_mut::<AnyObject>()];
+                (r.origin.x, win_frame.size.height - (r.origin.y + r.size.height))
+            });
+            let down = centre - b.size.height / 2.0 - top;
+            let (left, top) = (left + down, top + down);
+            // A strip as tall as the buttons plus the same gap above and below, so flipped or not they land at `top`.
+            let height = top * 2.0 + b.size.height;
+            let strip = NSRect::new(NSPoint::new(0.0, win_frame.size.height - height), NSSize::new(win_frame.size.width, height));
+            let _: () = msg_send![container, setFrame: strip];
+            for i in 0usize..3 {
+                let btn: *mut AnyObject = msg_send![w, standardWindowButton: i];
+                if !btn.is_null() {
+                    let _: () = msg_send![btn, setFrameOrigin: NSPoint::new(left + i as f64 * spacing, top)];
                 }
             }
         }
@@ -2100,6 +2185,45 @@ pub fn bring_to_front(wv: &WebView) {
     }
 }
 
+/// Put a view back under the others (the sidebar's view, after it floated over the pages).
+pub fn send_to_back(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::send_to_back(wv);
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
+        use wry::WebViewExtWindows;
+        let mut hwnd = HWND::default();
+        if wv.controller().ParentWindow(&mut hwnd).is_ok() {
+            let _ = SetWindowPos(hwnd, Some(HWND_BOTTOM), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    let _ = wv;
+}
+
+/// Moves a live page into another window, as it is (no reload). False where that can't be done here (Linux).
+pub fn move_view_to(wv: &WebView, window: &tao::window::Window) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::WindowExtMacOS;
+        use wry::WebViewExtMacOS;
+        return wv.reparent(window.ns_window() as _).is_ok();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        use wry::WebViewExtWindows;
+        return wv.reparent(window.hwnd() as isize).is_ok();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (wv, window);
+        false
+    }
+}
+
 /// Which corners of a page to round: the ones that meet the browser's own UI, not the window edge.
 #[derive(Clone, Copy, PartialEq)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -2127,6 +2251,8 @@ pub enum Follow {
     Top,
     Bottom,
     TopRight,
+    /// Full height and fixed width, against the left or right edge.
+    Side { right: bool },
 }
 
 pub fn follow_window(wv: &WebView, follow: Follow) {
@@ -2134,6 +2260,29 @@ pub fn follow_window(wv: &WebView, follow: Follow) {
     mac::follow_window(wv, follow);
     #[cfg(not(target_os = "macos"))]
     let _ = (wv, follow);
+}
+
+/// Move a window's top edge up by `dy` logical pixels (down when negative), its bottom staying put; false when there's no
+/// room on the screen above it.
+pub fn grow_window_top(window: &tao::window::Window, dy: f64) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::grow_window_top(window, dy);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let scale = window.scale_factor();
+        let (Ok(pos), size) = (window.outer_position(), window.inner_size()) else { return false };
+        let pos = pos.to_logical::<f64>(scale);
+        let size = size.to_logical::<f64>(scale);
+        if dy > 0.0 {
+            let top = window.current_monitor().map(|m| m.position().to_logical::<f64>(m.scale_factor()).y).unwrap_or(0.0);
+            if pos.y - dy < top {
+                return false;
+            }
+        }
+        window.set_outer_position(tao::dpi::LogicalPosition::new(pos.x, pos.y - dy));
+        window.set_inner_size(tao::dpi::LogicalSize::new(size.width, size.height + dy));
+        true
+    }
 }
 
 /// The window's title bar was double-clicked: zoom or minimize as the system is set to.
@@ -2149,6 +2298,14 @@ pub fn set_traffic_lights_hidden(window: &tao::window::Window, hidden: bool) {
     mac::set_traffic_lights_hidden(window, hidden);
     #[cfg(not(target_os = "macos"))]
     let _ = (window, hidden);
+}
+
+/// Lines the window buttons up with a row whose centre is `centre` points from the top (macOS only).
+pub fn place_traffic_lights(window: &tao::window::Window, centre: f64) {
+    #[cfg(target_os = "macos")]
+    mac::place_traffic_lights(window, centre);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, centre);
 }
 
 /// Animate a child webview to new bounds. Returns false when the platform can't, so the caller sets them directly.

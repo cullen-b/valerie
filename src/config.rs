@@ -78,6 +78,14 @@ pub struct Config {
     pub extensions: ExtensionsConfig,
     pub logs: LogsConfig,
     pub change_history: ChangeHistoryConfig,
+    pub saved_settings: SavedSettingsConfig,
+}
+
+/// Named copies of config.yaml to switch between (`src/saved_settings.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedSettingsConfig {
+    pub keep_changes: bool,
+    pub in_command_bar: bool,
 }
 
 /// The history of changes to the settings, plugins and looks (`src/history.rs`).
@@ -247,6 +255,7 @@ pub struct Layout {
     pub sidebar_size: String,
     pub sidebar_position: SidebarPosition,
     pub reveal_sidebar_on_edge: bool,
+    pub reveal_sidebar_over_page: bool,
     pub bezel: f64,
     pub corner_radius: f64,
     pub split_gap: f64,
@@ -277,6 +286,7 @@ pub struct SidebarConfig {
     pub compact_pinned: String,
     pub pinned_folder_icon: String,
     pub kept_section: bool,
+    pub name_new_folders: bool,
     pub minus_for_saved_tabs: bool,
     pub remove_closed_saved_tabs: bool,
     pub new_tab_button: bool,
@@ -285,7 +295,6 @@ pub struct SidebarConfig {
     pub space_switcher: bool,
     pub order: Vec<String>,
     pub tab_height: f64,
-    pub name_new_folders: bool,
     pub now_playing: bool,
     pub now_playing_skip: f64,
     pub compact_width: f64,
@@ -865,6 +874,8 @@ pub struct PrivacyConfig {
     pub strip_tracking: bool,
     pub tracking_params: Vec<String>,
     pub cookie_banners: String,
+    #[serde(default = "yes")]
+    pub offer_cookie_help: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -906,12 +917,15 @@ pub struct CaptureConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LittleWindowConfig {
     pub enabled: bool,
+    pub top_bar: String,
     pub space_picker: bool,
     pub copy_button: bool,
     pub keep_open_when_main_closes: bool,
     pub open_links_alone: bool,
     pub keep_one_ready: bool,
     pub remember_size: bool,
+    #[serde(default = "yes")]
+    pub open_without_reloading: bool,
     #[serde(default = "yes")]
     pub loading_line: bool,
     pub width: f64,

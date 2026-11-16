@@ -22,6 +22,7 @@ mod popup_win;
 mod quick_fullscreen;
 mod plugins;
 mod routing;
+mod saved_settings;
 mod state;
 mod sync;
 mod trust;
@@ -58,6 +59,7 @@ USAGE:
   valerie paths           show config and data locations
   valerie changes         list every change to your settings and looks
   valerie changes back <id>   put them back exactly as they were at that change
+  valerie saved-settings  list saved settings (also: save <name>, switch <name>, delete <name>)
   valerie triage          something's wrong: your AI (Claude Code or Codex) helps find why, even if Valerie won't open";
 
 /// How long ago, in plain words, for `valerie changes`.
@@ -701,6 +703,25 @@ fn main() -> anyhow::Result<()> {
                 },
                 _ => anyhow::bail!("use: valerie changes  |  valerie changes back <id>"),
             }
+            return Ok(());
+        }
+        Some("saved-settings") => {
+            let name = args.get(2..).map(|a| a.join(" ")).unwrap_or_default();
+            let done = match args.get(1).map(String::as_str) {
+                None | Some("list") => {
+                    let current = saved_settings::current();
+                    for n in saved_settings::list() {
+                        println!("{}{n}", if current.as_deref() == Some(n.as_str()) { "* " } else { "  " });
+                    }
+                    println!("(in {})", saved_settings::dir().display());
+                    return Ok(());
+                }
+                Some("save") => saved_settings::save(&name).map(|n| format!("Saved the settings in use as {n:?}")),
+                Some("switch") => saved_settings::switch(&name, config.saved_settings.keep_changes).map(|n| format!("Switched to the settings {n:?}")),
+                Some("delete") => saved_settings::delete(&name).map(|n| format!("Deleted the saved settings {n:?}")),
+                _ => anyhow::bail!("use: valerie saved-settings [list | save <name> | switch <name> | delete <name>]"),
+            }?;
+            println!("{done}");
             return Ok(());
         }
         Some("paths") => {

@@ -682,6 +682,22 @@ pub enum Command {
     },
     /// Put Valerie's settings, plugins and styles back the way they were before the last change an AI made.
     UndoCustomization,
+    /// Keep the settings in use under a name, to switch back to later; without a name, ask for one.
+    SaveSettings {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Use saved settings; without a name, the next saved ones.
+    SwitchSettings {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Forget saved settings (the settings in use stay as they are).
+    DeleteSavedSettings {
+        name: String,
+    },
+    /// The Saved Settings page: save, switch and delete sets of settings (valerie://page/saved-settings).
+    SavedSettings,
     /// A chat where the user's AI helps find out what went wrong (the triage playbook).
     ReportProblem,
     /// The browser extensions Valerie loaded (and their buttons).
@@ -912,6 +928,9 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("report_problem", "Triage: Report a Problem… (your AI finds what went wrong, fixes your setup or files the bug for review)"),
     ("undo_customization", "Undo Last Customization (put settings back as they were before the AI changed them)"),
     ("change_history", "Change History (every change to your settings and looks; go back to any of them)"),
+    ("save_settings", "Save Settings As… (keep these settings under a name to switch back to)"),
+    ("switch_settings", "Switch to the Next Saved Settings"),
+    ("saved_settings", "Saved Settings (save, switch between and delete sets of settings)"),
     ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),
 ];
@@ -989,6 +1008,9 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_private_window", "{ url? }  (a window whose cookies and storage last only while it's open; no history)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
     ("toggle_plugin", "{ name, on?, extension? }  (turn a plugin or browser extension on or off; without `on`, switch it; `extension: true` when a plugin has the same name)"),
+    ("save_settings", "{ name? }  (keep the settings in use, the whole config.yaml, under this name; replaces one by that name; no name: asks)"),
+    ("switch_settings", "{ name? }  (use these saved settings: config.yaml becomes a copy of them; no name: the next saved ones; `valerie saved-settings` lists them)"),
+    ("delete_saved_settings", "{ name }  (forget these saved settings; the settings in use stay as they are)"),
     ("go_back_to_change", "{ id }  (put the settings, plugins and looks back exactly as they were at a change; `valerie changes` lists the ids; undoable the same way)"),
     ("open_page", "{ name }  (a page from the config folder's pages/, e.g. one an agent made with show_page; or downloads, history)"),
     ("plugin", "{ plugin, command, context? }  (run a plugin command by its title; context: { link?, selection?, image?, page? })"),

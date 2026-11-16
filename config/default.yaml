@@ -49,6 +49,8 @@ layout:
   sidebar_size: full       # one of: full (icon + title) | medium (icon + domain) | compact (icons only)
   sidebar_position: left   # one of: left | right
   reveal_sidebar_on_edge: true  # when the sidebar is hidden, moving the mouse to the window edge peeks it open
+  reveal_sidebar_over_page: true # that peeked sidebar floats over the page, so the page never resizes. true | false
+                           # (false = the page shrinks to make room while it shows)
   bezel: 0                 # gap around the page in pixels. 0 = edge to edge like Safari, ~8 = Arc
   corner_radius: 16        # rounds the page where it meets the sidebar (every corner when bezel > 0); 0 = square
   split_gap: 2             # pixels between split-view panes
@@ -447,6 +449,7 @@ privacy:
                     _hsenc, _hsmi, mkt_tok, oly_anon_id, oly_enc_id, vero_id, rb_clickid, li_fat_id, s_cid]
                            # query parameters to remove; a trailing * matches any ending (utm_* = utm_source, utm_medium …)
   cookie_banners: reject   # cookie pop-ups. one of: reject (click "Reject all" when possible, otherwise hide) | hide | off
+  offer_cookie_help: true  # after you answer a cookie pop-up Valerie didn't, offer once per site to answer it the same way for you from then on. true | false
 
 # What sites may use. one of: ask (Valerie asks the first time a site wants it) | allow | deny
 permissions:
@@ -518,6 +521,8 @@ links:
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
+  top_bar: hover           # the bar with "Open in …". one of: hover (hidden; bring the mouse to the window's top and
+                           # it slides out above the page, which doesn't move or resize) | always
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
   copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
   keep_open_when_main_closes: true   # closing the main window leaves little windows open (the Dock icon or ⌘T
@@ -529,6 +534,9 @@ little_window:
                            # memory). true | false (false = each little window is made when a link arrives)
   remember_size: true      # a new little window opens at the size you last resized one to. true | false (false =
                            # always width and height below)
+  open_without_reloading: true   # "Open in …" moves the page itself into your tabs, as it is, without loading it
+                           # again. true | false (false = a new tab loads the link from the start). Pages that need
+                           # another space's profile load again either way
   loading_line: true       # a thin moving line at the top of a little window while a link's page is on the way, on
                            # an empty page in your light or dark. true | false (false = just the empty page)
   width: 960               # pixels, until you've resized one (or always, with remember_size off)
@@ -970,6 +978,15 @@ updates:
 change_history:
   enabled: true            # record changes. true | false (false = stop recording; what's already saved stays and still works)
   keep: 1000               # how many changes to keep, oldest forgotten first. 0 = keep them all
+
+# Saved settings: whole copies of this file kept under a name (your everyday set, a fun one to demo, …) to switch
+# between in one step. "Save Settings As…" and "Switch Settings" in the command bar, the "Saved Settings" page (Valerie
+# menu > Saved Settings…), or `valerie saved-settings` in a terminal. Kept in the config folder's `saved-settings`.
+saved_settings:
+  keep_changes: true       # switching away from saved settings first stores your changes to them in their saved copy.
+                           # true | false (false = each saved set stays as you saved it; changes since are kept only in
+                           # Change History)
+  in_command_bar: true     # list each saved set in the command bar ("Switch to Settings: Demo"). true | false
 
 # Valerie's log: what went wrong and what happened (sync, updates, plugins, commands, agents' tool calls, …), one file
 # a day in the `logs` folder inside Valerie's data folder (`valerie paths` shows where). Read it, or ask your AI to
