@@ -2184,6 +2184,21 @@ pub fn safari_user_agent() -> String {
     )
 }
 
+/// Chrome's user agent for this system, with a version that keeps pace with Chrome's four-week releases.
+pub fn chrome_user_agent() -> String {
+    // Chrome 142 shipped 2025-10-28.
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let version = 142 + secs.saturating_sub(1_761_609_600) / (28 * 86_400);
+    let system = if cfg!(target_os = "windows") {
+        "Windows NT 10.0; Win64; x64"
+    } else if cfg!(target_os = "linux") {
+        "X11; Linux x86_64"
+    } else {
+        "Macintosh; Intel Mac OS X 10_15_7"
+    };
+    format!("Mozilla/5.0 ({system}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36")
+}
+
 fn safari_version() -> Option<String> {
     #[cfg(target_os = "macos")]
     {

@@ -885,6 +885,7 @@ pub struct PagesConfig {
     pub pdf_viewer: bool,
     pub wait_for_first_draw: bool,
     pub youtube_sharp_start: bool,
+    pub youtube_downloads: bool,
     pub quick_full_screen: bool,
 }
 
