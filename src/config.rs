@@ -285,6 +285,7 @@ pub struct SidebarConfig {
     pub space_switcher: bool,
     pub order: Vec<String>,
     pub tab_height: f64,
+    pub name_new_folders: bool,
     pub now_playing: bool,
     pub now_playing_skip: f64,
     pub compact_width: f64,

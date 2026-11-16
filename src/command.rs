@@ -935,7 +935,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("set_pinned_url", "{ tab? }  (a pinned/kept/favorite tab's home becomes its current page)"),
     ("reset_pinned_url", "{ tab? }  (go back to the tab's pinned page)"),
     ("rename_tab", "{ tab, title }"),
-    ("new_folder", "{ name?, section?: kept | pinned }"),
+    ("new_folder", "{ name, section?: kept | pinned }  (without a name it asks the user in the command bar)"),
     ("delete_items", "{ tabs?: [tab], folders?: [folder], keep_tabs? }  (closes the tabs for good, pinned ones too; folders go with their tabs unless keep_tabs)"),
     ("switch_space", "{ index? | name? }"),
     ("new_space", "{ name? }"),
