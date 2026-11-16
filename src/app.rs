@@ -3292,9 +3292,16 @@ impl App {
         h
     }
 
-    /// The user agent for an address: its site's own (`sites:`), else user_agent, else Safari's.
+    /// The user agent for an address: its site's own (`sites:`), else Chrome's on YouTube (pages.youtube_downloads), else
+    /// user_agent, else Safari's.
     fn agent_for_url(&self, url: &str) -> String {
-        self.site_settings(url).user_agent.filter(|a| !a.trim().is_empty()).unwrap_or_else(|| self.user_agent.clone())
+        if let Some(a) = self.site_settings(url).user_agent.filter(|a| !a.trim().is_empty()) {
+            return a;
+        }
+        if self.config.pages.youtube_downloads && crate::plugins::matches(&["youtube.com".into()], url) {
+            return platform::chrome_user_agent();
+        }
+        self.user_agent.clone()
     }
 
     fn apply_zoom(&mut self, tab: TabId) {
