@@ -5,7 +5,8 @@ use crate::command::{CATALOG, WITH_ARGS};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 use tao::event_loop::EventLoopProxy;
 
@@ -23,6 +24,12 @@ pub fn set_web_tools(on: bool) {
 }
 
 static ASK_USER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// Until when (seconds since 1970) web_search leaves Google alone after it answered with a robot check.
+static GOOGLE_BLOCKED_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
 
 pub fn set_ask_user(on: bool) {
     ASK_USER.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -209,7 +216,7 @@ PDFs, research across several pages, and anything another tool returned blocked,
 the user sees. Keep curl for APIs and raw files.\n\
 Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
 user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
-top results). fetch_page reads pages and PDFs as Markdown; give focus (your question) to get just the sections about it, word \
+top results). fetch_page reads pages, PDFs and YouTube videos (transcript included) as Markdown; give focus (your question) to get just the sections about it, word \
 for word, and urls to read several at once.\n\
 Building a site or app: check_page loads it (localhost or a file) at phone and desktop sizes and returns screenshots, \
 console errors, broken images and anything sticking out past the screen, in one call. read_network lists a page's \
@@ -582,8 +589,8 @@ pub fn tools() -> Vec<Value> {
             "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
             "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
         tool("fetch_page", "Use this for a page that needs a login or JavaScript, or that another tool couldn't read. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
-             logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N) and \
-             local files work, with no rate limits. \
+             logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N), \
+             YouTube videos (their description and timestamped transcript) and local files work, with no rate limits. \
              Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
              under their headings, plus the page's outline: far smaller than the whole page. urls reads up to 10 at once. Runs \
              in hidden tabs; the user's tabs and history aren't touched.", json!({
@@ -623,7 +630,9 @@ pub fn tools() -> Vec<Value> {
         tool("approve", "Ask the user to approve an action (used for permission prompts).",
              json!({ "tool_name": { "type": "string" }, "input": { "type": "object", "additionalProperties": true } }), &["tool_name"]),
         tool("list_tabs", "List tabs: favorites, pinned and today tabs, with ids, urls, titles, space and state.",
-             json!({ "space": { "type": "string", "description": "Only this space" } }), &[]),
+             json!({ "space": { "type": "string", "description": "Only this space" },
+                "query": { "type": "string", "description": "Only tabs whose title or address holds all these words" },
+                "limit": { "type": "integer", "description": "Most tabs to return (default 100)" } }), &[]),
         tool("open_tab", "Open a URL (or search terms) in a new tab.", json!({
             "url": { "type": "string" }, "space": { "type": "string", "description": "Space name; defaults to the active space" },
             "activate": { "type": "boolean", "description": "Switch to the tab (default false: open in background)" },
@@ -811,7 +820,11 @@ fn call_wait(proxy: &EventLoopProxy<UserEvent>, op: &str, args: Value, secs: u64
     proxy
         .send_event(UserEvent::Mcp(McpRequest { op: op.into(), args, reply: tx }))
         .map_err(|_| "browser is shutting down".to_string())?;
-    rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| "timed out waiting for the browser".to_string())?
+    rx.recv_timeout(Duration::from_secs(secs)).map_err(|e| match e {
+        RecvTimeoutError::Timeout => "timed out waiting for the browser".to_string(),
+        // WebKit drops a script's answer when its page navigates or closes first.
+        RecvTimeoutError::Disconnected => "the page navigated or closed before it answered; try again".to_string(),
+    })?
 }
 
 /// Scrolls through the page once (images that load as they come into view do), back to where it was, with Valerie's
@@ -980,8 +993,11 @@ fn wait_ready(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>) -> Result<Opt
     let t = call(proxy, "ensure_loaded", json!({ "tab": tab }))?;
     let tab = t["tab"].as_i64();
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(10) {
+    // Until a page starts loading, scripts sent to it go unanswered: give a busy computer longer to get it going.
+    let mut started = false;
+    while start.elapsed() < Duration::from_secs(if started { 10 } else { 30 }) {
         if let Ok(v) = eval(proxy, tab, "return document.readyState") {
+            started = true;
             if v == "complete" || (v == "interactive" && start.elapsed() > Duration::from_secs(2)) {
                 break;
             }
@@ -2017,8 +2033,35 @@ fn resolve_redirects(results: &mut Value) {
     });
 }
 
+/// Hidden pages being read at once. More wait their turn: a burst from many agents otherwise loads dozens of pages
+/// together, slowly enough that they fail, and takes the computer's CPU from everything else.
+const WEB_SLOTS: usize = 6;
+static WEB_BUSY: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static WEB_FREED: std::sync::Condvar = std::sync::Condvar::new();
+
+struct WebSlot;
+
+impl WebSlot {
+    fn take() -> WebSlot {
+        let mut busy = WEB_BUSY.lock().unwrap_or_else(|e| e.into_inner());
+        while *busy >= WEB_SLOTS {
+            busy = WEB_FREED.wait(busy).unwrap_or_else(|e| e.into_inner());
+        }
+        *busy += 1;
+        WebSlot
+    }
+}
+
+impl Drop for WebSlot {
+    fn drop(&mut self) {
+        *WEB_BUSY.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+        WEB_FREED.notify_one();
+    }
+}
+
 /// Open a hidden tab (not in the sidebar or history), run `f` on it, and close it whatever happens.
 fn in_web_tab(proxy: &EventLoopProxy<UserEvent>, open: Value, f: impl FnOnce(Option<i64>) -> Result<Value, String>) -> Result<Value, String> {
+    let _slot = WebSlot::take();
     let tab = call(proxy, "web_open", open)?["tab"].as_i64();
     let mut out = f(tab);
     // A page that wants a person stays open, for ask_user.
@@ -2039,8 +2082,13 @@ fn in_web_tab(proxy: &EventLoopProxy<UserEvent>, open: Value, f: impl FnOnce(Opt
 const BLOCKED_JS: &str = r#"
 const body = document.body ? document.body.innerText : "", words = body.split(/\s+/).filter(Boolean).length;
 const title = (document.title || "").toLowerCase(), text = (title + " " + body.slice(0, 3000)).toLowerCase();
-if (document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], #challenge-form, #challenge-running, .cf-turnstile, .g-recaptcha, .h-captcha, #px-captcha')
-    || (words < 600 && /just a moment|verify (that )?you are (a )?human|are you a robot|unusual traffic|press (&|and) hold|security check|checking your browser|captcha/.test(text))) return "captcha";
+// Full-page walls count anywhere; a robot-check widget only on a page that is little else (articles carry reCAPTCHA
+// badges and Turnstile boxes for their sign-up forms).
+const widget = [...document.querySelectorAll('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], .cf-turnstile, .g-recaptcha, .h-captcha')]
+  .some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+if (document.querySelector('#challenge-form, #challenge-running, #px-captcha')
+    || (words < 150 && widget)
+    || (words < 600 && /just a moment|verify (that )?you are (a )?human|are you a robot|unusual traffic|press (&|and) hold|security (check|verification)|checking your browser|captcha/.test(text))) return "captcha";
 const pw = [...document.querySelectorAll('input[type="password"]')].some((i) => i.offsetParent !== null);
 if (words < 400 && (pw || /^(sign in|log in|login)\b|\bsign in to\b|\blog in to\b/.test(title))) return "sign_in";
 return "";
@@ -2050,9 +2098,13 @@ return "";
 fn poll(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, js: &str, secs: u64, done: impl Fn(&Value) -> bool) -> Result<Value, String> {
     let start = Instant::now();
     loop {
-        let v = eval(proxy, tab, js)?;
-        if done(&v) || start.elapsed() > Duration::from_secs(secs) {
-            return Ok(v);
+        // A page that redirects while it's watched (a search turning into a robot check) loses one answer, not the read.
+        let v = eval(proxy, tab, js);
+        let over = start.elapsed() > Duration::from_secs(secs);
+        match v {
+            Ok(v) if done(&v) || over => return Ok(v),
+            Err(e) if over || e.starts_with("timed out") || e == "no tab" => return Err(e),
+            _ => {}
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -2102,6 +2154,41 @@ fn save_png(shot: &Value, path: &str) -> Result<String, String> {
     Ok(p.to_string_lossy().into_owned())
 }
 
+/// A YouTube video as Markdown: its title, channel, description and transcript (from the page's own "Show transcript"
+/// panel; the caption files want a token only the player has), instead of whatever ad is playing.
+const YOUTUBE_JS: &str = r#"
+return (async () => {
+  const pr = window.ytInitialPlayerResponse, d = pr && pr.videoDetails;
+  if (!d || !/^\/(watch|shorts\/|live\/)/.test(location.pathname)) return null;
+  const clock = (n) => { n = Math.floor(+n || 0); const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = String(n % 60).padStart(2, '0');
+    return h ? h + ':' + String(m).padStart(2, '0') + ':' + s : m + ':' + s; };
+  const segs = () => document.querySelectorAll('transcript-segment-view-model, ytd-transcript-segment-renderer');
+  const button = () => [...document.querySelectorAll('button')].find((b) => /^show transcript$/i.test((b.getAttribute('aria-label') || b.textContent || '').trim()));
+  if (!segs().length) {
+    if (!button()) { const more = document.querySelector('#description-inline-expander #expand, tp-yt-paper-button#expand'); if (more) more.click(); }
+    for (let i = 0; i < 20 && !button(); i++) await new Promise((r) => setTimeout(r, 250));
+    const b = button();
+    if (b) b.click();
+    for (let i = 0; i < 40 && b && !segs().length; i++) await new Promise((r) => setTimeout(r, 250));
+  }
+  const lines = [...segs()].map((e, i) => {
+    const t = e.querySelector('.segment-timestamp, [class*="Timestamp"]:not([class*="A11y"])');
+    const x = e.querySelector('.segment-text, .ytAttributedStringHost');
+    const line = '[' + (t ? t.textContent.trim() : '') + '] ' + (x ? x.textContent : e.innerText).replace(/\s+/g, ' ').trim();
+    return i && i % 12 === 0 ? '\n' + line : line;
+  });
+  const views = Number(d.viewCount || 0).toLocaleString('en-US');
+  const content = '# ' + d.title + '\n\n' + d.author + ' · ' + clock(d.lengthSeconds) + ' · ' + views + ' views\n\n## Description\n\n'
+    + (d.shortDescription || '').trim() + '\n\n## Transcript\n\n' + (lines.length ? lines.join('\n') : '(This video has no transcript.)');
+  return { url: location.href, title: d.title, content, transcript: lines.length > 0 };
+})();
+"#;
+
+fn youtube_video(url: &str) -> bool {
+    let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
+}
+
 /// One page read in a hidden tab (fetch_page), narrowed to `focus` when it's given.
 fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<Value, String> {
     if url.trim().is_empty() {
@@ -2130,7 +2217,26 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
             return eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120);
         }
         settle(proxy, tab, a["wait_for"].as_str())?;
+        if youtube_video(url) {
+            if let Ok(mut v) = eval_for(proxy, tab, YOUTUBE_JS, 30).and_then(|v| if v["content"].is_string() { Ok(v) } else { Err(String::new()) }) {
+                let limit = args["max_chars"].as_u64().unwrap_or(40_000) as usize;
+                let text = v["content"].as_str().unwrap_or("").to_string();
+                v["truncated"] = json!(text.chars().count() > limit);
+                v["content"] = json!(text.chars().take(limit).collect::<String>());
+                return Ok(v);
+            }
+        }
         let mut page = eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120)?;
+        // Some layouts hide the story from the main-content guess: then the whole page beats an empty answer.
+        if args["main_only"] != false && page["content"].as_str().is_some_and(|c| c.trim().len() < 200) {
+            let mut all = args.clone();
+            all["main_only"] = json!(false);
+            if let Ok(p) = eval_for(proxy, tab, &with_args(&all, MARKDOWN_JS), 120) {
+                if p["content"].as_str().is_some_and(|c| c.trim().len() > page["content"].as_str().unwrap_or("").trim().len()) {
+                    page = p;
+                }
+            }
+        }
         if let Some(b) = eval(proxy, tab, BLOCKED_JS)?.as_str().filter(|b| !b.is_empty()) {
             page["blocked"] = json!(b);
         }
@@ -2311,22 +2417,40 @@ fn web_search(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, Str
     };
     let (recent, news) = (a["recent"].as_str().unwrap_or(""), a["news"].as_bool() == Some(true));
     let mine = call(proxy, "search_engine", json!({}))?.as_str().unwrap_or(GOOGLE).to_string();
-    let first = search_url(&mine, &full, recent, news).or_else(|| search_url(GOOGLE, &full, recent, news)).unwrap_or_default();
+    let mut first = search_url(&mine, &full, recent, news).or_else(|| search_url(GOOGLE, &full, recent, news)).unwrap_or_default();
+    // Google answers a burst of searches (several agents at once) with robot checks for a while: go round it meanwhile.
+    let google_resting = first.contains("google.") && !news && now_secs() < GOOGLE_BLOCKED_UNTIL.load(Ordering::Relaxed);
+    if google_resting {
+        first = search_url(DUCKDUCKGO, &full, recent, false).unwrap_or(first);
+    }
+    let script = format!("const r = (() => {{ {} }})();\nif (!r.results || !r.results.length) r.blocked = (() => {{ {BLOCKED_JS} }})();\nreturn r;",
+        with_args(&json!({ "limit": limit }), SEARCH_JS));
     let run = |url: &str| {
         in_web_tab(proxy, json!({ "url": url }), |tab| {
             let tab = wait_ready(proxy, tab)?;
-            let mut r = poll(proxy, tab, &with_args(&json!({ "limit": limit }), SEARCH_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))?;
-            if r["results"].as_array().is_none_or(Vec::is_empty) {
-                if let Some(b) = eval(proxy, tab, BLOCKED_JS)?.as_str().filter(|b| !b.is_empty()) {
-                    r["blocked"] = json!(b);
-                }
+            // Stops at results, or at once on a robot check instead of waiting it out.
+            let mut r = poll(proxy, tab, &script, 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()) || v["blocked"].as_str().is_some_and(|b| !b.is_empty()))?;
+            if r["blocked"].as_str().is_none_or(str::is_empty) {
+                r.as_object_mut().map(|o| o.remove("blocked"));
+            } else if url.contains("google.") {
+                GOOGLE_BLOCKED_UNTIL.store(now_secs() + 600, Ordering::Relaxed);
             }
             Ok(r)
         })
     };
     let empty = |r: &Value| r["results"].as_array().is_none_or(Vec::is_empty);
     let mut r = run(&first)?;
-    if empty(&r) && !news {
+    // DuckDuckGo stood in but found nothing: Google may have rested long enough.
+    if empty(&r) && google_resting {
+        let other = run(&search_url(&mine, &full, recent, news).unwrap_or_default())?;
+        if empty(&other) {
+            let _ = call(proxy, "web_close", json!({ "tab": other["tab"] }));
+        } else {
+            let _ = call(proxy, "web_close", json!({ "tab": r["tab"] }));
+            r = other;
+        }
+    }
+    if empty(&r) && !news && !google_resting {
         if let Some(u) = search_url(DUCKDUCKGO, &full, recent, false) {
             let other = run(&u)?;
             if empty(&other) {
@@ -2579,10 +2703,37 @@ fn map_site(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, Strin
     Ok(out)
 }
 
+/// list_tabs, narrowed by `query` and kept short: some people keep hundreds of tabs, and a long list is cut off unread.
+fn list_tabs(proxy: &EventLoopProxy<UserEvent>, a: Value) -> Result<Value, String> {
+    let all = call(proxy, "list_tabs", a.clone())?;
+    let Some(rows) = all.as_array() else { return Ok(all) };
+    let words: Vec<String> = a["query"].as_str().unwrap_or("").to_lowercase().split_whitespace().map(str::to_string).collect();
+    let hits: Vec<&Value> = rows
+        .iter()
+        .filter(|t| {
+            let hay = format!("{} {}", t["title"].as_str().unwrap_or(""), t["url"].as_str().unwrap_or("")).to_lowercase();
+            words.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .collect();
+    let limit = a["limit"].as_u64().unwrap_or(100).max(1) as usize;
+    if hits.len() <= limit {
+        return Ok(json!(hits));
+    }
+    // The active tab first, then the order they're in.
+    let mut keep: Vec<&Value> = hits.iter().filter(|t| t["active"] == true).copied().collect();
+    keep.extend(hits.iter().filter(|t| t["active"] != true).take(limit.saturating_sub(keep.len())));
+    // Still a list (plugin scripts walk it); its last row says what was left out.
+    let more = hits.len() - keep.len();
+    let mut out: Vec<Value> = keep.into_iter().cloned().collect();
+    out.push(json!({ "more": more, "note": "More tabs than limit: pass query (words in the title or address) or space to find one, or a higher limit." }));
+    Ok(json!(out))
+}
+
 fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let tab = a.get("tab").and_then(|t| t.as_i64());
     match name {
-        "list_spaces" | "list_tabs" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
+        "list_tabs" => list_tabs(proxy, a),
+        "list_spaces" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
         | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
         "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
         "report_issue" => {
@@ -2675,6 +2826,10 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             // Several pages at once, side by side in their own hidden tabs.
             Some(urls) => {
                 let urls: Vec<String> = urls.iter().filter_map(|u| u.as_str().map(str::to_string)).take(10).collect();
+                // Agents' tool answers are cut off past ~50,000 characters, so the pages share that much between them.
+                let per = a["max_chars"].as_u64().unwrap_or(40_000).min((48_000 / urls.len().max(1) as u64).max(2_000));
+                let mut a = a.clone();
+                a["max_chars"] = json!(per);
                 let out: Vec<Value> = std::thread::scope(|s| {
                     let a = &a;
                     let jobs: Vec<_> = urls.iter().map(|u| s.spawn(move || fetch_one(proxy, u, a).unwrap_or_else(|e| json!({ "url": u, "error": e })))).collect();
