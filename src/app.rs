@@ -10315,6 +10315,9 @@ impl App {
     }
 
     fn after_reveal(&mut self) {
+        if let Some((bad, now)) = crate::update::take_rollback_note() {
+            self.toast(&format!("Valerie {bad} kept crashing when it opened, so you're back on {now}. Your tabs and settings are as they were"));
+        }
         self.queue_event("valerie_started", self.state.active_tab(), None);
         self.load_extensions(false);
         if self.config.app.command_line_tool {
@@ -12732,6 +12735,12 @@ impl App {
                 return crate::log::line("update", format!("update check: {e}"));
             }
         };
+        if crate::update::skipped().as_deref() == Some(r.version.as_str()) {
+            if manual {
+                self.toast(&format!("Valerie {} kept crashing when it opened, so it's skipped: you'll get the next version", r.version));
+            }
+            return;
+        }
         let current = self.update_ready.clone().unwrap_or_else(|| crate::update::current().to_string());
         if !crate::update::newer(&r.version, &current) {
             if manual {

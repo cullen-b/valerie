@@ -84,6 +84,11 @@ the owner reports a failure. When you add code where something can fail without 
   back to testing builds that only edge copies get, set `PUBLISH_TO: edge` (only when the owner asks); then a build
   reaches everyone only when the owner approves it and it's promoted with `gh workflow run promote.yml`.
   `scripts/install-macos.sh` is only for trying a build before it's pushed.
+- Before a release is published, `scripts/smoke-macos.sh` opens the built app on macOS 26 and 15 (free standard runners)
+  and fails the release if it doesn't stay up with tabs open. If a release still crashes at launch twice in a row on
+  someone's Mac, Valerie goes back to the version it replaced and skips the bad one (`roll_back_if_crashing` in
+  `src/update.rs`, setting `updates.roll_back_on_crash`), so the version it replaced is kept until the new one has run
+  for 2 minutes.
 - The release key (`assets/release-signing.pem`; private half in the repo's `MACOS_SIGNING_P12` secret and the owner's
   keychain) must not change: macOS ties camera, microphone and keychain permissions to it, and the updater only
   accepts builds signed with it (`RELEASE_REQUIREMENTS`, also `site/install.sh`). Changing keys takes one release that
