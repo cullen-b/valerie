@@ -109,4 +109,7 @@ the owner reports a failure. When you add code where something can fail without 
 - The agent shell can't capture the screen. Check UI changes by loading `ui/*.html` in Playwright with a stubbed
   `window.ipc` and mock state.
 - `cargo check --target x86_64-pc-windows-msvc` type-checks the Windows build; CI builds macOS, Linux, Windows.
+- Speed and memory: `scripts/perf-bench.py --app <a .app>` measures launch, new tab, tab switch, idle CPU, wakeups
+  and memory the way ardia.dev/benchmarks does (a test copy; run it at normal priority). `VALERIE_TRACE=1` prints
+  each launch step's time.
 - Plan and roadmap: `PLAN.md`.

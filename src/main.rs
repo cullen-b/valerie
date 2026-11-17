@@ -525,7 +525,9 @@ fn main() -> anyhow::Result<()> {
     #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Console::AttachConsole(windows::Win32::System::Console::ATTACH_PARENT_PROCESS) };
     let args: Vec<String> = std::env::args().skip(1).collect();
+    app::trace("main");
     let loaded = Config::load();
+    app::trace("config read");
     log::init(loaded.as_ref().map_or(Config::defaults().logs.keep_days, |c| c.logs.keep_days));
     log::set_level(&loaded.as_ref().map_or(Config::defaults().logs.level, |c| c.logs.level.clone()));
     let config = loaded.unwrap_or_else(|e| {

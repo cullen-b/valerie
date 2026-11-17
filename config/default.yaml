@@ -140,6 +140,9 @@ sidebar:
   remove_closed_saved_tabs: true # a closed (unloaded) pinned or kept row shows × on hover: it removes the tab from the
                            # sidebar. So − then × (pointer still on the row) closes it for good. false = no button once closed
   close_folder_with_last_tab: true # closing (−) the last open tab in a folder also folds the folder up. false = it stays open
+  folder_animation: slide  # how a folder opens and folds up. one of: slide (its tabs slide up into the folder and back
+                           # out) | fade (they fade as the folder shrinks or grows) | none (it snaps open or shut)
+  folder_animation_ms: 320 # how long that takes, in milliseconds (0 = no animation; layout.animation_ms: 0 also turns it off)
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
@@ -165,9 +168,6 @@ sidebar:
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
-  folder_animation: slide  # how a folder opens and folds up. one of: slide (its tabs slide up into the folder and back
-                           # out) | fade (they fade as the folder shrinks or grows) | none (it snaps open or shut)
-  folder_animation_ms: 320 # how long that takes, in milliseconds (0 = no animation; layout.animation_ms: 0 also turns it off)
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false
   drop_to_split: true      # drop a tab on the middle of another to open the two side by side in split view. true | false
   alt_click_to_split: true # Option-click a tab (Alt-click on Windows and Linux) to show it in split view beside the tab you're on. true | false
@@ -497,6 +497,11 @@ pages:
   loading_bar: true        # a thin line across the top of a page while it loads
   wait_for_first_draw: true # a tab that's loading from scratch (new, or asleep) stays hidden until it has drawn, up to a
                            # second, then fades in, so it never flashes white. false = show it straight away
+  share_process_by_site: true # tabs of the same site (and profile) share one web process, like Chrome does: far less
+                           # memory with many tabs open, but a page that hangs or crashes takes its same-site tabs with it.
+                           # false = every tab gets its own process
+  slow_background_tabs: true # tabs you aren't looking at run their timers less and less often the longer they stay
+                           # out of sight, as in Safari (sound and video carry on): saves battery. false = full speed
   quick_full_screen: true  # a page's full screen (a video's button) fills the whole screen straight away: no slide to a
                            # separate desktop on the Mac, and over the whole window everywhere. false = the system's own way:
                            # the Mac's slide; on Windows and Linux the video stays inside the tab's area

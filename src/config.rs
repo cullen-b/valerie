@@ -292,10 +292,10 @@ pub struct SidebarConfig {
     pub minus_for_saved_tabs: bool,
     pub remove_closed_saved_tabs: bool,
     pub close_folder_with_last_tab: bool,
-    pub new_tab_button: bool,
-    pub today_label: bool,
     pub folder_animation: String,
     pub folder_animation_ms: f64,
+    pub new_tab_button: bool,
+    pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
     pub order: Vec<String>,
@@ -811,6 +811,12 @@ pub struct DownloadRule {
     pub ask: Option<bool>,
 }
 
+/// default.yaml, parsed once: it's large, and every config read and settings change starts from it.
+fn default_value() -> &'static Value {
+    static PARSED: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    PARSED.get_or_init(|| serde_yaml::from_str(DEFAULT_YAML).expect("default config is valid"))
+}
+
 impl Config {
     /// Every task: `tasks`, plus the older `briefs` (pages) and `agents.jobs` (results as notifications).
     pub fn all_tasks(&self) -> Vec<TaskConfig> {
@@ -935,6 +941,8 @@ pub struct PagesConfig {
     pub markdown_edit: String,
     pub pdf_viewer: bool,
     pub wait_for_first_draw: bool,
+    pub share_process_by_site: bool,
+    pub slow_background_tabs: bool,
     pub youtube_sharp_start: bool,
     pub youtube_downloads: bool,
     pub quick_full_screen: bool,
@@ -1671,7 +1679,7 @@ pub fn merge(base: &mut Value, over: Value) {
 
 impl Config {
     pub fn defaults() -> Config {
-        serde_yaml::from_str(DEFAULT_YAML).expect("default config is valid")
+        serde_yaml::from_value(default_value().clone()).expect("default config is valid")
     }
 
     /// Load the user config, writing a small starter file on first run (defaults fill in the rest).
@@ -1710,7 +1718,7 @@ impl Config {
 
     /// The defaults with the user's (shared, synced) file on top, without this computer's own settings.
     pub fn merged_shared(text: &str) -> Result<Value> {
-        let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
+        let mut base: Value = default_value().clone();
         let user: Value = serde_yaml::from_str(text)?;
         // Defaults, then the old browser's shortcuts, then the user's own keybindings.
         if let Some(keys) = user.get("shortcuts_like").and_then(|v| v.as_str()).and_then(shortcuts_like_keys) {
