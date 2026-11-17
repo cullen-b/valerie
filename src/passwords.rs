@@ -540,14 +540,21 @@ pub fn signature(vaults: &[String]) -> String {
     format!("{}|{}", names.join("\t"), std::fs::read_to_string(stamps_path()).unwrap_or_default())
 }
 
-/// Every password in these vaults, plus the ones deleted here, for the other machines.
-pub fn export(vaults: &[String]) -> Vec<Synced> {
+/// Every password in these vaults, plus the ones deleted here, for the other machines. Passwords unchanged since
+/// `previous` (this machine's last export) are reused, so only new or changed ones are read: each read can make the Keychain ask.
+pub fn export(vaults: &[String], previous: &[Synced]) -> Vec<Synced> {
     let st = stamps();
+    let before: std::collections::HashMap<String, &Synced> =
+        previous.iter().filter(|p| !p.deleted && !p.password.is_empty()).map(|p| (format!("{}\n{}\n{}", p.vault, p.origin, p.username), p)).collect();
     let mut out: Vec<Synced> = list(vaults)
         .into_iter()
         .filter_map(|e| {
-            let pw = password(&e).ok().flatten()?;
-            let modified = st.get(&format!("{}\n{}\n{}", e.vault, e.origin, e.username)).map_or(0, |s| s.modified);
+            let k = format!("{}\n{}\n{}", e.vault, e.origin, e.username);
+            let modified = st.get(&k).map_or(0, |s| s.modified);
+            let pw = match before.get(&k).filter(|p| p.modified == modified) {
+                Some(p) => p.password.clone(),
+                None => password(&e).ok().flatten()?,
+            };
             Some(Synced { vault: e.vault, origin: e.origin, username: e.username, password: pw, modified, deleted: false })
         })
         .collect();

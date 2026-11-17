@@ -308,7 +308,8 @@ fn write_mine(dir: &Path, me: &DeviceTabs, opt: &Options, st: &mut State) -> Res
         let sig = crate::passwords::signature(&opt.vaults);
         let path = format!("devices/{}.passwords.enc", me.id);
         if sig != st.passwords || !dir.join(&path).exists() {
-            let all = crate::passwords::export(&opt.vaults);
+            let previous = std::fs::read(dir.join(&path)).ok().and_then(|b| crate::crypt::open(key, &b).ok()).and_then(|b| serde_json::from_slice::<Vec<crate::passwords::Synced>>(&b).ok()).unwrap_or_default();
+            let all = crate::passwords::export(&opt.vaults, &previous);
             std::fs::write(dir.join(&path), crate::crypt::seal(key, &serde_json::to_vec(&all)?))?;
             st.passwords = sig;
         }
