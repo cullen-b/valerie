@@ -541,6 +541,8 @@ little_window:
                            # another space's profile load again either way
   loading_line: true       # a thin moving line at the top of a little window while a link's page is on the way, on
                            # an empty page in your light or dark. true | false (false = just the empty page)
+  new_window_key: "CmdOrCtrl+N"   # this key, pressed in a little window, opens another little window instead of
+                           # doing what keybindings gives it (new chat). A key, e.g. "CmdOrCtrl+Shift+N"; "" = off
   width: 960               # pixels, until you've resized one (or always, with remember_size off)
   height: 700              # pixels, same
 

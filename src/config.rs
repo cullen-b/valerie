@@ -930,6 +930,8 @@ pub struct LittleWindowConfig {
     pub open_without_reloading: bool,
     #[serde(default = "yes")]
     pub loading_line: bool,
+    #[serde(default = "cmd_n")]
+    pub new_window_key: String,
     pub width: f64,
     pub height: f64,
 }
@@ -1173,6 +1175,10 @@ pub struct AgentJob {
     pub at: Option<String>,
     #[serde(default = "yes")]
     pub enabled: bool,
+}
+
+fn cmd_n() -> String {
+    "CmdOrCtrl+N".into()
 }
 
 fn yes() -> bool {

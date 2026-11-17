@@ -4643,6 +4643,12 @@ impl App {
     }
 
     /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
+    /// Whether `cmd` is what little_window.new_window_key is bound to, so pressing it in a little window opens another one.
+    fn little_new_window_key(&self, cmd: &Command) -> bool {
+        let Some(key) = accel(&self.config.little_window.new_window_key) else { return false };
+        self.config.keybindings.iter().any(|(k, b)| accel(k).as_ref() == Some(&key) && b.as_ref().and_then(|b| b.command()).as_ref() == Some(cmd))
+    }
+
     fn little_size(&self) -> (f64, f64) {
         let lw = &self.config.little_window;
         let fits = |(w, h): &(f64, f64)| {
@@ -6524,6 +6530,10 @@ impl App {
         }
         // Commands aimed at the focused little window.
         if let Some(id) = little {
+            if self.little_new_window_key(&cmd) {
+                let space = self.littles[&id].space;
+                return self.open_little(LITTLE_BLANK, space, elwt);
+            }
             let l = &self.littles[&id];
             match &cmd {
                 Command::CloseTab { tab: None } => {
