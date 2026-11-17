@@ -126,6 +126,8 @@ window.little = {
     const page = ((s.tabs || []).find((t) => t.active) || {}).n;
     const asking = !!s.ask && (!document.body.classList.contains("ask") || page !== lastPage);
     lastPage = page;
+    // Done asking with the mouse already gone from the bar: nothing else would put it away.
+    if (!s.ask && document.body.classList.contains("ask") && !document.documentElement.matches(":hover")) send({ t: "bar_away" });
     document.body.classList.toggle("ask", !!s.ask);
     if (asking) { addr.value = ""; addr.focus(); }
   },

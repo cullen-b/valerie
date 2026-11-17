@@ -66,20 +66,43 @@ fn marker() -> PathBuf {
     crate::config::data_dir().join("running")
 }
 
+/// How the last run ended when it never quit.
+pub struct Crash {
+    /// Its version number ("0.1.488").
+    pub version: String,
+    /// It crashed before it had run for `HEALTHY_SECS`.
+    pub early: bool,
+}
+
+/// A run that lasts this long without crashing counts as healthy (see `update::roll_back_if_crashing`).
+pub const HEALTHY_SECS: u64 = 120;
+
 /// At launch: log how the last run ended if it never quit (with the system's crash report when there is one), then
-/// mark this run as running.
-pub fn note_start(version: &str) {
-    if let Ok(prev) = std::fs::read_to_string(marker()) {
-        let (pid, what) = prev.trim().split_once(' ').unwrap_or(("", prev.trim()));
-        line("crash", format!("the last run ({what}) ended without quitting: it crashed or was force quit"));
+/// mark this run as running. The marker is "pid<TAB>version<TAB>shown version", plus "<TAB>ok" once healthy.
+pub fn note_start(version: &str, shown: &str) -> Option<Crash> {
+    let crash = std::fs::read_to_string(marker()).ok().map(|prev| {
+        let f: Vec<&str> = prev.trim().split('\t').collect();
+        let early = f.get(3) != Some(&"ok");
+        let what = f.get(2).or(f.get(1)).copied().unwrap_or("an earlier version");
+        let when = if early { format!("within {HEALTHY_SECS} seconds of starting") } else { "while running".into() };
+        line("crash", format!("the last run ({what}) ended without quitting {when}: it crashed or was force quit"));
         #[cfg(target_os = "macos")]
-        if let Some(report) = pid.parse().ok().and_then(crash_report) {
+        if let Some(report) = f.first().and_then(|p| p.parse().ok()).and_then(crash_report) {
             line("crash", report);
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = pid;
+        Crash { version: f.get(1).copied().unwrap_or_default().to_string(), early }
+    });
+    let _ = std::fs::write(marker(), format!("{}\t{version}\t{shown}", std::process::id()));
+    crash
+}
+
+/// This run has lasted `HEALTHY_SECS`: a crash from now on isn't a crash at launch.
+pub fn note_healthy() {
+    if let Ok(m) = std::fs::read_to_string(marker()) {
+        if !m.trim_end().ends_with("\tok") {
+            let _ = std::fs::write(marker(), format!("{}\tok", m.trim_end()));
+        }
     }
-    let _ = std::fs::write(marker(), format!("{} {version}", std::process::id()));
 }
 
 /// When Valerie quits normally.

@@ -72,11 +72,114 @@ pub fn fetch(feed: &str) -> Result<Release> {
     serde_json::from_slice(&out.stdout).context("the update feed isn't valid")
 }
 
-/// Delete the copy of Valerie the last update kept for the process that was running then. Call when the app starts.
+/// At launch: throw away an update that was only half unpacked. The version that ran before the last update stays
+/// (`previous.app`) until this one has proved itself, so a release that crashes at launch can be rolled back.
 pub fn clean_up_previous() {
     if let Some(parent) = app_bundle().filter(|_| !is_test_instance()).as_deref().and_then(Path::parent) {
-        let _ = std::fs::remove_dir_all(parent.join(KEPT_FOLDER));
+        let _ = std::fs::remove_dir_all(parent.join(KEPT_FOLDER).join("incoming"));
     }
+}
+
+/// This version has run for `log::HEALTHY_SECS` without crashing: the kept older version isn't needed any more.
+pub fn forget_previous() {
+    let _ = std::fs::remove_file(crate::config::data_dir().join(CRASH_COUNT));
+    if let Some(parent) = app_bundle().filter(|_| !is_test_instance()).as_deref().and_then(Path::parent) {
+        let kept = parent.join(KEPT_FOLDER);
+        let _ = std::fs::remove_dir_all(kept.join("previous.app"));
+        let _ = std::fs::remove_dir_all(kept.join("crashing.app"));
+    }
+}
+
+/// In the data folder: how many launches in a row of this version crashed early ("version count").
+const CRASH_COUNT: &str = "launch-crashes";
+/// In the data folder: a version that was rolled back, which updates skip until a newer one is out.
+const SKIPPED: &str = "skipped-version";
+/// In the data folder: "bad version<TAB>version gone back to", for the notice the older version shows.
+const ROLLED_BACK: &str = "rolled-back";
+/// Rolled back after this many launches in a row crashed early.
+const CRASHES_BEFORE_ROLLBACK: u32 = 2;
+
+/// When this version keeps crashing at launch (`CRASHES_BEFORE_ROLLBACK` early crashes in a row) and the version from
+/// before the last update is still kept, put that one back, open it, and return true (this process should exit).
+/// Tabs and settings live outside the app, so going back doesn't touch them.
+pub fn roll_back_if_crashing(crash: Option<&crate::log::Crash>, enabled: bool) -> bool {
+    let file = crate::config::data_dir().join(CRASH_COUNT);
+    let Some(_) = crash.filter(|c| c.early && c.version == current()) else {
+        let _ = std::fs::remove_file(&file);
+        return false;
+    };
+    let before = std::fs::read_to_string(&file).ok().and_then(|t| {
+        let (v, n) = t.trim().split_once(' ')?;
+        (v == current()).then(|| n.parse::<u32>().ok()).flatten()
+    });
+    let count = before.unwrap_or(0) + 1;
+    let _ = std::fs::write(&file, format!("{} {count}", current()));
+    if !enabled || count < CRASHES_BEFORE_ROLLBACK || !cfg!(target_os = "macos") || is_test_instance() {
+        return false;
+    }
+    match roll_back() {
+        Ok(old) => {
+            crate::log::line("update", format!("Valerie {} crashed at launch {count} times in a row: went back to {old}", current()));
+            let _ = std::fs::remove_file(&file);
+            true
+        }
+        Err(e) => {
+            crate::log::line("update", format!("Valerie {} keeps crashing at launch and couldn't go back: {e:#}", current()));
+            false
+        }
+    }
+}
+
+fn roll_back() -> Result<String> {
+    let app = app_bundle().context("not running from Valerie.app")?;
+    let kept = app.parent().context("no folder around the app")?.join(KEPT_FOLDER);
+    let previous = kept.join("previous.app");
+    let old = bundle_version(&previous).context("no earlier version is kept (it's dropped once a version runs well)")?;
+    if !newer(current(), &old) {
+        bail!("the kept version ({old}) isn't older than this one");
+    }
+    verify(&previous, &app)?;
+    let bad = kept.join("crashing.app");
+    let _ = std::fs::remove_dir_all(&bad);
+    std::fs::rename(&app, &bad).context("couldn't move this version aside")?;
+    if let Err(e) = std::fs::rename(&previous, &app) {
+        let _ = std::fs::rename(&bad, &app);
+        return Err(e).context("couldn't put the earlier version back");
+    }
+    let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+    let _ = crate::platform::command(lsregister).arg("-f").arg(&app).status();
+    let data = crate::config::data_dir();
+    let _ = std::fs::write(data.join(SKIPPED), current());
+    let _ = std::fs::write(data.join(ROLLED_BACK), format!("{}\t{old}", current()));
+    crate::log::note_quit();
+    // `open` doesn't pass this process's environment on; a test copy's VALERIE_* folders have to go with it.
+    let mut open = crate::platform::command("open");
+    open.arg("-n");
+    for (k, v) in std::env::vars().filter(|(k, _)| k.starts_with("VALERIE_")) {
+        open.arg("--env").arg(format!("{k}={v}"));
+    }
+    open.arg(&app).spawn().context("couldn't open the earlier version")?;
+    Ok(old)
+}
+
+/// The version an app bundle says it is.
+fn bundle_version(app: &Path) -> Option<String> {
+    let out = crate::platform::command("plutil").args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"]).arg(app.join("Contents/Info.plist")).output().ok()?;
+    let v = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    (out.status.success() && !v.is_empty()).then_some(v)
+}
+
+/// A version that was rolled back because it crashed at launch: updates leave it alone.
+pub fn skipped() -> Option<String> {
+    std::fs::read_to_string(crate::config::data_dir().join(SKIPPED)).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// After a roll back, once: (the version that crashed, the one now running).
+pub fn take_rollback_note() -> Option<(String, String)> {
+    let path = crate::config::data_dir().join(ROLLED_BACK);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    text.trim().split_once('\t').map(|(a, b)| (a.to_string(), b.to_string()))
 }
 
 /// A test instance leaves updates alone, unless VALERIE_UPDATE_TEST lets it update its own copy of the app.

@@ -1,5 +1,6 @@
 name: Release
-# Every push to main is tested, built for macOS (signed with Valerie's release key), Linux and Windows, and published
+# Every push to main is tested, built for macOS (signed with Valerie's release key), Linux and Windows, opened on macOS
+# 26 and 15 to check it stays up (scripts/smoke-macos.sh), and published
 # with latest.json. PUBLISH_TO below decides who gets it:
 #   stable: every build is the stable release everyone gets (and the edge feed too).
 #   edge:   a pre-release only copies on the edge channel get; everyone else waits until it's promoted (promote.yml).
@@ -121,8 +122,24 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: valerie-windows-x86_64.zip }
 
+  # Opens the built app on each macOS version GitHub offers for free (standard runners; the repo is public) and fails
+  # the release if it doesn't stay up with tabs open. 0.1.486 crashed at launch on macOS 26 only.
+  smoke:
+    needs: macos
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: macos, path: dist }
+      - run: ditto -x -k dist/Valerie-macos.zip "$RUNNER_TEMP/app"
+      - run: scripts/smoke-macos.sh "$RUNNER_TEMP/app/Valerie.app"
+
   publish:
-    needs: [version, macos, linux, windows]
+    needs: [version, macos, smoke, linux, windows]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}

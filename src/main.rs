@@ -760,7 +760,15 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     log::line("app", format!("Valerie {} started on {}", app::version(), platform::os_version()));
-    log::note_start(&app::version());
+    let crash = log::note_start(update::current(), &app::version());
+    if update::roll_back_if_crashing(crash.as_ref(), config.updates.roll_back_on_crash) {
+        return Ok(());
+    }
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(log::HEALTHY_SECS));
+        log::note_healthy();
+        update::forget_previous();
+    });
     // The app outlives the terminal it may have started from: closing that terminal mustn't close the browser.
     #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Console::FreeConsole() };
