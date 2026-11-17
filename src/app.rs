@@ -15,8 +15,10 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder};
 
 const LITTLE_BAR: f64 = 36.0;
-/// Seconds the little window's bar takes to slide out or away (`little_window.top_bar: hover`).
+/// Seconds the little window's bar takes to slide away (`little_window.top_bar: hover`).
 const LITTLE_BAR_SLIDE: f64 = 0.2;
+/// Seconds it takes to slide out: a touch slower than away, so it eases in.
+const LITTLE_BAR_OUT: f64 = 0.3;
 const MAX_UNTRUSTED_IPC: usize = 64 * 1024;
 /// URL schemes handed to other apps when a page links to them.
 const EXTERNAL_SCHEMES: &[&str] = &[
@@ -3347,6 +3349,8 @@ impl App {
     /// stays where it is on screen, the same size; with no room above (or filling the screen) the bar slides over the page.
     fn set_little_bar(&mut self, id: WindowId, out: bool) {
         let hover = self.little_bar_hides();
+        // little_window.bar_reveal: over (slide over the page's top) | above (the window grows upward to fit it).
+        let over = self.config.little_window.bar_reveal != "above";
         let Some(room) = self.littles.get(&id).map(|l| self.little_fills_screen(l)) else { return };
         let Some(l) = self.littles.get_mut(&id) else { return };
         if !hover || room {
@@ -3370,12 +3374,12 @@ impl App {
             let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
             let _ = l.bar.set_visible(true);
             let fills = l.window.fullscreen().is_some() || l.window.is_maximized();
-            l.bar_over = fills || !platform::grow_window_top(&l.window, LITTLE_BAR, LITTLE_BAR_SLIDE);
+            l.bar_over = fills || over || !platform::grow_window_top(&l.window, LITTLE_BAR, LITTLE_BAR_OUT);
             let _ = l.bar.evaluate_script("window.little && little.reveal()");
             if l.bar_over {
                 let _ = l.bar.set_bounds(rect(0.0, -LITTLE_BAR, w, LITTLE_BAR));
                 platform::bring_to_front(&l.bar);
-                platform::animate_bounds(&l.bar, 0.0, 0.0, w, LITTLE_BAR, LITTLE_BAR_SLIDE)
+                platform::animate_bounds(&l.bar, 0.0, 0.0, w, LITTLE_BAR, LITTLE_BAR_OUT)
             } else {
                 cfg!(target_os = "macos")
             }
@@ -3394,7 +3398,7 @@ impl App {
             l.sliding = true;
             let p = self.proxy.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs_f64(LITTLE_BAR_SLIDE + 0.03));
+                std::thread::sleep(std::time::Duration::from_secs_f64(if out { LITTLE_BAR_OUT } else { LITTLE_BAR_SLIDE } + 0.03));
                 send(&p, UserEvent::LittleBarSlid(id));
             });
         } else {

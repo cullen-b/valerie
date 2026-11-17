@@ -167,6 +167,7 @@ changed in plain words. Some translations:
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "Sidebar only when I push the mouse to the edge" / "the page shouldn't resize when it shows" | `layout.sidebar_visible: false`, `layout.reveal_sidebar_on_edge: true`, `layout.reveal_sidebar_over_page: true` (`false` squeezes the page instead) |
 | "Always show the little window's bar" / "hide it until I point at the top" | `little_window.top_bar: always` / `hover` |
+| "The little window's bar should grow the window upward instead of covering the page" | `little_window.bar_reveal: above` (`over`, the default, slides it down over the page's top) |
 | "In full screen, the little window's bar should cover the page, not push it down" | `little_window.full_screen_bar: over` (`room`, the default, keeps a strip for the bar above the page) |
 | "No tabs in little windows" / "the command bar in a little window should open the main window" | `little_window.tabs: false` (⌘T and the command bar then work as in the main window) |
 | "⌘N in a little window should open another little window" / "a different key for that" / "turn it off" | `little_window.new_window_key: "CmdOrCtrl+N"` (the default) / `"CmdOrCtrl+Shift+N"` / `""` |
