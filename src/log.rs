@@ -61,6 +61,70 @@ pub fn line(area: &str, msg: impl std::fmt::Display) {
     }
 }
 
+/// A file that exists while Valerie runs, so the next launch can tell the last run crashed or was force quit.
+fn marker() -> PathBuf {
+    crate::config::data_dir().join("running")
+}
+
+/// At launch: log how the last run ended if it never quit (with the system's crash report when there is one), then
+/// mark this run as running.
+pub fn note_start(version: &str) {
+    if let Ok(prev) = std::fs::read_to_string(marker()) {
+        let (pid, what) = prev.trim().split_once(' ').unwrap_or(("", prev.trim()));
+        line("crash", format!("the last run ({what}) ended without quitting: it crashed or was force quit"));
+        #[cfg(target_os = "macos")]
+        if let Some(report) = pid.parse().ok().and_then(crash_report) {
+            line("crash", report);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = pid;
+    }
+    let _ = std::fs::write(marker(), format!("{} {version}", std::process::id()));
+}
+
+/// When Valerie quits normally.
+pub fn note_quit() {
+    let _ = std::fs::remove_file(marker());
+}
+
+/// The summary of macOS's crash report for process `pid`: what killed it, why, and where.
+#[cfg(target_os = "macos")]
+fn crash_report(pid: u64) -> Option<String> {
+    let dir = PathBuf::from(std::env::var_os("HOME")?).join("Library/Logs/DiagnosticReports");
+    for e in std::fs::read_dir(&dir).ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with("valerie") && name.ends_with(".ips")) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(e.path()) else { continue };
+        let Some((_, body)) = text.split_once('\n') else { continue };
+        let Ok(b) = serde_json::from_str::<serde_json::Value>(body) else { continue };
+        if b["pid"].as_u64() != Some(pid) {
+            continue;
+        }
+        let images = b["usedImages"].as_array().cloned().unwrap_or_default();
+        let frames = |list: &serde_json::Value| -> Vec<String> {
+            list.as_array().into_iter().flatten().filter_map(|f| {
+                let image = images.get(f["imageIndex"].as_u64()? as usize)?["name"].as_str().unwrap_or("?").to_string();
+                Some(format!("{image} {}", f["symbol"].as_str().unwrap_or("?")))
+            }).take(16).collect()
+        };
+        let thread = &b["threads"][b["faultingThread"].as_u64().unwrap_or(0) as usize];
+        let mut out = format!("{} ({}), report {}", b["exception"]["type"].as_str().unwrap_or("crash"), b["exception"]["signal"].as_str().unwrap_or(""), e.path().display());
+        if let Some(why) = b.get("asi").filter(|a| !a.is_null()) {
+            out.push_str(&format!("\nwhy: {why}"));
+        }
+        for (title, list) in [("thrown at", &b["lastExceptionBacktrace"]), ("crashed at", &thread["frames"])] {
+            let f = frames(list);
+            if !f.is_empty() {
+                out.push_str(&format!("\n{title}:\n  {}", f.join("\n  ")));
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
 fn prune(keep_days: u64) {
     let cutoff = SystemTime::now() - Duration::from_secs(keep_days * 86_400);
     for e in std::fs::read_dir(dir()).into_iter().flatten().flatten() {

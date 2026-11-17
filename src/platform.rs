@@ -208,6 +208,19 @@ mod mac {
     pub fn relate(config: &AnyObject, with: &WebView) {
         unsafe {
             if msg_send![config, respondsToSelector: objc2::sel!(_setRelatedWebView:)] {
+                // WebKit throws (macOS 26 aborted Valerie at launch) unless both views use the same process pool and data store.
+                let theirs: *mut AnyObject = msg_send![ptr(with), configuration];
+                if theirs.is_null() {
+                    return;
+                }
+                let pool: *mut AnyObject = msg_send![theirs, processPool];
+                let store: *mut AnyObject = msg_send![theirs, websiteDataStore];
+                if !pool.is_null() {
+                    let _: () = msg_send![config, setProcessPool: pool];
+                }
+                if !store.is_null() {
+                    let _: () = msg_send![config, setWebsiteDataStore: store];
+                }
                 let _: () = msg_send![config, _setRelatedWebView: ptr(with)];
             }
         }
@@ -2236,6 +2249,19 @@ pub fn page_configuration(id: [u8; 16], extensions: Option<objc2::rc::Retained<o
         mac::slow_hidden_timers(&config);
     }
     Some(config)
+}
+
+/// The system and its version, for the log ("macOS Version 26.5.2 (Build 25F84)").
+pub fn os_version() -> String {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let info: *mut objc2::runtime::AnyObject = objc2::msg_send![objc2::class!(NSProcessInfo), processInfo];
+        let v: *mut objc2_foundation::NSString = objc2::msg_send![info, operatingSystemVersionString];
+        if !v.is_null() {
+            return format!("macOS {}", (*v).to_string());
+        }
+    }
+    format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 pub fn bench_in_view(wv: &WebView) {

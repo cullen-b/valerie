@@ -711,7 +711,7 @@ fn page_source(name: &str) -> Option<(String, bool)> {
 
 /// The tools a page asks for: `<meta name="valerie-tools" content="open_tab close_tab">`.
 fn page_tools(html: &str) -> Vec<String> {
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let Some(at) = lower.find("name=\"valerie-tools\"") else { return Vec::new() };
     let tag_start = lower[..at].rfind('<').unwrap_or(0);
     let tag_end = lower[at..].find('>').map_or(lower.len(), |e| at + e);
@@ -726,7 +726,7 @@ fn page_tools(html: &str) -> Vec<String> {
 
 /// A page's <title>, for lists.
 fn page_title(html: &str) -> String {
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     lower.find("<title>").and_then(|a| lower[a..].find("</title>").map(|b| html[a + 7..a + b].trim().to_string())).unwrap_or_default()
 }
 
@@ -774,7 +774,7 @@ fn dress_page(html: &str, name: &str, key: &str, theme: &str, props: &str, state
     );
     // Every script the page wrote itself gets the nonce.
     let mut body = String::with_capacity(html.len() + 200);
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let mut last = 0;
     for (i, _) in lower.match_indices("<script") {
         body.push_str(&html[last..i + 7]);
@@ -782,7 +782,7 @@ fn dress_page(html: &str, name: &str, key: &str, theme: &str, props: &str, state
         last = i + 7;
     }
     body.push_str(&html[last..]);
-    let lower = body.to_lowercase();
+    let lower = body.to_ascii_lowercase();
     let at = lower.find("<head").and_then(|h| lower[h..].find('>').map(|e| h + e + 1))
         .or_else(|| lower.starts_with("<!doctype").then(|| lower.find('>').map(|e| e + 1)).flatten())
         .unwrap_or(0);
@@ -1326,7 +1326,7 @@ fn ui_page(page: &str, config: &Config) -> String {
 /// A replaced window with a watcher that runs before its own scripts and reports what goes wrong.
 fn watch_replacement(html: &str) -> String {
     const WATCH: &str = r#"<script>addEventListener("error", (e) => { try { window.ipc.postMessage(JSON.stringify({ t: "replacement_error", message: String(e.message), at: (e.lineno || 0) })); } catch (_) {} });</script>"#;
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let at = lower.find("<head").and_then(|h| lower[h..].find('>').map(|e| h + e + 1)).or_else(|| lower.starts_with("<!doctype").then(|| lower.find('>').map(|e| e + 1)).flatten()).unwrap_or(0);
     format!("{}{WATCH}{}", &html[..at], &html[at..])
 }
@@ -2188,7 +2188,12 @@ impl App {
                 self.view_profiles.get(t) == Some(&profile) && self.state.tabs.get(t).and_then(|o| site_of(&o.url)).as_ref() == Some(&site)
             })
         });
-        let built = self.with_profile(&profile, mate, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
+        let mut built = self.with_profile(&profile, mate, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
+        // Some WebKit versions refuse to share a page's process; the page then gets one of its own.
+        if let (Err(e), Some(_)) = (&built, mate) {
+            crate::log::line("page", format!("couldn't share a web process with the site's other tab ({e}); using its own"));
+            built = self.with_profile(&profile, None, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
+        }
         match built {
             Ok(v) => {
                 platform::allow_magnification(&v, self.config.gestures.pinch_to_zoom);
@@ -10774,7 +10779,10 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
                 trace("link from another app");
                 app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt);
             }
-            Event::LoopDestroyed => app.save(),
+            Event::LoopDestroyed => {
+                app.save();
+                crate::log::note_quit();
+            }
             _ => {}
         }
         if app.quit {
@@ -10782,6 +10790,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
             app.drain_events(elwt);
             app.remember_frame();
             app.save();
+            crate::log::note_quit();
             *control_flow = ControlFlow::Exit;
         }
     });
