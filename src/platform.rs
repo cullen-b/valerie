@@ -1588,9 +1588,9 @@ mod mac {
         }
     }
 
-    /// Move the window's top edge up by `dy` points (down when negative) in one step, the bottom staying put; false
-    /// when growing would pass the top of the screen's usable area.
-    pub fn grow_window_top(window: &tao::window::Window, dy: f64) -> bool {
+    /// Move the window's top edge up by `dy` points (down when negative), gliding over `secs`, the bottom staying put;
+    /// false when growing would pass the top of the screen's usable area.
+    pub fn grow_window_top(window: &tao::window::Window, dy: f64, secs: f64) -> bool {
         use objc2_foundation::NSRect;
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -1604,7 +1604,14 @@ mod mac {
                 }
             }
             frame.size.height += dy;
-            let _: () = msg_send![w, setFrame: frame, display: true];
+            if secs > 0.0 {
+                animate_curve(secs, "easeOut", || {
+                    let animator: *mut AnyObject = msg_send![w, animator];
+                    let _: () = msg_send![animator, setFrame: frame, display: true];
+                });
+            } else {
+                let _: () = msg_send![w, setFrame: frame, display: true];
+            }
         }
         true
     }
@@ -2263,12 +2270,13 @@ pub fn follow_window(wv: &WebView, follow: Follow) {
 }
 
 /// Move a window's top edge up by `dy` logical pixels (down when negative), its bottom staying put; false when there's no
-/// room on the screen above it.
-pub fn grow_window_top(window: &tao::window::Window, dy: f64) -> bool {
+/// room on the screen above it. On macOS it glides there over `secs`; elsewhere it moves in one step.
+pub fn grow_window_top(window: &tao::window::Window, dy: f64, secs: f64) -> bool {
     #[cfg(target_os = "macos")]
-    return mac::grow_window_top(window, dy);
+    return mac::grow_window_top(window, dy, secs);
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = secs;
         let scale = window.scale_factor();
         let (Ok(pos), size) = (window.outer_position(), window.inner_size()) else { return false };
         let pos = pos.to_logical::<f64>(scale);

@@ -15,6 +15,8 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder};
 
 const LITTLE_BAR: f64 = 36.0;
+/// Seconds the little window's bar takes to slide out or away (`little_window.top_bar: hover`).
+const LITTLE_BAR_SLIDE: f64 = 0.2;
 const MAX_UNTRUSTED_IPC: usize = 64 * 1024;
 /// URL schemes handed to other apps when a page links to them.
 const EXTERNAL_SCHEMES: &[&str] = &[
@@ -60,6 +62,8 @@ pub enum UserEvent {
     PageFullscreen,
     /// Time to make the hidden little window that waits for the next link (`little_window.keep_one_ready`).
     PrepareLittle,
+    /// A little window's bar finished sliding out or away.
+    LittleBarSlid(WindowId),
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
@@ -210,6 +214,10 @@ struct Little {
     bar_out: bool,
     /// It showed over the page's top instead (no room above the window, or it fills the screen).
     bar_over: bool,
+    /// The bar is sliding out or away; layout waits for the slide to end (`little_bar_slid`).
+    sliding: bool,
+    /// Where the mouse asked the bar to go while it was sliding: done once the slide ends.
+    bar_wanted: Option<bool>,
     /// The profile its page was made with (cookies and logins), so it can move into a tab of the same profile.
     profile: String,
 }
@@ -3256,20 +3264,27 @@ impl App {
     }
 
     fn layout_little(&self, id: WindowId) {
-        if let Some(l) = self.littles.get(&id) {
+        if let Some(l) = self.littles.get(&id).filter(|l| !l.sliding) {
             let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
             let hover = self.little_bar_hides();
-            let top = if !hover || l.bar_out && !l.bar_over { LITTLE_BAR } else { 0.0 };
+            let room = hover && self.little_fills_screen(l);
+            let shown = !hover || room || l.bar_out;
+            let top = if !hover || room || l.bar_out && !l.bar_over { LITTLE_BAR } else { 0.0 };
             let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR));
-            let _ = l.bar.set_visible(!hover || l.bar_out);
+            let _ = l.bar.set_visible(shown);
             let _ = l.view.set_bounds(rect(0.0, top, s.width, (s.height - top).max(1.0)));
             platform::follow_window(&l.bar, platform::Follow::Top);
             platform::follow_window(&l.view, platform::Follow::Fill);
-            if l.bar_over {
+            if l.bar_over && !room {
                 platform::bring_to_front(&l.bar);
             }
-            platform::set_traffic_lights_hidden(&l.window, hover && !l.bar_out);
+            platform::set_traffic_lights_hidden(&l.window, !shown);
         }
+    }
+
+    /// Full screen (or zoomed to fill it) with `little_window.full_screen_bar: room`: the bar keeps a strip of its own above the page.
+    fn little_fills_screen(&self, l: &Little) -> bool {
+        self.config.little_window.full_screen_bar == "room" && (l.window.fullscreen().is_some() || l.window.is_maximized())
     }
 
     /// `little_window.top_bar: hover`: the bar stays hidden until the mouse comes to the window's top.
@@ -3277,37 +3292,78 @@ impl App {
         self.config.little_window.top_bar != "always"
     }
 
-    /// Slide a little window's bar out above its page, or back away. The window grows or shrinks at the top so the page
-    /// stays where it is on screen, the same size; with no room above (or filling the screen) the bar goes over the page.
+    /// Slide a little window's bar out above its page, or back away. The window's top edge glides up or down so the page
+    /// stays where it is on screen, the same size; with no room above (or filling the screen) the bar slides over the page.
     fn set_little_bar(&mut self, id: WindowId, out: bool) {
         let hover = self.little_bar_hides();
+        let Some(room) = self.littles.get(&id).map(|l| self.little_fills_screen(l)) else { return };
         let Some(l) = self.littles.get_mut(&id) else { return };
-        if !hover || l.bar_out == out || (!out && l.asking()) {
+        if !hover || room {
+            return;
+        }
+        if l.sliding {
+            l.bar_wanted = Some(out);
+            return;
+        }
+        if l.bar_out == out || (!out && l.asking()) {
             return;
         }
         let was_over = l.bar_over;
         l.bar_out = out;
-        // Pinned to the bottom while the window's top moves, so the page doesn't stretch for a frame.
+        let w = l.window.inner_size().to_logical::<f64>(l.window.scale_factor()).width;
+        // Pinned to the bottom while the window's top moves, the bar to the top; the page stays in front, covering the bar.
         platform::follow_window(&l.view, platform::Follow::Bottom);
-        if out {
+        platform::follow_window(&l.bar, platform::Follow::Top);
+        let slid = if out {
+            platform::bring_to_front(&l.view);
+            let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
+            let _ = l.bar.set_visible(true);
             let fills = l.window.fullscreen().is_some() || l.window.is_maximized();
-            l.bar_over = fills || !platform::grow_window_top(&l.window, LITTLE_BAR);
-            if l.bar_over {
-                platform::bring_to_front(&l.bar);
-            } else {
-                platform::bring_to_front(&l.view);
-            }
+            l.bar_over = fills || !platform::grow_window_top(&l.window, LITTLE_BAR, LITTLE_BAR_SLIDE);
             let _ = l.bar.evaluate_script("window.little && little.reveal()");
+            if l.bar_over {
+                let _ = l.bar.set_bounds(rect(0.0, -LITTLE_BAR, w, LITTLE_BAR));
+                platform::bring_to_front(&l.bar);
+                platform::animate_bounds(&l.bar, 0.0, 0.0, w, LITTLE_BAR, LITTLE_BAR_SLIDE)
+            } else {
+                cfg!(target_os = "macos")
+            }
         } else {
             l.bar_over = false;
-            if !was_over {
-                platform::grow_window_top(&l.window, -LITTLE_BAR);
+            platform::set_traffic_lights_hidden(&l.window, true);
+            if was_over {
+                platform::animate_bounds(&l.bar, 0.0, -LITTLE_BAR, w, LITTLE_BAR, LITTLE_BAR_SLIDE)
+            } else {
+                platform::bring_to_front(&l.view);
+                platform::grow_window_top(&l.window, -LITTLE_BAR, LITTLE_BAR_SLIDE);
+                cfg!(target_os = "macos")
             }
+        };
+        if slid {
+            l.sliding = true;
+            let p = self.proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs_f64(LITTLE_BAR_SLIDE + 0.03));
+                send(&p, UserEvent::LittleBarSlid(id));
+            });
+        } else {
+            self.layout_little(id);
         }
-        self.layout_little(id);
         if let Some(l) = self.littles.get(&id) {
             let cfg = self.page_config_for(Target::Little(id), &self.page_config());
             let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+        }
+    }
+
+    /// The bar's slide ended: settle the layout, then go where the mouse asked meanwhile.
+    fn little_bar_slid(&mut self, id: WindowId) {
+        let Some(l) = self.littles.get_mut(&id) else { return };
+        l.sliding = false;
+        let wanted = l.bar_wanted.take();
+        self.layout_little(id);
+        self.remember_little_size(id);
+        if let Some(out) = wanted {
+            self.set_little_bar(id, out);
         }
     }
 
@@ -4588,7 +4644,7 @@ impl App {
         let id = l.window.id();
         // An empty one opens with its bar out, so its address box shows; it hides like any other once a page loads.
         let bar_out = url == LITTLE_BLANK;
-        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, bar_out, bar_over: false, ..l });
+        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, bar_out, bar_over: false, sliding: false, bar_wanted: None, ..l });
         self.layout_little(id);
         self.focused_little = Some(id);
         self.render_little(id);
@@ -4639,10 +4695,16 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, profile: if private { String::new() } else { profile } })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, sliding: false, bar_wanted: None, profile: if private { String::new() } else { profile } })
     }
 
     /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
+    /// Whether `cmd` is what little_window.new_window_key is bound to, so pressing it in a little window opens another one.
+    fn little_new_window_key(&self, cmd: &Command) -> bool {
+        let Some(key) = accel(&self.config.little_window.new_window_key) else { return false };
+        self.config.keybindings.iter().any(|(k, b)| accel(k).as_ref() == Some(&key) && b.as_ref().and_then(|b| b.command()).as_ref() == Some(cmd))
+    }
+
     fn little_size(&self) -> (f64, f64) {
         let lw = &self.config.little_window;
         let fits = |(w, h): &(f64, f64)| {
@@ -4656,7 +4718,7 @@ impl App {
 
     /// Keep a little window's size for the next one (not while it's full screen, maximized or minimized).
     fn remember_little_size(&mut self, id: WindowId) {
-        let Some(l) = self.littles.get(&id).filter(|l| l.usual_size) else { return };
+        let Some(l) = self.littles.get(&id).filter(|l| l.usual_size && !l.sliding) else { return };
         if !self.config.little_window.remember_size || l.window.fullscreen().is_some() || l.window.is_maximized() || l.window.is_minimized() {
             return;
         }
@@ -6524,6 +6586,10 @@ impl App {
         }
         // Commands aimed at the focused little window.
         if let Some(id) = little {
+            if self.little_new_window_key(&cmd) {
+                let space = self.littles[&id].space;
+                return self.open_little(LITTLE_BLANK, space, elwt);
+            }
             let l = &self.littles[&id];
             match &cmd {
                 Command::CloseTab { tab: None } => {
@@ -9249,6 +9315,7 @@ impl App {
             UserEvent::RevealTimeout => self.reveal("timeout"),
             UserEvent::DrawTimeout(id) => self.drawn(id),
             UserEvent::PrepareLittle => self.prepare_little(elwt),
+            UserEvent::LittleBarSlid(id) => self.little_bar_slid(id),
             UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
                 self.found_models.insert(cli, models);

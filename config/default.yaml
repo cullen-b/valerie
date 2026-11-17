@@ -525,6 +525,8 @@ little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
   top_bar: hover           # the bar with "Open in …". one of: hover (hidden; bring the mouse to the window's top and
                            # it slides out above the page, which doesn't move or resize) | always
+  full_screen_bar: room    # with top_bar: hover, when a little window is full screen (or fills the screen). one of: room
+                           # (the page starts below the bar, which stays showing) | over (the bar slides over the page's top)
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
   copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
   keep_open_when_main_closes: true   # closing the main window leaves little windows open (the Dock icon or ⌘T
@@ -541,6 +543,8 @@ little_window:
                            # another space's profile load again either way
   loading_line: true       # a thin moving line at the top of a little window while a link's page is on the way, on
                            # an empty page in your light or dark. true | false (false = just the empty page)
+  new_window_key: "CmdOrCtrl+N"   # this key, pressed in a little window, opens another little window instead of
+                           # doing what keybindings gives it (new chat). A key, e.g. "CmdOrCtrl+Shift+N"; "" = off
   width: 960               # pixels, until you've resized one (or always, with remember_size off)
   height: 700              # pixels, same
 
