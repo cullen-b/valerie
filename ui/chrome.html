@@ -124,6 +124,7 @@ img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .folder.open > .row .chev { transform: rotate(90deg); }
 .folder .kids { padding-left: 14px; display: none; }
 .folder.open > .kids { display: block; }
+.folder .kids.folding { display: block; overflow: hidden; position: relative; }
 .divider { display: flex; align-items: center; margin: 10px 4px 6px; color: var(--fg-dim); font-size: 11px; min-height: 14px; }
 .divider span { padding: 0 8px; white-space: nowrap; }
 .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
@@ -884,9 +885,61 @@ function renderNowPlaying() {
   np.style.display = P && S.layout.tab_bar !== "top" ? "" : "none";
   if (!P) return;
   const go = el("div", "np-tab"); go.append(icon(P, "ico", "np"), el("div", "title", P.title || host(P.url)));
+  folderNow.set(n.id, n.open);
+  const was = folderSeen.get(n.id);
+  if (was !== undefined && was !== n.open) {
+    // Turned around mid-way: carry on from the same point instead of jumping.
+    const prev = folderAnims.get(n.id), ms = +S.sidebar.folder_animation_ms || 0, now = performance.now();
+    const left = prev ? Math.max(0, ms - (now - prev.start)) : 0;
+    folderAnims.set(n.id, { open: n.open, start: now - left });
+  }
+  const a = folderAnims.get(n.id);
+  if (a && a.open === n.open) queueMicrotask(() => foldAnimate(n.id, a, r, kids));
   go.title = P.title || P.url; go.onclick = () => cmd({ cmd: "activate_tab", tab: P.id });
   const playing = P.media === "playing";
   const pp = el("div", "np-btn"); pp.append(glyph(playing ? PAUSE : PLAY, "fill")); pp.title = playing ? "Pause" : "Play";
+// sidebar.folder_animation: tabs slide up into a folder as it folds, and back out as it opens. A render mid-way
+// rebuilds the rows, so the animation picks up where it was.
+let folderSeen = new Map(), folderNow = new Map();
+const folderAnims = new Map();
+function foldAnimate(id, a, row, kids) {
+  const style = S.sidebar.folder_animation || "slide", ms = Math.max(0, +S.sidebar.folder_animation_ms || 0);
+  const done = performance.now() - a.start >= ms;
+  if (style === "none" || !ms || S.layout.animation_ms === 0 || done || matchMedia("(prefers-reduced-motion: reduce)").matches || !kids.isConnected) {
+    if (done) folderAnims.delete(id);
+    return;
+  }
+  kids.classList.add("folding");
+  const h = kids.offsetHeight;
+  if (!h) { kids.classList.remove("folding"); return folderAnims.delete(id); }
+  const at = performance.now() - a.start, ease = "cubic-bezier(.65,0,.35,1)";
+  const flip = (frames) => (a.open ? [...frames].reverse() : frames);
+  const run = (node, frames, extra = {}) => {
+    const an = node.animate(flip(frames), { duration: ms, easing: ease, fill: "both", ...extra });
+    an.currentTime = at;
+    return an;
+  };
+  const main = run(kids, [{ height: h + "px" }, { height: "0px" }]);
+  for (const c of kids.children) {
+    if (style === "slide") {
+      const lift = c.offsetTop + c.offsetHeight;
+      run(c, [{ transform: "none", opacity: 1 }, { opacity: 1, offset: 0.45 }, { transform: `translateY(${-lift}px) scale(.94)`, opacity: 0 }]);
+    } else run(c, [{ opacity: 1 }, { opacity: 0 }]);
+  }
+  const chev = row.querySelector(".chev");
+  if (chev) run(chev, [{ transform: "rotate(90deg)" }, { transform: "rotate(0deg)" }]);
+  if (style === "slide" && !a.open) {
+    const ic = row.querySelector(".ficon");
+    if (ic) run(ic, [{ transform: "scale(1)" }, { transform: "scale(1)", offset: 0.7 }, { transform: "scale(1.18)", offset: 0.85 }, { transform: "scale(1)" }]);
+  }
+  main.onfinish = () => {
+    if (folderAnims.get(id) === a) folderAnims.delete(id);
+    kids.classList.remove("folding");
+    for (const an of kids.getAnimations({ subtree: true })) an.cancel();
+    if (chev) chev.getAnimations().forEach((an) => an.cancel());
+  };
+}
+
   pp.onclick = () => cmd({ cmd: "toggle_media", tab: P.id });
   const mu = el("div", "np-btn"); mu.append(glyph(P.muted ? MUTED : VOLUME, "line")); mu.title = P.muted ? "Unmute" : "Mute";
   mu.onclick = () => cmd({ cmd: "toggle_mute", tab: P.id });
@@ -1248,6 +1301,7 @@ function render(state) {
   if (picked.size) { const live = new Set(pickKeys()); picked = new Set([...picked].filter((k) => live.has(k))); showPicked(); }
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
 }
+  folderSeen = folderNow; folderNow = new Map();
 
 // Agents label only when it fits (else just its dot); space buttons wrap only once they can't shrink further.
 function fitBottom() {

@@ -140,6 +140,9 @@ sidebar:
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
+  folder_animation: slide  # how a folder opens and folds up. one of: slide (its tabs slide up into the folder and back
+                           # out) | fade (they fade as the folder shrinks or grows) | none (it snaps open or shut)
+  folder_animation_ms: 320 # how long that takes, in milliseconds (0 = no animation; layout.animation_ms: 0 also turns it off)
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false
   drop_to_split: true      # drop a tab on the middle of another to open the two side by side in split view. true | false
   alt_click_to_split: true # Option-click a tab (Alt-click on Windows and Linux) to show it in split view beside the tab you're on. true | false

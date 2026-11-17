@@ -110,6 +110,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
                     }
                 }
             }
+            if !["slide", "fade", "none"].contains(&c.sidebar.folder_animation.as_str()) {
+                problems.push(format!("sidebar: folder_animation is {:?}; use slide, fade or none", c.sidebar.folder_animation));
+            }
             if !["folder", "icons"].contains(&c.sidebar.compact_pinned.as_str()) {
                 problems.push(format!("sidebar: compact_pinned is {:?}; use folder or icons", c.sidebar.compact_pinned));
             }

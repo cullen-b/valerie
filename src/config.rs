@@ -292,6 +292,8 @@ pub struct SidebarConfig {
     pub close_folder_with_last_tab: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
+    pub folder_animation: String,
+    pub folder_animation_ms: f64,
     pub clear_button: String,
     pub space_switcher: bool,
     pub order: Vec<String>,
