@@ -16,7 +16,7 @@ body { font: 14.5px/1.6 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", 
 #top { position: absolute; top: 0; left: 0; right: 0; height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 18px;
   border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); z-index: 5; }
 #top .title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#toast { position: fixed; top: 52px; left: 50%; max-width: min(560px, calc(100vw - 32px)); z-index: 50; padding: 9px 12px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 500; opacity: 0; transform: translate(-50%, -6px); transition: .2s; pointer-events: none; }
+#toast { position: fixed; top: 52px; left: 50%; max-width: min(560px, calc(100vw - 32px)); z-index: 50; padding: 9px 12px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 500; opacity: 0; transform: translate(-50%, -6px); transition: opacity .2s, transform .2s; pointer-events: none; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #top .agent, #top .proj { font-size: 11.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; flex: none; white-space: nowrap; }
 #top .proj { font-family: var(--mono); font-size: 11px; }
@@ -214,6 +214,32 @@ html.float.hints #floatHint { display: block; font-size: 11px; color: var(--dim)
 #pane .diffwrap { flex: 1; overflow: auto; padding: 12px 16px 60px; }
 #pane .diff { max-height: none; border-radius: 10px; }
 #pane .loading { color: var(--dim); padding: 30px; text-align: center; }
+/* animations, each only while its switch is on (custom.js puts anim-<name> on <html>) */
+html.anim-chat-messages .msg.user.new { animation: rise .22s cubic-bezier(.2,.8,.2,1) backwards; }
+html.anim-chat-messages .msg.assistant.new, html.anim-chat-messages #queue div.new { animation: arrive .18s cubic-bezier(.2,.8,.2,1) backwards; }
+html.anim-chat-messages #attach .file.new { animation: pop .12s ease-out backwards; }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
+@keyframes pop { from { opacity: 0; transform: scale(.9); } }
+html.anim-chat-steps .steps.closing > .list { display: block; }
+html.anim-chat-steps .step.new { animation: fade .12s ease-out backwards; }
+@keyframes fade { from { opacity: 0; } }
+html.anim-chat-controls #send.flip { transition: transform .12s ease-out, opacity .12s ease-out, background-color .2s cubic-bezier(.2,0,0,1), color .2s cubic-bezier(.2,0,0,1); }
+html.anim-chat-controls #send svg { grid-area: 1 / 1; transform-origin: center; }
+html.anim-chat-controls #send svg.in { animation: iconIn .2s cubic-bezier(.2,0,0,1) backwards; }
+html.anim-chat-controls #send svg.out { animation: iconOut .2s cubic-bezier(.2,0,0,1) forwards; }
+@keyframes iconIn { from { opacity: 0; transform: scale(.25); filter: blur(4px); } }
+@keyframes iconOut { to { opacity: 0; transform: scale(.25); filter: blur(4px); } }
+html.anim-chat-controls :is(.copy, .md pre .cp) { display: block; opacity: 0; pointer-events: none; transition: opacity .15s ease-out; }
+html.anim-chat-controls :is(.msg.assistant:hover .copy, .md pre:hover .cp) { opacity: 1; pointer-events: auto; }
+html.anim-chat-controls :is(.copy, .cp) .lbl { display: inline-block; animation: label .16s cubic-bezier(.2,0,0,1) backwards; }
+@keyframes label { from { opacity: 0; filter: blur(2px); } }
+html.anim-chat-controls #pane { display: flex; visibility: hidden; opacity: 0; transform: translateX(12px); transition: opacity .11s ease-out, transform .11s ease-out, visibility 0s .11s; }
+html.anim-chat-controls #pane.on { visibility: visible; opacity: 1; transform: none; transition: opacity .16s cubic-bezier(.2,.8,.2,1), transform .16s cubic-bezier(.2,.8,.2,1); }
+html.anim-press :is(.btn, .foot button, .copy, .md pre .cp) { transition: transform .12s ease-out; }
+html.anim-press .ctl { transition: background-color .12s ease-out, color .12s ease-out, transform .12s ease-out; }
+html.anim-press.anim-chat-controls :is(.copy, .md pre .cp) { transition: opacity .15s ease-out, transform .12s ease-out; }
+html.anim-press :is(.ctl, .btn, .foot button, .copy, .md pre .cp):active { transform: scale(.96); }
 </style>
 </head>
 <body>
@@ -248,6 +274,52 @@ let D = null;
 let toastTimer;
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+// ---------- animations (each behind its switch; custom.js turns them all off when the computer asks for less motion) ----------
+const anim = (k) => !!(window.__valerieUi && __valerieUi.anim && __valerieUi.anim(k));
+// When things arrived while the user watched, by key. Streaming redraws a message every frame, so a redraw carries an
+// entrance on from where it was instead of starting it again.
+const born = new Map();
+function enter(e, key, ms) {
+  const t = born.get(key), age = performance.now() - t;
+  if (t == null) return e;
+  if (age >= ms) { born.delete(key); return e; }
+  e.classList.add("new"); e.style.animationDelay = -age + "ms";
+  return e;
+}
+// How many of a kind were drawn last time, in which chat: more in the same chat (or `also`) arrived just now.
+const seen = {};
+let sentAt = -1e4; // when the user last sent a message
+function arrived(kind, id, n, k, also) {
+  const was = seen[kind], same = !!was && (was.id === id || !!also);
+  seen[kind] = { id, n };
+  if (same && anim(k)) for (let i = was.n; i < n; i++) born.set(kind + i, performance.now());
+  return same;
+}
+// Lists the user opened or closed just now, by key: they unfold or fold, and a redraw part-way carries on.
+const folds = new Map();
+function foldFrom(key, list, open, h = list.offsetHeight) {
+  if (anim("chat_steps")) folds.set(key, { t: performance.now(), open, h, o: list.getAnimations().length ? +getComputedStyle(list).opacity : +!open });
+}
+function fold(list, key, done) {
+  const f = folds.get(key), ms = f && f.open ? 160 : 120, age = f ? performance.now() - f.t : ms;
+  const end = () => { list.style.overflow = ""; if (folds.get(key) !== f) return; folds.delete(key); if (!f.open) done(); };
+  if (!f) return false;
+  if (age >= ms) { end(); return false; }
+  list.style.overflow = "hidden";
+  // Once it's on the page, so its height can be measured.
+  queueMicrotask(() => {
+    if (!list.isConnected) return;
+    const a = list.animate([{ height: f.h + "px", opacity: f.o }, { height: f.open ? list.scrollHeight + "px" : "0px", opacity: +f.open }],
+      { duration: ms, delay: -age, easing: "cubic-bezier(.2,0,0,1)", fill: "forwards" });
+    a.onfinish = () => { end(); a.cancel(); };
+  });
+  return true;
+}
+// A button's label changing (Copy, Copied): the new one fades in.
+function relabel(b, t) { if (anim("chat_controls")) b.replaceChildren(el("span", "lbl", t)); else b.textContent = t; }
+// Changes that come with opening another chat happen at once.
+function still(e, fn) { e.style.transition = "none"; fn(); void e.offsetWidth; e.style.transition = ""; }
 
 // ---------- paths ----------
 // A path as short as it can be: inside the chat's folder it's relative, elsewhere ~ stands for home.
@@ -295,7 +367,7 @@ function markdown(src, into) {
       const code = []; i++;
       while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
       const pre = el("pre"), text = code.join("\n"); pre.append(el("code", null, text));
-      const cp = el("button", "cp", "Copy"); cp.onclick = () => { cmd({ cmd: "copy_text", text }); cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1200); };
+      const cp = el("button", "cp", "Copy"); cp.onclick = () => { cmd({ cmd: "copy_text", text }); relabel(cp, "Copied"); setTimeout(() => relabel(cp, "Copy"), 1200); };
       pre.append(cp); into.append(pre); flush(); continue;
     }
     if (!line.trim()) { flush(); continue; }
@@ -408,6 +480,8 @@ function summarize(steps) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 const opened = new Set(); // steps and groups the user opened (or closed), by key, so redraws keep them
+const known = new Set(); // steps drawn so far in this chat, by key
+let quiet = false; // drawing a chat just opened: nothing in it is new
 function toggled(key, dflt) { return opened.has(key) ? !dflt : dflt; }
 function flip(key) { opened.has(key) ? opened.delete(key) : opened.add(key); }
 
@@ -466,10 +540,16 @@ function groupEl(steps, key, live, lastInMsg) {
   const span = last.started_ms && first.started_ms ? last.started_ms + (last.ms || 0) - first.started_ms : 0;
   const sum = el("div", "sum", onlyThought ? "Thought for " + dur(steps.reduce((n, s) => n + (s.ms || 0), 0) || 1000) : summarize(steps) + (span >= 2000 ? " · " + dur(span) : ""));
   if (steps.some((s) => s.state === "error")) sum.append(el("span", null, "· " + steps.filter((s) => s.state === "error").length + " failed"));
-  sum.onclick = () => { flip(key); g.replaceWith(groupEl(steps, key, live, lastInMsg)); };
   const list = el("div", "list");
-  steps.forEach((s, j) => list.append(stepEl(s, key + ":" + j, live)));
+  sum.onclick = () => { foldFrom(key, list, !g.classList.contains("open")); flip(key); g.replaceWith(groupEl(steps, key, live, lastInMsg)); };
+  steps.forEach((s, j) => {
+    const sk = key + ":" + j;
+    // A step that arrives while the user watches fades in.
+    if (!known.has(sk)) { known.add(sk); if (live && !quiet && anim("chat_steps")) born.set("s" + sk, performance.now()); }
+    list.append(enter(stepEl(s, sk, live), "s" + sk, 120));
+  });
   g.append(sum, list);
+  if (fold(list, key, () => g.classList.remove("closing")) && !g.classList.contains("open")) g.classList.add("closing");
   return g;
 }
 
@@ -486,7 +566,7 @@ function fileChips(files) {
   return box;
 }
 function msgEl(m, i, live) {
-  const d = el("div", "msg " + m.role); d.dataset.i = i;
+  const d = enter(el("div", "msg " + m.role), "m" + i, m.role === "user" ? 220 : 180); d.dataset.i = i;
   if (m.role === "user") {
     if (m.text) d.append(el("div", "bubble", m.text));
     if (m.files && m.files.length) d.append(fileChips(m.files));
@@ -494,7 +574,7 @@ function msgEl(m, i, live) {
   }
   if (m.text && !live) {
     const c = el("div", "copy", "Copy"); c.title = "Copy this answer";
-    c.onclick = () => { cmd({ cmd: "copy_text", text: m.text }); c.textContent = "Copied"; setTimeout(() => (c.textContent = "Copy"), 1200); };
+    c.onclick = () => { cmd({ cmd: "copy_text", text: m.text }); relabel(c, "Copied"); setTimeout(() => relabel(c, "Copy"), 1200); };
     d.append(c);
   }
   const who = el("div", "who"); who.append(el("i"), m.agent || "agent");
@@ -634,7 +714,10 @@ function toBottom() { const s = $("#scroll"); s.scrollTop = s.scrollHeight; }
 
 function renderLog() {
   const log = $("#log"); log.replaceChildren();
-  const c = D.chat;
+  const c = D.chat, n = c ? c.messages.length : 0;
+  // Messages new since this chat was last drawn come in; on opening a chat nothing does. The first ones of a chat
+  // just started here count as new.
+  const same = arrived("m", c && c.id, n, "chat_messages", seen.m && !seen.m.n && n <= 2 && performance.now() - sentAt < 3000);
   if (!c || !c.messages.length) {
     const e = el("div"); e.id = "empty";
     const coding = c && c.folder;
@@ -646,7 +729,9 @@ function renderLog() {
       .forEach((s) => { const c2 = el("div", "chip", s); c2.onclick = () => submit(s); chips.append(c2); });
     e.append(chips); log.append(e); return;
   }
+  quiet = !same;
   c.messages.forEach((m, i) => log.append(msgEl(m, i, D.running && i === c.messages.length - 1 && m.role === "assistant")));
+  quiet = false;
   renderCards();
 }
 
@@ -658,8 +743,21 @@ function renderPlanNow() {
   box.style.display = "block";
   const done = todo.todos.filter((t) => t.state === "completed").length, now = todo.todos.find((t) => t.state === "in_progress");
   box.querySelector("summary").textContent = `Plan · ${done}/${todo.todos.length} done` + (now ? " · " + now.text : "");
-  box.querySelector(".todos").replaceWith(todoList(todo.todos));
+  const ul = todoList(todo.todos);
+  box.querySelector(".todos").replaceWith(ul);
+  fold(ul, "plan", () => (box.open = false));
 }
+// With step animations on, the plan folds like a step list (it stays open until it has folded).
+$("#plan-now summary").addEventListener("click", (e) => {
+  if (!anim("chat_steps")) return;
+  e.preventDefault();
+  const b = $("#plan-now"), ul = b.querySelector(".todos"), f = folds.get("plan");
+  // A closed <details> can still report its content's height.
+  foldFrom("plan", ul, !(f ? f.open : b.open), b.open ? ul.offsetHeight : 0);
+  ul.getAnimations().forEach((a) => a.cancel());
+  b.open = true;
+  fold(ul, "plan", () => (b.open = false));
+});
 
 // ---------- composer ----------
 // Options picked before a chat exists (they go along with its first message).
@@ -741,7 +839,8 @@ function renderControls() {
   $("#input").placeholder = f ? "Ask for a change, a fix, or anything about " + folderName(f) + "…" : "Ask anything, or ask for something to be done…";
   const q = (D.chat && D.chat.queue) || [], qe = $("#queue");
   qe.style.display = q.length ? "block" : "none"; qe.replaceChildren();
-  q.forEach((t) => qe.append(el("div", null, "Queued · " + t)));
+  arrived("q", D.chat && D.chat.id, q.length, "chat_messages");
+  q.forEach((t, j) => qe.append(enter(el("div", null, "Queued · " + t), "q" + j, 180)));
 }
 let tick = 0;
 function renderWorking() {
@@ -764,11 +863,17 @@ let shownChat = null;
 function renderAll() {
   const c = D.chat;
   const switched = (c && c.id) !== shownChat;
-  if (switched) { shownChat = c && c.id; opened.clear(); closePane(); clearAttachments(); }
+  if (switched) { shownChat = c && c.id; opened.clear(); known.clear(); born.clear(); folds.clear(); still($("#pane"), closePane); clearAttachments(); }
   $("#title").textContent = c && c.title ? c.title : "New chat";
   renderControls(); renderWorking(); renderPlanNow();
-  const btn = $("#send");
-  btn.classList.toggle("stop", !!D.running); btn.replaceChildren(sendIcon(!!D.running)); btn.title = D.running ? "Stop (type to queue a message instead)" : "Send";
+  const btn = $("#send"), stop = !!D.running, old = btn.querySelector("svg:not(.out)");
+  if (anim("chat_controls") && !switched && old && stop !== btn.classList.contains("stop")) {
+    // Send turning into stop and back: the icons cross-fade and the colour eases.
+    btn.querySelectorAll(".out").forEach((x) => x.remove());
+    old.classList.remove("in"); old.classList.add("out"); old.onanimationend = old.onanimationcancel = (e) => e.animationName === "iconOut" && old.remove();
+    const icon = sendIcon(stop); icon.classList.add("in"); btn.append(icon); btn.classList.add("flip");
+  } else if (!anim("chat_controls") || switched || !old) { btn.classList.remove("flip"); btn.replaceChildren(sendIcon(stop)); }
+  btn.classList.toggle("stop", stop); btn.title = D.running ? "Stop (type to queue a message instead)" : "Send";
   const follow = atBottom();
   renderLog();
   $("#scroll").style.paddingBottom = Math.max(220, $("#composer").offsetHeight + 60) + "px";
@@ -783,7 +888,7 @@ function drawAttachments() {
   const box = $("#attach"); box.replaceChildren();
   box.style.display = attachments.length ? "flex" : "none";
   attachments.forEach((p) => {
-    const c = el("div", "file"), img = el("img"); img.src = thumbs[p]; c.append(img, el("span", null, p.split("/").pop()));
+    const c = enter(el("div", "file"), "f" + p, 120), img = el("img"); img.src = thumbs[p]; c.append(img, el("span", null, p.split("/").pop()));
     const x = el("span", "rm", "✕"); x.title = "Remove"; x.onclick = () => { attachments = attachments.filter((a) => a !== p); drawAttachments(); };
     c.append(x); box.append(c);
   });
@@ -814,7 +919,7 @@ function submit(text) {
   const fresh = !(D.chat && D.chat.messages.length);
   cmd({ cmd: "send_chat", chat: D.chat ? D.chat.id : null, text, agent: $("#agent").value, files: attachments,
         ...(fresh ? { model: $("#model").value, effort: $("#effort").value, access: $("#access").value, plan: $("#plan").classList.contains("on") } : {}) });
-  pending = {};
+  pending = {}; sentAt = performance.now();
   if (text === $("#input").value.trim()) { $("#input").value = ""; grow(); }
   clearAttachments();
 }
@@ -948,6 +1053,7 @@ window.chat = {
   attached(path, key) {
     if (!waiting[key]) return;
     thumbs[path] = waiting[key]; delete waiting[key];
+    if (anim("chat_messages")) born.set("f" + path, performance.now());
     attachments.push(path); drawAttachments(); $("#input").focus();
   },
   showDiff(path, text) {

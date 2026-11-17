@@ -32,6 +32,8 @@ pub struct Config {
     pub history: HistoryConfig,
     pub downloads: DownloadsConfig,
     pub toast_seconds: f64,
+    #[serde(default)]
+    pub animations: Animations,
     pub reader_view: ReaderConfig,
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
@@ -699,6 +701,38 @@ pub struct WindowConfig {
     pub opacity: f64,
     pub vibrancy: String,
     pub traffic_lights: String,
+}
+
+/// The small animations (`animations:`), one switch each; `layout.animation_ms: 0` turns them all off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Animations {
+    pub tabs: bool,
+    pub press: bool,
+    pub nav_buttons: bool,
+    pub sound_bars: bool,
+    pub mini_player: bool,
+    pub space_highlight: bool,
+    pub pinned_popup: bool,
+    pub start_logo: bool,
+    pub command_bar: bool,
+    pub command_bar_selection: bool,
+    pub command_bar_height: bool,
+    pub chat_messages: bool,
+    pub chat_steps: bool,
+    pub chat_controls: bool,
+    pub find_bar: bool,
+    pub page_messages: bool,
+    pub link_address: bool,
+    pub keyboard_click: bool,
+    pub plugins_window: bool,
+    pub built_in_pages: bool,
+}
+
+impl Default for Animations {
+    fn default() -> Self {
+        Animations { tabs: true, press: true, nav_buttons: true, sound_bars: true, mini_player: true, space_highlight: true, pinned_popup: true, start_logo: true, command_bar: true, command_bar_selection: true, command_bar_height: true, chat_messages: true, chat_steps: true, chat_controls: true, find_bar: true, page_messages: true, link_address: true, keyboard_click: true, plugins_window: true, built_in_pages: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

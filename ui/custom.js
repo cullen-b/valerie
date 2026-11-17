@@ -1,5 +1,6 @@
 // Added to each of Valerie's own windows: the user's CSS (ui/<window>.css in the config folder) and Valerie's words
-// in their language (strings/<language>.yaml). Valerie calls __valerieUi.apply({ css, strings }) whenever they change.
+// in their language (strings/<language>.yaml), and which animations are on (`animations:`). Valerie calls
+// __valerieUi.apply({ css, strings, animations }) whenever they change.
 window.__valerieUi = (() => {
   let strings = {}, patterns = [], observer = null;
   const mine = new WeakMap(); // text we wrote, so our own changes aren't translated again
@@ -39,7 +40,18 @@ window.__valerieUi = (() => {
       else translateEl(n);
     }
   }
+  // `animations:` — each one that's on puts anim-<name> on <html>; none while the computer asks for less motion.
+  let anims = {};
+  const calm = matchMedia("(prefers-reduced-motion: reduce)");
+  const anim = (name) => !!anims[name] && !calm.matches;
+  function showAnims() {
+    const root = document.documentElement;
+    [...root.classList].filter((c) => c.startsWith("anim-")).forEach((c) => root.classList.remove(c));
+    for (const k of Object.keys(anims)) if (anim(k)) root.classList.add("anim-" + k.replace(/_/g, "-"));
+  }
+  calm.addEventListener("change", showAnims);
   function apply(d) {
+    anims = d.animations || {}; showAnims();
     let st = document.getElementById("valerie-user-css");
     if (d.css) {
       if (!st) { st = document.createElement("style"); st.id = "valerie-user-css"; }
@@ -65,5 +77,5 @@ window.__valerieUi = (() => {
     };
     if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
   }
-  return { apply, tr };
+  return { apply, tr, anim };
 })();

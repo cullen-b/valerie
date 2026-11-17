@@ -1298,7 +1298,18 @@ fn css_file(page: &str) -> String {
 
 /// What a UI window needs to look and read the user's way.
 fn ui_custom(page: &str, config: &Config) -> Value {
-    json!({ "css": user_css(&css_file(page), config), "strings": strings_for(&config.language) })
+    json!({ "css": user_css(&css_file(page), config), "strings": strings_for(&config.language), "animations": animations_on(config) })
+}
+
+/// `animations:` as each window gets it: every switch, all off when `layout.animation_ms` is 0.
+fn animations_on(config: &Config) -> Value {
+    let mut on = serde_json::to_value(&config.animations).unwrap_or_default();
+    if config.layout.animation_ms <= 0.0 {
+        for v in on.as_object_mut().into_iter().flat_map(|m| m.values_mut()) {
+            *v = Value::Bool(false);
+        }
+    }
+    on
 }
 
 /// A UI page with the user's own CSS and words built in.
@@ -1754,7 +1765,7 @@ impl App {
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
-            "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
+            "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds, "animations": animations_on(&self.config),
             "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
             "sites": self.config.sites, "mouse": self.config.mouse, "plugin_contexts": self.plugin_contexts(),

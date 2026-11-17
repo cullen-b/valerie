@@ -124,7 +124,8 @@ changed in plain words. Some translations:
 | "The text is too small" / "I can't read it" | `tabs.default_zoom: 125` (every website), `sidebar.tab_height: 48`, `command_bar.font_size: 24` |
 | "Too cluttered" / "simpler" | `sidebar.nav_buttons: true`, `sidebar.url_bar: true`, `sidebar.space_switcher: false`, `vim.enabled: false`, `command_bar.calculator: false`, `links.show_url_on_hover: false` |
 | "I keep pressing keys by accident" | `vim.enabled: false`, remove shortcuts under `keybindings` with `null` |
-| "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0`, `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
+| "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0` (also stops every small animation under `animations:`), `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
+| "Stop that one animation" (tabs sliding, the logo drawing, the ring after `f`) | its switch under `animations:` (e.g. `animations.tabs: false`); `config/default.yaml` lists them all |
 | "Messages vanish before I read them" | `toast_seconds: 5` |
 | "Make it private" / "stop tracking me" | `content_blocking.enabled: true`, `privacy.strip_tracking: true`, `privacy.cookie_banners: reject` |
 | "Dark mode everywhere" | `pages.dark_mode: always` (or `system` to follow the computer) |

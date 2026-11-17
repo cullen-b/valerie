@@ -115,6 +115,31 @@ async function act(tool, args) {
 }
 function flash(msg) { $("summary").textContent = msg; setTimeout(render, 2500); }
 
+// Motion (animations.built_in_pages), off until Valerie answers; each plays from its start time, so a re-render carries on.
+let anim = false, loaded = false, primed = false, drawn = new Map(), lastQ = null, folding = null;
+const came = new Map(), finished = new Map(), EASE = "cubic-bezier(.2,.8,.2,1)";
+const moving = () => anim && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+function sizes(e) {
+  const cs = getComputedStyle(e);
+  return [{ height: "0px", paddingTop: "0px", paddingBottom: "0px", marginBottom: "0px", opacity: 0, overflow: "hidden" },
+    { height: e.offsetHeight + "px", paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, marginBottom: cs.marginBottom, opacity: 1, overflow: "hidden" }];
+}
+function play(e, frames, ms, since, fill, now = performance.now()) {
+  const t = now - since;
+  if (t >= ms) return;
+  const a = e.animate(frames, { duration: ms, easing: EASE, fill });
+  a.currentTime = t;
+  return a;
+}
+// A row, or its whole group when every row in it goes.
+const whole = (r, set) => [...r.parentElement.querySelectorAll(".row")].every((x) => set.has(x)) ? r.parentElement : r;
+function foldAway(rows) {
+  const parts = [...new Set(rows.map((r) => whole(r, new Set(rows))))], frames = parts.map((p) => sizes(p).reverse());
+  const f = { stop() { f.stopped = true; } }, now = performance.now();
+  Promise.all(parts.map((p, i) => play(p, frames[i], 150, now, "forwards").finished)).then(() => { if (!f.stopped) { folding = null; render(); } }, () => {});
+  return f;
+}
+
 function row(d) {
   const k = kindOf(d.name);
   const r = el("div", "row" + (d.state === "failed" ? " failed" : "") + (d.state === "done" && !d.exists ? " missing" : ""));
@@ -142,9 +167,18 @@ function row(d) {
   return r;
 }
 
-function render() {
+function render(instant) {
   const q = $("q").value.trim().toLowerCase();
+  if (folding && instant !== true) return;
+  if (folding) { folding.stop(); folding = null; }
   const shown = items.filter((d) => !q || d.name.toLowerCase().includes(q) || (d.site || "").includes(q));
+  const before = drawn, same = primed && instant !== true && q === lastQ && moving();
+  // Rows that went (and nothing new came) fold up first; the list is redrawn once they have.
+  if (same && shown.every((d) => before.has(d.path))) {
+    const keep = new Set(shown.map((d) => d.path)), gone = [...before.keys()].filter((k) => !keep.has(k));
+    if (gone.length) { const rows = gone.map((k) => before.get(k).row); gone.forEach((k) => drawn.delete(k)); folding = foldAway(rows); return; }
+  }
+  drawn = new Map(); lastQ = q; primed = loaded;
   const list = $("list"); list.replaceChildren();
   const total = items.filter((d) => d.exists).reduce((n, d) => n + (d.bytes || 0), 0);
   $("summary").textContent = items.length ? `${items.length} ${items.length === 1 ? "file" : "files"}` + (total ? ` · ${size(total)}` : "") : "";
@@ -158,17 +192,38 @@ function render() {
   for (const [name, ds] of groups) {
     const g = el("section", "group");
     if (name) g.append(el("h2", null, name));
-    for (const d of ds) g.append(row(d));
+    for (const d of ds) { const r = row(d); g.append(r); drawn.set(d.path, { row: r, state: d.state }); }
     list.append(g);
+  }
+  if (!same) return;
+  const now = performance.now(), growing = new Map(), ease = [];
+  for (const [k, { row: r, state }] of drawn) {
+    const was = before.get(k);
+    if (!was) came.set(k, now);
+    else if (was.state === "downloading" && state !== "downloading") finished.set(k, now);
+    if (now - (came.get(k) || -1e9) < 200) growing.set(r, came.get(k));
+    if (now - (finished.get(k) || -1e9) < 220) ease.push(k);
+  }
+  for (const m of [came, finished]) for (const [k, t] of m) if (now - t > 1000) m.delete(k);
+  const parts = new Map([...growing].map(([r, t]) => [whole(r, growing), t]));
+  const frames = [...parts.keys()].map(sizes);
+  [...parts].forEach(([p, t], i) => play(p, frames[i], 200, t, undefined, now));
+  for (const k of ease) {
+    const r = drawn.get(k).row, info = r.querySelector(".info"), bar = el("div", "bar"), fill = el("i");
+    // The bar shows full, then fades and closes up while the new status fades in.
+    fill.style.cssText = "width: 100%; animation: none"; bar.append(fill); info.append(bar);
+    const a = play(bar, [{ opacity: 1 }, { opacity: 0, height: "0px", marginTop: "0px" }], 220, finished.get(k), "forwards", now);
+    if (a) a.finished.then(() => bar.remove(), () => {}); else bar.remove();
+    play(r.querySelector(".sub"), [{ opacity: 0 }, { opacity: 1 }], 220, finished.get(k), undefined, now);
   }
 }
 
 async function load() {
-  try { items = await valerie.call("list_downloads", {}); } catch (e) { valerie.log("error: list_downloads", e); }
+  try { items = await valerie.call("list_downloads", {}); loaded = true; } catch (e) { valerie.log("error: list_downloads", e); }
   render();
 }
 
-$("q").addEventListener("input", render);
+$("q").addEventListener("input", () => render(true));
 $("folder").addEventListener("click", () => act("run_command", { command: { cmd: "show_downloads" } }));
 $("clear").addEventListener("click", () => $("head").classList.add("asking"));
 $("no").addEventListener("click", () => $("head").classList.remove("asking"));
@@ -176,6 +231,8 @@ $("yes").addEventListener("click", () => { $("head").classList.remove("asking");
 addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("q").focus(); } });
 valerie.on("downloads", load);
 valerie.call("get_settings", { key: "downloads.page" }).then((s) => { Object.assign(opts, s.in_use || {}); render(); }).catch(() => {});
+Promise.all([valerie.call("get_settings", { key: "animations" }), valerie.call("get_settings", { key: "layout" })])
+  .then(([a, l]) => { anim = !!(a.in_use && a.in_use.built_in_pages) && Number(l.in_use && l.in_use.animation_ms) > 0; }).catch(() => {});
 load();
 </script>
 </body>

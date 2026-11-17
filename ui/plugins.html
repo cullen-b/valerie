@@ -72,6 +72,9 @@ button.b:focus-visible, .tabs button:focus-visible, .x:focus-visible { outline: 
 .err { color: var(--bad); font-size: 13px; }
 .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--card2); border-top-color: currentColor; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+html.anim-press button.b, html.anim-press .tabs button, html.anim-press .x { transition: transform .12s ease-out; }
+html.anim-press button.b:active, html.anim-press .tabs button:active, html.anim-press .x:active { transform: scale(.96); }
+html.anim-plugins-window button.b.done[disabled] { opacity: 1; color: var(--ok); }
 </style>
 </head>
 <body>
@@ -84,7 +87,8 @@ button.b:focus-visible, .tabs button:focus-visible, .x:focus-visible { outline: 
 </header>
 <main id="main"><div class="wrap" id="list"></div></main>
 <script>
-const send = (o) => window.ipc.postMessage(JSON.stringify(o));
+// Asking to close (or to go somewhere that closes this) means the next time it shows is a fresh open.
+const send = (o) => { if (/^(close|use_layout|duplicate_layout|open)$/.test(o.t)) reopened = true; window.ipc.postMessage(JSON.stringify(o)); };
 const $ = (s) => document.querySelector(s);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function btn(text, cls, on) { const b = el("button", "b " + (cls || ""), text); b.onclick = on; return b; }
@@ -98,6 +102,38 @@ const hasPanels = (x) => (x.panels || []).length > 0;
 const key = (x) => (isExt(x) ? "extension:" : "plugin:") + x.name;
 const same = (a, b) => a.name === b.name && isExt(a) === isExt(b);
 const msg = (t, x) => ({ t, name: x.name, kind: isExt(x) ? "extension" : "plugin" });
+
+// Motion (animations.plugins_window): each plays from its start time, so a redraw halfway through carries on.
+const anim = (k) => !!(window.__valerieUi && __valerieUi.anim && __valerieUi.anim(k));
+const EASE = "cubic-bezier(.2,.8,.2,1)";
+function motion(node, frames, ms, since, delay = 0, now = performance.now()) {
+  const t = now - since;
+  if (since && t < delay + ms) node.animate(frames, { duration: ms, delay, easing: EASE, fill: "backwards" }).currentTime = t;
+}
+let armed = true, reopened = false, arrivedAt = 0;
+const busySince = {}, ticks = {};
+function arrive() {
+  const cards = $("#list").querySelectorAll(".card"), waiting = S.index === null && !S.indexError && S.tab !== "mine";
+  if (armed && !document.hidden && (cards.length || !waiting)) { armed = false; arrivedAt = anim("plugins_window") && cards.length ? performance.now() : 0; }
+  const now = performance.now();
+  if (arrivedAt) cards.forEach((c, i) => motion(c, [{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], 220, arrivedAt, Math.min(i, 10) * 30, now));
+}
+// One-keyframe fades end on the button's own opacity (a disabled one is dimmed).
+function spinBtn(k, label) {
+  const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), label);
+  if (anim("plugins_window")) motion(b, [{ opacity: 0 }], 160, busySince[k] || (busySince[k] = performance.now()));
+  return b;
+}
+function tickBtn(k) {
+  const b = btn("", "done", null), NS = "http://www.w3.org/2000/svg", s = document.createElementNS(NS, "svg"), p = document.createElementNS(NS, "path");
+  b.disabled = true;
+  s.setAttribute("width", "14"); s.setAttribute("height", "14"); s.setAttribute("viewBox", "0 0 16 16"); s.setAttribute("aria-hidden", "true");
+  for (const [a, v] of [["d", "M3.5 8.5l3 3 6-7"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "2"], ["stroke-linecap", "round"], ["stroke-linejoin", "round"], ["pathLength", "1"], ["stroke-dasharray", "1"]]) p.setAttribute(a, v);
+  s.append(p); b.append(s, ticks[k].label);
+  motion(b, [{ opacity: 0.5 }], 160, ticks[k].at);
+  motion(p, [{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], 260, ticks[k].at);
+  return b;
+}
 
 function words(q) { return q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1); }
 function hits(text, q) { const w = words(q); return !w.length || w.every((x) => text.toLowerCase().includes(x)); }
@@ -187,7 +223,8 @@ function marketLayoutCard(e) {
   const foot = el("div", "foot"), note = S.notes[key(e)];
   if (note) foot.append(el("span", note.ok === false ? "err" : "chip ok", note.text));
   foot.append(el("span", "grow"));
-  if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
+  if (busy) foot.append(spinBtn(key(e), busy));
+  else if (ticks[key(e)]) foot.append(tickBtn(key(e)));
   else if (!local) foot.append(btn("Install", "primary", () => { S.busy[key(e)] = "Installing"; draw(); send(msg("install", e)); }));
   else if (local.market_version && local.market_version !== versionOf(e)) foot.append(btn("Update", "primary", () => { S.busy[key(e)] = "Updating"; draw(); send(msg("install", e)); }));
   else if (S.onScreen === e.name) foot.append(el("span", "chip on", "On screen"));
@@ -212,7 +249,8 @@ function browseCard(e) {
   const note = S.notes[key(e)];
   if (note) foot.append(el("span", note.ok === false ? "err" : "chip ok", note.text));
   foot.append(el("span", "grow"));
-  if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
+  if (busy) foot.append(spinBtn(key(e), busy));
+  else if (ticks[key(e)]) foot.append(tickBtn(key(e)));
   else if (!local) foot.append(btn("Install", "primary", () => { S.busy[key(e)] = "Installing"; draw(); send(msg("install", e)); }));
   else if (local.market_version && local.market_version !== versionOf(e)) foot.append(btn("Update", "primary", () => { S.busy[key(e)] = "Updating"; draw(); send(msg("install", e)); }));
   else foot.append(el("span", "chip ok", "✓ Installed"));
@@ -242,7 +280,8 @@ function mineCard(p) {
     else foot.append(el("span", n.ok === false ? "err" : "chip ok", n.text));
   }
   foot.append(el("span", "grow"));
-  if (busy) { const b = btn("", "", null); b.disabled = true; b.append(el("span", "spin"), busy); foot.append(b); }
+  if (busy) foot.append(spinBtn(key(p), busy));
+  else if (ticks[key(p)]) foot.append(tickBtn(key(p)));
   else {
     if (p.market_version && inIndex && versionOf(inIndex) !== p.market_version) foot.append(btn("Update", "primary", () => { S.busy[key(p)] = "Updating"; draw(); send(msg("install", p)); }));
     const shared = S.notes[key(p)] && S.notes[key(p)].url;
@@ -253,13 +292,14 @@ function mineCard(p) {
   return c;
 }
 
-function draw() {
+function draw() { drawList(); arrive(); }
+function drawList() {
   const q = $("#q").value, list = $("#list"); list.replaceChildren();
   const tabs = $("#tabs"); tabs.replaceChildren();
   const market = S.index || [], listed = market.filter((e) => !isLayout(e));
   [["browse", "Plugins", S.index ? listed.filter((e) => !hasPanels(e)).length : null], ["layouts", "Layouts", S.layouts.length + market.filter((e) => isLayout(e) && !S.layouts.some((l) => l.name === e.name)).length], ["panels", "Panels", S.index ? listed.filter(hasPanels).length : null], ["mine", "Yours", S.local.length]].forEach(([id, label, n]) => {
     const b = el("button", S.tab === id ? "on" : "", label); if (n != null) b.append(el("span", "n", String(n)));
-    b.onclick = () => { S.tab = id; draw(); }; tabs.append(b);
+    b.onclick = () => { if (S.tab !== id) armed = true; S.tab = id; draw(); }; tabs.append(b);
   });
   $("#q").placeholder = S.tab === "layouts" ? "Search layouts…" : S.tab === "panels" ? "Search panels…" : "Search plugins and extensions…";
   if (S.tab === "layouts") {
@@ -290,7 +330,8 @@ function draw() {
   }
 }
 
-$("#q").addEventListener("input", draw);
+$("#q").addEventListener("input", () => { armed = false; arrivedAt = 0; draw(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && reopened) { reopened = false; armed = true; arrive(); } });
 $("#close").onclick = () => send({ t: "close" });
 $("#drag").addEventListener("mousedown", (e) => { if (e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") send({ t: "close" }); if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("#q").focus(); } });
@@ -307,13 +348,17 @@ window.market = {
     if (ev.type === "index") { S.index = ev.plugins || []; S.indexError = ""; }
     else if (ev.type === "index_error") { S.index = null; S.indexError = ev.detail || "unknown error"; }
     else if (ev.type === "local") { S.local = ev.plugins || []; S.layouts = ev.layouts || S.layouts; if (ev.on_screen) S.onScreen = ev.on_screen; }
-    else if (ev.type === "tab") S.tab = ev.tab;
+    else if (ev.type === "tab") { if (ev.tab !== S.tab) armed = true; S.tab = ev.tab; }
     else if (ev.type === "sharing") S.busy[key(ev)] = "Sharing";
-    else if (ev.type === "installed") { delete S.busy[key(ev)]; S.notes[key(ev)] = ev.ok ? { text: isExt(ev) ? "✓ Installed: Valerie asks before loading it" : "✓ Installed" } : { ok: false, text: ev.detail || "Couldn't install" }; }
+    else if (ev.type === "installed") {
+      const k = key(ev);
+      // The card that just finished shows a tick for a moment, then settles.
+      if (ev.ok && S.busy[k] && anim("plugins_window")) { ticks[k] = { at: performance.now(), label: S.busy[k] === "Updating" ? "Updated" : "Installed" }; setTimeout(() => { delete ticks[k]; draw(); }, 560); }
+      delete S.busy[k]; delete busySince[k]; S.notes[key(ev)] = ev.ok ? { text: isExt(ev) ? "✓ Installed: Valerie asks before loading it" : "✓ Installed" } : { ok: false, text: ev.detail || "Couldn't install" }; }
     else if (ev.type === "removed" && ev.kind === "layout") send({ t: "refresh" });
     else if (ev.type === "shared" && ev.kind === "layout") { delete S.busy["layout:" + ev.name]; S.notes["layout:" + ev.name] = { ok: false, text: ev.detail || "Couldn't share" }; }
     else if (ev.type === "removed") { if (ev.name) delete S.notes[key(ev)]; }
-    else if (ev.type === "shared") { delete S.busy["layout:" + ev.name]; if (ev.url) S.notes["layout:" + ev.name] = { url: ev.url }; else if (S.layouts.some((l) => l.name === ev.name)) S.notes["layout:" + ev.name] = { ok: false, text: ev.detail || "Couldn't share" }; delete S.busy[key(ev)]; S.notes[key(ev)] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
+    else if (ev.type === "shared") { delete S.busy["layout:" + ev.name]; if (ev.url) S.notes["layout:" + ev.name] = { url: ev.url }; else if (S.layouts.some((l) => l.name === ev.name)) S.notes["layout:" + ev.name] = { ok: false, text: ev.detail || "Couldn't share" }; delete S.busy[key(ev)]; delete busySince[key(ev)]; S.notes[key(ev)] = ev.url ? { url: ev.url } : { ok: false, text: ev.detail || "Couldn't share" }; }
     draw();
   },
 };
