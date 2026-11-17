@@ -28,6 +28,7 @@ fn token_file() -> std::path::PathBuf {
 
 /// Keep Valerie's own GitHub token in the Keychain (a private file where there's no Keychain support yet).
 fn store_token(t: &str) -> Result<()> {
+    *REMEMBERED.lock().unwrap_or_else(|e| e.into_inner()) = Some(t.to_string());
     if crate::passwords::keychain::save(KEYCHAIN, "token", "Valerie GitHub sync", t).is_ok() {
         return Ok(());
     }
@@ -42,11 +43,20 @@ fn store_token(t: &str) -> Result<()> {
     Ok(())
 }
 
+/// Valerie's own token once it's been read or stored this launch, so the Keychain is asked for it once, not on every sync.
+static REMEMBERED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn stored_token() -> Option<String> {
+    let mut remembered = REMEMBERED.lock().unwrap_or_else(|e| e.into_inner());
+    if remembered.is_none() {
+        *remembered = crate::passwords::keychain::get(KEYCHAIN, "token").ok().flatten();
+    }
+    remembered.clone()
+}
+
 /// A token for GitHub: one Valerie stored after its own sign-in, else the GitHub CLI's.
 pub fn token() -> Option<String> {
-    crate::passwords::keychain::get(KEYCHAIN, "token")
-        .ok()
-        .flatten()
+    stored_token()
         .or_else(|| std::fs::read_to_string(token_file()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
         .or_else(|| gh(&["auth", "token"]))
 }
@@ -262,6 +272,7 @@ pub fn add_repo_key(token: &str, repo: &str, device: &str) -> Result<()> {
 
 /// Drop the GitHub sign-in Valerie stored itself (the GitHub CLI keeps its own, which is the CLI's business).
 pub fn forget_token() {
+    *REMEMBERED.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let _ = crate::passwords::keychain::delete(KEYCHAIN, "token");
     let _ = std::fs::remove_file(token_file());
 }
