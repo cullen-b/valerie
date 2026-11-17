@@ -47,6 +47,14 @@ html.bar-only, html.bar-only body { background: var(--bg); }
 html.bar-only #backdrop { display: none; }
 html.bar-only #card { position: static; width: 100%; border-radius: 0; box-shadow: inset 0 0 0 1px var(--line); transform: none; opacity: 1; transition: none; }
 html.bar-only #list { max-height: 430px; }
+/* Animations: each only while its anim-* class is on <html> (ui/custom.js). The card's open and close run from the script. */
+@keyframes scope-in { from { opacity: 0; transform: scale(.9); } }
+html.anim-command-bar #backdrop, html.anim-command-bar #card { transition: none; }
+html.anim-command-bar body.scoped #scope { animation: scope-in .12s cubic-bezier(.2,.8,.2,1); }
+html.anim-command-bar-selection #list { position: relative; z-index: 0; }
+html.anim-command-bar-selection .item.sel { background: none; box-shadow: none; }
+#highlight { position: absolute; top: 0; left: 0; z-index: -1; border-radius: 10px; background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); pointer-events: none;
+  transition: transform .09s cubic-bezier(.2,.8,.2,1), height .09s cubic-bezier(.2,.8,.2,1); }
 </style>
 </head>
 <body>
@@ -268,10 +276,54 @@ function more(query, plugin, title, items) {
   const keep = results[sel];
   compute();
   const i = keep ? results.findIndex((r) => r.title === keep.title && r.kind === keep.kind) : -1;
-  if (i > 0) { sel = i; mark(); }
+  if (i > 0) { sel = i; mark(true); }
 }
 
+const anim = (k) => !!(window.__valerieUi && __valerieUi.anim && __valerieUi.anim(k));
+const barOnly = () => document.documentElement.classList.contains("bar-only");
+const card = document.getElementById("card"), backdrop = document.getElementById("backdrop"), hl = document.createElement("div");
+hl.id = "highlight";
+let swinging = [], hAnim = null, firstDraw = true;
+// Open settles the card in, close lifts it away; each starts from wherever the last left it, so reopening mid-close never flashes.
+function swing(open) {
+  if (!anim("command_bar") || barOnly()) return;
+  const busy = swinging.some((a) => a.playState !== "finished"), now = (el) => getComputedStyle(el);
+  const c0 = busy || !open ? { opacity: now(card).opacity, transform: now(card).transform } : { opacity: 0, transform: "translateX(-50%) translateY(-6px) scale(.98)" };
+  const b0 = { opacity: busy || !open ? now(backdrop).opacity : 0 };
+  swinging.forEach((a) => a.cancel());
+  const o = open ? { duration: 140, easing: "cubic-bezier(.2,.8,.2,1)" } : { duration: 90, easing: "ease-out" };
+  swinging = [card.animate([c0, { opacity: open ? 1 : 0, transform: open ? "translateX(-50%)" : "translateX(-50%) translateY(-3px)" }], o),
+              backdrop.animate([b0, { opacity: open ? 1 : 0 }], o)];
+}
+// The selection highlight glides to the selected row; it lives in the list's content so it scrolls with it.
+function place(instant) {
+  if (!anim("command_bar_selection")) return hl.remove();
+  const row = list.children[sel];
+  if (!hl.isConnected || !row || row === hl) return;
+  // Rects, not offset*, keep fractional row heights; dividing by s undoes the card's scale while it opens.
+  const l = list.getBoundingClientRect(), b = row.getBoundingClientRect(), s = l.width / list.offsetWidth || 1;
+  hl.style.left = (b.left - l.left) / s - list.clientLeft + "px"; hl.style.width = b.width / s + "px"; hl.style.height = b.height / s + "px";
+  hl.style.transform = "translateY(" + ((b.top - l.top) / s - list.clientTop + list.scrollTop) + "px)";
+  if (instant) hl.getAnimations().forEach((a) => a.finish());
+}
+addEventListener("resize", () => place(true));
+// The list's height eases between results: measured once per draw, retargeted from wherever it is mid-way.
 function draw() {
+  const grow = !firstDraw && anim("command_bar_height") && !barOnly();
+  const from = grow ? list.getBoundingClientRect().height : 0;
+  firstDraw = false;
+  if (hAnim) { hAnim.cancel(); hAnim = null; list.style.display = ""; }
+  fill();
+  if (results.length && anim("command_bar_selection")) list.append(hl);
+  const to = grow ? list.offsetHeight : 0;
+  place(true);
+  if (!grow || from === to) return;
+  const flat = { paddingTop: "0px", paddingBottom: "0px" }; // the empty list has no padding (it isn't shown)
+  if (!to) list.style.display = "block";
+  hAnim = list.animate([{ height: from + "px", ...(from ? {} : flat) }, { height: to + "px", ...(to ? {} : flat) }], { duration: 120, easing: "cubic-bezier(.2,.8,.2,1)" });
+  hAnim.onfinish = () => { hAnim = null; list.style.display = ""; };
+}
+function fill() {
   const needle = q.value.trim().toLowerCase();
   list.innerHTML = "";
   if (!results.length) {
@@ -298,7 +350,11 @@ function draw() {
   });
   foot();
 }
-function mark() { [...list.children].forEach((c, i) => c.classList.toggle("sel", i === sel)); list.children[sel]?.scrollIntoView({ block: "nearest" }); foot(); }
+// A held arrow key moves the highlight without gliding; a key also ends the height animation first so scrolling uses the final size.
+function mark(instant, key) {
+  if (key && hAnim) hAnim.finish();
+  [...list.children].forEach((c, i) => c.classList.toggle("sel", i === sel)); list.children[sel]?.scrollIntoView({ block: "nearest" }); place(instant); foot();
+}
 // On "Ask agent" the footer says what Enter and Shift+Enter do there.
 function foot() {
   const ask = results[sel] && results[sel].kind === "agent" && (D.options || {}).shift_enter_to_chats !== false;
@@ -329,8 +385,8 @@ q.addEventListener("keydown", (e) => {
     if (site) { e.preventDefault(); return enterScope(site); }
   }
   if (k === "Backspace" && scope && !q.value) { e.preventDefault(); return leaveScope(); }
-  if (k === "ArrowDown" || (ctl && (k === "n" || k === "j")) || (k === "Tab" && !e.shiftKey)) { e.preventDefault(); sel = Math.min(sel + 1, results.length - 1); mark(); }
-  else if (k === "ArrowUp" || (ctl && (k === "p" || k === "k")) || (k === "Tab" && e.shiftKey)) { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(); }
+  if (k === "ArrowDown" || (ctl && (k === "n" || k === "j")) || (k === "Tab" && !e.shiftKey)) { e.preventDefault(); sel = Math.min(sel + 1, results.length - 1); mark(e.repeat, true); }
+  else if (k === "ArrowUp" || (ctl && (k === "p" || k === "k")) || (k === "Tab" && e.shiftKey)) { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(e.repeat, true); }
   else if (k === "Enter" && D.mode === "prompt") {
     e.preventDefault();
     const v = q.value.trim();
@@ -372,11 +428,11 @@ window.palette = {
     if (data.mode === "list") { q.value = ""; q.placeholder = data.placeholder || "Pick one…"; }
     document.querySelector("#inputrow .glyph").textContent = data.mode === "prompt" ? "✎" : "⌕";
     scope = null; document.body.classList.remove("scoped");
-    compute();
-    document.body.classList.add("open");
+    firstDraw = true; compute();
+    swing(true); document.body.classList.add("open");
     setTimeout(() => { q.focus(); q.select(); }, 0);
   },
-  hide() { document.body.classList.remove("open"); },
+  hide() { swing(false); document.body.classList.remove("open"); },
   // A new search carries on in the new space; anything else was about the old space's tab or list.
   spaceChanged(theme) {
     if (D && D.mode !== "new_tab") return close();

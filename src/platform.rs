@@ -198,6 +198,65 @@ mod mac {
         }
     }
 
+    /// A configuration whose webview shares `with`'s web process (WebKit's related view).
+    pub fn sharing_process(with: &WebView) -> objc2::rc::Retained<AnyObject> {
+        let config: objc2::rc::Retained<AnyObject> = unsafe { msg_send![objc2::class!(WKWebViewConfiguration), new] };
+        relate(&config, with);
+        config
+    }
+
+    pub fn relate(config: &AnyObject, with: &WebView) {
+        unsafe {
+            if msg_send![config, respondsToSelector: objc2::sel!(_setRelatedWebView:)] {
+                let _: () = msg_send![config, _setRelatedWebView: ptr(with)];
+            }
+        }
+    }
+
+    /// A configuration with a profile's storage (what wry makes from a data store identifier).
+    pub fn profile_configuration(id: [u8; 16]) -> objc2::rc::Retained<AnyObject> {
+        unsafe {
+            let config: objc2::rc::Retained<AnyObject> = msg_send![objc2::class!(WKWebViewConfiguration), new];
+            let uuid: *mut AnyObject = msg_send![objc2::class!(NSUUID), alloc];
+            let uuid: *mut AnyObject = msg_send![uuid, initWithUUIDBytes: id.as_ptr()];
+            let store: *mut AnyObject = msg_send![objc2::class!(WKWebsiteDataStore), dataStoreForIdentifier: uuid];
+            let _: () = msg_send![uuid, release];
+            let _: () = msg_send![&*config, setWebsiteDataStore: store];
+            config
+        }
+    }
+
+    /// Safari's way with hidden tabs: their timers fire less and less often the longer they stay hidden.
+    pub fn slow_hidden_timers(config: &AnyObject) {
+        unsafe {
+            let prefs: *mut AnyObject = msg_send![config, preferences];
+            if prefs.is_null() {
+                return;
+            }
+            if msg_send![prefs, respondsToSelector: objc2::sel!(_setHiddenPageDOMTimerThrottlingEnabled:)] {
+                let _: () = msg_send![prefs, _setHiddenPageDOMTimerThrottlingEnabled: true];
+            }
+            if msg_send![prefs, respondsToSelector: objc2::sel!(_setHiddenPageDOMTimerThrottlingAutoIncreases:)] {
+                let _: () = msg_send![prefs, _setHiddenPageDOMTimerThrottlingAutoIncreases: true];
+            }
+            if msg_send![prefs, respondsToSelector: objc2::sel!(_setPageVisibilityBasedProcessSuppressionEnabled:)] {
+                let _: () = msg_send![prefs, _setPageVisibilityBasedProcessSuppressionEnabled: true];
+            }
+        }
+    }
+
+    /// For scripts/perf-bench.py (VALERIE_BENCH=1): a test window sits behind the owner's, and an occluded page counts
+    /// as hidden, so it would never draw; this makes it draw as if in view (Ardia's bench does the same for itself).
+    pub fn bench_in_view(wv: &WebView) {
+        use objc2::sel;
+        let v = ptr(wv);
+        unsafe {
+            if msg_send![v, respondsToSelector: sel!(_setWindowOcclusionDetectionEnabled:)] {
+                let _: () = msg_send![v, _setWindowOcclusionDetectionEnabled: false];
+            }
+        }
+    }
+
     /// Re-adding a subview moves it to the top of its siblings.
     pub fn bring_to_front(wv: &WebView) {
         let v = ptr(wv);
@@ -2149,6 +2208,45 @@ pub fn page_url(wv: &WebView) -> Option<String> {
 }
 
 /// Cut a page's sound right away; call just before dropping its view.
+/// A builder for Valerie's own pages (command bar, chat, little window bars...): on macOS they share the sidebar's web
+/// process instead of each starting one of their own.
+pub fn ui_builder<'a>(sidebar: &WebView) -> wry::WebViewBuilder<'a> {
+    #[cfg(target_os = "macos")]
+    {
+        use wry::WebViewBuilderExtMacos;
+        let config = mac::sharing_process(sidebar);
+        wry::WebViewBuilder::new().with_webview_configuration(unsafe { objc2::rc::Retained::cast_unchecked(config) })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = sidebar;
+        wry::WebViewBuilder::new()
+    }
+}
+
+/// A page's configuration on macOS: the profile's storage, extensions if any, and (with `mate`) sharing that page's
+/// web process.
+#[cfg(target_os = "macos")]
+pub fn page_configuration(id: [u8; 16], extensions: Option<objc2::rc::Retained<objc2::runtime::AnyObject>>, mate: Option<&WebView>, slow_hidden: bool) -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
+    let config = extensions.or_else(|| (mate.is_some() || slow_hidden).then(|| mac::profile_configuration(id)))?;
+    if let Some(m) = mate {
+        mac::relate(&config, m);
+    }
+    if slow_hidden {
+        mac::slow_hidden_timers(&config);
+    }
+    Some(config)
+}
+
+pub fn bench_in_view(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("VALERIE_BENCH").is_some() {
+        mac::bench_in_view(wv);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = wv;
+}
+
 pub fn silence(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::silence(wv);

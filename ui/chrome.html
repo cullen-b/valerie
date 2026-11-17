@@ -124,6 +124,7 @@ img.ico, .letter { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .folder.open > .row .chev { transform: rotate(90deg); }
 .folder .kids { padding-left: 14px; display: none; }
 .folder.open > .kids { display: block; }
+.folder .kids.folding { display: block; overflow: hidden; position: relative; }
 .divider { display: flex; align-items: center; margin: 10px 4px 6px; color: var(--fg-dim); font-size: 11px; min-height: 14px; }
 .divider span { padding: 0 8px; white-space: nowrap; }
 .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
@@ -278,7 +279,7 @@ body.pointer #menu div:hover { background: var(--accent); color: #fff; }
 #menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 #toast {
   position: fixed; bottom: 54px; left: 12px; width: calc(var(--sw) - 24px); padding: 9px 12px; border-radius: 10px;
-  background: var(--accent); color: #fff; font-weight: 500; opacity: 0; transform: translateY(6px); transition: .2s; pointer-events: none;
+  background: var(--accent); color: #fff; font-weight: 500; opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; pointer-events: none;
 }
 body.right #toast { left: auto; right: 12px; }
 #toast.show { opacity: 1; transform: none; }
@@ -314,6 +315,30 @@ body.pointer #topbar .chip:hover { background: var(--hover); }
 .ask input { width: 100%; margin-top: 6px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--tile);
   color: var(--fg); font: inherit; font-size: 13px; outline: none; }
 .ask input:focus { border-color: var(--accent); }
+/* animations: each one only while its `animations:` switch puts anim-<name> on <html> */
+@property --lift { syntax: "<number>"; inherits: false; initial-value: 1.03; }
+html.anim-tabs .ghost { animation: ghost-lift .12s cubic-bezier(.2,.8,.2,1); }
+@keyframes ghost-lift { from { --lift: 1; box-shadow: 0 0 0 rgba(0,0,0,0); } }
+html.anim-press :is(.navbtn, .np-btn, .widget.clickable) { transition: transform .1s cubic-bezier(.2,.8,.2,1); }
+html.anim-press .tile:not(.ghost) { transition: background .12s, transform .1s cubic-bezier(.2,.8,.2,1); }
+html.anim-press .sp { transition: background .15s, color .15s, transform .1s cubic-bezier(.2,.8,.2,1); }
+html.anim-press body:not(.dragging):not(.sp-dragging) :is(.tile, .sp, .navbtn, .np-btn, .widget.clickable):active { transform: scale(.96); }
+html.anim-sound-bars .audio.bars { display: inline-flex; align-items: flex-end; justify-content: center; gap: max(1px, .12em); width: .9em; height: .8em; text-decoration: none; }
+html.anim-sound-bars .audio.bars i { flex: none; width: max(1.5px, .16em); height: 100%; border-radius: 1px; background: currentColor; transform-origin: bottom;
+  animation: sound-bar var(--d) ease-in-out var(--o) infinite; }
+html.anim-sound-bars .audio.bars.muted i { animation: none; transform: scaleY(.3); }
+@keyframes sound-bar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+html.anim-mini-player .np-btn > svg { grid-area: 1 / 1; }
+html.anim-space-highlight .sps { isolation: isolate; }
+html.anim-space-highlight .sps .sp.glide:not(.sp-moving) { position: relative; background: transparent; }
+html.anim-space-highlight .sps .sp.glide:not(.sp-moving)::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: var(--hover); animation: sp-glide .2s cubic-bezier(.2,.8,.2,1) var(--glide-at, 0s) both; }
+@keyframes sp-glide { from { transform: translate(var(--gx), var(--gy)); } }
+html.anim-pinned-popup #pinfly { opacity: 0; transform: scale(.96); transform-origin: 50% 0; pointer-events: none;
+  transition: opacity .1s ease-out, transform .1s ease-out, display .1s allow-discrete; }
+html.anim-pinned-popup #pinfly.open { opacity: 1; transform: none; pointer-events: auto; transition-duration: .14s; transition-timing-function: cubic-bezier(.2,.8,.2,1); }
+@starting-style { html.anim-pinned-popup #pinfly.open { opacity: 0; transform: scale(.96); } }
+html.anim-start-logo #empty svg circle { transform-box: fill-box; transform-origin: center; }
 </style>
 </head>
 <body class="left">
@@ -340,6 +365,9 @@ body.pointer #topbar .chip:hover { background: var(--hover); }
 const $ = (s) => document.querySelector(s);
 const send = (o) => window.ipc.postMessage(JSON.stringify(o));
 const cmd = (c) => send({ t: "cmd", cmd: c });
+// `animations:` switches (ui/custom.js); off while the computer asks for less motion.
+const anim = (k) => !!(window.__valerieUi && __valerieUi.anim && __valerieUi.anim(k));
+const EASE = "cubic-bezier(.2,.8,.2,1)";
 let S = null, prevSpace = null, prevTheme = null, pendingDir = 0, suppressClick = false;
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -454,7 +482,7 @@ function liveMove(t) {
 }
 let spaceHover = null, scrollTimer = 0;
 function dragMove(x, y) {
-  drag.ghost.style.transform = `translate(${x - drag.dx}px, ${y - drag.dy}px) scale(1.03)`;
+  drag.ghost.style.transform = `translate(${x - drag.dx}px, ${y - drag.dy}px) scale(var(--lift, 1.03))`;
   drag.mx = x; drag.my = y;
   clearIndicators();
   const t = locate(x, y);
@@ -857,7 +885,59 @@ function folderEl(n, section = "pinned", list = section, index = 0, around = { s
   const kids = el("div", "kids");
   eachRun(n.children, (r) => kids.append(r.folder ? folderEl(r.folder, section, inner, r.i, inside) : runRow(r, inner, inside)));
   f.append(r, kids);
+  folderNow.set(n.id, n.open);
+  const was = folderSeen.get(n.id);
+  if (was !== undefined && was !== n.open) {
+    // Turned around mid-way: carry on from the same point instead of jumping.
+    const prev = folderAnims.get(n.id), ms = +S.sidebar.folder_animation_ms || 0, now = performance.now();
+    const left = prev ? Math.max(0, ms - (now - prev.start)) : 0;
+    folderAnims.set(n.id, { open: n.open, start: now - left });
+  }
+  const a = folderAnims.get(n.id);
+  if (a && a.open === n.open) queueMicrotask(() => foldAnimate(n.id, a, r, kids));
   return f;
+}
+
+// sidebar.folder_animation: tabs slide up into a folder as it folds, and back out as it opens. A render mid-way
+// rebuilds the rows, so the animation picks up where it was.
+let folderSeen = new Map(), folderNow = new Map();
+const folderAnims = new Map();
+function foldAnimate(id, a, row, kids) {
+  const style = S.sidebar.folder_animation || "slide", ms = Math.max(0, +S.sidebar.folder_animation_ms || 0);
+  const done = performance.now() - a.start >= ms;
+  if (style === "none" || !ms || S.layout.animation_ms === 0 || done || matchMedia("(prefers-reduced-motion: reduce)").matches || !kids.isConnected) {
+    if (done) folderAnims.delete(id);
+    return;
+  }
+  kids.classList.add("folding");
+  const h = kids.offsetHeight;
+  if (!h) { kids.classList.remove("folding"); return folderAnims.delete(id); }
+  const at = performance.now() - a.start, ease = "cubic-bezier(.65,0,.35,1)";
+  const flip = (frames) => (a.open ? [...frames].reverse() : frames);
+  const run = (node, frames, extra = {}) => {
+    const an = node.animate(flip(frames), { duration: ms, easing: ease, fill: "both", ...extra });
+    an.currentTime = at;
+    return an;
+  };
+  const main = run(kids, [{ height: h + "px" }, { height: "0px" }]);
+  for (const c of kids.children) {
+    if (style === "slide") {
+      const lift = c.offsetTop + c.offsetHeight;
+      run(c, [{ transform: "none", opacity: 1 }, { opacity: 1, offset: 0.45 }, { transform: `translateY(${-lift}px) scale(.94)`, opacity: 0 }]);
+    } else run(c, [{ opacity: 1 }, { opacity: 0 }]);
+  }
+  const chev = row.querySelector(".chev");
+  if (chev) run(chev, [{ transform: "rotate(90deg)" }, { transform: "rotate(0deg)" }]);
+  if (style === "slide" && !a.open) {
+    const ic = row.querySelector(".ficon");
+    if (ic) run(ic, [{ transform: "scale(1)" }, { transform: "scale(1)", offset: 0.7 }, { transform: "scale(1.18)", offset: 0.85 }, { transform: "scale(1)" }]);
+  }
+  main.onfinish = () => {
+    if (folderAnims.get(id) === a) folderAnims.delete(id);
+    kids.classList.remove("folding");
+    for (const an of kids.getAnimations({ subtree: true })) an.cancel();
+    if (chev) chev.getAnimations().forEach((an) => an.cancel());
+  };
 }
 
 // The pinned tabs as one tile (icons-only sidebar); hovering it opens them in a column below.
@@ -874,19 +954,54 @@ function glyph(d, cls = "glyph") {
 }
 // The ♪ on a tab that's playing: click it to mute or unmute the tab.
 function audio(t) {
-  const a = el("div", "audio" + (t.muted ? " muted" : ""), "♪"); a.title = t.muted ? "Unmute" : "Mute";
+  const a = playMark(el("div", "audio" + (t.muted ? " muted" : ""))); a.title = t.muted ? "Unmute" : "Mute";
   a.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "toggle_mute", tab: t.id }); };
   a.onmousedown = (e) => e.stopPropagation();
   return a;
 }
+// animations.sound_bars: three bars instead of ♪; their phase comes from the clock, so re-rendering doesn't restart them.
+function playMark(a) {
+  if (!anim("sound_bars")) { a.textContent = "♪"; return a; }
+  a.classList.add("bars");
+  const s = performance.now() / 1000;
+  [0.9, 1.15, 0.75].forEach((d, k) => {
+    const i = el("i"); i.style.setProperty("--d", d + "s"); i.style.setProperty("--o", -((s + k * 0.3) % d).toFixed(3) + "s"); a.append(i);
+  });
+  return a;
+}
+// animations.mini_player: what was on screen last render, and when play/pause last flipped (a render mid-way carries on).
+let npShown = null, npLast = null, npFlipAt = -1e9, npLeave = null;
 function renderNowPlaying() {
-  const np = $("#nowplaying"), P = S.now_playing; np.replaceChildren();
-  np.style.display = P && S.layout.tab_bar !== "top" ? "" : "none";
-  if (!P) return;
+  const np = $("#nowplaying"), P = S.now_playing, show = !!P && S.layout.tab_bar !== "top", was = npShown, moving = anim("mini_player");
+  if (!show && npLeave) return;
+  npShown = show;
+  if (!show && was && moving && !$("#sidebar").classList.contains("hidden")) {
+    // Keep the old player while it eases out, then draw it again (hidden, or back if something started playing).
+    npLeave = np.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(6px)" }], { duration: 140, easing: EASE, fill: "forwards" });
+    npLeave.onfinish = () => { const a = npLeave; npLeave = null; npShown = false; renderNowPlaying(); a.cancel(); };
+    return;
+  }
+  if (npLeave) { npLeave.cancel(); npLeave = null; }
+  np.replaceChildren();
+  np.style.display = show ? "" : "none";
+  if (show && was === false && moving) np.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 200, easing: EASE });
+  if (!P) return (npLast = null);
   const go = el("div", "np-tab"); go.append(icon(P, "ico", "np"), el("div", "title", P.title || host(P.url)));
   go.title = P.title || P.url; go.onclick = () => cmd({ cmd: "activate_tab", tab: P.id });
   const playing = P.media === "playing";
+  if (npLast && npLast.id === P.id && npLast.playing !== playing) npFlipAt = performance.now();
+  npLast = { id: P.id, playing };
   const pp = el("div", "np-btn"); pp.append(glyph(playing ? PAUSE : PLAY, "fill")); pp.title = playing ? "Pause" : "Play";
+  const since = performance.now() - npFlipAt;
+  if (moving && show && since < 200) {
+    // Play and pause cross-fade: the old glyph shrinks and blurs away as the new one comes in.
+    const out = glyph(playing ? PLAY : PAUSE, "fill"), inn = pp.firstChild, o = { duration: 200, easing: "cubic-bezier(.2,0,0,1)", fill: "both" };
+    const off = { opacity: 0, transform: "scale(.25)", filter: "blur(4px)" }, on = { opacity: 1, transform: "none", filter: "blur(0px)" };
+    pp.prepend(out);
+    const a = out.animate([on, off], o), b = inn.animate([off, on], o);
+    a.currentTime = b.currentTime = since;
+    a.onfinish = () => out.remove(); b.onfinish = () => b.cancel();
+  }
   pp.onclick = () => cmd({ cmd: "toggle_media", tab: P.id });
   const mu = el("div", "np-btn"); mu.append(glyph(P.muted ? MUTED : VOLUME, "line")); mu.title = P.muted ? "Unmute" : "Mute";
   mu.onclick = () => cmd({ cmd: "toggle_mute", tab: P.id });
@@ -912,7 +1027,7 @@ function pinFolder(tabs) {
   if (look === "favicons") { const mini = el("div", "mini"); tabs.slice(0, 4).forEach((t) => mini.append(icon(t))); f.append(mini); }
   else f.append(glyph(look === "star" ? STAR : PIN));
   f.title = "Pinned";
-  if (tabs.some((t) => t.playing)) f.append(el("div", "audio", "♪"));
+  if (tabs.some((t) => t.playing)) f.append(playMark(el("div", "audio")));
   f.onmouseenter = () => openFly(f);
   f.onmouseleave = () => closeFly();
   f.onclick = click(() => ($("#pinfly").classList.contains("open") ? closeFly(true) : openFly(f)));
@@ -1063,8 +1178,130 @@ function slideIn(dir) {
   sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
 }
 
+// ---------- animations.tabs: between two renders of the same list, new tabs grow in, closed ones fold away, the rest slide ----------
+// Rows and tiles are keyed by kind and data-pick ("r:t12", "t:t12", "r:f3"); a folder grows and folds as one block.
+const LIST_ITEMS = "#favorites [data-pick], #pins [data-pick], #scroll [data-pick], #lists .divider, #lists .newtab, #lists .space-title";
+let listSig = null;
+const entering = new Map();
+function listSnap() {
+  const items = new Map(), folds = new Map();
+  for (const n of document.querySelectorAll(LIST_ITEMS)) {
+    const c = n.classList, k = n.dataset.pick ? (c.contains("tile") ? "t:" : "r:") + n.dataset.pick : "s:" + (c.contains("divider") ? "divider" : c.contains("newtab") ? "newtab" : "title");
+    const b = c.contains("folder-row") ? n.parentNode : n;
+    if (b !== n) folds.set(k, b.classList.contains("open"));
+    items.set(k, { n, b, r: n.getBoundingClientRect(), br: b.getBoundingClientRect(), on: n.getClientRects().length > 0 });
+  }
+  return { items, folds, folding: !!document.querySelector(".kids.folding") };
+}
+function listAfter(before, where, hidden, chatsOpen) {
+  const sig = before ? JSON.stringify([where, hidden, S.layout, S.sidebar]) : null;
+  // Not on a space switch (slideIn has it), mid-drag or resize, or while a folder opens or closes (it has its own).
+  const go = before && sig === listSig && !hidden && !chatsOpen && !resizing && !blockDrag && !(drag && drag.active) && !(spDrag && spDrag.active);
+  listSig = sig;
+  if (!go || !listAnimate(before)) entering.clear();
+}
+function listAnimate(old) {
+  if (old.folding) return false;
+  const cur = listSnap(), now = performance.now(), seen = (r) => r.width > 0 && r.bottom > 0 && r.top < innerHeight;
+  for (const [k, open] of cur.folds) if (old.folds.has(k) && old.folds.get(k) !== open) return false;
+  const ids = new Set([...cur.items.keys()].map((k) => k.slice(2)));
+  const enters = [], moves = [];
+  for (const [k, c] of cur.items) {
+    if (!c.on) continue;
+    const o = old.items.get(k);
+    if (o && o.on) moves.push([k, c, o.r]);
+    else if (!o && k[0] !== "s") enters.push([k, c]);
+  }
+  let exits = [...old.items].filter(([k, o]) => o.on && k[0] !== "s" && !ids.has(k.slice(2)) && !o.b.isConnected).map(([, o]) => o);
+  // Many at once (Clear, closing a lot) only folds away; a lot appearing just snaps.
+  if (enters.length > 12 || (enters.length && enters.length + exits.length > 12)) return false;
+  exits = exits.filter((o) => seen(o.br));
+  const inside = (x, list) => list.some((y) => y !== x && y.b.contains(x.b));
+  const grow = (c, at) => {
+    const b = c.b, a = b.classList.contains("tile")
+      ? b.animate([{ transform: "scale(.85)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 180, easing: EASE })
+      : b.animate([{ height: "0px", opacity: 0 }, { height: c.br.height + "px", opacity: 1 }], { duration: 180, easing: EASE });
+    if (!b.classList.contains("tile")) { b.style.overflow = "hidden"; a.onfinish = a.oncancel = () => (b.style.overflow = ""); }
+    a.currentTime = at;
+  };
+  const grew = new Set();
+  for (const [k, t] of entering) if (now - t >= 180) entering.delete(k);
+  for (const [k, c] of moves) if (entering.has(k)) { grow(c, now - entering.get(k)); grew.add(k); }
+  const fresh = enters.map(([, c]) => c);
+  for (const [k, c] of enters) if (seen(c.br) && !inside(c, fresh)) { entering.set(k, now); grow(c, 0); }
+  // Measured after the new rows start at zero height, so rows below them are pushed rather than slid.
+  for (const [k, c, from] of moves) {
+    if (grew.has(k) && c.b.classList.contains("tile")) continue;
+    const to = c.n.getBoundingClientRect(), dx = from.left - to.left, dy = from.top - to.top;
+    if ((Math.abs(dx) < 1 && Math.abs(dy) < 1) || (!seen(from) && !seen(to))) continue;
+    c.n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 180, easing: EASE });
+  }
+  exits = exits.filter((o) => !inside(o, exits)).sort((a, b) => a.br.top - b.br.top);
+  const step = exits.length > 1 ? Math.min(15, 150 / exits.length) : 0;
+  exits.forEach((o, i) => foldAway(o.b, o.br, i * step));
+  return true;
+}
+// The old row or tile, out of the list and fixed where it was, folds away; nothing finds it as a tab any more.
+function foldAway(g, r, delay) {
+  for (const n of [g, ...g.querySelectorAll("[data-tab], [data-pick], [data-drop]")]) { delete n.dataset.tab; delete n.dataset.pick; delete n.dataset.drop; }
+  g.classList.remove("picked", "drop-before", "drop-after", "drop-into", "drop-split");
+  Object.assign(g.style, { position: "fixed", left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px",
+    margin: "0", zIndex: "4", pointerEvents: "none", overflow: "hidden", transition: "none" });
+  document.body.append(g);
+  g.getAnimations({ subtree: true }).forEach((a) => { if (!(a instanceof CSSAnimation)) a.cancel(); });
+  const a = g.classList.contains("tile")
+    ? g.animate([{ transform: "none", opacity: 1 }, { transform: "scale(.85)", opacity: 0 }], { duration: 150, delay, easing: EASE, fill: "both" })
+    : g.animate([{ height: r.height + "px", opacity: 1 }, { height: "0px", opacity: 0 }], { duration: 150, delay, easing: EASE, fill: "both" });
+  a.onfinish = a.oncancel = () => g.remove();
+}
+
+// animations.space_highlight: the active space's highlight glides from the button that had it (a render mid-way carries on).
+let spGlide = null;
+const spKey = (n) => (n.classList.contains("chats-sp") ? "chats" : n.dataset.space || "");
+function spVisual() {
+  const a = document.querySelector("#bottom .sp.active"), r = a && a.getBoundingClientRect();
+  if (!r || !r.width) return null;
+  const m = a.classList.contains("glide") ? new DOMMatrixReadOnly(getComputedStyle(a, "::before").transform) : null;
+  return { key: spKey(a), x: r.left + (m ? m.m41 : 0), y: r.top + (m ? m.m42 : 0) };
+}
+function glideSpace(from) {
+  const a = document.querySelector("#bottom .sp.active"), now = performance.now();
+  if (!from || !a || (spDrag && spDrag.active)) return (spGlide = null);
+  const key = spKey(a);
+  if (key !== from.key) spGlide = { key, at: now, x: from.x, y: from.y };
+  if (!spGlide || spGlide.key !== key || now - spGlide.at >= 200) return;
+  const r = a.getBoundingClientRect();
+  a.style.setProperty("--gx", spGlide.x - r.left + "px"); a.style.setProperty("--gy", spGlide.y - r.top + "px");
+  a.style.setProperty("--glide-at", -(now - spGlide.at) + "ms");
+  a.classList.add("glide");
+  a.addEventListener("animationend", () => a.classList.remove("glide"), { once: true });
+}
+
+// animations.start_logo: when the start page comes into view, the V draws itself and then the dot pops in.
+let startOn = false;
+function startShown(node) {
+  const on = node.style.display !== "none", was = startOn;
+  startOn = on;
+  if (!on || was || !anim("start_logo")) return;
+  const path = node.querySelector(":scope > svg path"), dot = node.querySelector(":scope > svg circle"), h = node.querySelector(":scope > h1");
+  const pop = (n, delay) => n.animate([{ transform: "scale(0)" }, { transform: "scale(1.15)", offset: 0.7 }, { transform: "scale(1)" }],
+    { duration: 220, delay, easing: "ease-out", fill: "backwards" });
+  if (path && dot) {
+    // The dash starts past the stroke's round cap, so nothing shows before it draws.
+    const len = path.getTotalLength(), dash = `${len} ${len + 200}`;
+    path.animate([{ strokeDasharray: dash, strokeDashoffset: len + 100 }, { strokeDasharray: dash, strokeDashoffset: 0 }], { duration: 700, easing: "cubic-bezier(.25,.7,.3,1)" });
+    pop(dot, 560);
+  } else if (h) {
+    h.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: getComputedStyle(h).opacity, transform: "none" }], { duration: 420, easing: EASE });
+    const dot = h.querySelector("span");
+    if (dot) { dot.style.display = "inline-block"; pop(dot, 320).onfinish = () => (dot.style.display = ""); }
+  }
+}
+
 function render(state) {
+  const before = S && anim("tabs") ? listSnap() : null, spFrom = S && anim("space_highlight") ? spVisual() : null;
   S = state; iconsUsed = new Set();
+  folderSeen = folderNow; folderNow = new Map();
   applyTheme(S.theme);
   document.documentElement.classList.toggle("vibrant", !!S.vibrancy && S.vibrancy !== "none");
   const root = document.documentElement, b = document.body;
@@ -1247,6 +1484,9 @@ function render(state) {
   keepDrag();
   if (picked.size) { const live = new Set(pickKeys()); picked = new Set([...picked].filter((k) => live.has(k))); showPicked(); }
   for (const k of iconNodes.keys()) if (!iconsUsed.has(k)) iconNodes.delete(k);
+  listAfter(before, where, hidden, chatsOpen);
+  glideSpace(spFrom);
+  startShown(empty);
 }
 
 // Agents label only when it fits (else just its dot); space buttons wrap only once they can't shrink further.
@@ -1356,6 +1596,23 @@ const prompt_ = (label, value, then, field) => cmd({ cmd: "prompt", label, value
 $("#back").onclick = () => cmd({ cmd: "back" });
 $("#fwd").onclick = () => cmd({ cmd: "forward" });
 $("#reload").onclick = () => cmd({ cmd: "reload" });
+// animations.nav_buttons: back nudges left, forward right, reload turns once; clicking again mid-way starts it over.
+function navNudge(b, turn, dx) {
+  if (!anim("nav_buttons")) return;
+  let g = b.firstElementChild;
+  if (!g) { g = el("span", null, b.textContent); b.replaceChildren(g); }
+  if (!turn) {
+    g.getAnimations().forEach((a) => a.cancel());
+    return g.animate([{ transform: "none" }, { transform: `translateX(${dx}px)`, offset: 0.3 }, { transform: "none" }], { duration: 300, easing: EASE });
+  }
+  // A turn already going carries on from where it is, round to the next full turn, at the same speed.
+  const m = new DOMMatrixReadOnly(getComputedStyle(g).transform), deg = ((Math.atan2(m.b, m.a) * 180) / Math.PI + 360) % 360, to = deg > 1 ? 720 : 360;
+  g.getAnimations().forEach((a) => a.cancel());
+  g.animate([{ transform: `rotate(${deg}deg)` }, { transform: `rotate(${to}deg)` }], { duration: (450 * (to - deg)) / 360, easing: "cubic-bezier(.2,.7,.3,1)" });
+}
+$("#back").addEventListener("click", () => navNudge($("#back"), false, -2));
+$("#fwd").addEventListener("click", () => navNudge($("#fwd"), false, 2));
+$("#reload").addEventListener("click", () => navNudge($("#reload"), true));
 $("#url").onclick = () => cmd({ cmd: "open_command_bar", mode: "current" });
 $("#sidebar").addEventListener("mouseleave", () => { if (S && S.peek) send({ t: "unpeek" }); });
 $("#drag").onmousedown = (e) => { if (e.target.id === "drag" && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };

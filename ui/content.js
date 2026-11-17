@@ -530,15 +530,34 @@ function ui() {
     .find .ask { display: none; padding: 2px 7px; border-radius: 6px; background: ${cfg.accent || "#9d8cff"}; color: #fff; font-size: 11px; white-space: nowrap; }
     .find.question .ask { display: inline-block; }
     .find.question .count { display: none; }
-              border-radius: 12px; background: rgba(24,24,32,.96); color: rgba(255,255,255,.92); pointer-events: auto; box-shadow: 0 12px 32px rgba(0,0,0,.35); }
     .loadbar { position: fixed; top: 0; left: 0; height: 2px; width: 0; background: ${cfg.accent || "#9d8cff"}; box-shadow: 0 0 6px ${cfg.accent || "#9d8cff"};
                transition: width 2.5s cubic-bezier(.1,.7,.3,1), opacity .25s; }
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
-            outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: all .06s; }`;
+            outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: left .06s, top .06s, width .06s, height .06s; }
+    .ring { position: fixed; border-radius: 6px; outline: 2px solid ${cfg.accent || "#9d8cff"}; pointer-events: none; }`;
   shadow.appendChild(st);
   shadow.appendChild(userStyle());
   return shadow;
 }
+// ---------- small motions (`animations:` switches): transform and opacity only, none in hidden tabs or with reduced motion ----------
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)"), EASE = "cubic-bezier(.2,.8,.2,1)";
+const anim = (k) => !!(cfg.animations && cfg.animations[k]) && document.visibilityState !== "hidden" && !reduceMotion.matches;
+function enter(el, k, frames, ms) { if (anim(k)) el.animate(frames, { duration: ms, easing: EASE }); }
+// Plays frames, then removes el; it gives up focus and clicks at once. With k's switch off it's removed right away.
+function leave(el, k, frames, ms) {
+  if (!el.isConnected || el.inert) return;
+  if (!anim(k)) return el.remove();
+  const a = shadow && shadow.activeElement;
+  if (a && el.contains(a)) a.blur();
+  el.inert = true; el.style.pointerEvents = "none";
+  const gone = () => el.remove();
+  el.animate(frames, { duration: ms, easing: "ease-out", fill: "forwards" }).onfinish = gone;
+  setTimeout(gone, ms + 50); // hidden tabs may never finish the animation
+}
+// The save and help prompts slide in from their edge: down from the top, up from the bottom (`.help`).
+const promptShift = (box, d) => `translateY(${box.classList.contains("help") ? d : -d}px)`;
+function promptIn(box) { ui().appendChild(box); enter(box, "page_messages", [{ opacity: 0, transform: promptShift(box, 10) }, { opacity: 1, transform: "none" }], 180); }
+function promptOut(box) { leave(box, "page_messages", [{ opacity: 1, transform: "none" }, { opacity: 0, transform: promptShift(box, 6) }], 140); }
 // The user's own ui/page.css, after Valerie's styles in each of its shadow roots (find bar, hints, menus, reader…).
 const userStyles = [];
 function userStyle() {
@@ -561,7 +580,11 @@ function tr(text) {
 
 function toast(msg) {
   const t = document.createElement("div"); t.className = "toast"; t.textContent = tr(msg); ui().appendChild(t);
-  setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 250); }, (cfg.toast_seconds || 1.5) * 1000);
+  enter(t, "page_messages", [{ opacity: 0, transform: "translateX(-50%) translateY(8px)" }, { opacity: 1, transform: "translateX(-50%)" }], 160);
+  setTimeout(() => {
+    if (anim("page_messages")) return leave(t, "page_messages", [{ opacity: 1, transform: "translateX(-50%)" }, { opacity: 0, transform: "translateX(-50%) translateY(6px)" }], 200);
+    t.style.opacity = "0"; setTimeout(() => t.remove(), 250);
+  }, (cfg.toast_seconds || 1.5) * 1000);
 }
 
 // ---------- scrolling ----------
@@ -803,8 +826,24 @@ function hintKey(k) {
       h.d.replaceChildren(t, h.label.slice(typed.length));
     }
   }
-  if (left === 1 && last.label === typed) { const nt = hints.newTab; stopHints(); activate(last.e, nt); }
+  if (left === 1 && last.label === typed) {
+    const nt = hints.newTab; stopHints();
+    const r = anim("keyboard_click") && last.e.getBoundingClientRect();
+    activate(last.e, nt); if (r) clickRing(r);
+  }
   else if (!left) stopHints();
+}
+// A ring that grows off what a hint clicked and fades; drawn after the click so it never holds it up.
+let ring = null;
+function clickRing(r) {
+  if (ring) ring.remove();
+  const el = ring = document.createElement("div"); el.className = "ring";
+  Object.assign(el.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" });
+  ui().appendChild(el);
+  const gone = () => { el.remove(); if (ring === el) ring = null; };
+  el.animate([{ opacity: 0.8, transform: "none" }, { opacity: 0, transform: `scale(${(r.width + 12) / r.width}, ${(r.height + 12) / r.height})` }],
+    { duration: 320, easing: EASE, fill: "forwards" }).onfinish = gone;
+  setTimeout(gone, 370);
 }
 // A real-looking click: frameworks (React, YouTube's Polymer, menus) often act on pointer/mouse down, not click.
 function activate(e, newTab) {
@@ -1032,6 +1071,7 @@ function openFind(initial) {
   const root = ui();
   ensureFindStyle();
   if (!fnd.bar) {
+    for (const el of root.querySelectorAll(".find, .minimap")) el.remove(); // a bar still easing out from the last close
     const minimap = !cfg.find || cfg.find.minimap !== false;
     fnd.bar = document.createElement("div"); fnd.bar.className = "find" + (minimap ? " with-map" : "");
     fnd.input = document.createElement("input"); fnd.input.placeholder = "Find in page";
@@ -1039,12 +1079,17 @@ function openFind(initial) {
     fnd.ask = document.createElement("span"); fnd.ask.className = "ask"; fnd.ask.textContent = "Ask ↵";
     fnd.bar.append(fnd.input, fnd.count, fnd.ask);
     root.appendChild(fnd.bar);
+    enter(fnd.bar, "find_bar", [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }], 140);
     fnd.input.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Enter") {
         e.preventDefault(); clearTimeout(fnd.timer);
         if (!e.shiftKey && isQuestion(fnd.input.value)) askPage(fnd.input.value.trim());
-        else if (fnd.query !== fnd.input.value) runSearch(); else goToMatch(fnd.cur + (e.shiftKey ? -1 : 1));
+        else {
+          if (fnd.query !== fnd.input.value) runSearch(); else goToMatch(fnd.cur + (e.shiftKey ? -1 : 1));
+          // Nothing to go to: the bar shakes its head.
+          if (!fnd.items.length && fnd.input.value && anim("find_bar")) fnd.bar.animate([0, -5, 5, -3, 2, 0].map((x) => ({ transform: `translateX(${x}px)` })), { duration: 250, easing: "ease-out" });
+        }
       }
       if (e.key === "Escape") { e.preventDefault(); closeAnswer(); closeFind(); }
     }, true);
@@ -1055,6 +1100,7 @@ function openFind(initial) {
     if (minimap) {
       fnd.map = document.createElement("canvas"); fnd.map.className = "minimap";
       root.appendChild(fnd.map);
+      enter(fnd.map, "find_bar", [{ opacity: 0, transform: "translateX(16px)" }, { opacity: 1, transform: "none" }], 160);
       let dragging = false;
       fnd.map.addEventListener("mousedown", (e) => { dragging = true; minimapScrollTo(e); e.preventDefault(); });
       addEventListener("mousemove", (e) => { if (dragging) minimapScrollTo(e); }, true);
@@ -1078,8 +1124,9 @@ function findStep(d) {
 }
 function closeFind() {
   if (!fnd.bar) return;
-  fnd.bar.remove(); if (fnd.map) fnd.map.remove();
-  removeEventListener("scroll", fnd.onScroll, true);
+  leave(fnd.bar, "find_bar", [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-4px)" }], 100);
+  if (fnd.map) leave(fnd.map, "find_bar", [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateX(8px)" }], 100);
+  removeEventListener("scroll", fnd.onScroll, true); cancelAnimationFrame(fnd.raf);
   if (canHighlight) { CSS.highlights.delete("valerie-find"); CSS.highlights.delete("valerie-find-current"); }
   // Leave the current match selected so ⌘C copies it, like other browsers.
   const cur = fnd.items[fnd.cur];
@@ -1577,13 +1624,13 @@ function cookieOffer(text, site, nonce) {
   box.append(p);
   const button = (label, cls, msg) => {
     const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
-    b.addEventListener("click", (e) => { if (!e.isTrusted) return; box.remove(); if (msg) post(msg); });
+    b.addEventListener("click", (e) => { if (!e.isTrusted) return; promptOut(box); if (msg) post(msg); });
     box.append(b);
   };
   button("Do it for me", "primary", { t: "cookie_learn", nonce });
   button("No thanks", "", null);
-  ui().appendChild(box);
-  setTimeout(() => box.remove(), 15000);
+  promptIn(box);
+  setTimeout(() => promptOut(box), 15000);
 }
 // Banners load late, so keep looking for a few seconds after load, then stop watching.
 {
@@ -1599,14 +1646,30 @@ function cookieOffer(text, site, nonce) {
 }
 
 // ---------- links: show where they go while hovered, and drop tracking junk before following them ----------
-let pill = null, pillTimer = 0;
-function hidePill() { if (pill) { pill.remove(); pill = null; } }
+let pill = null, pillTimer = 0, pillFading = 0;
+// Fades the pill from where it is now to `to`; fading out keeps it until removed.
+function fadePill(to, ms) {
+  const from = getComputedStyle(pill).opacity;
+  for (const a of pill.getAnimations()) a.cancel();
+  pill.animate([{ opacity: from }, { opacity: to }], { duration: ms, easing: "ease-out", fill: to ? "none" : "forwards" });
+}
+function hidePill() {
+  if (!pill || pillFading) return;
+  if (!anim("link_address")) { pill.remove(); pill = null; return; }
+  fadePill(0, 100);
+  pillFading = setTimeout(() => { pillFading = 0; pill.remove(); pill = null; }, 110);
+}
 document.addEventListener("mouseover", (e) => {
   if (!(cfg.links && cfg.links.show_url_on_hover)) return;
   const a = e.target.closest && e.target.closest("a[href]");
   clearTimeout(pillTimer);
   if (!a || !/^https?:/.test(a.href)) { pillTimer = setTimeout(hidePill, 120); return; }
-  if (!pill) { pill = document.createElement("div"); pill.className = "pill"; ui().appendChild(pill); }
+  // Back on a link while the pill fades: bring the same one back instead of making another.
+  if (pillFading) { clearTimeout(pillFading); pillFading = 0; fadePill(1, 120); }
+  if (!pill) {
+    pill = document.createElement("div"); pill.className = "pill"; ui().appendChild(pill);
+    enter(pill, "link_address", [{ opacity: 0 }, { opacity: 1 }], 120);
+  }
   let text = cleanUrl(a.href); try { text = decodeURI(text); } catch (_) {}
   pill.textContent = text.replace(/^https?:\/\/(www\.)?/, "");
   pill.classList.toggle("right", e.clientX < innerWidth * 0.55 && e.clientY > innerHeight - 70);
@@ -1768,6 +1831,7 @@ function showAccounts(field) {
     menu.append(d);
   });
   ui().appendChild(menu);
+  enter(menu, "page_messages", [{ opacity: 0, transform: "scale(.98)", transformOrigin: "0 0" }, { opacity: 1, transform: "none", transformOrigin: "0 0" }], 110);
   // Follow the field while the page slides it into place (Google's password step) or scrolls.
   const m = menu;
   const place = () => {
@@ -1850,7 +1914,7 @@ function helpBar(who, note, nonce, choices) {
   const p = document.createElement("p"); p.textContent = note;
   const input = document.createElement("textarea"); input.placeholder = tr("Anything to tell it? (optional)"); input.rows = 2;
   const row = document.createElement("div");
-  const send = (gave_up, choice) => { box.remove(); helpBox = null; post({ t: "help_done", nonce, note: input.value, gave_up, choice }); };
+  const send = (gave_up, choice) => { promptOut(box); helpBox = null; post({ t: "help_done", nonce, note: input.value, gave_up, choice }); };
   const button = (label, cls, gave_up, choice) => {
     const b = document.createElement("button"); b.textContent = choice || tr(label); if (cls) b.className = cls;
     b.addEventListener("click", (e) => { if (e.isTrusted) send(gave_up, choice); }); row.append(b);
@@ -1861,9 +1925,9 @@ function helpBar(who, note, nonce, choices) {
   button("I can't", "", true);
   input.addEventListener("keydown", (e) => { if (e.isTrusted && e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(false); e.stopPropagation(); });
   box.append(h, p, input, row);
-  helpBox = box; ui().appendChild(box);
+  helpBox = box; promptIn(box);
 }
-function helpBarClose() { if (helpBox) helpBox.remove(); helpBox = null; }
+function helpBarClose() { if (helpBox) promptOut(helpBox); helpBox = null; }
 
 function offerSave(host, username, nonce, vaults) {
   // Windows can get here before the new page has any HTML to show this on.
@@ -1875,15 +1939,15 @@ function offerSave(host, username, nonce, vaults) {
   box.append(p);
   const button = (label, cls, msg) => {
     const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
-    b.addEventListener("click", (e) => { if (!e.isTrusted) return; box.remove(); if (msg) post(msg); });
+    b.addEventListener("click", (e) => { if (!e.isTrusted) return; promptOut(box); if (msg) post(msg); });
     box.append(b);
   };
   button("Save", "primary", { t: "save_password", nonce, vault: vaults[0] });
   vaults.slice(1).forEach((v) => button("Save to " + v, "", { t: "save_password", nonce, vault: v }));
   button("Never", "", { t: "never_password", nonce });
   button("Not now", "", { t: "dismiss_password", nonce });
-  ui().appendChild(box);
-  setTimeout(() => box.remove(), (cfg.save_prompt_seconds || 30) * 1000);
+  promptIn(box);
+  setTimeout(() => promptOut(box), (cfg.save_prompt_seconds || 30) * 1000);
 }
 // Watch for login forms that appear later, but only while the tab is visible and until one is found.
 let loginTimer = 0;

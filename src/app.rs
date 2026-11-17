@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tao::dpi::LogicalSize;
-use tao::event::{Event, StartCause, WindowEvent};
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use tao::window::{Window, WindowBuilder, WindowId};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebView, WebViewBuilder};
@@ -1298,7 +1298,18 @@ fn css_file(page: &str) -> String {
 
 /// What a UI window needs to look and read the user's way.
 fn ui_custom(page: &str, config: &Config) -> Value {
-    json!({ "css": user_css(&css_file(page), config), "strings": strings_for(&config.language) })
+    json!({ "css": user_css(&css_file(page), config), "strings": strings_for(&config.language), "animations": animations_on(config) })
+}
+
+/// `animations:` as each window gets it: every switch, all off when `layout.animation_ms` is 0.
+fn animations_on(config: &Config) -> Value {
+    let mut on = serde_json::to_value(&config.animations).unwrap_or_default();
+    if config.layout.animation_ms <= 0.0 {
+        for v in on.as_object_mut().into_iter().flat_map(|m| m.values_mut()) {
+            *v = Value::Bool(false);
+        }
+    }
+    on
 }
 
 /// A UI page with the user's own CSS and words built in.
@@ -1414,6 +1425,7 @@ impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
         // Last session's size and place (if it still fits a screen), else the configured size, else most of the screen.
         let mut state = State::load(&state_path());
+        trace("  state read");
         // Downloads that were running when Valerie last quit didn't finish.
         for d in state.downloads.iter_mut().filter(|d| d.state == "downloading") {
             d.state = "failed".into();
@@ -1476,7 +1488,7 @@ impl App {
             .child_of(&window)?;
         trace("  sidebar view");
         let p = proxy.clone();
-        let overlay = WebViewBuilder::new()
+        let overlay = platform::ui_builder(&chrome)
             .with_html(ui_page("palette.html", &config))
             .with_bounds(full)
             .with_transparent(true)
@@ -1754,7 +1766,7 @@ impl App {
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
         json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
-            "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds,
+            "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds, "animations": animations_on(&self.config),
             "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
             "sites": self.config.sites, "mouse": self.config.mouse, "plugin_contexts": self.plugin_contexts(),
@@ -1947,20 +1959,23 @@ impl App {
 
     /// Run `f` with a builder bound to the profile's isolated storage: a WKWebsiteDataStore on macOS,
     /// a WebContext data directory elsewhere.
-    fn with_profile<R>(&mut self, profile: &str, f: impl FnOnce(&Self, WebViewBuilder<'_>) -> R) -> R {
+    /// `mate`: a page whose web process this one shares (macOS; pages.share_process_by_site).
+    fn with_profile<R>(&mut self, profile: &str, mate: Option<TabId>, f: impl FnOnce(&Self, WebViewBuilder<'_>) -> R) -> R {
         #[cfg(target_os = "macos")]
         {
             use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos};
             let id = platform::profile_id(profile);
             let mut base = WebViewBuilder::new().with_data_store_identifier(id);
             // With extensions loaded, pages get a configuration that has them (and the profile's storage).
-            if let Some(c) = crate::extensions::page_configuration(id) {
+            let mate = mate.and_then(|t| self.views.get(&t));
+            if let Some(c) = platform::page_configuration(id, crate::extensions::page_configuration(id), mate, self.config.pages.slow_background_tabs) {
                 base = base.with_webview_configuration(unsafe { objc2::rc::Retained::cast_unchecked(c) });
             }
             f(self, base)
         }
         #[cfg(not(target_os = "macos"))]
         {
+            let _ = mate;
             let dir = config::data_dir().join("profiles").join(profile);
             let mut ctx = self.contexts.remove(profile).unwrap_or_else(|| wry::WebContext::new(Some(dir)));
             self.protocol_taken.set(ctx.is_custom_protocol_registered("valerie"));
@@ -2167,11 +2182,18 @@ impl App {
         let profile = self.site_profile(&url).unwrap_or_else(|| self.profile_for(space));
         self.view_profiles.insert(tab, profile.clone());
         self.view_agents.insert(tab, self.agent_for_url(&url));
-        let built = self.with_profile(&profile, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
+        let site = site_of(&url).filter(|_| self.config.pages.share_process_by_site);
+        let mate = site.and_then(|site| {
+            self.views.keys().copied().find(|t| {
+                self.view_profiles.get(t) == Some(&profile) && self.state.tabs.get(t).and_then(|o| site_of(&o.url)).as_ref() == Some(&site)
+            })
+        });
+        let built = self.with_profile(&profile, mate, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
         match built {
             Ok(v) => {
                 platform::allow_magnification(&v, self.config.gestures.pinch_to_zoom);
                 platform::prefer_dark(&v, self.config.pages.dark_mode == "always");
+                platform::bench_in_view(&v);
                 self.zoom_applied.remove(&tab);
                 let z = self.zoom_for(tab);
                 if z != 1.0 {
@@ -2292,7 +2314,7 @@ impl App {
         while self.split_handles.len() < want {
             let p = self.proxy.clone();
             let i = self.split_handles.len();
-            let built = WebViewBuilder::new()
+            let built = platform::ui_builder(&self.chrome)
                 .with_html(ui_page("split-handle.html", &self.config))
                 .with_visible(false)
                 .with_transparent(true)
@@ -4739,10 +4761,10 @@ impl App {
             self.protocol_taken.set(false);
             place(self.page_builder(WebViewBuilder::new().with_incognito(true), Target::Little(id, 0), url))
         } else {
-            self.with_profile(&profile, |app, base| place(app.page_builder(base, Target::Little(id, 0), url)))
+            self.with_profile(&profile, None, |app, base| place(app.page_builder(base, Target::Little(id, 0), url)))
         };
         let p = self.proxy.clone();
-        let bar = WebViewBuilder::new()
+        let bar = platform::ui_builder(&self.chrome)
             .with_html(ui_page("little.html", &self.config))
             .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
@@ -4777,7 +4799,7 @@ impl App {
             self.protocol_taken.set(false);
             place(self, WebViewBuilder::new().with_incognito(true))
         } else {
-            self.with_profile(&profile, place)
+            self.with_profile(&profile, None, place)
         };
         let view = match view {
             Ok(v) => v,
@@ -5943,7 +5965,7 @@ impl App {
         self.close_peek();
         let (x, y, w, h) = self.peek_rect();
         let profile = self.site_profile(url).unwrap_or_else(|| self.profile_for(self.state.active_space));
-        let built = self.with_profile(&profile, |app, base| {
+        let built = self.with_profile(&profile, None, |app, base| {
             app.page_builder(base, Target::Peek, url).with_visible(true).with_bounds(rect(x, y, w, h)).child_of(&app.window)
         });
         let view = match built {
@@ -8853,6 +8875,9 @@ impl App {
                     self.render();
                 }
                 Target::Tab(id) => {
+                    if !self.revealed {
+                        trace(if finished { "tab page finished" } else { "tab page started" });
+                    }
                     if finished && !self.restore_queue.is_empty() {
                         if let Some(t) = self.state.tabs.get_mut(&id) {
                             t.loading = false;
@@ -10126,6 +10151,7 @@ impl App {
     /// Launch: only what the active space needs. The window appears once it's on screen (or after 1.5s at most);
     /// everything else happens after that, in `after_reveal`.
     fn start(&mut self, urls: Vec<String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        trace("  event loop running");
         self.known_plugins = self.plugins.iter().map(|p| p.name.clone()).collect();
         self.known_plugins.extend(crate::extensions::find(&crate::extensions::dir(&self.config.extensions)).iter().map(|e| ext_key(&e.name)));
         // The active space's own settings apply from the start.
@@ -10137,12 +10163,13 @@ impl App {
         if let Ok(mut s) = self.sites_shared.write() {
             s.clone_from(&self.config.sites);
         }
+        trace("  settings merged");
         self.ensure_plugin_keys();
         self.init_print = self.init_fingerprint();
+        trace("  fingerprint");
         self.load_strings();
         self.apply_app_settings();
         trace("start");
-        self.build_menu();
         // An agent's tool call started Valerie: no window and no pages, only what the call needs.
         if std::env::var_os(crate::mcp::STARTED_FOR_AGENT).is_some() {
             std::env::remove_var(crate::mcp::STARTED_FOR_AGENT);
@@ -10161,6 +10188,9 @@ impl App {
             }
         }
         trace("active space requested");
+        // After the first page is asked for, so it loads while the menus are made.
+        self.build_menu();
+        trace("  menu");
         let p = self.proxy.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -10677,6 +10707,7 @@ fn menu_shortcut(msg: *const std::ffi::c_void) -> bool {
 pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     trace("launch");
     crate::update::clean_up_previous();
+    trace("  cleaned up");
     #[allow(unused_mut)]
     let mut builder = EventLoopBuilder::<UserEvent>::with_user_event();
     #[cfg(target_os = "windows")]
@@ -10686,6 +10717,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     }
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut event_loop = builder.build();
+    trace("  event loop");
     #[cfg(target_os = "macos")]
     if platform::test_windows().is_some() {
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
@@ -10711,17 +10743,19 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     });
     watch_config(proxy.clone());
     crate::history::configure(config.change_history.enabled, config.change_history.keep);
+    trace("  threads started");
     let mut app = App::new(&event_loop, config, proxy)?;
     // After App::new, which installs the bundled plugins: those aren't a change anyone made.
     record_changes_soon();
+    trace("  app made");
     app.refresh_win_layout();
     app.layout();
     trace("window and sidebar created");
-    let mut initial = Some(urls);
+    // Before the event loop: the first page starts loading while macOS finishes launching the app.
+    app.start(urls, &event_loop);
     event_loop.run(move |event, elwt, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::NewEvents(StartCause::Init) => app.start(initial.take().unwrap_or_default(), elwt),
             Event::UserEvent(ev) => {
                 app.handle(ev, elwt);
                 if let Some(why) = app.pending_reveal.take() {
@@ -10761,7 +10795,7 @@ impl App {
             return;
         }
         let (p, p2) = (self.proxy.clone(), self.proxy.clone());
-        let built = WebViewBuilder::new()
+        let built = platform::ui_builder(&self.chrome)
             .with_html(ui_page("chat.html", &self.config))
             .with_visible(false)
             .with_transparent(true)
@@ -11425,7 +11459,7 @@ impl App {
     fn show_answer(&mut self, tab: TabId, label: &str) {
         if self.answer_view.is_none() {
             let p = self.proxy.clone();
-            let built = WebViewBuilder::new()
+            let built = platform::ui_builder(&self.chrome)
                 .with_html(ui_page("answer.html", &self.config))
                 .with_visible(false)
                 .with_transparent(true)
@@ -12063,7 +12097,7 @@ impl App {
     fn open_market(&mut self) {
         if self.market_view.is_none() {
             let (p, p2) = (self.proxy.clone(), self.proxy.clone());
-            let built = WebViewBuilder::new()
+            let built = platform::ui_builder(&self.chrome)
                 .with_html(ui_page("plugins.html", &self.config))
                 .with_visible(false)
                 .with_accept_first_mouse(true)
@@ -12306,7 +12340,7 @@ impl App {
         self.welcome_only = None;
         if self.welcome_view.is_none() {
             let (p, p2) = (self.proxy.clone(), self.proxy.clone());
-            let built = WebViewBuilder::new()
+            let built = platform::ui_builder(&self.chrome)
                 .with_html(ui_page("welcome.html", &self.config))
                 .with_visible(false)
                 .with_accept_first_mouse(true)
@@ -14094,7 +14128,7 @@ impl App {
         // xterm.js is built in, so the panel works offline and loads nothing from the web.
         let html = ui_page("terminal.html", &self.config).replacen("<!--XTERM-->", &xterm_assets(), 1);
         let p = self.proxy.clone();
-        let built = WebViewBuilder::new()
+        let built = platform::ui_builder(&self.chrome)
             .with_html(html)
             .with_visible(false)
             .with_accept_first_mouse(true)

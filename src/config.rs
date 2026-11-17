@@ -32,6 +32,8 @@ pub struct Config {
     pub history: HistoryConfig,
     pub downloads: DownloadsConfig,
     pub toast_seconds: f64,
+    #[serde(default)]
+    pub animations: Animations,
     pub reader_view: ReaderConfig,
     pub capture: CaptureConfig,
     pub privacy: PrivacyConfig,
@@ -290,6 +292,8 @@ pub struct SidebarConfig {
     pub minus_for_saved_tabs: bool,
     pub remove_closed_saved_tabs: bool,
     pub close_folder_with_last_tab: bool,
+    pub folder_animation: String,
+    pub folder_animation_ms: f64,
     pub new_tab_button: bool,
     pub today_label: bool,
     pub clear_button: String,
@@ -699,6 +703,38 @@ pub struct WindowConfig {
     pub traffic_lights: String,
 }
 
+/// The small animations (`animations:`), one switch each; `layout.animation_ms: 0` turns them all off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Animations {
+    pub tabs: bool,
+    pub press: bool,
+    pub nav_buttons: bool,
+    pub sound_bars: bool,
+    pub mini_player: bool,
+    pub space_highlight: bool,
+    pub pinned_popup: bool,
+    pub start_logo: bool,
+    pub command_bar: bool,
+    pub command_bar_selection: bool,
+    pub command_bar_height: bool,
+    pub chat_messages: bool,
+    pub chat_steps: bool,
+    pub chat_controls: bool,
+    pub find_bar: bool,
+    pub page_messages: bool,
+    pub link_address: bool,
+    pub keyboard_click: bool,
+    pub plugins_window: bool,
+    pub built_in_pages: bool,
+}
+
+impl Default for Animations {
+    fn default() -> Self {
+        Animations { tabs: true, press: true, nav_buttons: true, sound_bars: true, mini_player: true, space_highlight: true, pinned_popup: true, start_logo: true, command_bar: true, command_bar_selection: true, command_bar_height: true, chat_messages: true, chat_steps: true, chat_controls: true, find_bar: true, page_messages: true, link_address: true, keyboard_click: true, plugins_window: true, built_in_pages: true }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeekConfig {
     pub margin: f64,
@@ -773,6 +809,12 @@ pub struct DownloadRule {
     pub folder: String,
     pub open: Option<bool>,
     pub ask: Option<bool>,
+}
+
+/// default.yaml, parsed once: it's large, and every config read and settings change starts from it.
+fn default_value() -> &'static Value {
+    static PARSED: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    PARSED.get_or_init(|| serde_yaml::from_str(DEFAULT_YAML).expect("default config is valid"))
 }
 
 impl Config {
@@ -899,6 +941,8 @@ pub struct PagesConfig {
     pub markdown_edit: String,
     pub pdf_viewer: bool,
     pub wait_for_first_draw: bool,
+    pub share_process_by_site: bool,
+    pub slow_background_tabs: bool,
     pub youtube_sharp_start: bool,
     pub youtube_downloads: bool,
     pub quick_full_screen: bool,
@@ -1635,7 +1679,7 @@ pub fn merge(base: &mut Value, over: Value) {
 
 impl Config {
     pub fn defaults() -> Config {
-        serde_yaml::from_str(DEFAULT_YAML).expect("default config is valid")
+        serde_yaml::from_value(default_value().clone()).expect("default config is valid")
     }
 
     /// Load the user config, writing a small starter file on first run (defaults fill in the rest).
@@ -1674,7 +1718,7 @@ impl Config {
 
     /// The defaults with the user's (shared, synced) file on top, without this computer's own settings.
     pub fn merged_shared(text: &str) -> Result<Value> {
-        let mut base: Value = serde_yaml::from_str(DEFAULT_YAML)?;
+        let mut base: Value = default_value().clone();
         let user: Value = serde_yaml::from_str(text)?;
         // Defaults, then the old browser's shortcuts, then the user's own keybindings.
         if let Some(keys) = user.get("shortcuts_like").and_then(|v| v.as_str()).and_then(shortcuts_like_keys) {

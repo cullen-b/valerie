@@ -93,6 +93,31 @@ window:
 
 toast_seconds: 1.8         # how long the little messages ("Copied URL", "Zoom 110%") stay up
 
+# Small animations, one switch each (true | false). `layout.animation_ms: 0` turns every one of them off, and so does
+# your computer's "reduce motion" setting.
+animations:
+  tabs: true               # sidebar tabs grow in when they open, fold away when they close, and the others slide to
+                           # make room; a tab you pick up to drag lifts off the list
+  press: true              # buttons and pinned tiles dip a little while you press them
+  nav_buttons: true        # the sidebar's back and forward arrows nudge the way they point, and reload turns once
+  sound_bars: true         # a tab that's playing shows three small moving bars instead of ♪
+  mini_player: true        # the sidebar's mini player slides in and out, and play turns into pause
+  space_highlight: true    # the highlight glides from one space's button to the next when you switch
+  pinned_popup: true       # the icons-only sidebar's pinned tabs fold out of their tile
+  start_logo: true         # the start page's logo draws itself when a space becomes empty
+  command_bar: true        # the command bar settles in when it opens, and a site search's chip pops in
+  command_bar_selection: true # the highlight glides between results as you arrow through them
+  command_bar_height: true # the command bar grows and shrinks smoothly as its results change
+  chat_messages: true      # in chats, what you send rises out of the box and replies fade in
+  chat_steps: true         # an agent's list of steps unfolds and folds instead of snapping
+  chat_controls: true      # send turns into stop, "Copy" ticks, and the chat's menus and side pane ease in
+  find_bar: true           # find drops in from the top, and nudges sideways when Enter finds nothing
+  page_messages: true      # messages and prompts on a page ("Copied URL", save this password) rise in and ease out
+  link_address: true       # the address shown while you hover a link fades in and out
+  keyboard_click: true     # a ring ripples where a link hint (f) clicked, so you see what was pressed
+  plugins_window: true     # the Plugins window: cards arrive in turn, and install turns into a tick
+  built_in_pages: true     # Downloads and History: new rows slide in, removed ones fold away
+
 # Each piece of text or chrome in the sidebar. Set to false to hide it.
 sidebar:
   nav_buttons: true        # back / forward / reload buttons at the top
@@ -115,6 +140,9 @@ sidebar:
   remove_closed_saved_tabs: true # a closed (unloaded) pinned or kept row shows × on hover: it removes the tab from the
                            # sidebar. So − then × (pointer still on the row) closes it for good. false = no button once closed
   close_folder_with_last_tab: true # closing (−) the last open tab in a folder also folds the folder up. false = it stays open
+  folder_animation: slide  # how a folder opens and folds up. one of: slide (its tabs slide up into the folder and back
+                           # out) | fade (they fade as the folder shrinks or grows) | none (it snaps open or shut)
+  folder_animation_ms: 320 # how long that takes, in milliseconds (0 = no animation; layout.animation_ms: 0 also turns it off)
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
@@ -469,6 +497,11 @@ pages:
   loading_bar: true        # a thin line across the top of a page while it loads
   wait_for_first_draw: true # a tab that's loading from scratch (new, or asleep) stays hidden until it has drawn, up to a
                            # second, then fades in, so it never flashes white. false = show it straight away
+  share_process_by_site: true # tabs of the same site (and profile) share one web process, like Chrome does: far less
+                           # memory with many tabs open, but a page that hangs or crashes takes its same-site tabs with it.
+                           # false = every tab gets its own process
+  slow_background_tabs: true # tabs you aren't looking at run their timers less and less often the longer they stay
+                           # out of sight, as in Safari (sound and video carry on): saves battery. false = full speed
   quick_full_screen: true  # a page's full screen (a video's button) fills the whole screen straight away: no slide to a
                            # separate desktop on the Mac, and over the whole window everywhere. false = the system's own way:
                            # the Mac's slide; on Windows and Linux the video stays inside the tab's area

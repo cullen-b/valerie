@@ -90,6 +90,20 @@ async function act(tool, args, reload) {
   try { await valerie.call(tool, args); } catch (e) { $("summary").textContent = e.message; }
   if (reload) load();
 }
+// Motion (animations.built_in_pages), off until Valerie answers: forgotten pages fold away; loads and searches stay instant.
+let anim = false, loaded = false, primed = false, drawn = new Map(), lastQ = null, folding = null;
+const moving = () => anim && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+// A row, or its whole group when every row in it goes.
+const whole = (r, set) => [...r.parentElement.querySelectorAll(".row")].every((x) => set.has(x)) ? r.parentElement : r;
+function foldAway(rows) {
+  const parts = [...new Set(rows.map((r) => whole(r, new Set(rows))))];
+  const frames = parts.map((p) => { const cs = getComputedStyle(p); return [{ height: p.offsetHeight + "px", paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, marginBottom: cs.marginBottom, overflow: "hidden" },
+    { height: "0px", paddingTop: "0px", paddingBottom: "0px", marginBottom: "0px", opacity: 0, overflow: "hidden" }]; });
+  const f = { stop() { f.stopped = true; } };
+  Promise.all(parts.map((p, i) => p.animate(frames[i], { duration: 150, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" }).finished))
+    .then(() => { if (!f.stopped) { folding = null; render(); } }, () => {});
+  return f;
+}
 function row(h) {
   const r = el("div", "row");
   const info = el("div", "info");
@@ -107,8 +121,16 @@ function row(h) {
   return r;
 }
 function render() {
-  const list = $("list"); list.replaceChildren();
   const q = $("q").value.trim();
+  if (folding) return;
+  const before = drawn, keys = items.map((h) => h.url);
+  // Rows that went (and nothing new came) fold up first; the list is redrawn once they have.
+  if (primed && q === lastQ && moving() && keys.every((k) => before.has(k))) {
+    const keep = new Set(keys), gone = [...before.keys()].filter((k) => !keep.has(k));
+    if (gone.length) { const rows = gone.map((k) => before.get(k)); gone.forEach((k) => drawn.delete(k)); folding = foldAway(rows); return; }
+  }
+  drawn = new Map(); lastQ = q; primed = loaded;
+  const list = $("list"); list.replaceChildren();
   $("summary").textContent = items.length ? (q ? `${items.length}${items.length >= limit ? "+" : ""} matching` : `${items.length}${items.length >= limit ? "+" : ""} pages`) : "";
   if (!items.length) {
     const e = el("div", "empty"); e.append(el("b", null, q ? "Nothing matches" : "No history yet"), el("span", null, q ? "Try other words." : "Pages you visit show up here."));
@@ -120,7 +142,7 @@ function render() {
   for (const [name, hs] of groups) {
     const g = el("section", "group");
     if (name) g.append(el("h2", null, name));
-    for (const h of hs) g.append(row(h));
+    for (const h of hs) { const r = row(h); g.append(r); drawn.set(h.url, r); }
     list.append(g);
   }
   if (items.length >= limit) {
@@ -130,11 +152,11 @@ function render() {
   }
 }
 async function load() {
-  try { items = await valerie.call("search_history", { query: $("q").value.trim(), limit }); } catch (e) { valerie.log("error: search_history", e); }
+  try { items = await valerie.call("search_history", { query: $("q").value.trim(), limit }); loaded = true; } catch (e) { valerie.log("error: search_history", e); }
   render();
 }
 
-$("q").addEventListener("input", () => { clearTimeout(timer); limit = 300; timer = setTimeout(load, 120); });
+$("q").addEventListener("input", () => { clearTimeout(timer); limit = 300; if (folding) { folding.stop(); folding = null; } timer = setTimeout(load, 120); });
 $("clear").addEventListener("click", () => $("head").classList.add("asking"));
 $("no").addEventListener("click", () => $("head").classList.remove("asking"));
 for (const b of document.querySelectorAll("[data-min]")) {
@@ -143,6 +165,8 @@ for (const b of document.querySelectorAll("[data-min]")) {
 addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "f") { e.preventDefault(); $("q").focus(); } });
 valerie.on("history", load);
 valerie.call("get_settings", { key: "history.page" }).then((s) => { Object.assign(opts, s.in_use || {}); render(); }).catch(() => {});
+Promise.all([valerie.call("get_settings", { key: "animations" }), valerie.call("get_settings", { key: "layout" })])
+  .then(([a, l]) => { anim = !!(a.in_use && a.in_use.built_in_pages) && Number(l.in_use && l.in_use.animation_ms) > 0; }).catch(() => {});
 load();
 </script>
 </body>
