@@ -206,6 +206,17 @@ struct Little {
     usual_size: bool,
     /// A private window: its own throwaway cookies and storage, no history, and its links stay private.
     private: bool,
+    /// With `little_window.top_bar: hover`, the bar is showing: the window grew upward to fit it above the page.
+    bar_out: bool,
+    /// It showed over the page's top instead (no room above the window, or it fills the screen).
+    bar_over: bool,
+}
+
+impl Little {
+    /// An empty one asking where to go: its address box stays showing.
+    fn asking(&self) -> bool {
+        self.url.is_empty() || self.url == LITTLE_BLANK || self.url.starts_with("about:") || self.url.starts_with("data:")
+    }
 }
 
 pub struct App {
@@ -388,6 +399,8 @@ pub struct App {
     boosts: Vec<Boost>,
     plugins: Vec<plugins::Plugin>,
     sidebar_peek: bool,
+    /// The sidebar's view is raised over the pages, sized to just the sidebar (`layout.reveal_sidebar_over_page`).
+    chrome_floating: bool,
     /// The split-view gap the mouse is on, widened to `layout.split_grab_width` so it's easy to grab.
     split_grab: Option<usize>,
     /// Where the split-view gap being dragged by its handle was (window points); the handle sends how far the mouse moved.
@@ -1530,6 +1543,7 @@ impl App {
             boosts: load_boosts(),
             plugins: plugins::load_all().0,
             sidebar_peek: false,
+            chrome_floating: false,
             split_grab: None,
             split_drag_from: None,
             split_handles: Vec::new(),
@@ -1688,6 +1702,12 @@ impl App {
         // A tab no one sees (an agent's, or one fetch_page reads): pages there still draw (content.js timerFrames).
         if let Target::Tab(id) = target {
             c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
+        }
+        // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover`), not the sidebar's edge.
+        if let Target::Little(id) = target {
+            let hover = self.little_bar_hides();
+            c["edge"] = json!(hover.then_some("top"));
+            c["peek"] = json!(hover && self.littles.get(&id).is_some_and(|l| l.bar_out));
         }
         c
     }
@@ -2314,7 +2334,7 @@ impl App {
         let spots = window_layout::for_layout(&self.state.layout_spots, &self.win_layout_name);
         window_layout::arrange(layout, w, h, &window_layout::Inputs {
             sidebar_width: self.sidebar_width(),
-            sidebar_visible: self.config.layout.sidebar_visible || self.sidebar_peek,
+            sidebar_visible: self.sidebar_takes_room(),
             top_bar_height: self.config.layout.top_bar_height,
             terminal_open: self.terminal_open && self.terminal_view.is_some(),
             chats_block: self.config.chats.enabled && !self.chats_open,
@@ -2336,7 +2356,7 @@ impl App {
         match l.tab_bar {
             TabBar::Top => (b, self.config.layout.top_bar_height, w - 2.0 * b, h - self.config.layout.top_bar_height - b),
             TabBar::Side => {
-                let sw = if l.sidebar_visible || self.sidebar_peek { self.sidebar_width() } else { 0.0 };
+                let sw = if self.sidebar_takes_room() { self.sidebar_width() } else { 0.0 };
                 let (left, right) = match l.sidebar_position {
                     SidebarPosition::Left => (if sw > 0.0 { sw } else { b }, b),
                     SidebarPosition::Right => (b, if sw > 0.0 { sw } else { b }),
@@ -2389,9 +2409,16 @@ impl App {
         let full = rect(0.0, 0.0, size.width, size.height);
         // The welcome guide's share of the window while an agent works beside it.
         let guide_w = (size.width * 0.46).round().min(size.width - 380.0).max(size.width.min(380.0) / 2.0);
-        let _ = self.chrome.set_bounds(full);
+        let floating = self.sidebar_floats();
+        if floating {
+            let sw = self.sidebar_width();
+            let x = if self.config.layout.sidebar_position == SidebarPosition::Right { size.width - sw } else { 0.0 };
+            let _ = self.chrome.set_bounds(rect(x, 0.0, sw, size.height));
+        } else {
+            let _ = self.chrome.set_bounds(full);
+        }
         let _ = self.overlay.set_bounds(self.bar_bounds(size.width, size.height));
-        platform::follow_window(&self.chrome, platform::Follow::Fill);
+        platform::follow_window(&self.chrome, if floating { platform::Follow::Side { right: self.config.layout.sidebar_position == SidebarPosition::Right } } else { platform::Follow::Fill });
         platform::follow_window(&self.overlay, platform::Follow::Fill);
         let (x, y, w, h) = self.content_area(size.width, size.height);
         let panes = self.panes();
@@ -2557,6 +2584,12 @@ impl App {
             let _ = p.view.set_bounds(rect(px, py, pw, ph));
             platform::follow_window(&p.view, platform::Follow::Fill);
         }
+        if floating {
+            platform::bring_to_front(&self.chrome);
+        } else if self.chrome_floating {
+            platform::send_to_back(&self.chrome);
+        }
+        self.chrome_floating = floating;
         if self.bar_open {
             platform::bring_to_front(&self.overlay);
         }
@@ -2575,7 +2608,7 @@ impl App {
         }
         match l.tab_bar {
             TabBar::Top => Corners::Top,
-            TabBar::Side if !(l.sidebar_visible || self.sidebar_peek) => Corners::None,
+            TabBar::Side if !self.sidebar_takes_room() => Corners::None,
             TabBar::Side => match l.sidebar_position {
                 SidebarPosition::Left if i == 0 => Corners::Left,
                 SidebarPosition::Right if i + 1 == n => Corners::Right,
@@ -3142,6 +3175,21 @@ impl App {
     }
 
     /// The sidebar's current width: what the user dragged to, else the preset for `layout.sidebar_size`.
+    /// The peeked sidebar floats over the pages instead of making room (classic layout with a page showing; not on Linux,
+    /// where views can't be restacked).
+    fn sidebar_floats(&self) -> bool {
+        self.sidebar_peek
+            && self.config.layout.reveal_sidebar_over_page
+            && self.win_layout.is_none()
+            && !cfg!(target_os = "linux")
+            && !self.panes().is_empty()
+    }
+
+    /// The sidebar takes room from the pages: shown, or peeked without floating.
+    fn sidebar_takes_room(&self) -> bool {
+        self.config.layout.sidebar_visible || (self.sidebar_peek && !self.sidebar_floats())
+    }
+
     fn sidebar_width(&self) -> f64 {
         self.state.sidebar_width.unwrap_or_else(|| match self.config.layout.sidebar_size.as_str() {
             "compact" => self.config.sidebar.compact_width,
@@ -3184,10 +3232,56 @@ impl App {
     fn layout_little(&self, id: WindowId) {
         if let Some(l) = self.littles.get(&id) {
             let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+            let hover = self.little_bar_hides();
+            let top = if !hover || l.bar_out && !l.bar_over { LITTLE_BAR } else { 0.0 };
             let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR));
-            let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, s.width, s.height - LITTLE_BAR));
+            let _ = l.bar.set_visible(!hover || l.bar_out);
+            let _ = l.view.set_bounds(rect(0.0, top, s.width, (s.height - top).max(1.0)));
             platform::follow_window(&l.bar, platform::Follow::Top);
             platform::follow_window(&l.view, platform::Follow::Fill);
+            if l.bar_over {
+                platform::bring_to_front(&l.bar);
+            }
+            platform::set_traffic_lights_hidden(&l.window, hover && !l.bar_out);
+        }
+    }
+
+    /// `little_window.top_bar: hover`: the bar stays hidden until the mouse comes to the window's top.
+    fn little_bar_hides(&self) -> bool {
+        self.config.little_window.top_bar != "always"
+    }
+
+    /// Slide a little window's bar out above its page, or back away. The window grows or shrinks at the top so the page
+    /// stays where it is on screen, the same size; with no room above (or filling the screen) the bar goes over the page.
+    fn set_little_bar(&mut self, id: WindowId, out: bool) {
+        let hover = self.little_bar_hides();
+        let Some(l) = self.littles.get_mut(&id) else { return };
+        if !hover || l.bar_out == out || (!out && l.asking()) {
+            return;
+        }
+        let was_over = l.bar_over;
+        l.bar_out = out;
+        // Pinned to the bottom while the window's top moves, so the page doesn't stretch for a frame.
+        platform::follow_window(&l.view, platform::Follow::Bottom);
+        if out {
+            let fills = l.window.fullscreen().is_some() || l.window.is_maximized();
+            l.bar_over = fills || !platform::grow_window_top(&l.window, LITTLE_BAR);
+            if l.bar_over {
+                platform::bring_to_front(&l.bar);
+            } else {
+                platform::bring_to_front(&l.view);
+            }
+            let _ = l.bar.evaluate_script("window.little && little.reveal()");
+        } else {
+            l.bar_over = false;
+            if !was_over {
+                platform::grow_window_top(&l.window, -LITTLE_BAR);
+            }
+        }
+        self.layout_little(id);
+        if let Some(l) = self.littles.get(&id) {
+            let cfg = self.page_config_for(Target::Little(id), &self.page_config());
+            let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
     }
 
@@ -3527,6 +3621,8 @@ impl App {
                 *self.panel_state.borrow_mut() = told;
             }
         }
+        let mut vm = vm;
+        vm["peek_float"] = json!(self.sidebar_floats());
         let vm = vm.to_string();
         if *self.last_render.borrow() == vm {
             return;
@@ -3544,7 +3640,7 @@ impl App {
                 "copy_button": self.config.little_window.copy_button,
                 "font": self.config.layout.font,
                 "private": l.private,
-                "ask": l.url.is_empty() || l.url == LITTLE_BLANK || l.url.starts_with("about:") || l.url.starts_with("data:"),
+                "ask": l.asking(),
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -4439,8 +4535,6 @@ impl App {
                 // Made a while ago: the usual size may have changed since.
                 let (w, h) = self.little_size();
                 l.window.set_inner_size(LogicalSize::new(w, h));
-                let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
-                let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR));
                 l.window.set_visible(true);
                 l
             }
@@ -4458,7 +4552,10 @@ impl App {
         let _ = focus_view(if url == LITTLE_BLANK { &l.bar } else { &l.view });
         l.window.set_focus();
         let id = l.window.id();
-        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, ..l });
+        // An empty one opens with its bar out, so its address box shows; it hides like any other once a page loads.
+        let bar_out = url == LITTLE_BLANK;
+        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, bar_out, bar_over: false, ..l });
+        self.layout_little(id);
         self.focused_little = Some(id);
         self.render_little(id);
         self.prepare_little_later();
@@ -4508,7 +4605,7 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false })
     }
 
     /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
@@ -4530,8 +4627,10 @@ impl App {
             return;
         }
         let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
-        if self.state.little_size != Some((s.width, s.height)) {
-            self.state.little_size = Some((s.width, s.height));
+        // The size without a bar that's only out for the moment (`little_window.top_bar: hover`).
+        let h = if self.little_bar_hides() && l.bar_out && !l.bar_over { s.height - LITTLE_BAR } else { s.height };
+        if self.state.little_size != Some((s.width, h)) {
+            self.state.little_size = Some((s.width, h));
             self.dirty = true;
         }
     }
@@ -7978,6 +8077,8 @@ impl App {
                 let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
                 self.show_space_menu(id, x, y);
             }
+            (Source::Page(Target::Little(id)), "edge") => self.set_little_bar(id, true),
+            (Source::Page(Target::Little(id)), "unpeek") | (Source::LittleBar(id), "bar_away") => self.set_little_bar(id, false),
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {
                     let _ = l.window.drag_window();

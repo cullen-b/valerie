@@ -119,6 +119,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["hover", "always", "never"].contains(&c.sidebar.scroll_long_titles.as_str()) {
                 problems.push(format!("sidebar: scroll_long_titles is {:?}; use hover, always or never", c.sidebar.scroll_long_titles));
             }
+            if !["hover", "always"].contains(&c.little_window.top_bar.as_str()) {
+                problems.push(format!("little_window: top_bar is {:?}; use hover or always", c.little_window.top_bar));
+            }
             if !(16.0..=120.0).contains(&c.sidebar.tab_height) {
                 problems.push(format!("sidebar: tab_height is {}; use a number of pixels from 16 to 120", c.sidebar.tab_height));
             }

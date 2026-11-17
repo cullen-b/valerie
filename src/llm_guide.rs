@@ -156,6 +156,8 @@ changed in plain words. Some translations:
 | "Swiping skips two spaces" / "swipes feel too touchy" | `sidebar.swipe_settle_ms: 900` (longer wait before a hard swipe can switch again), `sidebar.swipe_distance: 140` |
 | "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
+| "Sidebar only when I push the mouse to the edge" / "the page shouldn't resize when it shows" | `layout.sidebar_visible: false`, `layout.reveal_sidebar_on_edge: true`, `layout.reveal_sidebar_over_page: true` (`false` squeezes the page instead) |
+| "Always show the little window's bar" / "hide it until I point at the top" | `little_window.top_bar: always` / `hover` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
 | "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits) on macOS; on Windows and Linux `app.keep_running_when_closed_without_dock` (`false` quits, the default; `true` stays, and opening Valerie again shows it) |
 | "Don't leave Valerie running after an agent opened it" / "keep it running" | `mcp.quit_when_unused_minutes: 10` (minutes with no agent calls) / `0` (stays) |
