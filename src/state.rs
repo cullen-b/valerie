@@ -358,6 +358,20 @@ pub fn find_folder(nodes: &mut [Node], folder: TabId) -> Option<&mut Node> {
     None
 }
 
+/// Ids of the folders holding a tab, outermost first.
+pub fn folders_holding(nodes: &[Node], tab: TabId) -> Vec<TabId> {
+    for n in nodes {
+        if let Node::Folder { id, children, .. } = n {
+            if flat_ids(children).contains(&tab) {
+                let mut v = vec![*id];
+                v.extend(folders_holding(children, tab));
+                return v;
+            }
+        }
+    }
+    Vec::new()
+}
+
 /// Remove a folder, returning it so its tabs can be relocated.
 fn take_folder(nodes: &mut Vec<Node>, folder: TabId) -> Option<Node> {
     if let Some(i) = nodes.iter().position(|n| matches!(n, Node::Folder { id, .. } if *id == folder)) {
@@ -1275,6 +1289,15 @@ mod tests {
         assert_eq!(s.order(0, false), vec![a]);
         s.delete_folder(f);
         assert_eq!(s.order(0, true), vec![a]);
+    }
+
+    #[test]
+    fn folders_holding_lists_enclosing_folders_outermost_first() {
+        let inner = Node::Folder { id: 2, name: "In".into(), open: true, children: vec![Node::Tab { id: 3 }] };
+        let nodes = vec![Node::Tab { id: 9 }, Node::Folder { id: 1, name: "Out".into(), open: true, children: vec![Node::Tab { id: 4 }, inner] }];
+        assert_eq!(folders_holding(&nodes, 3), vec![1, 2]);
+        assert_eq!(folders_holding(&nodes, 4), vec![1]);
+        assert!(folders_holding(&nodes, 9).is_empty());
     }
 
     #[test]

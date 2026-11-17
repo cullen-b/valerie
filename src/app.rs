@@ -2167,6 +2167,23 @@ impl App {
     fn layout_split_handles(&mut self, rects: &[(f64, f64)], y: f64, h: f64) {
         let want = if self.split_grip_on() && rects.len() > 1 && !self.views.values().any(platform::in_page_fullscreen) { rects.len() - 1 } else { 0 };
         while self.split_handles.len() < want {
+    /// Fold up the folders holding `tab` that no longer hold an open page (sidebar.close_folder_with_last_tab).
+    fn close_emptied_folders(&mut self, tab: TabId) {
+        let Some(s) = self.state.space_of(tab) else { return };
+        let space = &self.state.spaces[s];
+        let folders = [crate::state::folders_holding(&space.pinned, tab), crate::state::folders_holding(&space.kept, tab)].concat();
+        for f in folders {
+            let Some(Node::Folder { children, .. }) = self.state.folder_mut(f) else { continue };
+            let open_page = crate::state::flat_ids(children).iter().any(|t| self.views.contains_key(t) && !self.preloaded.contains_key(t));
+            if !open_page {
+                if let Some(Node::Folder { open, .. }) = self.state.folder_mut(f) {
+                    *open = false;
+                }
+                self.dirty = true;
+            }
+        }
+    }
+
             let p = self.proxy.clone();
             let i = self.split_handles.len();
             let built = WebViewBuilder::new()
@@ -3775,6 +3792,9 @@ impl App {
 
     /// Close agents' hidden tabs no one has used for mcp.hidden_tabs_close_after minutes.
     fn close_idle_agent_tabs(&mut self) {
+            if self.config.sidebar.close_folder_with_last_tab {
+                self.close_emptied_folders(tab);
+            }
         let mins = self.config.mcp.hidden_tabs_close_after;
         if mins == 0 {
             return;
