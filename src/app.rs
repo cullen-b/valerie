@@ -206,6 +206,19 @@ struct Little {
     usual_size: bool,
     /// A private window: its own throwaway cookies and storage, no history, and its links stay private.
     private: bool,
+    /// With `little_window.top_bar: hover`, the bar is showing: the window grew upward to fit it above the page.
+    bar_out: bool,
+    /// It showed over the page's top instead (no room above the window, or it fills the screen).
+    bar_over: bool,
+    /// The profile its page was made with (cookies and logins), so it can move into a tab of the same profile.
+    profile: String,
+}
+
+impl Little {
+    /// An empty one asking where to go: its address box stays showing.
+    fn asking(&self) -> bool {
+        self.url.is_empty() || self.url == LITTLE_BLANK || self.url.starts_with("about:") || self.url.starts_with("data:")
+    }
 }
 
 pub struct App {
@@ -261,6 +274,8 @@ pub struct App {
     /// Plugins already here (or already offered for sharing): only new ones get the "share it?" offer.
     /// Plugins (by name) and extensions (by `ext_key`) seen so far, so only new ones get the offer to share.
     known_plugins: std::collections::HashSet<String>,
+    /// The offer to answer a site's cookie pop-up for the user: (page, nonce it must echo back, site, the button they clicked).
+    cookie_offer: Option<(Target, String, String, crate::state::CookieButton)>,
     /// Chats whose agent is answering right now.
     chat_running: std::collections::HashSet<String>,
     /// When each running chat's agent started (for the Working section's timers).
@@ -338,6 +353,9 @@ pub struct App {
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
     sync_gen: u64,
     littles: HashMap<WindowId, Little>,
+    /// Little windows whose live page moved into a tab: that page still names the little window in its messages. Its
+    /// (hidden) window is kept so a new little window can't get the same id while the page lives.
+    adopted: HashMap<WindowId, (TabId, Window)>,
     /// A little window made ahead and kept hidden, so a link appears in one at once (`little_window.keep_one_ready`).
     ready_little: Option<Little>,
     focused_little: Option<WindowId>,
@@ -388,6 +406,8 @@ pub struct App {
     boosts: Vec<Boost>,
     plugins: Vec<plugins::Plugin>,
     sidebar_peek: bool,
+    /// The sidebar's view is raised over the pages, sized to just the sidebar (`layout.reveal_sidebar_over_page`).
+    chrome_floating: bool,
     /// The split-view gap the mouse is on, widened to `layout.split_grab_width` so it's easy to grab.
     split_grab: Option<usize>,
     /// Where the split-view gap being dragged by its handle was (window points); the handle sends how far the mouse moved.
@@ -605,10 +625,10 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
 }
 
 /// Built-in pages: what Valerie shows at valerie://page/<name> unless the config folder's pages/ has one by that name.
-const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes"];
+const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes", "saved-settings"];
 
 /// Tools only built-in pages (and pages that list them) can use: they act on files Valerie downloaded.
-const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change"];
+const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change", "list_saved_settings", "save_settings", "switch_settings", "delete_saved_settings"];
 
 fn pages_dir() -> PathBuf {
     config::config_dir().join("pages")
@@ -1122,6 +1142,21 @@ fn link_valerie(exe: &std::path::Path, dirs: &[PathBuf], home: &std::path::Path,
 /// What a new empty little window shows until you say where to go: an empty page in the system's light or dark.
 const LITTLE_BLANK: &str = "data:text/html,%3Cmeta%20name=color-scheme%20content=%22light%20dark%22%3E";
 
+/// What the hidden ready little window shows until its link's page arrives: the system's light or dark, with a thin
+/// moving line at the top while the page is on the way (`little_window.loading_line`).
+fn little_waiting_page(line: bool) -> String {
+    let style = if line {
+        "html,body{margin:0;height:100%}i{position:fixed;top:0;left:0;height:2px;width:30%;background:currentColor;opacity:.35;\
+         animation:a 1.1s cubic-bezier(.4,0,.2,1) infinite}@keyframes a{from{transform:translateX(-100%)}to{transform:translateX(340%)}}\
+         @media (prefers-reduced-motion:reduce){i{width:100%;animation:p 1.4s ease-in-out infinite alternate}@keyframes p{from{opacity:.1}to{opacity:.35}}}"
+    } else {
+        ""
+    };
+    let html = format!("<meta name=color-scheme content=\"light dark\"><style>{style}</style>{}", if line { "<i></i>" } else { "" });
+    let encoded: String = html.bytes().map(|b| if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    format!("data:text/html;charset=utf-8,{encoded}")
+}
+
 /// Why nothing can be saved in `dir`, found by making (and removing) an empty file there; None when it's writable.
 fn cannot_write(dir: &Path) -> Option<std::io::Error> {
     let probe = dir.join(format!(".valerie-can-write-{}", std::process::id()));
@@ -1166,6 +1201,7 @@ pub fn ui(name: &str) -> String {
         "pages/downloads.html" => include_str!("../ui/pages/downloads.html"),
         "pages/history.html" => include_str!("../ui/pages/history.html"),
         "pages/changes.html" => include_str!("../ui/pages/changes.html"),
+        "pages/saved-settings.html" => include_str!("../ui/pages/saved-settings.html"),
         _ => "",
     }
     .to_string()
@@ -1450,6 +1486,7 @@ impl App {
             market_open: false,
             market_index: Vec::new(),
             known_plugins: Default::default(),
+            cookie_offer: None,
             chat_running: Default::default(),
             chat_started: HashMap::new(),
             chat_asks: HashMap::new(),
@@ -1494,6 +1531,7 @@ impl App {
             notify_times: HashMap::new(),
             sync_gen: 0,
             littles: HashMap::new(),
+            adopted: HashMap::new(),
             ready_little: None,
             focused_little: None,
             main_hidden: false,
@@ -1529,6 +1567,7 @@ impl App {
             boosts: load_boosts(),
             plugins: plugins::load_all().0,
             sidebar_peek: false,
+            chrome_floating: false,
             split_grab: None,
             split_drag_from: None,
             split_handles: Vec::new(),
@@ -1661,7 +1700,7 @@ impl App {
             "sites": self.config.sites, "mouse": self.config.mouse, "plugin_contexts": self.plugin_contexts(),
             "redirects": self.config.rules.iter().filter(|r| !r.redirect.is_empty() && !r.to.is_empty()).map(|r| json!({ "from": r.redirect, "to": r.to, "site": r.site })).collect::<Vec<_>>(),
             "hide_rules": self.config.rules.iter().filter(|r| !r.hide.trim().is_empty()).map(|r| json!({ "selector": r.hide, "site": r.site })).collect::<Vec<_>>(),
-            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "pages": self.config.pages,
+            "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "cookie_buttons": self.state.cookie_buttons, "pages": self.config.pages,
             "notifications": { "policy": self.config.notifications.websites, "sites": self.notify_states() },
             "site_location": cfg!(target_os = "macos").then(|| json!({ "policy": self.config.permissions.location, "sites": self.state.location_sites.iter().map(|(s, a)| (s.clone(), json!(if *a { "granted" } else { "denied" }))).collect::<serde_json::Map<_, _>>() })),
             "ai": { "ask_in_find": self.config.chats.ask_in_find, "find_question_words": self.config.chats.find_question_words,
@@ -1687,6 +1726,12 @@ impl App {
         // A tab no one sees (an agent's, or one fetch_page reads): pages there still draw (content.js timerFrames).
         if let Target::Tab(id) = target {
             c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
+        }
+        // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover`), not the sidebar's edge.
+        if let Target::Little(id) = target {
+            let hover = self.little_bar_hides();
+            c["edge"] = json!(hover.then_some("top"));
+            c["peek"] = json!(hover && self.littles.get(&id).is_some_and(|l| l.bar_out));
         }
         c
     }
@@ -2107,6 +2152,7 @@ impl App {
         if let Some(v) = self.views.remove(&tab) {
             platform::silence(&v);
         }
+        self.adopted.retain(|_, (t, _)| *t != tab);
     }
 
     fn unload(&mut self, tab: TabId) {
@@ -2118,6 +2164,23 @@ impl App {
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.loading = false;
             t.playing = false;
+        }
+    }
+
+    /// Fold up the folders holding `tab` that no longer hold an open page (sidebar.close_folder_with_last_tab).
+    fn close_emptied_folders(&mut self, tab: TabId) {
+        let Some(s) = self.state.space_of(tab) else { return };
+        let space = &self.state.spaces[s];
+        let folders = [crate::state::folders_holding(&space.pinned, tab), crate::state::folders_holding(&space.kept, tab)].concat();
+        for f in folders {
+            let Some(Node::Folder { children, .. }) = self.state.folder_mut(f) else { continue };
+            let open_page = crate::state::flat_ids(children).iter().any(|t| self.views.contains_key(t) && !self.preloaded.contains_key(t));
+            if !open_page {
+                if let Some(Node::Folder { open, .. }) = self.state.folder_mut(f) {
+                    *open = false;
+                }
+                self.dirty = true;
+            }
         }
     }
 
@@ -2296,7 +2359,7 @@ impl App {
         let spots = window_layout::for_layout(&self.state.layout_spots, &self.win_layout_name);
         window_layout::arrange(layout, w, h, &window_layout::Inputs {
             sidebar_width: self.sidebar_width(),
-            sidebar_visible: self.config.layout.sidebar_visible || self.sidebar_peek,
+            sidebar_visible: self.sidebar_takes_room(),
             top_bar_height: self.config.layout.top_bar_height,
             terminal_open: self.terminal_open && self.terminal_view.is_some(),
             chats_block: self.config.chats.enabled && !self.chats_open,
@@ -2318,7 +2381,7 @@ impl App {
         match l.tab_bar {
             TabBar::Top => (b, self.config.layout.top_bar_height, w - 2.0 * b, h - self.config.layout.top_bar_height - b),
             TabBar::Side => {
-                let sw = if l.sidebar_visible || self.sidebar_peek { self.sidebar_width() } else { 0.0 };
+                let sw = if self.sidebar_takes_room() { self.sidebar_width() } else { 0.0 };
                 let (left, right) = match l.sidebar_position {
                     SidebarPosition::Left => (if sw > 0.0 { sw } else { b }, b),
                     SidebarPosition::Right => (b, if sw > 0.0 { sw } else { b }),
@@ -2371,9 +2434,16 @@ impl App {
         let full = rect(0.0, 0.0, size.width, size.height);
         // The welcome guide's share of the window while an agent works beside it.
         let guide_w = (size.width * 0.46).round().min(size.width - 380.0).max(size.width.min(380.0) / 2.0);
-        let _ = self.chrome.set_bounds(full);
+        let floating = self.sidebar_floats();
+        if floating {
+            let sw = self.sidebar_width();
+            let x = if self.config.layout.sidebar_position == SidebarPosition::Right { size.width - sw } else { 0.0 };
+            let _ = self.chrome.set_bounds(rect(x, 0.0, sw, size.height));
+        } else {
+            let _ = self.chrome.set_bounds(full);
+        }
         let _ = self.overlay.set_bounds(self.bar_bounds(size.width, size.height));
-        platform::follow_window(&self.chrome, platform::Follow::Fill);
+        platform::follow_window(&self.chrome, if floating { platform::Follow::Side { right: self.config.layout.sidebar_position == SidebarPosition::Right } } else { platform::Follow::Fill });
         platform::follow_window(&self.overlay, platform::Follow::Fill);
         let (x, y, w, h) = self.content_area(size.width, size.height);
         let panes = self.panes();
@@ -2534,11 +2604,18 @@ impl App {
             _ => self.config.layout.tab_bar == TabBar::Side && (!self.config.layout.sidebar_visible || self.config.layout.sidebar_position == SidebarPosition::Right),
         };
         platform::set_traffic_lights_hidden(&self.window, hide_lights);
+        platform::place_traffic_lights(&self.window, 20.0); // the middle of the sidebar's 40px back / reload row
         if let Some(p) = &self.peek {
             let (px, py, pw, ph) = self.peek_rect();
             let _ = p.view.set_bounds(rect(px, py, pw, ph));
             platform::follow_window(&p.view, platform::Follow::Fill);
         }
+        if floating {
+            platform::bring_to_front(&self.chrome);
+        } else if self.chrome_floating {
+            platform::send_to_back(&self.chrome);
+        }
+        self.chrome_floating = floating;
         if self.bar_open {
             platform::bring_to_front(&self.overlay);
         }
@@ -2557,7 +2634,7 @@ impl App {
         }
         match l.tab_bar {
             TabBar::Top => Corners::Top,
-            TabBar::Side if !(l.sidebar_visible || self.sidebar_peek) => Corners::None,
+            TabBar::Side if !self.sidebar_takes_room() => Corners::None,
             TabBar::Side => match l.sidebar_position {
                 SidebarPosition::Left if i == 0 => Corners::Left,
                 SidebarPosition::Right if i + 1 == n => Corners::Right,
@@ -3124,6 +3201,21 @@ impl App {
     }
 
     /// The sidebar's current width: what the user dragged to, else the preset for `layout.sidebar_size`.
+    /// The peeked sidebar floats over the pages instead of making room (classic layout with a page showing; not on Linux,
+    /// where views can't be restacked).
+    fn sidebar_floats(&self) -> bool {
+        self.sidebar_peek
+            && self.config.layout.reveal_sidebar_over_page
+            && self.win_layout.is_none()
+            && !cfg!(target_os = "linux")
+            && !self.panes().is_empty()
+    }
+
+    /// The sidebar takes room from the pages: shown, or peeked without floating.
+    fn sidebar_takes_room(&self) -> bool {
+        self.config.layout.sidebar_visible || (self.sidebar_peek && !self.sidebar_floats())
+    }
+
     fn sidebar_width(&self) -> f64 {
         self.state.sidebar_width.unwrap_or_else(|| match self.config.layout.sidebar_size.as_str() {
             "compact" => self.config.sidebar.compact_width,
@@ -3166,10 +3258,56 @@ impl App {
     fn layout_little(&self, id: WindowId) {
         if let Some(l) = self.littles.get(&id) {
             let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+            let hover = self.little_bar_hides();
+            let top = if !hover || l.bar_out && !l.bar_over { LITTLE_BAR } else { 0.0 };
             let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR));
-            let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, s.width, s.height - LITTLE_BAR));
+            let _ = l.bar.set_visible(!hover || l.bar_out);
+            let _ = l.view.set_bounds(rect(0.0, top, s.width, (s.height - top).max(1.0)));
             platform::follow_window(&l.bar, platform::Follow::Top);
             platform::follow_window(&l.view, platform::Follow::Fill);
+            if l.bar_over {
+                platform::bring_to_front(&l.bar);
+            }
+            platform::set_traffic_lights_hidden(&l.window, hover && !l.bar_out);
+        }
+    }
+
+    /// `little_window.top_bar: hover`: the bar stays hidden until the mouse comes to the window's top.
+    fn little_bar_hides(&self) -> bool {
+        self.config.little_window.top_bar != "always"
+    }
+
+    /// Slide a little window's bar out above its page, or back away. The window grows or shrinks at the top so the page
+    /// stays where it is on screen, the same size; with no room above (or filling the screen) the bar goes over the page.
+    fn set_little_bar(&mut self, id: WindowId, out: bool) {
+        let hover = self.little_bar_hides();
+        let Some(l) = self.littles.get_mut(&id) else { return };
+        if !hover || l.bar_out == out || (!out && l.asking()) {
+            return;
+        }
+        let was_over = l.bar_over;
+        l.bar_out = out;
+        // Pinned to the bottom while the window's top moves, so the page doesn't stretch for a frame.
+        platform::follow_window(&l.view, platform::Follow::Bottom);
+        if out {
+            let fills = l.window.fullscreen().is_some() || l.window.is_maximized();
+            l.bar_over = fills || !platform::grow_window_top(&l.window, LITTLE_BAR);
+            if l.bar_over {
+                platform::bring_to_front(&l.bar);
+            } else {
+                platform::bring_to_front(&l.view);
+            }
+            let _ = l.bar.evaluate_script("window.little && little.reveal()");
+        } else {
+            l.bar_over = false;
+            if !was_over {
+                platform::grow_window_top(&l.window, -LITTLE_BAR);
+            }
+        }
+        self.layout_little(id);
+        if let Some(l) = self.littles.get(&id) {
+            let cfg = self.page_config_for(Target::Little(id), &self.page_config());
+            let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
     }
 
@@ -3509,6 +3647,8 @@ impl App {
                 *self.panel_state.borrow_mut() = told;
             }
         }
+        let mut vm = vm;
+        vm["peek_float"] = json!(self.sidebar_floats());
         let vm = vm.to_string();
         if *self.last_render.borrow() == vm {
             return;
@@ -3526,7 +3666,7 @@ impl App {
                 "copy_button": self.config.little_window.copy_button,
                 "font": self.config.layout.font,
                 "private": l.private,
-                "ask": l.url.is_empty() || l.url == LITTLE_BLANK || l.url.starts_with("about:") || l.url.starts_with("data:"),
+                "ask": l.asking(),
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -3615,6 +3755,14 @@ impl App {
         id
     }
 
+    /// Add a tab for a link opened from `from`: below that tab (`links.open_below_current_tab`), else where new tabs go.
+    fn add_link_tab(&mut self, space: usize, url: &str, from: Target) -> TabId {
+        match from {
+            Target::Tab(src) if self.config.links.open_below_current_tab => self.state.add_tab_below(space, url, src),
+            _ => self.state.add_tab(space, url, self.config.tabs.new_tab_position != "bottom"),
+        }
+    }
+
     fn navigate(&mut self, tab: TabId, url: &str) {
         let url = &self.rewrite(url);
         self.keyed.remove(&Target::Tab(tab)); // you went there yourself, not by a keyboard click on the page
@@ -3644,6 +3792,9 @@ impl App {
             // Like Arc: closing a pinned tab unloads it but keeps it in the sidebar.
             let was_active = self.state.active_tab() == Some(tab);
             self.unload(tab);
+            if self.config.sidebar.close_folder_with_last_tab {
+                self.close_emptied_folders(tab);
+            }
             if was_active {
                 let order: Vec<TabId> = self.state.order(self.state.active_space, true);
                 // A tab preloaded on hover looks closed, so it's not where closing lands.
@@ -4098,6 +4249,13 @@ impl App {
             }
             items.push(json!({ "kind": "task", "title": format!("Run {} now", t.name), "sub": t.want, "icon": "⚙", "cmd": { "cmd": "run_task", "name": t.name } }));
         }
+        if self.config.saved_settings.in_command_bar {
+            let current = crate::saved_settings::current();
+            for n in crate::saved_settings::list() {
+                let sub = if current.as_deref() == Some(n.as_str()) { "Saved settings · in use" } else { "Saved settings" };
+                items.push(json!({ "kind": "settings", "title": format!("Switch to Settings: {n}"), "sub": sub, "icon": "⚙", "cmd": { "cmd": "switch_settings", "name": n } }));
+            }
+        }
         for w in &self.state.watches {
             items.push(json!({ "kind": "watch", "title": format!("Stop watching: {}", w.title), "sub": w.condition, "icon": "◉", "cmd": { "cmd": "stop_watching", "id": w.id } }));
         }
@@ -4411,8 +4569,6 @@ impl App {
                 // Made a while ago: the usual size may have changed since.
                 let (w, h) = self.little_size();
                 l.window.set_inner_size(LogicalSize::new(w, h));
-                let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
-                let _ = l.view.set_bounds(rect(0.0, LITTLE_BAR, w, h - LITTLE_BAR));
                 l.window.set_visible(true);
                 l
             }
@@ -4430,7 +4586,10 @@ impl App {
         let _ = focus_view(if url == LITTLE_BLANK { &l.bar } else { &l.view });
         l.window.set_focus();
         let id = l.window.id();
-        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, ..l });
+        // An empty one opens with its bar out, so its address box shows; it hides like any other once a page loads.
+        let bar_out = url == LITTLE_BLANK;
+        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, bar_out, bar_over: false, ..l });
+        self.layout_little(id);
         self.focused_little = Some(id);
         self.render_little(id);
         self.prepare_little_later();
@@ -4480,7 +4639,7 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, profile: if private { String::new() } else { profile } })
     }
 
     /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
@@ -4502,8 +4661,10 @@ impl App {
             return;
         }
         let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
-        if self.state.little_size != Some((s.width, s.height)) {
-            self.state.little_size = Some((s.width, s.height));
+        // The size without a bar that's only out for the moment (`little_window.top_bar: hover`).
+        let h = if self.little_bar_hides() && l.bar_out && !l.bar_over { s.height - LITTLE_BAR } else { s.height };
+        if self.state.little_size != Some((s.width, h)) {
+            self.state.little_size = Some((s.width, h));
             self.dirty = true;
         }
     }
@@ -4553,7 +4714,8 @@ impl App {
         if self.ready_little.as_ref().is_some_and(|r| r.space == space) {
             return;
         }
-        self.ready_little = self.build_little("about:blank", space, None, false, false, elwt);
+        let waiting = little_waiting_page(self.config.little_window.loading_line);
+        self.ready_little = self.build_little(&waiting, space, None, false, false, elwt);
     }
 
     fn little_to_main(&mut self, id: WindowId, space: Option<String>) {
@@ -4563,11 +4725,73 @@ impl App {
         if let Some(l) = self.littles.remove(&id) {
             let url = l.url.clone();
             let target = space.and_then(|s| self.state.space_index(&s)).unwrap_or(l.space);
-            drop(l);
             self.focused_little = None;
-            self.open_tab(&url, Some(target), true);
+            if let Err(l) = self.adopt_little(id, l, target) {
+                drop(l);
+                self.open_tab(&url, Some(target), true);
+            }
             self.show_main();
             self.focus_active();
+        }
+    }
+
+    /// Moves a little window's live page into a new tab as it is, without loading it again
+    /// (`little_window.open_without_reloading`). Gives the window back when the page can't move.
+    fn adopt_little(&mut self, id: WindowId, l: Little, space: usize) -> Result<(), Little> {
+        let same_page = self.config.little_window.open_without_reloading
+            && l.profile == self.profile_for(space)
+            && (space == l.space || self.plugin_init_scripts(space) == self.plugin_init_scripts(l.space));
+        if !same_page || l.url.is_empty() || l.url == LITTLE_BLANK || !platform::move_view_to(&l.view, &self.window) {
+            return Err(l);
+        }
+        let Little { window, bar, view, url, title, zoom, .. } = l;
+        drop(bar);
+        window.set_visible(false);
+        let tab = self.state.add_tab(space, &url, self.config.tabs.new_tab_position != "bottom");
+        if let Some(t) = self.state.tabs.get_mut(&tab) {
+            t.title = title;
+        }
+        self.queue_event("tab_opened", Some(tab), None);
+        platform::allow_magnification(&view, self.config.gestures.pinch_to_zoom);
+        platform::prefer_dark(&view, self.config.pages.dark_mode == "always");
+        if zoom != self.zoom_for(tab) {
+            let _ = view.zoom(self.zoom_for(tab));
+        }
+        self.zoom_applied.insert(tab, self.zoom_for(tab));
+        self.view_profiles.insert(tab, self.profile_for(space));
+        self.view_agents.insert(tab, self.agent_for_url(&url));
+        // Its settings were a little window's (the top bar's hover edge); now it's a tab's.
+        let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config_for(Target::Tab(tab), &self.page_config())));
+        self.views.insert(tab, view);
+        self.adopted.insert(id, (tab, window));
+        self.activate(tab);
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn retarget(&self, ev: UserEvent) -> UserEvent {
+        let t = |target| self.adopted_target(target);
+        match ev {
+            UserEvent::Ipc { from: Source::Page(target), msg } => UserEvent::Ipc { from: Source::Page(t(target)), msg },
+            UserEvent::PageLoad { target, url, finished } => UserEvent::PageLoad { target: t(target), url, finished },
+            UserEvent::PageCrashed { target } => UserEvent::PageCrashed { target: t(target) },
+            UserEvent::Title { target, title } => UserEvent::Title { target: t(target), title },
+            UserEvent::NewWindow { target, url } => UserEvent::NewWindow { target: t(target), url },
+            UserEvent::MarkdownChanged(target) => UserEvent::MarkdownChanged(t(target)),
+            UserEvent::MarkdownSave { target, file, text } => UserEvent::MarkdownSave { target: t(target), file, text },
+            UserEvent::PasswordToFill { target, origin, username, read } => UserEvent::PasswordToFill { target: t(target), origin, username, read },
+            UserEvent::CredentialChecked { target, origin, username, password, known } => UserEvent::CredentialChecked { target: t(target), origin, username, password, known },
+            UserEvent::DownloadStarted { target, name, path, url } => UserEvent::DownloadStarted { target: t(target), name, path, url },
+            UserEvent::PluginReply { target, id, result } => UserEvent::PluginReply { target: t(target), id, result },
+            ev => ev,
+        }
+    }
+
+    /// Messages from a page that moved out of a little window into a tab count as that tab's.
+    fn adopted_target(&self, target: Target) -> Target {
+        match target {
+            Target::Little(id) => self.adopted.get(&id).map_or(target, |(tab, _)| Target::Tab(*tab)),
+            t => t,
         }
     }
 
@@ -4852,18 +5076,21 @@ impl App {
         let app_menu = Submenu::new(name_of("Valerie"), true);
         let settings = MenuItem::with_id("settings", "Settings…", true, None);
         cmds.insert(settings.id().clone(), Command::OpenConfig);
+        let saved = MenuItem::with_id("saved_settings", "Saved Settings…", true, None);
+        cmds.insert(saved.id().clone(), Command::SavedSettings);
         let quit = MenuItem::with_id("quit", "Quit Valerie", true, mc.quit_shortcut.parse().ok());
         cmds.insert(quit.id().clone(), Command::Quit);
         let _ = app_menu.append_items(&[
             &PredefinedMenuItem::about(None, None),
             &PredefinedMenuItem::separator(),
             &settings,
+            &saved,
             &PredefinedMenuItem::separator(),
             &quit,
         ]);
         // Mac menu items. Elsewhere they do nothing or take Ctrl+H and Ctrl+M from the page.
         #[cfg(target_os = "macos")]
-        let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 4);
+        let _ = app_menu.insert_items(&[&PredefinedMenuItem::services(None), &PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator()], 5);
         // Menus by their English names, in the bar's order; menu.commands can add new ones (before Window).
         let browser = mc.browser_menus;
         let names: Vec<&str> = if browser {
@@ -5434,7 +5661,8 @@ impl App {
                 }
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
-                    let known = watching_password_store(&proxy, || saved.iter().any(|e| passwords::password(e).ok().flatten().as_deref() == Some(password.as_str())));
+                    // Never worth a Keychain window: a saved password that can't be read without one counts as this one.
+                    let known = saved.iter().any(|e| passwords::password_quiet(e).is_none_or(|pw| pw == password));
                     send(&proxy, UserEvent::CredentialChecked { target, origin, username, password, known });
                 });
             }
@@ -5573,7 +5801,10 @@ impl App {
             "little_window" => self.open_little(url, space, elwt),
             "new_tab" => {
                 self.close_peek();
-                self.open_tab(url, Some(space), true);
+                let id = self.add_link_tab(space, url, from);
+                self.queue_event("tab_opened", Some(id), None);
+                self.activate(id);
+                self.dirty = true;
             }
             "split" => {
                 // Split beside the page the link came from.
@@ -5582,12 +5813,12 @@ impl App {
                         self.state.space_mut().active = Some(src);
                     }
                 }
-                let id = self.state.add_tab(space, url, true);
+                let id = self.add_link_tab(space, url, from);
                 self.queue_event("tab_opened", Some(id), None);
                 self.dispatch(Command::SplitView { tab: Some(id), with: None }, elwt);
             }
             _ => {
-                let id = self.state.add_tab(space, url, true);
+                let id = self.add_link_tab(space, url, from);
                 self.queue_event("tab_opened", Some(id), None);
                 self.ensure_view(id);
                 self.layout();
@@ -5843,6 +6074,7 @@ impl App {
             encrypt: c.encrypt,
             chats: self.config.chats.sync.then(|| chats_dir(&self.config)),
             vaults: if c.encrypt && c.passwords && self.config.passwords.enabled { vaults } else { Vec::new() },
+            fewer_keychain_prompts: self.config.passwords.fewer_keychain_prompts,
             hold: c.ask_before_plugins,
             // Cleared only once a sync succeeds, so a failed one tries again.
             fresh_history: self.fresh_history,
@@ -6363,6 +6595,7 @@ impl App {
                 | Command::CopyLinkToHighlight
                 | Command::ToggleDarkPage
                 | Command::ShowHiddenElements
+                | Command::ForgetCookieChoice
                 | Command::CapturePage
                 | Command::WatchPage { .. }
                 | Command::TranslatePage => return self.toast("Move this page to the main window to do that"),
@@ -6540,8 +6773,15 @@ impl App {
                 }
             }
             Command::NewFolder { name, section } => {
+                let name = match name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+                    Some(n) => n,
+                    None if self.config.sidebar.name_new_folders => {
+                        let then = json!({ "cmd": "new_folder", "section": section });
+                        return self.dispatch(Command::Prompt { label: "Folder name".into(), value: String::new(), then, field: "name".into() }, elwt);
+                    }
+                    None => "New Folder".into(),
+                };
                 let id = self.state.new_id();
-                let name = name.unwrap_or_else(|| "New Folder".into());
                 let folder = Node::Folder { id, name, open: true, children: vec![] };
                 // With the Kept list hidden (sidebar.kept_section), a folder there couldn't be seen: it goes in Pinned.
                 if section.as_deref() == Some("pinned") || !self.config.sidebar.kept_section {
@@ -6970,11 +7210,12 @@ impl App {
                     None => self.toast("That file is no longer there"),
                 }
             }
-            Command::Downloads | Command::History | Command::ChangeHistory | Command::OpenPage { .. } => {
+            Command::Downloads | Command::History | Command::ChangeHistory | Command::SavedSettings | Command::OpenPage { .. } => {
                 let name = match &cmd {
                     Command::Downloads => "downloads".to_string(),
                     Command::History => "history".to_string(),
                     Command::ChangeHistory => "changes".to_string(),
+                    Command::SavedSettings => "saved-settings".to_string(),
                     Command::OpenPage { name } => name.trim().to_string(),
                     _ => unreachable!(),
                 };
@@ -7471,6 +7712,14 @@ impl App {
                 }
                 self.toast(if removed > 0 { "Hidden elements are back" } else { "Nothing is hidden on this site" });
             }
+            Command::ForgetCookieChoice => {
+                let Some(site) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)) else { return };
+                let had = self.state.cookie_buttons.remove(&site).is_some();
+                self.state.cookie_offered.remove(&site);
+                self.dirty = true;
+                self.refresh_content_config();
+                self.toast(if had { "Valerie won't answer this site's cookie pop-up for you any more" } else { "Valerie wasn't answering this site's cookie pop-up for you" });
+            }
             Command::TranslatePage => {
                 if let Some(t) = self.state.active_tab() {
                     let Some(url) = self.state.tabs.get(&t).map(|x| x.url.clone()).filter(|u| u.starts_with("http")) else { return };
@@ -7761,6 +8010,30 @@ impl App {
                 self.close_bar();
                 self.undo_customization();
             }
+            Command::SaveSettings { name: None } => {
+                let name = crate::saved_settings::current().unwrap_or_default();
+                self.open_prompt("Save settings as", &name, json!({ "cmd": "save_settings" }), "name");
+            }
+            Command::SaveSettings { name: Some(name) } => {
+                self.close_bar();
+                if let Err(e) = self.saved_settings_op("save_settings", &json!({ "name": name })) {
+                    self.toast(&format!("Couldn't save the settings: {e}"));
+                }
+            }
+            Command::SwitchSettings { name } => {
+                self.close_bar();
+                let Some(name) = name.or_else(crate::saved_settings::next) else {
+                    return self.toast("No saved settings yet: Save Settings As… keeps the ones in use");
+                };
+                if let Err(e) = self.saved_settings_op("switch_settings", &json!({ "name": name })) {
+                    self.toast(&format!("Couldn't switch settings: {e}"));
+                }
+            }
+            Command::DeleteSavedSettings { name } => {
+                if let Err(e) = self.saved_settings_op("delete_saved_settings", &json!({ "name": name })) {
+                    self.toast(&format!("Couldn't delete the saved settings: {e}"));
+                }
+            }
             Command::GoBackToChange { id } => {
                 self.close_bar();
                 if let Err(e) = self.go_back_to_change(&id) {
@@ -7922,6 +8195,8 @@ impl App {
                 let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
                 self.show_space_menu(id, x, y);
             }
+            (Source::Page(Target::Little(id)), "edge") => self.set_little_bar(id, true),
+            (Source::Page(Target::Little(id)), "unpeek") | (Source::LittleBar(id), "bar_away") => self.set_little_bar(id, false),
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {
                     let _ = l.window.drag_window();
@@ -8090,6 +8365,35 @@ impl App {
                     let age = (now() as f64 - n("saved") / 1000.0).max(0.0) as u64;
                     crate::log::line("video", format!("YouTube page started with a bad stall number, capped it: stall {:.2e}, longest recent gap {:.0} ms, speed {:.0} Mbps, saved {age}s ago", n("stall"), n("gap_ms"), n("byterate") / 125_000.0));
                 }
+            }
+            // The user answered a cookie pop-up Valerie didn't (privacy.offer_cookie_help): offer, once per site, to do it for them.
+            (Source::Page(target), "cookie_click") => {
+                let Some(site) = self.view_for(target).and_then(platform::page_url).and_then(|u| site_of(&u)) else { return };
+                let text: String = m["text"].as_str().unwrap_or("").trim().chars().take(40).collect();
+                let selector: String = m["selector"].as_str().unwrap_or("").chars().take(200).collect();
+                if !self.config.privacy.offer_cookie_help || text.is_empty() || self.state.cookie_buttons.contains_key(&site) || !self.state.cookie_offered.insert(site.clone()) {
+                    return;
+                }
+                self.dirty = true;
+                let nonce = crate::mcp::random_hex();
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.cookieOffer({}, {}, {})", json!(text), json!(site), json!(nonce)));
+                }
+                crate::log::line("cookies", format!("offered to answer {site}'s cookie pop-up with {text:?}"));
+                self.cookie_offer = Some((target, nonce, site, crate::state::CookieButton { text, selector }));
+            }
+            (Source::Page(target), "cookie_learn") => {
+                let Some((t, nonce, site, button)) = self.cookie_offer.take() else { return };
+                if t != target || m["nonce"].as_str() != Some(nonce.as_str()) {
+                    self.cookie_offer = Some((t, nonce, site, button));
+                    return;
+                }
+                let text = button.text.clone();
+                crate::log::line("cookies", format!("will answer {site}'s cookie pop-up with {text:?}"));
+                self.state.cookie_buttons.insert(site.clone(), button);
+                self.dirty = true;
+                self.refresh_content_config();
+                self.toast(&format!("Valerie will click “{text}” on {site} from now on"));
             }
             (Source::Page(target), "keyed") => {
                 if m["on"].as_bool() == Some(true) {
@@ -8291,6 +8595,7 @@ impl App {
     }
 
     pub fn handle(&mut self, ev: UserEvent, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let ev = if self.adopted.is_empty() { ev } else { self.retarget(ev) };
         match ev {
             UserEvent::Ipc { from, msg } => self.handle_ipc(from, msg, elwt),
             UserEvent::PageLoad { target, url, finished } => match target {
@@ -8410,7 +8715,18 @@ impl App {
                     Target::Peek | Target::Panel(_) => None,
                 };
                 self.close_peek();
-                self.open_tab(&url, space, true);
+                match (space, target) {
+                    (Some(sp), Target::Tab(_)) => {
+                        let url = self.rewrite(&url);
+                        let id = self.add_link_tab(sp, &url, target);
+                        self.queue_event("tab_opened", Some(id), None);
+                        self.activate(id);
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.open_tab(&url, space, true);
+                    }
+                }
                 self.show_main();
             }
             UserEvent::PageFullscreen => self.page_fullscreen_changed(),
@@ -9480,6 +9796,7 @@ impl App {
             "location": self.location_state(site),
             "ad_blocking_off": self.state.blocking_allow.iter().any(|h| h == site) || self.config.content_blocking.allow.iter().any(|h| h == site),
             "hidden_elements": hidden,
+            "cookie_button": self.state.cookie_buttons.get(site).map(|b| &b.text),
             "boost_css": boost("css").exists(),
             "boost_js": boost("js").exists(),
             "profile": self.site_profile(&url),
@@ -9847,7 +10164,7 @@ const PAGE_HTML_JS: &str = r#"(() => { const d = document.documentElement.cloneN
 const BROWSER_MENUS: &[(&str, &[&str])] = &[
     ("File", &["new_tab", "new_window", "new_private_window", "share_page", "new_little_window", "open_command_bar", "open_file", "close_tab", "close_window", "move_to_little_window", "move_to_main_window", "save_page", "email_link", "print", "capture_page", "capture_full_page"]),
     ("Edit", &["copy_url", "copy_markdown_link", "copy_link_to_highlight", "paste_and_go", "search_selection", "find_in_page", "find_next", "find_previous"]),
-    ("View", &["toggle_sidebar", "toggle_tab_bar_position", "cycle_sidebar_size", "reload", "hard_reload", "stop", "zoom_in", "zoom_out", "zoom_reset", "reader_view", "toggle_dark_page", "translate_page", "split_view", "unsplit", "focus_next_pane", "focus_pane", "toggle_terminal", "new_terminal", "layout_gallery", "next_layout", "reset_layout", "duplicate_layout", "switch_layout", "dev_tools", "view_source", "hide_element", "show_hidden_elements"]),
+    ("View", &["toggle_sidebar", "toggle_tab_bar_position", "cycle_sidebar_size", "reload", "hard_reload", "stop", "zoom_in", "zoom_out", "zoom_reset", "reader_view", "toggle_dark_page", "translate_page", "split_view", "unsplit", "focus_next_pane", "focus_pane", "toggle_terminal", "new_terminal", "layout_gallery", "next_layout", "reset_layout", "duplicate_layout", "switch_layout", "dev_tools", "view_source", "hide_element", "show_hidden_elements", "forget_cookie_choice"]),
     ("History", &["back", "forward", "reopen_closed_tab", "history", "clear_site_data", "clear_cache", "clear_cache_and_cookies"]),
     ("Bookmarks", &["toggle_favorite", "review_saved_tabs"]),
     ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs"]),
@@ -12814,6 +13131,27 @@ impl App {
         }
     }
 
+    /// Save, switch, delete or list saved settings (`src/saved_settings.rs`), for commands and the Saved Settings page.
+    fn saved_settings_op(&mut self, op: &str, args: &Value) -> Result<Value, String> {
+        use crate::saved_settings as saved;
+        let name = args["name"].as_str().unwrap_or("");
+        let done = match op {
+            "list_saved_settings" => return Ok(saved::summary()),
+            "save_settings" => saved::save(name).map(|n| format!("Saved these settings as {n:?}")),
+            "switch_settings" => saved::switch(name, self.config.saved_settings.keep_changes).map(|n| {
+                self.reload_config();
+                format!("Switched to the settings {n:?}")
+            }),
+            "delete_saved_settings" => saved::delete(name).map(|n| format!("Deleted the saved settings {n:?}")),
+            _ => return Err(format!("unknown {op}")),
+        }
+        .map_err(|e| format!("{e:#}"))?;
+        crate::log::line("settings", &done);
+        self.toast(&done);
+        self.pages_changed("saved_settings");
+        Ok(json!({ "done": done, "saved": saved::list(), "current": saved::current() }))
+    }
+
     /// Put the settings, plugins and looks back exactly as they were at a change in the history.
     fn go_back_to_change(&mut self, id: &str) -> Result<String, String> {
         let entry = crate::history::go_back(id)?;
@@ -13263,6 +13601,7 @@ impl App {
             }
             "list_changes" => Ok(json!(crate::history::entries().into_iter().rev().take(500).collect::<Vec<_>>())),
             "go_back_to_change" => self.go_back_to_change(args["id"].as_str().unwrap_or("")).map(|why| json!(why)),
+            "list_saved_settings" | "save_settings" | "switch_settings" | "delete_saved_settings" => self.saved_settings_op(op, args),
             "forget_download" => {
                 let before = self.state.downloads.len();
                 self.state.downloads.retain(|d| if path.is_empty() { d.state == "downloading" } else { d.path != path });

@@ -61,6 +61,14 @@ Valerie's binary: `{exe}`
    further back). Every change, by anyone, is also in the "Change History" page (the `change_history` command, or
    `"{exe}" changes`): `go_back_to_change` with an id, or `"{exe}" changes back <id>`, restores that state exactly and
    deletes nothing, so it can be undone the same way.
+7. Big changes the user may want to flip back and forth (a demo look, a "work" set): offer to keep them as **saved
+   settings**, whole copies of config.yaml under a name (`saved-settings/<name>.yaml` in the config folder). Before a
+   big change, `save_settings` with `{{"name": "Everyday"}}` keeps how things are; after it, `save_settings` again under
+   the new name. `switch_settings` with a name makes config.yaml a copy of that set (no name: the next one);
+   `delete_saved_settings` forgets one. `"{exe}" saved-settings` lists them and which is in use (also `save <name>`,
+   `switch <name>`, `delete <name>`). Edit a saved set's file directly to change it without switching. Switching
+   first puts the user's changes back into the set in use (`saved_settings.keep_changes`) and never loses settings
+   that aren't saved anywhere (they're kept as "Before <name>").
 
 ## Make Valerie into anything
 
@@ -136,6 +144,7 @@ changed in plain words. Some translations:
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
 | "Stop explaining the Keychain window" / "stop the Always Allow message" | `passwords.explain_keychain_prompt: false` |
+| "My Mac keeps asking to allow saved passwords" | keep `passwords.fewer_keychain_prompts: true` and turn on sync with passwords (`sync.encrypt`, `sync.passwords`): Valerie then uses its own encrypted copy instead of asking |
 | "Use DuckDuckGo" | `search_engine: "https://duckduckgo.com/?q=%s"` |
 | "Make the sidebar look like …" / "rounder tabs" / "a different font for tab titles" | CSS in `ui/chrome.css` (see "Restyling Valerie itself") |
 | "Make the find bar / link hints bigger" | CSS in `ui/page.css` |
@@ -156,6 +165,8 @@ changed in plain words. Some translations:
 | "Swiping skips two spaces" / "swipes feel too touchy" | `sidebar.swipe_settle_ms: 900` (longer wait before a hard swipe can switch again), `sidebar.swipe_distance: 140` |
 | "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
+| "Sidebar only when I push the mouse to the edge" / "the page shouldn't resize when it shows" | `layout.sidebar_visible: false`, `layout.reveal_sidebar_on_edge: true`, `layout.reveal_sidebar_over_page: true` (`false` squeezes the page instead) |
+| "Always show the little window's bar" / "hide it until I point at the top" | `little_window.top_bar: always` / `hover` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
 | "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits) on macOS; on Windows and Linux `app.keep_running_when_closed_without_dock` (`false` quits, the default; `true` stays, and opening Valerie again shows it) |
 | "Don't leave Valerie running after an agent opened it" / "keep it running" | `mcp.quit_when_unused_minutes: 10` (minutes with no agent calls) / `0` (stays) |
@@ -166,6 +177,7 @@ changed in plain words. Some translations:
 | "⌘K then ⌘S" style shortcuts | a key sequence in `keybindings`: `"CmdOrCtrl+K CmdOrCtrl+S": sync` |
 | "Put that back" / "undo what you just did" | the `undo_customization` command |
 | "Make it look like it did last week" / "go back to before that redesign" | find it with `"{exe}" changes`, then the `go_back_to_change` command |
+| "Save my setup" / "make a fun one to demo and let me switch back" | saved settings: `save_settings` `{{"name": "Everyday"}}`, change things, `save_settings` `{{"name": "Demo"}}`; `switch_settings` `{{"name": "Everyday"}}` goes back (see "Saved settings" above) |
 
 Example: "I'm 82, my eyes aren't great, I only use email and the news, and the keyboard tricks confuse me" becomes:
 

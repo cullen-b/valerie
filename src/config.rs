@@ -78,6 +78,14 @@ pub struct Config {
     pub extensions: ExtensionsConfig,
     pub logs: LogsConfig,
     pub change_history: ChangeHistoryConfig,
+    pub saved_settings: SavedSettingsConfig,
+}
+
+/// Named copies of config.yaml to switch between (`src/saved_settings.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedSettingsConfig {
+    pub keep_changes: bool,
+    pub in_command_bar: bool,
 }
 
 /// The history of changes to the settings, plugins and looks (`src/history.rs`).
@@ -247,6 +255,7 @@ pub struct Layout {
     pub sidebar_size: String,
     pub sidebar_position: SidebarPosition,
     pub reveal_sidebar_on_edge: bool,
+    pub reveal_sidebar_over_page: bool,
     pub bezel: f64,
     pub corner_radius: f64,
     pub split_gap: f64,
@@ -277,8 +286,10 @@ pub struct SidebarConfig {
     pub compact_pinned: String,
     pub pinned_folder_icon: String,
     pub kept_section: bool,
+    pub name_new_folders: bool,
     pub minus_for_saved_tabs: bool,
     pub remove_closed_saved_tabs: bool,
+    pub close_folder_with_last_tab: bool,
     pub new_tab_button: bool,
     pub today_label: bool,
     pub clear_button: String,
@@ -302,6 +313,7 @@ pub struct SidebarConfig {
     pub double_click_edge: bool,
     pub multi_select: bool,
     pub drop_to_split: bool,
+    pub alt_click_to_split: bool,
     pub drag_folders: bool,
     pub reorder_spaces: bool,
     pub split_rows: bool,
@@ -325,6 +337,7 @@ pub struct LinksConfig {
     pub show_url_on_hover: bool,
     pub popups: String,
     pub popup_look: String,
+    pub open_below_current_tab: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -863,6 +876,8 @@ pub struct PrivacyConfig {
     pub strip_tracking: bool,
     pub tracking_params: Vec<String>,
     pub cookie_banners: String,
+    #[serde(default = "yes")]
+    pub offer_cookie_help: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -904,12 +919,17 @@ pub struct CaptureConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LittleWindowConfig {
     pub enabled: bool,
+    pub top_bar: String,
     pub space_picker: bool,
     pub copy_button: bool,
     pub keep_open_when_main_closes: bool,
     pub open_links_alone: bool,
     pub keep_one_ready: bool,
     pub remember_size: bool,
+    #[serde(default = "yes")]
+    pub open_without_reloading: bool,
+    #[serde(default = "yes")]
+    pub loading_line: bool,
     pub width: f64,
     pub height: f64,
 }
@@ -1091,6 +1111,7 @@ pub struct PasswordsConfig {
     pub offer_passkeys: String,
     pub passkeys_through_safari: bool,
     pub explain_keychain_prompt: bool,
+    pub fewer_keychain_prompts: bool,
     pub shared: Vec<SharedVault>,
 }
 

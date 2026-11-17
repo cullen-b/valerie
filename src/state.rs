@@ -42,6 +42,9 @@ pub struct Tab {
     /// The tab's last-played video/audio: "playing" | "paused" (drives the sidebar mini player).
     #[serde(default, skip)]
     pub media: Option<String>,
+    /// The tab a link opened this one from, so several links from one page line up below it in order.
+    #[serde(default, skip)]
+    pub opener: Option<TabId>,
 }
 
 impl Tab {
@@ -96,6 +99,14 @@ pub struct Space {
     pub pinned_modified: u64,
     #[serde(default)]
     pub pinned_hash: Option<String>,
+}
+
+/// A cookie pop-up button: found by `selector` when the site gives it a stable one, otherwise by its words.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CookieButton {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub selector: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,6 +224,12 @@ pub struct State {
     /// Sites where the user turned Valerie's dark mode on (true) or off (false), overriding pages.dark_mode.
     #[serde(default)]
     pub dark_sites: BTreeMap<String, bool>,
+    /// The cookie pop-up button Valerie clicks for the user on each site (they said "Do it for me").
+    #[serde(default)]
+    pub cookie_buttons: BTreeMap<String, CookieButton>,
+    /// Sites where Valerie already offered to answer the cookie pop-up, so it never asks twice.
+    #[serde(default)]
+    pub cookie_offered: std::collections::BTreeSet<String>,
     /// How much history, archive and closed tabs to keep (from the `history` settings; not saved).
     #[serde(skip)]
     pub limits: Limits,
@@ -339,6 +356,20 @@ pub fn find_folder(nodes: &mut [Node], folder: TabId) -> Option<&mut Node> {
         }
     }
     None
+}
+
+/// Ids of the folders holding a tab, outermost first.
+pub fn folders_holding(nodes: &[Node], tab: TabId) -> Vec<TabId> {
+    for n in nodes {
+        if let Node::Folder { id, children, .. } = n {
+            if flat_ids(children).contains(&tab) {
+                let mut v = vec![*id];
+                v.extend(folders_holding(children, tab));
+                return v;
+            }
+        }
+    }
+    Vec::new()
 }
 
 /// Remove a folder, returning it so its tabs can be relocated.
@@ -509,6 +540,29 @@ impl State {
             today.insert(0, id);
         } else {
             today.push(id);
+        }
+        id
+    }
+
+    /// A tab opened from a link in `from`: right below `from` (after tabs it already opened) when `from` is a Today tab
+    /// in this space, otherwise at the top of Today, just under the saved tabs.
+    pub fn add_tab_below(&mut self, space: usize, url: &str, from: TabId) -> TabId {
+        let id = self.add_tab(space, url, true);
+        let today = &mut self.spaces[space].today;
+        today.remove(0);
+        let pos = match today.iter().position(|t| *t == from) {
+            Some(i) => {
+                let mut j = i + 1;
+                while j < today.len() && self.tabs.get(&today[j]).and_then(|t| t.opener) == Some(from) {
+                    j += 1;
+                }
+                j
+            }
+            None => 0,
+        };
+        today.insert(pos, id);
+        if let Some(t) = self.tabs.get_mut(&id) {
+            t.opener = Some(from);
         }
         id
     }
@@ -1116,6 +1170,20 @@ mod tests {
         s
     }
 
+    /// Links open right below their tab, in the order they were opened; from a saved tab, at the top of Today.
+    #[test]
+    fn link_tabs_open_below_their_tab() {
+        let mut s = state();
+        let [a, b] = ["a", "b"].map(|u| s.add_tab(0, &format!("https://{u}"), false));
+        let x = s.add_tab_below(0, "https://x", a);
+        let y = s.add_tab_below(0, "https://y", a);
+        let z = s.add_tab_below(0, "https://z", x);
+        assert_eq!(s.spaces[0].today, vec![a, x, z, y, b]);
+        s.pin(b);
+        let w = s.add_tab_below(0, "https://w", b);
+        assert_eq!(s.spaces[0].today, vec![w, a, x, z, y]);
+    }
+
     /// Only pinned, kept and favorite tabs unopened for the whole period count; keeping one restarts its clock, and a
     /// tab from before Valerie tracked this starts counting now.
     #[test]
@@ -1221,6 +1289,15 @@ mod tests {
         assert_eq!(s.order(0, false), vec![a]);
         s.delete_folder(f);
         assert_eq!(s.order(0, true), vec![a]);
+    }
+
+    #[test]
+    fn folders_holding_lists_enclosing_folders_outermost_first() {
+        let inner = Node::Folder { id: 2, name: "In".into(), open: true, children: vec![Node::Tab { id: 3 }] };
+        let nodes = vec![Node::Tab { id: 9 }, Node::Folder { id: 1, name: "Out".into(), open: true, children: vec![Node::Tab { id: 4 }, inner] }];
+        assert_eq!(folders_holding(&nodes, 3), vec![1, 2]);
+        assert_eq!(folders_holding(&nodes, 4), vec![1]);
+        assert!(folders_holding(&nodes, 9).is_empty());
     }
 
     #[test]

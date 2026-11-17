@@ -32,6 +32,10 @@ body {
 body.private { background: linear-gradient(90deg, #1b1a21, #25222e); --fg: #ecebf5; --dim: rgba(236,235,245,.55); --hover: rgba(255,255,255,.08); }
 body.private #priv { display: flex; }
 body.private #split { display: none; }
+/* little_window.top_bar: hover: the bar's contents rise up from behind the page as it slides out */
+body.rise > * { animation: rise .2s cubic-bezier(.2,.8,.2,1); }
+@keyframes rise { from { transform: translateY(16px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { body.rise > * { animation: none; } }
 body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
 </style>
 </head>
@@ -60,7 +64,12 @@ addr.onkeydown = (e) => {
   else if (e.key === "Escape") cmd({ cmd: "close_tab" });
 };
 document.body.onmousedown = (e) => { if ((e.target === document.body || e.target.id === "title") && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
+// Leaving through the top or sides puts the bar away (the page below handles the mouse moving down onto it).
+document.documentElement.addEventListener("mouseleave", (e) => {
+  if (e.clientY < innerHeight - 2 && !document.body.classList.contains("ask")) send({ t: "bar_away" });
+});
 window.little = {
+  reveal() { const b = document.body; b.classList.remove("rise"); void b.offsetWidth; b.classList.add("rise"); },
   render(s) {
     const r = document.documentElement;
     r.classList.toggle("light", s.theme.mode === "light");
