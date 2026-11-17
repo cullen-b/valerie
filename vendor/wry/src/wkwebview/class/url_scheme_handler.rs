@@ -53,8 +53,38 @@ pub fn create(name: &str) -> &AnyClass {
   }
 }
 
-// Task handler for custom protocol
+// Task handler for custom protocol. A panic can't unwind into WebKit (Rust aborts the whole app), so it fails just this request.
 extern "C" fn start_task(
+  this: &AnyObject,
+  sel: objc2::runtime::Sel,
+  webview: &WryWebView,
+  task: &ProtocolObject<dyn WKURLSchemeTask>,
+) {
+  if std::panic::catch_unwind(AssertUnwindSafe(|| start_task_inner(this, sel, webview, task))).is_err() {
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| fail_task(webview, task)));
+  }
+}
+
+fn fail_task(webview: &WryWebView, task: &ProtocolObject<dyn WKURLSchemeTask>) {
+  webview.remove_custom_task_key(task.hash());
+  let Some(url) = (unsafe { task.request() }).URL() else { return };
+  let response = NSHTTPURLResponse::initWithURL_statusCode_HTTPVersion_headerFields(
+    NSHTTPURLResponse::alloc(),
+    &url,
+    500,
+    Some(&NSString::from_str("HTTP/1.1")),
+    None,
+  );
+  if let Some(response) = response {
+    // Throws if the handler already answered before it panicked; nothing more to do then.
+    let _ = objc2::exception::catch(AssertUnwindSafe(|| unsafe {
+      task.didReceiveResponse(&response);
+      task.didFinish();
+    }));
+  }
+}
+
+fn start_task_inner(
   this: &AnyObject,
   _sel: objc2::runtime::Sel,
   webview: &WryWebView,
@@ -116,6 +146,10 @@ extern "C" fn start_task(
       while body_stream.hasBytesAvailable() {
         let count =
           unsafe { body_stream.read_maxLength(NonNull::new(buf.as_mut_ptr()).unwrap(), buf.len()) };
+        // -1 is a read error, 0 the end of the stream.
+        if count <= 0 {
+          break;
+        }
         sent_form_body.extend_from_slice(&buf[..count as usize]);
       }
 
@@ -226,10 +260,10 @@ extern "C" fn start_task(
               let wanted_version = format!("{:#?}", sent_response.version());
 
               let headers = NSMutableDictionary::new();
-              if let Some(mime) = wanted_mime {
+              if let Some(mime) = wanted_mime.and_then(|m| m.to_str().ok()) {
                 headers.insert(
                   &*NSString::from_str(CONTENT_TYPE.as_str()),
-                  &*NSString::from_str(mime.to_str().unwrap()),
+                  &*NSString::from_str(mime),
                 );
               }
               headers.insert(

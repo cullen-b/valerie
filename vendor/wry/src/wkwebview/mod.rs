@@ -422,8 +422,17 @@ impl InnerWebView {
           },
           size: CGSize::new(w as f64, h as f64),
         };
-        let webview: Retained<WryWebView> =
-          objc2::msg_send![super(webview), initWithFrame: frame, configuration: &**config];
+        // WebKit throws for configurations it rejects (a related view it won't share with, say); return that as an
+        // error instead of letting it unwind into Rust, which aborts the app.
+        let webview: Retained<WryWebView> = match objc2::exception::catch(AssertUnwindSafe(|| {
+          objc2::msg_send![super(webview), initWithFrame: frame, configuration: &**config]
+        })) {
+          Ok(webview) => webview,
+          Err(e) => {
+            WEBVIEW_STATE.write().unwrap().remove(&webview_id);
+            return Err(Error::WebViewInit(format!("{e:?}")));
+          }
+        };
 
         // Set the under-page background color for overscroll areas (public API, macOS 12+).
         // drawsBackground is already disabled on the config above, so the window background

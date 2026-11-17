@@ -530,6 +530,13 @@ fn main() -> anyhow::Result<()> {
     app::trace("config read");
     log::init(loaded.as_ref().map_or(Config::defaults().logs.keep_days, |c| c.logs.keep_days));
     log::set_level(&loaded.as_ref().map_or(Config::defaults().logs.level, |c| c.logs.level.clone()));
+    // A panic inside a WebKit callback aborts the app with no message; this puts what and where in the log first.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let what = info.payload().downcast_ref::<&str>().copied().or_else(|| info.payload().downcast_ref::<String>().map(String::as_str)).unwrap_or("panic");
+        log::line("panic", format!("{what} at {}", info.location().map_or_else(String::new, |l| l.to_string())));
+        default_hook(info);
+    }));
     let config = loaded.unwrap_or_else(|e| {
         log::line("config", format!("config error, using defaults: {e:#}"));
         let mut defaults = Config::defaults();
@@ -752,7 +759,8 @@ fn main() -> anyhow::Result<()> {
     if config.mcp.enabled && !replacing && std::env::var_os(mcp::STARTED_FOR_AGENT).is_none() && mcp::forward_open(config.mcp.port, &hand_over) {
         return Ok(());
     }
-    log::line("app", format!("Valerie {} started", app::version()));
+    log::line("app", format!("Valerie {} started on {}", app::version(), platform::os_version()));
+    log::note_start(&app::version());
     // The app outlives the terminal it may have started from: closing that terminal mustn't close the browser.
     #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Console::FreeConsole() };
