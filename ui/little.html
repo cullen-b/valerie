@@ -37,12 +37,26 @@ body.rise > * { animation: rise .28s cubic-bezier(.22,1,.36,1); }
 @keyframes rise { from { transform: translateY(5px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { body.rise > * { animation: none; } }
 body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
+/* little_window.tabs: with two or more tabs, they take the title's place */
+#tabs { display: none; flex: 1; min-width: 0; gap: 2px; align-items: center; }
+body.tabs #tabs { display: flex; } body.tabs #title { display: none; }
+body.tabs.ask #tabs { flex: 0 1 auto; max-width: 45%; }
+.tab { flex: 0 1 168px; min-width: 44px; height: 24px; padding: 0 3px 0 9px; border-radius: 7px; display: flex; align-items: center; gap: 2px;
+  color: var(--dim); transition: background-color .15s, color .15s; }
+.tab span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tab:hover { color: var(--fg); }
+.tab.on { background: var(--hover); color: var(--fg); }
+.tab .x { flex: none; width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 14px; line-height: 1; opacity: 0; }
+.tab:hover .x, .tab.on .x { opacity: .7; }
+.tab .x:hover { opacity: 1; background: var(--hover); }
+@media (prefers-reduced-motion: reduce) { .tab { transition: none; } }
 </style>
 </head>
 <body>
 <div class="btn" id="back">‹</div>
 <div id="priv" title="Cookies and site data here are forgotten when this window closes, and nothing goes in your history"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 9.5c2.5-1.2 9.5-1.2 12 0"/><path d="M4 9l1.2-5h5.6L12 9"/><circle cx="5" cy="12" r="1.8"/><circle cx="11" cy="12" r="1.8"/><path d="M6.8 12h2.4"/></svg>Private</div>
 <div id="title"></div>
+<div id="tabs" role="tablist"></div>
 <input id="addr" placeholder="Search or enter address" spellcheck="false" autocomplete="off">
 <div class="btn" id="copy" title="Copy URL (⌘⇧C)">Copy link</div>
 <div class="split" id="split"><div class="btn" id="open" title="⌘O">Open in Valerie</div><div class="btn" id="pick" title="Open in another space">▾</div></div>
@@ -63,11 +77,33 @@ addr.onkeydown = (e) => {
   if (e.key === "Enter" && addr.value.trim()) send({ t: "go", text: addr.value });
   else if (e.key === "Escape") cmd({ cmd: "close_tab" });
 };
-document.body.onmousedown = (e) => { if ((e.target === document.body || e.target.id === "title") && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
+document.body.onmousedown = (e) => { if ((e.target === document.body || e.target.id === "title" || e.target.id === "tabs") && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 // Leaving through the top or sides puts the bar away (the page below handles the mouse moving down onto it).
 document.documentElement.addEventListener("mouseleave", (e) => {
   if (e.clientY < innerHeight - 2 && !document.body.classList.contains("ask")) send({ t: "bar_away" });
 });
+// ⌘T (Ctrl+T elsewhere) here opens a tab too, while keybindings leaves the key free (tabKey).
+let tabKey = false, lastPage;
+addEventListener("keydown", (e) => {
+  if (!tabKey || e.code !== "KeyT" || e.shiftKey || e.altKey) return;
+  if (!(/Mac/.test(navigator.platform) ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
+  e.preventDefault(); cmd({ cmd: "new_tab" });
+});
+const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+function drawTabs(tabs) {
+  const box = document.getElementById("tabs");
+  box.replaceChildren(...tabs.map((t) => {
+    const el = document.createElement("div"); el.className = "tab" + (t.active ? " on" : ""); el.setAttribute("role", "tab");
+    el.setAttribute("aria-selected", t.active ? "true" : "false");
+    const label = document.createElement("span"); label.textContent = t.title || host(t.url) || "New tab"; el.title = label.textContent;
+    const x = document.createElement("div"); x.className = "x"; x.textContent = "×"; x.title = "Close tab"; x.setAttribute("aria-label", "Close " + label.textContent);
+    x.onclick = (e) => { e.stopPropagation(); send({ t: "close_tab", n: t.n }); };
+    el.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); send({ t: "close_tab", n: t.n }); } };
+    el.onclick = () => { if (!t.active) send({ t: "show_tab", n: t.n }); };
+    el.append(label, x); return el;
+  }));
+  document.body.classList.toggle("tabs", tabs.length > 1);
+}
 window.little = {
   reveal() { const b = document.body; b.classList.remove("rise"); void b.offsetWidth; b.classList.add("rise"); },
   render(s) {
@@ -84,7 +120,12 @@ window.little = {
     document.getElementById("split").classList.toggle("picker", !!s.picker);
     document.body.classList.toggle("private", !!s.private);
     document.getElementById("copy").style.display = s.copy_button ? "" : "none";
-    const asking = !!s.ask && !document.body.classList.contains("ask");
+    tabKey = !!s.tab_key;
+    drawTabs(s.tabs || []);
+    // A new ask (or another empty tab) starts with a clear, focused address box.
+    const page = ((s.tabs || []).find((t) => t.active) || {}).n;
+    const asking = !!s.ask && (!document.body.classList.contains("ask") || page !== lastPage);
+    lastPage = page;
     document.body.classList.toggle("ask", !!s.ask);
     if (asking) { addr.value = ""; addr.focus(); }
   },
