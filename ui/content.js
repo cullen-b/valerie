@@ -1291,6 +1291,13 @@ addEventListener("keydown", (e) => {
   e.preventDefault(); run("reopen_closed_tab");
 });
 
+// ---------- ⌘T (Ctrl+T elsewhere) in a little window opens a tab in it (little_window.tabs) ----------
+addEventListener("keydown", (e) => {
+  if (!e.isTrusted || e.defaultPrevented || !cfg.little_tabs || e.shiftKey || e.altKey || e.code !== "KeyT") return;
+  if (!(isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
+  e.preventDefault(); run("new_tab");
+});
+
 // ---------- the pointer entering a page tells the sidebar to drop its hover states ----------
 if (document.documentElement) document.documentElement.addEventListener("mouseenter", () => post({ t: "pointer" }));
 

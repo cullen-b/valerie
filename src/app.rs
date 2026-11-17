@@ -27,7 +27,8 @@ const EXTERNAL_SCHEMES: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Target {
     Tab(TabId),
-    Little(WindowId),
+    /// A little window's tab: the window, then the tab's number in it.
+    Little(WindowId, u32),
     Peek,
     Panel(u32),
 }
@@ -220,9 +221,58 @@ struct Little {
     bar_wanted: Option<bool>,
     /// The profile its page was made with (cookies and logins), so it can move into a tab of the same profile.
     profile: String,
+    /// The number of the tab showing (`view`, `url`, `title` and `zoom` are its); `others` holds the rest.
+    page: u32,
+    others: Vec<LittlePage>,
+    /// Every tab's number, in the order the bar shows them.
+    order: Vec<u32>,
+}
+
+/// A little window's tab that isn't showing (`little_window.tabs`).
+struct LittlePage {
+    n: u32,
+    view: WebView,
+    url: String,
+    title: String,
+    zoom: f64,
 }
 
 impl Little {
+    fn view_of(&self, n: u32) -> Option<&WebView> {
+        if n == self.page {
+            return Some(&self.view);
+        }
+        self.others.iter().find(|p| p.n == n).map(|p| &p.view)
+    }
+
+    /// Tab `n`'s address and title, showing or not.
+    fn page_mut(&mut self, n: u32) -> Option<(&mut String, &mut String)> {
+        if n == self.page {
+            return Some((&mut self.url, &mut self.title));
+        }
+        self.others.iter_mut().find(|p| p.n == n).map(|p| (&mut p.url, &mut p.title))
+    }
+
+    /// Show tab `n`: it trades places with the one showing.
+    fn show_page(&mut self, n: u32) {
+        let Some(o) = self.others.iter_mut().find(|p| p.n == n) else { return };
+        std::mem::swap(&mut self.view, &mut o.view);
+        std::mem::swap(&mut self.url, &mut o.url);
+        std::mem::swap(&mut self.title, &mut o.title);
+        std::mem::swap(&mut self.zoom, &mut o.zoom);
+        o.n = self.page;
+        self.page = n;
+        let _ = o.view.set_visible(false);
+        let _ = self.view.set_visible(true);
+    }
+
+    /// The tab `step` places along from the one showing, wrapping round.
+    fn page_along(&self, step: isize) -> u32 {
+        let i = self.order.iter().position(|&p| p == self.page).unwrap_or(0) as isize;
+        let len = self.order.len().max(1) as isize;
+        self.order.get((i + step).rem_euclid(len) as usize).copied().unwrap_or(self.page)
+    }
+
     /// An empty one asking where to go: its address box stays showing.
     fn asking(&self) -> bool {
         self.url.is_empty() || self.url == LITTLE_BLANK || self.url.starts_with("about:") || self.url.starts_with("data:")
@@ -1736,10 +1786,11 @@ impl App {
             c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
         }
         // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover`), not the sidebar's edge.
-        if let Target::Little(id) = target {
+        if let Target::Little(id, _) = target {
             let hover = self.little_bar_hides();
             c["edge"] = json!(hover.then_some("top"));
             c["peek"] = json!(hover && self.littles.get(&id).is_some_and(|l| l.bar_out));
+            c["little_tabs"] = json!(self.little_tab_key());
         }
         c
     }
@@ -1761,7 +1812,7 @@ impl App {
     fn space_of_target(&self, target: Target) -> usize {
         match target {
             Target::Tab(id) => self.state.space_of(id),
-            Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+            Target::Little(id, _) => self.littles.get(&id).map(|l| l.space),
             Target::Peek | Target::Panel(_) => None,
         }
         .unwrap_or(self.state.active_space)
@@ -3350,7 +3401,7 @@ impl App {
             self.layout_little(id);
         }
         if let Some(l) = self.littles.get(&id) {
-            let cfg = self.page_config_for(Target::Little(id), &self.page_config());
+            let cfg = self.page_config_for(Target::Little(id, l.page), &self.page_config());
             let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
         }
     }
@@ -3723,6 +3774,11 @@ impl App {
                 "font": self.config.layout.font,
                 "private": l.private,
                 "ask": l.asking(),
+                "tab_key": self.little_tab_key(),
+                "tabs": l.order.iter().filter(|_| l.order.len() > 1).map(|&n| {
+                    let (url, title) = if n == l.page { (&l.url, &l.title) } else { l.others.iter().find(|p| p.n == n).map(|p| (&p.url, &p.title)).unwrap_or((&l.url, &l.title)) };
+                    json!({ "n": n, "url": url, "title": title, "active": n == l.page })
+                }).collect::<Vec<_>>(),
             });
             let _ = l.bar.evaluate_script(&format!("window.little && little.render({vm})"));
         }
@@ -4677,9 +4733,9 @@ impl App {
         let view = if private {
             // Cookies and storage that live only as long as the window; no profile, no extensions.
             self.protocol_taken.set(false);
-            place(self.page_builder(WebViewBuilder::new().with_incognito(true), Target::Little(id), url))
+            place(self.page_builder(WebViewBuilder::new().with_incognito(true), Target::Little(id, 0), url))
         } else {
-            self.with_profile(&profile, |app, base| place(app.page_builder(base, Target::Little(id), url)))
+            self.with_profile(&profile, |app, base| place(app.page_builder(base, Target::Little(id, 0), url)))
         };
         let p = self.proxy.clone();
         let bar = WebViewBuilder::new()
@@ -4695,16 +4751,86 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, sliding: false, bar_wanted: None, profile: if private { String::new() } else { profile } })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, sliding: false, bar_wanted: None, profile: if private { String::new() } else { profile }, page: 0, others: Vec::new(), order: vec![0] })
     }
 
-    /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
-    /// Whether `cmd` is what little_window.new_window_key is bound to, so pressing it in a little window opens another one.
+    /// A new tab in little window `id` (`little_window.tabs`): `input` (an address or a search), or an empty one asking
+    /// where to go.
+    fn little_new_tab(&mut self, id: WindowId, input: Option<String>) {
+        let Some(l) = self.littles.get(&id) else { return };
+        let url = match input.filter(|u| !u.trim().is_empty()) {
+            Some(u) => self.rewrite(&routing::resolve_input(&u, &self.config.search_engine)),
+            None => LITTLE_BLANK.to_string(),
+        };
+        let n = l.order.iter().max().map_or(0, |m| m + 1);
+        let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+        let (private, profile) = (l.private, l.profile.clone());
+        let place = |app: &Self, b: WebViewBuilder<'_>| {
+            let w = &app.littles[&id].window;
+            app.page_builder(b, Target::Little(id, n), &url).with_visible(false).with_bounds(rect(0.0, LITTLE_BAR, s.width, (s.height - LITTLE_BAR).max(1.0))).child_of(w)
+        };
+        let view = if private {
+            self.protocol_taken.set(false);
+            place(self, WebViewBuilder::new().with_incognito(true))
+        } else {
+            self.with_profile(&profile, place)
+        };
+        let view = match view {
+            Ok(v) => v,
+            Err(e) => return crate::log::line("little-window", format!("couldn't make a tab: {e}")),
+        };
+        self.apply_rules_to(&view);
+        let zoom = self.default_zoom();
+        if zoom != 1.0 {
+            let _ = view.zoom(zoom);
+        }
+        let Some(l) = self.littles.get_mut(&id) else { return };
+        let at = l.order.iter().position(|&p| p == l.page).map_or(l.order.len(), |i| i + 1);
+        l.order.insert(at, n);
+        l.others.push(LittlePage { n, view, url, title: String::new(), zoom });
+        self.little_show_tab(id, n);
+    }
+
+    /// Whether a little window's page and bar catch ⌘T (Ctrl+T) themselves: tabs are on and keybindings leaves the key free.
+    fn little_tab_key(&self) -> bool {
+        let t = accel("CmdOrCtrl+T");
+        self.config.little_window.tabs && !self.config.keybindings.iter().any(|(k, b)| b.is_some() && accel(k) == t)
+    }
+
+    /// Bring a little window's tab `n` to the front.
+    fn little_show_tab(&mut self, id: WindowId, n: u32) {
+        let Some(l) = self.littles.get_mut(&id) else { return };
+        l.show_page(n);
+        let asking = l.asking();
+        let _ = focus_view(if asking { &l.bar } else { &l.view });
+        self.layout_little(id);
+        // An empty tab types into the bar's address box, so the bar comes out for it.
+        if asking {
+            self.set_little_bar(id, true);
+        }
+        self.render_little(id);
+    }
+
+    /// Close the little window's tab that's showing, when it has others; the one beside it shows next.
+    fn little_close_tab(&mut self, id: WindowId) {
+        let Some(l) = self.littles.get_mut(&id).filter(|l| !l.others.is_empty()) else { return };
+        let (gone, i) = (l.page, l.order.iter().position(|&p| p == l.page).unwrap_or(0));
+        let next = l.order.get(i + 1).or_else(|| l.order.get(i.wrapping_sub(1))).copied().unwrap_or(l.page);
+        self.little_show_tab(id, next);
+        if let Some(l) = self.littles.get_mut(&id) {
+            l.order.retain(|&p| p != gone);
+            l.others.retain(|p| p.n != gone);
+        }
+        self.render_little(id);
+    }
+
+    /// Whether `cmd` is bound to, so pressing it in a little window opens another one.
     fn little_new_window_key(&self, cmd: &Command) -> bool {
         let Some(key) = accel(&self.config.little_window.new_window_key) else { return false };
         self.config.keybindings.iter().any(|(k, b)| accel(k).as_ref() == Some(&key) && b.as_ref().and_then(|b| b.command()).as_ref() == Some(cmd))
     }
 
+    /// The size a new little window opens at: the last one you resized to, unless no screen here is big enough for it.
     fn little_size(&self) -> (f64, f64) {
         let lw = &self.config.little_window;
         let fits = |(w, h): &(f64, f64)| {
@@ -4852,7 +4978,7 @@ impl App {
     /// Messages from a page that moved out of a little window into a tab count as that tab's.
     fn adopted_target(&self, target: Target) -> Target {
         match target {
-            Target::Little(id) => self.adopted.get(&id).map_or(target, |(tab, _)| Target::Tab(*tab)),
+            Target::Little(id, _) => self.adopted.get(&id).map_or(target, |(tab, _)| Target::Tab(*tab)),
             t => t,
         }
     }
@@ -5626,13 +5752,13 @@ impl App {
     }
 
     fn is_private(&self, target: Target) -> bool {
-        matches!(target, Target::Little(id) if self.littles.get(&id).is_some_and(|l| l.private))
+        matches!(target, Target::Little(id, _) if self.littles.get(&id).is_some_and(|l| l.private))
     }
 
     fn view_for(&self, target: Target) -> Option<&WebView> {
         match target {
             Target::Tab(id) => self.views.get(&id),
-            Target::Little(id) => self.littles.get(&id).map(|l| &l.view),
+            Target::Little(id, n) => self.littles.get(&id).and_then(|l| l.view_of(n)),
             Target::Peek => self.peek.as_ref().map(|p| &p.view),
             Target::Panel(n) => self.panels.values().find(|p| p.num == n).map(|p| &p.view),
         }
@@ -5641,7 +5767,7 @@ impl App {
     fn vaults_for_target(&self, target: Target) -> Vec<String> {
         let space = match target {
             Target::Tab(id) => self.state.space_of(id).unwrap_or(self.state.active_space),
-            Target::Little(id) => self.littles.get(&id).map(|l| l.space).unwrap_or(self.state.active_space),
+            Target::Little(id, _) => self.littles.get(&id).map(|l| l.space).unwrap_or(self.state.active_space),
             Target::Peek | Target::Panel(_) => self.state.active_space,
         };
         self.config.vaults_for(&self.profile_for(space))
@@ -6591,7 +6717,28 @@ impl App {
                 return self.open_little(LITTLE_BLANK, space, elwt);
             }
             let l = &self.littles[&id];
+            let tabs = self.config.little_window.tabs;
+            let more = !l.others.is_empty();
             match &cmd {
+                // little_window.tabs: new tabs and the command bar stay in the little window.
+                Command::NewTab { url, .. } if tabs => return self.little_new_tab(id, url.clone()),
+                Command::OpenCommandBar { .. } if tabs => return self.little_new_tab(id, None),
+                Command::CloseTab { tab: None } if more => return self.little_close_tab(id),
+                Command::NextTab | Command::LastTab if more => return self.little_show_tab(id, l.page_along(1)),
+                Command::PrevTab if more => return self.little_show_tab(id, l.page_along(-1)),
+                Command::GoToTab { index } if more => {
+                    let n = l.order.get(*index).copied().unwrap_or(l.page);
+                    return self.little_show_tab(id, n);
+                }
+                // With other tabs, only this one moves to the main window (it loads again there).
+                Command::MoveToMainWindow { space } if more && !l.private => {
+                    let (url, to) = (l.url.clone(), space.as_ref().and_then(|s| self.state.space_index(s)).unwrap_or(l.space));
+                    self.little_close_tab(id);
+                    self.focused_little = None;
+                    self.open_tab(&url, Some(to), true);
+                    self.show_main();
+                    return self.focus_active();
+                }
                 Command::CloseTab { tab: None } => {
                     self.littles.remove(&id);
                     self.focused_little = None;
@@ -8257,12 +8404,30 @@ impl App {
                 }
                 self.render_little(id);
             }
+            (Source::LittleBar(id), "show_tab") => {
+                if let Some(n) = m["n"].as_u64() {
+                    self.little_show_tab(id, n as u32);
+                }
+            }
+            (Source::LittleBar(id), "close_tab") => {
+                let n = m["n"].as_u64().map(|n| n as u32);
+                match self.littles.get_mut(&id) {
+                    Some(l) if n == Some(l.page) => self.little_close_tab(id),
+                    // One that isn't showing just goes.
+                    Some(l) if n.is_some() => {
+                        l.order.retain(|&p| Some(p) != n);
+                        l.others.retain(|p| Some(p.n) != n);
+                        self.render_little(id);
+                    }
+                    _ => {}
+                }
+            }
             (Source::LittleBar(id), "space_menu") => {
                 let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
                 self.show_space_menu(id, x, y);
             }
-            (Source::Page(Target::Little(id)), "edge") => self.set_little_bar(id, true),
-            (Source::Page(Target::Little(id)), "unpeek") | (Source::LittleBar(id), "bar_away") => self.set_little_bar(id, false),
+            (Source::Page(Target::Little(id, _)), "edge") => self.set_little_bar(id, true),
+            (Source::Page(Target::Little(id, _)), "unpeek") | (Source::LittleBar(id), "bar_away") => self.set_little_bar(id, false),
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {
                     let _ = l.window.drag_window();
@@ -8277,7 +8442,7 @@ impl App {
                 let Ok(cmd) = serde_json::from_value::<Command>(m["cmd"].clone()) else { return };
                 match from {
                     Source::Page(_) if !cmd.page_safe() => return,
-                    Source::Page(Target::Little(id)) | Source::LittleBar(id) => self.focused_little = Some(id),
+                    Source::Page(Target::Little(id, _)) | Source::LittleBar(id) => self.focused_little = Some(id),
                     Source::Page(Target::Peek | Target::Panel(_)) => self.focused_little = None,
                     Source::Page(Target::Tab(id)) => {
                         self.focused_little = None;
@@ -8298,7 +8463,7 @@ impl App {
             }
             (Source::Page(target), "meta") => {
                 let Target::Tab(id) = target else {
-                    if matches!(target, Target::Little(l) if self.littles.contains_key(&l)) {
+                    if matches!(target, Target::Little(l, _) if self.littles.contains_key(&l)) {
                         trace("little page drawn");
                         // Started by a link that opened alone: the rest of launch can begin once its page is drawn.
                         if self.parked() {
@@ -8650,7 +8815,7 @@ impl App {
                 let url = self.clean(url);
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
-                    Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+                    Target::Little(id, _) => self.littles.get(&id).map(|l| l.space),
                     Target::Peek | Target::Panel(_) => None,
                 }
                 .unwrap_or(self.state.active_space);
@@ -8724,15 +8889,15 @@ impl App {
                     self.dirty = true;
                     self.render();
                 }
-                Target::Little(id) => {
+                Target::Little(id, n) => {
                     if self.littles.contains_key(&id) {
                         trace(if finished { "little page finished" } else { "little page started" });
                     }
-                    if let Some(l) = self.littles.get_mut(&id) {
-                        l.url = url.clone();
+                    if let Some((u, _)) = self.littles.get_mut(&id).and_then(|l| l.page_mut(n)) {
+                        *u = url.clone();
                     }
                     if finished && self.littles.contains_key(&id) {
-                        self.after_load(Target::Little(id), &url, false);
+                        self.after_load(Target::Little(id, n), &url, false);
                     }
                     self.render_little(id);
                 }
@@ -8755,9 +8920,9 @@ impl App {
                     }
                     self.render();
                 }
-                Target::Little(id) => {
-                    if let Some(l) = self.littles.get_mut(&id) {
-                        l.title = title;
+                Target::Little(id, n) => {
+                    if let Some((_, t)) = self.littles.get_mut(&id).and_then(|l| l.page_mut(n)) {
+                        *t = title;
                     }
                     self.render_little(id);
                 }
@@ -8777,7 +8942,7 @@ impl App {
                 let url = self.clean(&url);
                 let space = match target {
                     Target::Tab(id) => self.state.space_of(id),
-                    Target::Little(id) => self.littles.get(&id).map(|l| l.space),
+                    Target::Little(id, _) => self.littles.get(&id).map(|l| l.space),
                     Target::Peek | Target::Panel(_) => None,
                 };
                 self.close_peek();
@@ -9818,6 +9983,7 @@ impl App {
                     "terminal" => self.terminal_view.as_ref(),
                     "welcome" => self.welcome_view.as_ref(),
                     "plugins" => self.market_view.as_ref(),
+                    "little_bar" => self.focused_little.or_else(|| self.littles.keys().next().copied()).and_then(|id| self.littles.get(&id)).map(|l| &l.bar),
                     part if part.starts_with("panel:") => self.panels.get(&part[6..]).map(|p| &p.view),
                     _ => Some(&self.chrome),
                 };

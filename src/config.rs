@@ -934,6 +934,8 @@ pub struct LittleWindowConfig {
     pub loading_line: bool,
     #[serde(default = "cmd_n")]
     pub new_window_key: String,
+    #[serde(default = "yes")]
+    pub tabs: bool,
     pub width: f64,
     pub height: f64,
 }

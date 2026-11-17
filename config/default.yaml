@@ -545,6 +545,9 @@ little_window:
                            # an empty page in your light or dark. true | false (false = just the empty page)
   new_window_key: "CmdOrCtrl+N"   # this key, pressed in a little window, opens another little window instead of
                            # doing what keybindings gives it (new chat). A key, e.g. "CmdOrCtrl+Shift+N"; "" = off
+  tabs: true               # a little window can hold tabs: ⌘T (Ctrl+T) and the command bar open a new tab in it, and
+                           # its tabs show in the top bar once there are two. true | false (false = one page each;
+                           # the command bar opens in the main window)
   width: 960               # pixels, until you've resized one (or always, with remember_size off)
   height: 700              # pixels, same
 
