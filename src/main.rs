@@ -122,6 +122,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["hover", "always"].contains(&c.little_window.top_bar.as_str()) {
                 problems.push(format!("little_window: top_bar is {:?}; use hover or always", c.little_window.top_bar));
             }
+            if !["over", "above"].contains(&c.little_window.bar_reveal.as_str()) {
+                problems.push(format!("little_window: bar_reveal is {:?}; use over or above", c.little_window.bar_reveal));
+            }
             if !["room", "over"].contains(&c.little_window.full_screen_bar.as_str()) {
                 problems.push(format!("little_window: full_screen_bar is {:?}; use room or over", c.little_window.full_screen_bar));
             }
