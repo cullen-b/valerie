@@ -1266,6 +1266,8 @@ document.addEventListener("mousemove", (e) => {
     : cfg.edge === "left" ? e.clientX <= 2 && e.movementX < 0 : e.clientX >= innerWidth - 3 && e.movementX > 0;
   if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
 }, { passive: true });
+// The mouse leaving a little window through the page's sides or bottom puts its bar away too (up goes onto the bar).
+document.documentElement.addEventListener("mouseleave", (e) => { if (cfg.peek && cfg.edge === "top" && e.clientY > 0) post({ t: "unpeek" }); });
 
 // ---------- link gestures: middle / ⌘ / ⇧ / ⌥ clicks and Valerie's link menu ----------
 const isMac = /Mac/.test(navigator.platform);

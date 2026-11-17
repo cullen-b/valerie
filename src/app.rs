@@ -4839,6 +4839,11 @@ impl App {
         if asking {
             self.set_little_bar(id, true);
         }
+        // The page now showing learns whether the bar is out, so moving the mouse away puts it away.
+        if let Some(l) = self.littles.get(&id) {
+            let cfg = self.page_config_for(Target::Little(id, l.page), &self.page_config());
+            let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+        }
         self.render_little(id);
     }
 
