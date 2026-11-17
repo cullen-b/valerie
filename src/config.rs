@@ -966,7 +966,7 @@ pub struct LittleWindowConfig {
     pub top_bar: String,
     #[serde(default = "room")]
     pub full_screen_bar: String,
-    #[serde(default = "over")]
+    #[serde(default = "above")]
     pub bar_reveal: String,
     pub space_picker: bool,
     pub copy_button: bool,
@@ -1229,8 +1229,8 @@ pub struct AgentJob {
     pub enabled: bool,
 }
 
-fn over() -> String {
-    "over".into()
+fn above() -> String {
+    "above".into()
 }
 
 fn room() -> String {

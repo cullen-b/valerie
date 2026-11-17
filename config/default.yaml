@@ -558,8 +558,8 @@ little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
   top_bar: hover           # the bar with "Open in …". one of: hover (hidden; bring the mouse to the window's top and
                            # it slides out) | always
-  bar_reveal: over         # where the hidden bar slides out. one of: over (down over the page's top, inside the
-                           # window) | above (the window grows upward to fit it, so the page isn't covered)
+  bar_reveal: above        # where the hidden bar slides out. one of: above (the window grows upward to fit it, so the
+                           # bar sits on top of the page and covers nothing) | over (down over the page's top, inside the window)
   full_screen_bar: room    # with top_bar: hover, when a little window is full screen (or fills the screen). one of: room
                            # (the page starts below the bar, which stays showing) | over (the bar slides over the page's top)
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
