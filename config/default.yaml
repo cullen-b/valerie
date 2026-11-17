@@ -788,6 +788,9 @@ passwords:
                            # work) and bring the login back. Also "Sign In with Safari" in the command bar. true | false
   explain_keychain_prompt: true  # on Mac, when the system asks for permission to use a saved password, explain why
                            # and to click Always Allow ("Don't Show Again" turns this off). true | false
+  fewer_keychain_prompts: true  # on Mac, after an update the system asks again before Valerie reads each saved
+                           # password. With sync on, use this Mac's own encrypted synced copy instead of asking
+                           # (false: every password comes straight from the Keychain, which asks). true | false
   shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared

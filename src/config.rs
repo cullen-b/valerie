@@ -1111,6 +1111,7 @@ pub struct PasswordsConfig {
     pub offer_passkeys: String,
     pub passkeys_through_safari: bool,
     pub explain_keychain_prompt: bool,
+    pub fewer_keychain_prompts: bool,
     pub shared: Vec<SharedVault>,
 }
 

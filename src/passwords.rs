@@ -91,6 +91,14 @@ pub(crate) mod keychain {
         fn SecItemCopyMatching(query: *const AnyObject, result: *mut *const AnyObject) -> i32;
         fn SecItemUpdate(query: *const AnyObject, attributes: *const AnyObject) -> i32;
         fn SecItemDelete(query: *const AnyObject) -> i32;
+        fn SecKeychainSetUserInteractionAllowed(state: u8) -> i32;
+    }
+
+    /// "Don't ask" is switched for the whole app, so a quiet read holds this alone and everything that may ask shares it.
+    static ASKING: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+    fn may_ask() -> std::sync::RwLockReadGuard<'static, ()> {
+        ASKING.read().unwrap_or_else(|e| e.into_inner())
     }
 
     const NOT_FOUND: i32 = -25300;
@@ -126,6 +134,7 @@ pub(crate) mod keychain {
 
     pub fn save(service: &str, account: &str, label: &str, password: &str) -> Result<()> {
         let (s, a, l) = (ns(service), ns(account), ns(label));
+        let _asking = may_ask();
         unsafe {
             let sp = &*s as *const NSString as *const AnyObject;
             let ap = &*a as *const NSString as *const AnyObject;
@@ -148,6 +157,28 @@ pub(crate) mod keychain {
     }
 
     pub fn get(service: &str, account: &str) -> Result<Option<String>> {
+        let _asking = may_ask();
+        read(service, account)
+    }
+
+    /// Like `get`, but fails where the Keychain would put up its window (after an update it asks again for every item).
+    pub fn get_quiet(service: &str, account: &str) -> Result<Option<String>> {
+        struct AskAgain;
+        impl Drop for AskAgain {
+            fn drop(&mut self) {
+                unsafe { SecKeychainSetUserInteractionAllowed(1) };
+            }
+        }
+        // Something else is using the Keychain (its window may be up): that counts as "would have to ask".
+        let Ok(_alone) = ASKING.try_write() else { bail!("the Keychain is busy") };
+        if unsafe { SecKeychainSetUserInteractionAllowed(0) } != 0 {
+            bail!("couldn't keep the Keychain from asking");
+        }
+        let _again = AskAgain;
+        read(service, account)
+    }
+
+    fn read(service: &str, account: &str) -> Result<Option<String>> {
         let (s, a) = (ns(service), ns(account));
         unsafe {
             let query = dict(&[
@@ -201,6 +232,7 @@ pub(crate) mod keychain {
 
     pub fn delete(service: &str, account: &str) -> Result<()> {
         let (s, a) = (ns(service), ns(account));
+        let _asking = may_ask();
         unsafe {
             let query = dict(&[
                 (kSecClass, kSecClassGenericPassword),
@@ -457,6 +489,50 @@ pub fn noting_a_wait<T>(after: std::time::Duration, slow: impl FnOnce() + Send +
     out
 }
 
+/// Passwords this launch has read or saved, kept in memory only: the system is asked at most once for each.
+static KNOWN: std::sync::Mutex<std::collections::BTreeMap<String, String>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn id(vault: &str, origin: &str, username: &str) -> String {
+    format!("{vault}\n{origin}\n{username}")
+}
+
+fn known() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, String>> {
+    KNOWN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What the store just said about a password: keep it for this launch, or drop one that's gone.
+fn settle(e: &Entry, pw: Option<String>) -> Option<String> {
+    let k = id(&e.vault, &e.origin, &e.username);
+    match &pw {
+        Some(p) => known().insert(k, p.clone()),
+        None => known().remove(&k),
+    };
+    pw
+}
+
+/// Read without the system stopping to ask. Only the Mac's Keychain asks for one password at a time.
+#[cfg(target_os = "macos")]
+fn read_quietly(e: &Entry) -> Result<Option<String>> {
+    keychain::get_quiet(&service(&e.vault), &account(&e.origin, &e.username))
+}
+#[cfg(not(target_os = "macos"))]
+fn read_quietly(e: &Entry) -> Result<Option<String>> {
+    keychain::get(&service(&e.vault), &account(&e.origin, &e.username))
+}
+
+/// Passwords from this machine's own synced copy (sync.rs opened it with the sync key), used when reading one from the
+/// Keychain would make it ask. Only ones unchanged here since that copy was written.
+pub fn seed(copy: &[Synced]) {
+    let st = stamps();
+    let mut known = known();
+    for p in copy.iter().filter(|p| !p.deleted && !p.password.is_empty()) {
+        let k = id(&p.vault, &p.origin, &p.username);
+        if st.get(&k).map_or(0, |s| s.modified) == p.modified {
+            known.entry(k).or_insert_with(|| p.password.clone());
+        }
+    }
+}
+
 pub fn save(vault: &str, origin: &str, username: &str, password: &str) -> Result<()> {
     store(vault, origin, username, password)?;
     stamp(vault, origin, username, crate::state::now(), false);
@@ -465,15 +541,36 @@ pub fn save(vault: &str, origin: &str, username: &str, password: &str) -> Result
 
 fn store(vault: &str, origin: &str, username: &str, password: &str) -> Result<()> {
     let host = url::Url::parse(origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
-    keychain::save(&service(vault), &account(origin, username), &format!("Valerie: {host} ({username})"), password)
+    keychain::save(&service(vault), &account(origin, username), &format!("Valerie: {host} ({username})"), password)?;
+    known().insert(id(vault, origin, username), password.to_string());
+    Ok(())
 }
 
+/// A saved password, for something the user asked for (fill, copy): the system may stop to ask permission.
 pub fn password(e: &Entry) -> Result<Option<String>> {
-    keychain::get(&service(&e.vault), &account(&e.origin, &e.username))
+    match read_quietly(e) {
+        Ok(pw) => return Ok(settle(e, pw)),
+        Err(err) if !cfg!(target_os = "macos") => return Err(err),
+        Err(_) => {}
+    }
+    if let Some(pw) = known().get(&id(&e.vault, &e.origin, &e.username)) {
+        return Ok(Some(pw.clone()));
+    }
+    Ok(settle(e, keychain::get(&service(&e.vault), &account(&e.origin, &e.username))?))
+}
+
+/// A saved password for background work (sync, "is this one saved already?"): never makes the system ask.
+/// None when it would have to, or when nothing is saved.
+pub fn password_quiet(e: &Entry) -> Option<String> {
+    match read_quietly(e) {
+        Ok(pw) => settle(e, pw),
+        Err(_) => known().get(&id(&e.vault, &e.origin, &e.username)).cloned(),
+    }
 }
 
 pub fn delete(e: &Entry) -> Result<()> {
     keychain::delete(&service(&e.vault), &account(&e.origin, &e.username))?;
+    known().remove(&id(&e.vault, &e.origin, &e.username));
     stamp(&e.vault, &e.origin, &e.username, crate::state::now(), true);
     Ok(())
 }
@@ -541,23 +638,27 @@ pub fn signature(vaults: &[String]) -> String {
 }
 
 /// Every password in these vaults, plus the ones deleted here, for the other machines. Passwords unchanged since
-/// `previous` (this machine's last export) are reused, so only new or changed ones are read: each read can make the Keychain ask.
-pub fn export(vaults: &[String], previous: &[Synced]) -> Vec<Synced> {
+/// `previous` (this machine's last export) are reused, and the rest are read without asking. False when some couldn't be
+/// read that way and were left out: they join once the user has used them.
+pub fn export(vaults: &[String], previous: &[Synced]) -> (Vec<Synced>, bool) {
     let st = stamps();
     let before: std::collections::HashMap<String, &Synced> =
         previous.iter().filter(|p| !p.deleted && !p.password.is_empty()).map(|p| (format!("{}\n{}\n{}", p.vault, p.origin, p.username), p)).collect();
-    let mut out: Vec<Synced> = list(vaults)
+    let all = list(vaults);
+    let total = all.len();
+    let mut out: Vec<Synced> = all
         .into_iter()
         .filter_map(|e| {
             let k = format!("{}\n{}\n{}", e.vault, e.origin, e.username);
             let modified = st.get(&k).map_or(0, |s| s.modified);
             let pw = match before.get(&k).filter(|p| p.modified == modified) {
                 Some(p) => p.password.clone(),
-                None => password(&e).ok().flatten()?,
+                None => password_quiet(&e)?,
             };
             Some(Synced { vault: e.vault, origin: e.origin, username: e.username, password: pw, modified, deleted: false })
         })
         .collect();
+    let complete = out.len() == total;
     for (k, s) in st.iter().filter(|(_, s)| s.deleted) {
         let mut parts = k.splitn(3, '\n');
         if let (Some(v), Some(o), Some(u)) = (parts.next(), parts.next(), parts.next()) {
@@ -566,7 +667,7 @@ pub fn export(vaults: &[String], previous: &[Synced]) -> Vec<Synced> {
             }
         }
     }
-    out
+    (out, complete)
 }
 
 /// The newest of each password across `lists` (other machines' exports).
@@ -598,9 +699,13 @@ pub fn import(remote: &[Synced], vaults: &[String]) -> usize {
             continue;
         }
         let (ok, changed) = if e.deleted {
-            (!have || keychain::delete(&service(&e.vault), &account(&e.origin, &e.username)).is_ok(), have)
+            let gone = !have || keychain::delete(&service(&e.vault), &account(&e.origin, &e.username)).is_ok();
+            if gone {
+                known().remove(&k);
+            }
+            (gone, have)
         } else {
-            let same = have && password(&Entry { vault: e.vault.clone(), origin: e.origin.clone(), username: e.username.clone() }).ok().flatten().as_deref() == Some(e.password.as_str());
+            let same = have && password_quiet(&Entry { vault: e.vault.clone(), origin: e.origin.clone(), username: e.username.clone() }).as_deref() == Some(e.password.as_str());
             (same || store(&e.vault, &e.origin, &e.username, &e.password).is_ok(), !same)
         };
         if ok {
@@ -652,9 +757,34 @@ mod tests {
         save(&vault, &e.origin, &e.username, "second").unwrap(); // update, not duplicate
         assert_eq!(list(&[vault.clone()]), vec![e.clone()]);
         assert_eq!(password(&e).unwrap().as_deref(), Some("second"));
+        assert_eq!(password_quiet(&e).as_deref(), Some("second"));
+        let (all, complete) = export(&[vault.clone()], &[]);
+        assert!(complete && all.iter().any(|s| s.password == "second"));
         delete(&e).unwrap();
+        assert_eq!(password_quiet(&e), None);
         assert!(list(&[vault]).is_empty());
         assert_eq!(password(&e).unwrap(), None);
+    }
+
+    /// A password the Keychain would ask about (as after an update) reads as "can't" in the background, and comes from
+    /// the synced copy instead. Opt-in like the one above; if it regresses, a Keychain window appears: click Deny.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn keychain_quiet_reads_never_ask() {
+        let vault = format!("Test {}", crate::mcp::random_hex());
+        let e = Entry { vault: vault.clone(), origin: "https://example.test".into(), username: "me".into() };
+        let (svc, acct) = (service(&vault), account(&e.origin, &e.username));
+        // Only /usr/bin/true may read this one, so for this test it's another build's item.
+        let made = std::process::Command::new("security").args(["add-generic-password", "-s", &svc, "-a", &acct, "-w", "theirs", "-T", "/usr/bin/true"]).status().unwrap();
+        assert!(made.success());
+        assert!(keychain::get_quiet(&svc, &acct).is_err());
+        assert_eq!(password_quiet(&e), None);
+        assert_eq!(export(&[vault.clone()], &[]), (vec![], false));
+        seed(&[Synced { vault: vault.clone(), origin: e.origin.clone(), username: e.username.clone(), password: "copy".into(), modified: 0, deleted: false }]);
+        assert_eq!(password_quiet(&e).as_deref(), Some("copy"));
+        assert_eq!(password(&e).unwrap().as_deref(), Some("copy"));
+        let _ = std::process::Command::new("security").args(["delete-generic-password", "-s", &svc, "-a", &acct]).output();
     }
 
     #[test]

@@ -73,6 +73,8 @@ pub struct Options {
     pub chats: Option<PathBuf>,
     /// Password vaults to sync (empty = passwords don't).
     pub vaults: Vec<String>,
+    /// Use this machine's synced copy of a password where the Keychain would ask (passwords.fewer_keychain_prompts).
+    pub fewer_keychain_prompts: bool,
     /// Hold plugins and agent programs other machines add until they're allowed here.
     pub hold: bool,
     /// Replace the repo's history with one commit (after encryption is turned on, so nothing readable stays).
@@ -306,12 +308,25 @@ fn write_mine(dir: &Path, me: &DeviceTabs, opt: &Options, st: &mut State) -> Res
     }
     if !opt.vaults.is_empty() {
         let sig = crate::passwords::signature(&opt.vaults);
-        let path = format!("devices/{}.passwords.enc", me.id);
-        if sig != st.passwords || !dir.join(&path).exists() {
-            let previous = std::fs::read(dir.join(&path)).ok().and_then(|b| crate::crypt::open(key, &b).ok()).and_then(|b| serde_json::from_slice::<Vec<crate::passwords::Synced>>(&b).ok()).unwrap_or_default();
-            let all = crate::passwords::export(&opt.vaults, &previous);
-            std::fs::write(dir.join(&path), crate::crypt::seal(key, &serde_json::to_vec(&all)?))?;
-            st.passwords = sig;
+        let file = dir.join(format!("devices/{}.passwords.enc", me.id));
+        let mine = || std::fs::read(&file).ok().and_then(|b| crate::crypt::open(key, &b).ok()).and_then(|b| serde_json::from_slice::<Vec<crate::passwords::Synced>>(&b).ok());
+        // Once a launch: this machine's own copy stands in where the Keychain would ask before giving a password.
+        static SEEDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if opt.fewer_keychain_prompts && !SEEDED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            crate::passwords::seed(&mine().unwrap_or_default());
+        }
+        if sig != st.passwords || !file.exists() {
+            let previous = mine();
+            let (all, complete) = crate::passwords::export(&opt.vaults, previous.as_deref().unwrap_or_default());
+            // Sealing gives different bytes each time, so only write a list that changed.
+            if previous.as_ref() != Some(&all) {
+                std::fs::write(&file, crate::crypt::seal(key, &serde_json::to_vec(&all)?))?;
+            }
+            if complete {
+                st.passwords = sig;
+            } else {
+                crate::log::line("sync", "some saved passwords weren't synced: the Keychain would have asked for them. They sync once they've been used here");
+            }
         }
     }
     if let Some(chats) = &opt.chats {
