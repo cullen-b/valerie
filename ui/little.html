@@ -32,9 +32,9 @@ body {
 body.private { background: linear-gradient(90deg, #1b1a21, #25222e); --fg: #ecebf5; --dim: rgba(236,235,245,.55); --hover: rgba(255,255,255,.08); }
 body.private #priv { display: flex; }
 body.private #split { display: none; }
-/* little_window.top_bar: hover: the bar's contents rise up from behind the page as it slides out */
-body.rise > * { animation: rise .2s cubic-bezier(.2,.8,.2,1); }
-@keyframes rise { from { transform: translateY(16px); opacity: 0; } }
+/* little_window.top_bar: hover: the bar's contents fade in as the window's top glides up to show it */
+body.rise > * { animation: rise .28s cubic-bezier(.22,1,.36,1); }
+@keyframes rise { from { transform: translateY(5px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { body.rise > * { animation: none; } }
 body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
 </style>

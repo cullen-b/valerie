@@ -122,6 +122,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["hover", "always"].contains(&c.little_window.top_bar.as_str()) {
                 problems.push(format!("little_window: top_bar is {:?}; use hover or always", c.little_window.top_bar));
             }
+            if !["room", "over"].contains(&c.little_window.full_screen_bar.as_str()) {
+                problems.push(format!("little_window: full_screen_bar is {:?}; use room or over", c.little_window.full_screen_bar));
+            }
             if !(16.0..=120.0).contains(&c.sidebar.tab_height) {
                 problems.push(format!("sidebar: tab_height is {}; use a number of pixels from 16 to 120", c.sidebar.tab_height));
             }

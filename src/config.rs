@@ -920,6 +920,8 @@ pub struct CaptureConfig {
 pub struct LittleWindowConfig {
     pub enabled: bool,
     pub top_bar: String,
+    #[serde(default = "room")]
+    pub full_screen_bar: String,
     pub space_picker: bool,
     pub copy_button: bool,
     pub keep_open_when_main_closes: bool,
@@ -1175,6 +1177,10 @@ pub struct AgentJob {
     pub at: Option<String>,
     #[serde(default = "yes")]
     pub enabled: bool,
+}
+
+fn room() -> String {
+    "room".into()
 }
 
 fn cmd_n() -> String {
