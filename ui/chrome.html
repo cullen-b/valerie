@@ -29,6 +29,15 @@ html.vibrant body { background: linear-gradient(160deg, color-mix(in srgb, var(-
 html.vibrant { background: transparent; }
 #sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; transition: opacity .12s; }
 #sidebar.hidden { opacity: 0; transition: opacity .15s .2s; }
+/* layout.reveal_sidebar_over_page: the peeked sidebar floats over the page in a view of its own width */
+html.floating.vibrant body { background: linear-gradient(160deg, var(--bg1), var(--bg2)); }
+html.floating body.left { box-shadow: inset -1px 0 0 rgba(0,0,0,.28); }
+html.floating body.right { box-shadow: inset 1px 0 0 rgba(0,0,0,.28); }
+html.floating body.left #sidebar:not(.hidden) { animation: float-in-left .18s cubic-bezier(.2,.8,.2,1); }
+html.floating body.right #sidebar:not(.hidden) { animation: float-in-right .18s cubic-bezier(.2,.8,.2,1); }
+@keyframes float-in-left { from { transform: translateX(-28px); opacity: 0; } }
+@keyframes float-in-right { from { transform: translateX(28px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { html.floating body #sidebar:not(.hidden) { animation: none; } }
 body.right #sidebar { right: 0; }
 body.left #sidebar { left: 0; }
 .drag { height: 40px; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-left: 76px; }
@@ -364,6 +373,11 @@ function middleClick(t) {
 }
 const isActive = (t) => t.id === S.active || (S.split.includes(t.id) && S.split.includes(S.active));
 const click = (fn) => (e) => { if (!suppressClick) fn(e); };
+// Clicking a tab shows it; with sidebar.alt_click_to_split, Option-click (Alt) shows it in split view beside the tab you're on.
+function openTab(e, id) {
+  if (e && e.altKey && S.sidebar.alt_click_to_split !== false && S.active != null && id !== S.active) return cmd({ cmd: "split_view", tab: id });
+  cmd({ cmd: "activate_tab", tab: id });
+}
 
 // ---------- drag and drop (pointer based; HTML5 DnD is unreliable inside native webviews) ----------
 // Every tab element gets a source {id, list, index}; drop zones carry {kind, list, index, payload}. While dragging, the
@@ -662,7 +676,7 @@ function tile(t, list, index) {
     x.onclick = (e) => { e.stopPropagation(); closeHere([t.id]); };
     f.append(x);
   }
-  f.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
+  f.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) openTab(e, t.id); });
   f.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   f.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "t" + t.id)) tabMenu(e, t); };
   pickable(f, "t" + t.id);
@@ -693,7 +707,7 @@ function tabRow(t, list, index) {
   };
   if (remove || !(minus && !t.loaded)) r.append(x);
   r.title = t.url;
-  r.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) cmd({ cmd: "activate_tab", tab: t.id }); });
+  r.onclick = click((e) => { if (!pickClick(e, "t" + t.id)) openTab(e, t.id); });
   r.onauxclick = (e) => { if (e.button === 1) middleClick(t); };
   r.oncontextmenu = (e) => { e.preventDefault(); if (!pickMenu(e, "t" + t.id)) tabMenu(e, t); };
   pickable(r, "t" + t.id);
@@ -1066,6 +1080,7 @@ function render(state) {
   b.className = (hadPointer ? "pointer " : "") + (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
     (drag && drag.active ? " dragging" : "") + (resizing ? " resizing" : "");
   const hidden = !S.layout.sidebar_visible && !S.peek;
+  root.classList.toggle("floating", !!S.peek_float);
   $("#sidebar").classList.toggle("hidden", hidden);
   const O = S.sidebar;
   const empty = $("#empty");
@@ -1303,7 +1318,7 @@ function renderTop() {
   all.forEach((t) => {
     const c = el("div", "chip" + (t.id === S.active ? " active" : ""));
     c.append(icon(t, "ico", "top")); if (!t.pinned && !S.favorites.includes(t)) c.append(el("div", "title", t.title || host(t.url)));
-    c.title = t.title; c.onclick = () => cmd({ cmd: "activate_tab", tab: t.id });
+    c.title = t.title; c.onclick = (e) => openTab(e, t.id);
     c.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
     tabs.append(c);
   });

@@ -114,6 +114,7 @@ sidebar:
                            # sidebar (× on a pinned tab does the same). false = × everywhere
   remove_closed_saved_tabs: true # a closed (unloaded) pinned or kept row shows × on hover: it removes the tab from the
                            # sidebar. So − then × (pointer still on the row) closes it for good. false = no button once closed
+  close_folder_with_last_tab: true # closing (−) the last open tab in a folder also folds the folder up. false = it stays open
   new_tab_button: false    # the "+ New Tab" row
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
@@ -141,6 +142,7 @@ sidebar:
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false
   drop_to_split: true      # drop a tab on the middle of another to open the two side by side in split view. true | false
+  alt_click_to_split: true # Option-click a tab (Alt-click on Windows and Linux) to show it in split view beside the tab you're on. true | false
   drag_folders: true       # drag a folder by its row to move it (its tabs come along): reorder, put it in another folder,
                            # move it between pinned and kept, or rest on a space's button to take it there. true | false
   reorder_spaces: true     # drag a space's button along the bottom of the sidebar to change the order of your spaces. true | false
