@@ -1065,6 +1065,7 @@ pub struct VimConfig {
     pub hold_scroll_max_speed: f64,
     pub hint_characters: String,
     pub excluded_hosts: Vec<String>,
+    pub pass_at_edge: Vec<String>,
     pub bindings: BTreeMap<String, Option<serde_json::Value>>,
 }
 
@@ -1127,6 +1128,7 @@ pub struct UpdatesConfig {
     pub install: String,
     pub feed: String,
     pub channel: String,
+    pub roll_back_on_crash: bool,
 }
 
 impl UpdatesConfig {

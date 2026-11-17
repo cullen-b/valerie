@@ -781,6 +781,7 @@ vim:
   hold_scroll_max_speed: 14000     # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
   excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
+  pass_at_edge: ["youtube.com"]   # on these sites a scroll key with nowhere left to go goes to the site instead (k at the top pauses YouTube); [] turns it off
   bindings:
     "j": scroll_down
     "k": scroll_up
@@ -1018,6 +1019,8 @@ updates:
                            # back to stable from a newer edge build waits for stable to catch up (no downgrades)
   feed: "https://github.com/cullen-b/valerie/releases/latest/download/latest.json"   # where stable releases are
                            # described (a fork can point this at its own releases)
+  roll_back_on_crash: true # when a new version crashes within 2 minutes of opening twice in a row, go back to the
+                           # version you had before and skip the bad one until a newer one is out (macOS). true | false
 
 # Every change to your settings, plugins, styles and layouts, whether you, an AI or another app made it. "Change History"
 # in the command bar lists them and goes back to any of them exactly; going back deletes nothing, so it can be undone the

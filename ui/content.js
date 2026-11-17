@@ -1154,6 +1154,14 @@ function editable(e) {
 }
 function deepActive() { let a = document.activeElement; while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement; return a; }
 function excluded() { const h = location.hostname; return (cfg.vim.excluded_hosts || []).some((x) => h === x || h.endsWith("." + x)); }
+// On vim.pass_at_edge sites a scroll key with nowhere left to go reaches the page (k at the top pauses YouTube).
+function passAtEdge(dx, dy) {
+  const h = location.hostname;
+  if (!(cfg.vim.pass_at_edge || []).some((x) => h === x || h.endsWith("." + x)) || glide.raf || hold.key) return false;
+  const el = scroller();
+  if (dy) return dy < 0 ? el.scrollTop <= 0 : el.scrollTop >= el.scrollHeight - el.clientHeight - 1;
+  return dx < 0 ? el.scrollLeft <= 0 : el.scrollLeft >= el.scrollWidth - el.clientWidth - 1;
+}
 
 function run(action) {
   if (typeof action === "string" && PAGE_ACTIONS.has(action)) {
@@ -1200,6 +1208,7 @@ window.addEventListener("keydown", (e) => {
   // Key repeat on a scroll key means it's being held: switch to accelerating continuous scrolling.
   const HOLDS = { scroll_down: [0, 1], scroll_up: [0, -1], scroll_left: [-1, 0], scroll_right: [1, 0] };
   if (!buffer && HOLDS[b[e.key]]) {
+    if (!e.repeat && passAtEdge(...HOLDS[b[e.key]])) return;
     e.preventDefault(); e.stopImmediatePropagation();
     if (cfg.vim.hold_to_accelerate === false) return run(b[e.key]);
     if (e.repeat || hold.key) return; // already gliding or holding
