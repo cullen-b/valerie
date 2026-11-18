@@ -51,7 +51,7 @@ Valerie's binary: `{exe}`
    `"{exe}" check-agents` asks each installed AI app a one-line question and says which ones answer (for "my AI
    doesn't work"); `agents.default` picks the one Valerie uses.
 4. Check how it looks when it's about Valerie's own look: `"{exe}" call screenshot_ui '{{"part": "sidebar"}}'` saves a
-   picture of the sidebar (also command_bar, chats, welcome, plugins); `"{exe}" call read_ui '{{}}'` lists its elements,
+   picture of the sidebar (also command_bar, chats, welcome, plugins, answer); `"{exe}" call read_ui '{{}}'` lists its elements,
    ids and classes.
 5. Check it works: run it, then read what happened in Valerie's log (`"{exe}" call read_logs '{{"since_minutes": 5}}'`;
    a plugin's own messages and errors are under `"area": "plugin:<name>"`). Fix and try again until the log is clean.
