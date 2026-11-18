@@ -67,6 +67,8 @@ pub enum UserEvent {
     PrepareLittle,
     /// A little window's bar finished sliding out or away.
     LittleBarSlid(WindowId),
+    /// Time to look where the mouse is over little windows whose page is still loading (`watch_little_tops`).
+    LittleTopWatch,
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
@@ -221,6 +223,10 @@ struct Little {
     sliding: bool,
     /// Where the mouse asked the bar to go while it was sliding: done once the slide ends.
     bar_wanted: Option<bool>,
+    /// The page showing is still on its way, so its own script can't yet see the mouse reach the top.
+    loading: bool,
+    /// The mouse's height in the window (logical pixels) when it was last looked at while loading.
+    last_mouse_y: Option<f64>,
     /// The profile its page was made with (cookies and logins), so it can move into a tab of the same profile.
     profile: String,
     /// The number of the tab showing (`view`, `url`, `title` and `zoom` are its); `others` holds the rest.
@@ -420,6 +426,8 @@ pub struct App {
     adopted: HashMap<WindowId, (TabId, Window)>,
     /// A little window made ahead and kept hidden, so a link appears in one at once (`little_window.keep_one_ready`).
     ready_little: Option<Little>,
+    /// A `LittleTopWatch` is on its way.
+    little_top_watching: bool,
     focused_little: Option<WindowId>,
     /// The main window was closed while a little window stayed open (`little_window.keep_open_when_main_closes`).
     main_hidden: bool,
@@ -1608,6 +1616,7 @@ impl App {
             littles: HashMap::new(),
             adopted: HashMap::new(),
             ready_little: None,
+            little_top_watching: false,
             focused_little: None,
             main_hidden: false,
             config,
@@ -3432,6 +3441,46 @@ impl App {
         }
     }
 
+    /// While a little window's page loads, its own script can't see the mouse, so Valerie looks itself
+    /// (`little_window.top_bar: hover`): the bar slides out when the mouse comes up to the window's top, and away
+    /// when it leaves for the page below or the window's sides. Looks again shortly while any page is still loading.
+    fn watch_little_tops(&mut self) {
+        if !self.little_bar_hides() || self.little_top_watching {
+            return;
+        }
+        let mut moves = Vec::new();
+        let mut any = false;
+        for (id, l) in self.littles.iter_mut().filter(|(_, l)| l.loading) {
+            any = true;
+            let (Ok(mouse), Ok(at)) = (l.window.cursor_position(), l.window.inner_position()) else { continue };
+            let scale = l.window.scale_factor();
+            let size = l.window.inner_size().to_logical::<f64>(scale);
+            let (x, y) = ((mouse.x - at.x as f64) / scale, (mouse.y - at.y as f64) / scale);
+            let over = l.window.is_focused() && (0.0..size.width).contains(&x) && y < size.height;
+            let before = l.last_mouse_y.replace(y);
+            if l.sliding || !over && !l.bar_out {
+                continue;
+            }
+            // Like the page's own checks, only a move counts: up into the top, or down and away, not a resting mouse.
+            if !l.bar_out && (0.0..=6.0).contains(&y) && before.is_some_and(|b| b > y) {
+                moves.push((*id, true));
+            } else if l.bar_out && before.is_some_and(|b| b != y) && (!over && y >= 0.0 || y > LITTLE_BAR + 56.0) {
+                moves.push((*id, false));
+            }
+        }
+        for (id, out) in moves {
+            self.set_little_bar(id, out);
+        }
+        if any {
+            self.little_top_watching = true;
+            let p = self.proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                send(&p, UserEvent::LittleTopWatch);
+            });
+        }
+    }
+
     /// The bar's slide ended: settle the layout, then go where the mouse asked meanwhile.
     fn little_bar_slid(&mut self, id: WindowId) {
         let Some(l) = self.littles.get_mut(&id) else { return };
@@ -4726,10 +4775,11 @@ impl App {
         let id = l.window.id();
         // An empty one opens with its bar out, so its address box shows; it hides like any other once a page loads.
         let bar_out = url == LITTLE_BLANK;
-        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, bar_out, bar_over: false, sliding: false, bar_wanted: None, ..l });
+        self.littles.insert(id, Little { url: url.to_string(), title: String::new(), space, zoom, bar_out, bar_over: false, sliding: false, bar_wanted: None, loading: url != LITTLE_BLANK, last_mouse_y: None, ..l });
         self.layout_little(id);
         self.focused_little = Some(id);
         self.render_little(id);
+        self.watch_little_tops();
         self.prepare_little_later();
         trace("little window built");
     }
@@ -4777,7 +4827,7 @@ impl App {
                 return None;
             }
         };
-        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, sliding: false, bar_wanted: None, profile: if private { String::new() } else { profile }, page: 0, others: Vec::new(), order: vec![0] })
+        Some(Little { window, bar, view, url: url.to_string(), title: String::new(), space, zoom: 1.0, usual_size: size.is_none() && !private, private, bar_out: false, bar_over: false, sliding: false, bar_wanted: None, loading: false, last_mouse_y: None, profile: if private { String::new() } else { profile }, page: 0, others: Vec::new(), order: vec![0] })
     }
 
     /// A new tab in little window `id` (`little_window.tabs`): `input` (an address or a search), or an empty one asking
@@ -8953,9 +9003,16 @@ impl App {
                     if self.littles.contains_key(&id) {
                         trace(if finished { "little page finished" } else { "little page started" });
                     }
-                    if let Some((u, _)) = self.littles.get_mut(&id).and_then(|l| l.page_mut(n)) {
-                        *u = url.clone();
+                    if let Some(l) = self.littles.get_mut(&id) {
+                        if n == l.page {
+                            l.loading = !finished;
+                            l.last_mouse_y = None;
+                        }
+                        if let Some((u, _)) = l.page_mut(n) {
+                            *u = url.clone();
+                        }
                     }
+                    self.watch_little_tops();
                     if finished && self.littles.contains_key(&id) {
                         self.after_load(Target::Little(id, n), &url, false);
                     }
@@ -9541,6 +9598,10 @@ impl App {
             UserEvent::DrawTimeout(id) => self.drawn(id),
             UserEvent::PrepareLittle => self.prepare_little(elwt),
             UserEvent::LittleBarSlid(id) => self.little_bar_slid(id),
+            UserEvent::LittleTopWatch => {
+                self.little_top_watching = false;
+                self.watch_little_tops();
+            }
             UserEvent::DiscoverModels => self.discover_models(),
             UserEvent::ModelsFound { cli, models } => {
                 self.found_models.insert(cli, models);
