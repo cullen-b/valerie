@@ -137,6 +137,7 @@ changed in plain words. Some translations:
 | "Videos shouldn't play by themselves" | `tabs.autoplay_in_background: false`, `tabs.picture_in_picture_on_leave: false` |
 | "A video tab should start playing when I open it" / "…shouldn't" | `tabs.play_when_shown: true` / `false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
+| "Close old tabs even while the window is open" | `tabs.archive_while_window_open: true` |
 | "Turn off that plugin / extension" | `"{exe}" plugins off <name>` (`on` to turn it back on; add `--extension` when a plugin has the same name) |
 | "Find me a plugin for…" / "is there a plugin that…" | `"{exe}" plugins search <words>`, then `"{exe}" plugins install <name>`; "Plugins" in the command bar browses them |
 | "Don't update by yourself" / "ask before updating" | `updates.install: ask` (or `off` to only be told) |
