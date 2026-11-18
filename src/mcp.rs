@@ -897,10 +897,10 @@ pub fn tools() -> Vec<Value> {
             "body": { "type": "string", "description": "Markdown: what happened, steps to make it happen, what they expected, version and computer, the log lines that matter" },
             "issue": { "type": "integer", "description": "An existing issue's number: add the report there as a comment instead" } }), &["body"]),
         tool("screenshot_ui", "Capture Valerie's own interface as a PNG (to check a change to its look).",
-             json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins, little_bar (the front little window's top bar) or panel:<block id> for a layout's panel" },
+             json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins, answer (the answer to a question asked in find), little_bar (the front little window's top bar) or panel:<block id> for a layout's panel" },
                      "width": { "type": "integer" } }), &[]),
         tool("read_ui", "Read Valerie's own interface: its visible text and an outline of elements with their ids and classes \
-             (the names to use in ui/*.css).", json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins, little_bar (the front little window's top bar) or panel:<block id> for a layout's panel" } }), &[]),
+             (the names to use in ui/*.css).", json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins, answer (the answer to a question asked in find), little_bar (the front little window's top bar) or panel:<block id> for a layout's panel" } }), &[]),
     ];
     let ask = ASK_USER.load(std::sync::atomic::Ordering::Relaxed);
     all.into_iter().filter(|t| (web || !WEB.contains(&t["name"].as_str().unwrap_or(""))) && (ask || t["name"] != "ask_user")).collect()

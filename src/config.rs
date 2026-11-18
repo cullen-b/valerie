@@ -982,6 +982,8 @@ pub struct LittleWindowConfig {
     pub new_window_key: String,
     #[serde(default = "yes")]
     pub tabs: bool,
+    #[serde(default = "yes")]
+    pub open_all_tabs: bool,
     pub width: f64,
     pub height: f64,
 }

@@ -583,6 +583,8 @@ little_window:
   tabs: true               # a little window can hold tabs: ⌘T (Ctrl+T) and the command bar open a new tab in it, and
                            # its tabs show in the top bar once there are two. true | false (false = one page each;
                            # the command bar opens in the main window)
+  open_all_tabs: true      # "Open in …" on a little window with tabs moves all of its tabs into your tabs, in its
+                           # order. true | false (false = only the tab showing moves; the others close)
   width: 960               # pixels, until you've resized one (or always, with remember_size off)
   height: 700              # pixels, same
 
