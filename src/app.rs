@@ -109,8 +109,8 @@ pub enum UserEvent {
     /// A terminal panel shell printed something (take it from its `pending`), or ended.
     TermOutput { id: u32 },
     TermExit { id: u32 },
-    PageAnswer { tab: TabId, ev: crate::ai::Ev },
-    PageAnswerDone { tab: TabId },
+    PageAnswer { tab: Target, ev: crate::ai::Ev },
+    PageAnswerDone { tab: Target },
     /// A chat-mode AI action whose {selection} has been read from the page.
     AiActionReady { prompt: String, agent: Option<String> },
     /// A task's agent finished: its answer, or why it failed.
@@ -353,11 +353,13 @@ pub struct App {
     /// The models each CLI says it has: { id, label, group?, efforts? }.
     found_models: std::collections::BTreeMap<String, Vec<Value>>,
     /// Each tab's last question from find: (question, answer so far, agent), for "Open in Chats".
-    page_answers: HashMap<TabId, (String, String, String)>,
+    page_answers: HashMap<Target, (String, String, String)>,
     page_ask_times: Vec<std::time::Instant>,
     /// Valerie's own panel for answers to questions from find (the page can't see into it), its tab and height.
     answer_view: Option<WebView>,
-    answer_tab: Option<TabId>,
+    answer_tab: Option<Target>,
+    /// The little window the answer panel was built in (None: the main window).
+    answer_window: Option<WindowId>,
     answer_height: f64,
     answer_label: String,
     /// Tasks running right now (by name).
@@ -1572,6 +1574,7 @@ impl App {
             page_ask_times: Vec::new(),
             answer_view: None,
             answer_tab: None,
+            answer_window: None,
             answer_height: 120.0,
             answer_label: String::new(),
             tasks_running: Default::default(),
@@ -2581,19 +2584,8 @@ impl App {
         }
         self.layout_split_handles(&rects, y, h);
         self.layout_panels(size.width, size.height);
-        if let Some(av) = &self.answer_view {
-            match self.answer_tab.filter(|t| panes.contains(t)) {
-                Some(_) => {
-                    let (ax, ay, aw, ah) = self.answer_rect();
-                    let _ = av.set_bounds(rect(ax, ay, aw, ah));
-                    platform::follow_window(av, platform::Follow::TopRight);
-                    let _ = av.set_visible(true);
-                    platform::bring_to_front(av);
-                }
-                None => {
-                    let _ = av.set_visible(false);
-                }
-            }
+        if self.answer_window.is_none() {
+            self.layout_answer();
         }
         // A layout with a chats block shows a chat all the time, so it's built as soon as the block is there.
         if self.chats_block_rect().is_some() && self.chat_view.is_none() {
@@ -3359,6 +3351,9 @@ impl App {
                 platform::bring_to_front(&l.bar);
             }
             platform::set_traffic_lights_hidden(&l.window, !shown);
+        }
+        if self.answer_window == Some(id) {
+            self.layout_answer();
         }
     }
 
@@ -4946,13 +4941,37 @@ impl App {
         if self.littles.get(&id).is_some_and(|l| l.private) {
             return self.toast("A private window's page can't move into your tabs: copy its link instead");
         }
-        if let Some(l) = self.littles.remove(&id) {
+        if let Some(mut l) = self.littles.remove(&id) {
             let url = l.url.clone();
             let target = space.and_then(|s| self.state.space_index(&s)).unwrap_or(l.space);
+            let (shown, order) = (l.page, std::mem::take(&mut l.order));
+            let others = if self.config.little_window.open_all_tabs { std::mem::take(&mut l.others) } else { Vec::new() };
             self.focused_little = None;
-            if let Err(l) = self.adopt_little(id, l, target) {
-                drop(l);
-                self.open_tab(&url, Some(target), true);
+            let main = match self.adopt_little(id, l, target) {
+                Ok(()) => self.adopted.get(&id).map(|(tab, _)| *tab),
+                Err(l) => {
+                    drop(l);
+                    Some(self.open_tab(&url, Some(target), true))
+                }
+            };
+            // The window's other tabs open beside it, in the order its bar showed them.
+            let mut moved = Vec::new();
+            for n in order {
+                if n == shown {
+                    moved.extend(main);
+                } else if let Some(p) = others.iter().find(|p| p.n == n && !p.url.is_empty() && p.url != LITTLE_BLANK) {
+                    moved.push(self.open_tab(&p.url, Some(target), false));
+                }
+            }
+            drop(others);
+            if moved.len() > 1 {
+                let today = &mut self.state.spaces[target].today;
+                let at = moved.iter().filter_map(|t| today.iter().position(|x| x == t)).min().unwrap_or(0);
+                today.retain(|t| !moved.contains(t));
+                let at = at.min(today.len());
+                today.splice(at..at, moved);
+                self.dirty = true;
+                self.render();
             }
             self.show_main();
             self.focus_active();
@@ -6766,8 +6785,8 @@ impl App {
                     let n = l.order.get(*index).copied().unwrap_or(l.page);
                     return self.little_show_tab(id, n);
                 }
-                // With other tabs, only this one moves to the main window (it loads again there).
-                Command::MoveToMainWindow { space } if more && !l.private => {
+                // With other tabs and `little_window.open_all_tabs` off, only this one moves (it loads again there).
+                Command::MoveToMainWindow { space } if more && !l.private && !self.config.little_window.open_all_tabs => {
                     let (url, to) = (l.url.clone(), space.as_ref().and_then(|s| self.state.space_index(s)).unwrap_or(l.space));
                     self.little_close_tab(id);
                     self.focused_little = None;
@@ -8697,7 +8716,7 @@ impl App {
             }
             (Source::Page(Target::Tab(id)), "reply") => self.page_reply(id, &m),
             (Source::Page(Target::Tab(id)), "help_done") => self.help_done(id, &m),
-            (Source::Page(Target::Tab(id)), "page_ask") => self.page_ask(id, &m),
+            (Source::Page(t @ (Target::Tab(_) | Target::Little(..))), "page_ask") => self.page_ask(t, &m),
             (Source::Page(Target::Tab(id)), "notify") => self.site_notification(id, &m),
             (Source::Page(Target::Tab(id)), "notify_permission") => self.notify_permission(id),
             (Source::Page(Target::Tab(id)), "location") => self.location_wanted(id),
@@ -8798,9 +8817,9 @@ impl App {
             }
             (Source::Answer, "height") => {
                 self.answer_height = m["h"].as_f64().unwrap_or(120.0);
-                self.layout();
+                self.layout_answer();
             }
-            (Source::Answer, "close") | (Source::Page(Target::Tab(_)), "answer_close") => self.close_answer(),
+            (Source::Answer, "close") | (Source::Page(Target::Tab(_) | Target::Little(..)), "answer_close") => self.close_answer(),
             (Source::Answer, "to_chat") => {
                 if let Some(t) = self.answer_tab {
                     self.close_answer();
@@ -9538,7 +9557,7 @@ impl App {
                     }
                 } else if let Some(tab) = a["answer"].as_u64().filter(|t| self.state.tabs.contains_key(t)) {
                     self.activate(tab);
-                    self.reopen_answer(tab);
+                    self.reopen_answer(Target::Tab(tab));
                 } else if let Ok(cmd) = serde_json::from_value::<Command>(a["command"].clone()) {
                     self.dispatch(cmd, elwt);
                 }
@@ -9642,7 +9661,11 @@ impl App {
                     let _ = v.evaluate_script(&format!("window.answer && answer.event({})", json!({ "type": "done", "agent": agent })));
                 }
                 // Clicked away from the answer (another tab, Esc, another app): say it's ready.
-                let shown = self.answer_tab == Some(tab) && self.shown_panes.contains(&tab);
+                let shown = self.answer_tab == Some(tab) && match tab {
+                    Target::Tab(t) => self.shown_panes.contains(&t),
+                    Target::Little(id, n) => self.littles.get(&id).is_some_and(|l| l.page == n),
+                    _ => false,
+                };
                 if let Some((q, a, _)) = self.page_answers.get(&tab).filter(|_| self.config.chats.find_answer_notification).cloned() {
                     let title: String = q.chars().take(60).collect();
                     if !shown {
@@ -9650,10 +9673,13 @@ impl App {
                     }
                     if !shown || !self.window_focused {
                         let body: String = a.chars().take(160).collect();
-                        let action = json!({ "answer": tab }).to_string();
+                        let action = match tab {
+                            Target::Tab(t) => Some(json!({ "answer": t }).to_string()),
+                            _ => None,
+                        };
                         if self.config.notifications.from_valerie {
                             self.play_notification_sound();
-                            platform::notify(&platform::Note { title: &format!("✦ {title}"), subtitle: "", body: &body, action: Some(action), sound: self.config.notifications.sound && self.config.notifications.sound_file.trim().is_empty() });
+                            platform::notify(&platform::Note { title: &format!("✦ {title}"), subtitle: "", body: &body, action, sound: self.config.notifications.sound && self.config.notifications.sound_file.trim().is_empty() });
                         }
                     }
                 }
@@ -10022,6 +10048,7 @@ impl App {
                     "terminal" => self.terminal_view.as_ref(),
                     "welcome" => self.welcome_view.as_ref(),
                     "plugins" => self.market_view.as_ref(),
+                    "answer" => self.answer_view.as_ref().filter(|_| self.answer_tab.is_some()),
                     "little_bar" => self.focused_little.or_else(|| self.littles.keys().next().copied()).and_then(|id| self.littles.get(&id)).map(|l| &l.bar),
                     part if part.starts_with("panel:") => self.panels.get(&part[6..]).map(|p| &p.view),
                     _ => Some(&self.chrome),
@@ -11412,7 +11439,7 @@ impl App {
 
     /// A question typed into find. The page can fake this message, so the agent runs with no tools at all: it only
     /// sees the page text and the question, and can only answer.
-    fn page_ask(&mut self, tab: TabId, m: &Value) {
+    fn page_ask(&mut self, tab: Target, m: &Value) {
         if !self.config.chats.ask_in_find {
             return;
         }
@@ -11434,11 +11461,15 @@ impl App {
             return answer_error(self, "That's a lot of questions in a minute: wait a moment and ask again.");
         }
         self.page_ask_times.push(now_i);
-        let run = format!("page:{tab}");
+        let run = match tab {
+            Target::Tab(t) => format!("page:{t}"),
+            Target::Little(id, n) => format!("page:little:{id:?}:{n}"),
+            _ => return,
+        };
         crate::ai::stop(&run);
         let text: String = m["text"].as_str().unwrap_or("").chars().take(self.config.chats.page_text_limit).collect();
         let title: String = m["title"].as_str().unwrap_or("").chars().take(300).collect();
-        let url = self.state.tabs.get(&tab).map(|t| t.url.clone()).unwrap_or_default();
+        let url = self.answer_url(tab);
         let (name, def) = self.config.agent_for("find");
         self.page_answers.insert(tab, (q.clone(), String::new(), name));
         let prompt = format!(
@@ -11466,15 +11497,65 @@ impl App {
 
     /// Where the answer panel sits: under the find bar, at the page's top right.
     fn answer_rect(&self) -> (f64, f64, f64, f64) {
-        let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
-        let (x, y, w, h) = self.content_area(size.width, size.height);
+        let (x, y, w, h) = match self.answer_window.and_then(|id| self.littles.get(&id)) {
+            Some(l) => {
+                let s = l.window.inner_size().to_logical::<f64>(l.window.scale_factor());
+                let top = if !self.little_bar_hides() || self.little_fills_screen(l) || l.bar_out && !l.bar_over { LITTLE_BAR } else { 0.0 };
+                (0.0, top, s.width, (s.height - top).max(1.0))
+            }
+            None => {
+                let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                self.content_area(size.width, size.height)
+            }
+        };
         let right = if self.config.find.minimap { 78.0 } else { 16.0 };
         let pw = 440.0_f64.min(w - right - 16.0).max(200.0);
         (x + w - pw - right, y + 54.0, pw, self.answer_height.clamp(60.0, (h * 0.7).max(60.0)))
     }
 
-    fn show_answer(&mut self, tab: TabId, label: &str) {
+    /// Show or hide the answer panel: over its tab while that tab is showing.
+    fn layout_answer(&self) {
+        let Some(av) = &self.answer_view else { return };
+        let showing = match self.answer_tab {
+            Some(Target::Tab(t)) => self.answer_window.is_none() && self.panes().contains(&t),
+            Some(Target::Little(id, n)) => self.answer_window == Some(id) && self.littles.get(&id).is_some_and(|l| l.page == n),
+            _ => false,
+        };
+        if showing {
+            let (ax, ay, aw, ah) = self.answer_rect();
+            let _ = av.set_bounds(rect(ax, ay, aw, ah));
+            platform::follow_window(av, platform::Follow::TopRight);
+            let _ = av.set_visible(true);
+            platform::bring_to_front(av);
+        } else {
+            let _ = av.set_visible(false);
+        }
+    }
+
+    /// The address of the page a question from find came from.
+    fn answer_url(&self, tab: Target) -> String {
+        match tab {
+            Target::Tab(t) => self.state.tabs.get(&t).map(|t| t.url.clone()).unwrap_or_default(),
+            Target::Little(id, _) => self.littles.get(&id).map(|l| l.url.clone()).unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    fn show_answer(&mut self, tab: Target, label: &str) {
+        // The panel lives in the window the question came from: a little window gets its own.
+        let window = match tab {
+            Target::Little(id, _) => Some(id),
+            _ => None,
+        };
+        if self.answer_window != window {
+            self.answer_view = None;
+            self.answer_window = window;
+        }
         if self.answer_view.is_none() {
+            let parent = match window.and_then(|id| self.littles.get(&id)) {
+                Some(l) => &l.window,
+                None => &self.window,
+            };
             let p = self.proxy.clone();
             let built = platform::ui_builder(&self.chrome)
                 .with_html(ui_page("answer.html", &self.config))
@@ -11483,7 +11564,7 @@ impl App {
                 .with_accept_first_mouse(true)
                 .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Answer, msg: r.into_body() }))
                 .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
-                .child_of(&self.window);
+                .child_of(parent);
             match built {
                 Ok(v) => {
                     platform::round_corners(&v, 12.0, platform::Corners::All);
@@ -11499,11 +11580,11 @@ impl App {
         if let Some(v) = &self.answer_view {
             let _ = v.evaluate_script(&format!("window.answer && answer.start({}, {})", json!(label), json!(accent)));
         }
-        self.layout();
+        self.layout_answer();
     }
 
     /// Show a finished answer from find again (its notification was clicked).
-    fn reopen_answer(&mut self, tab: TabId) {
+    fn reopen_answer(&mut self, tab: Target) {
         let Some((q, text, agent)) = self.page_answers.get(&tab).cloned() else { return };
         self.show_answer(tab, &q);
         if let Some(v) = &self.answer_view {
@@ -11513,18 +11594,23 @@ impl App {
     }
 
     fn close_answer(&mut self) {
-        self.answer_tab = None;
+        let tab = self.answer_tab.take();
         if let Some(v) = &self.answer_view {
             let _ = v.set_visible(false);
         }
-        self.focus_active();
+        match tab.and_then(|t| if let Target::Little(id, _) = t { self.littles.get(&id) } else { None }) {
+            Some(l) => {
+                let _ = focus_view(&l.view);
+            }
+            None => self.focus_active(),
+        }
     }
 
     /// "Open in Chats" under an answer in find: the question and answer become a chat to continue (no agent runs).
-    fn page_to_chat(&mut self, tab: TabId) {
+    fn page_to_chat(&mut self, tab: Target) {
         use crate::ai::{Chat, Msg};
         let Some((q, a, agent)) = self.page_answers.remove(&tab).filter(|(_, a, _)| !a.trim().is_empty()) else { return };
-        let url = self.state.tabs.get(&tab).map(|t| t.url.clone()).unwrap_or_default();
+        let url = self.answer_url(tab);
         let mut c = Chat::new(&self.config.agent_for("chat").0);
         let t = now();
         c.title = q.chars().take(60).collect();
