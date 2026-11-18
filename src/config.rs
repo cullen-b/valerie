@@ -398,13 +398,14 @@ pub enum SidebarPosition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabsConfig {
     pub archive_after_hours: f64,
-    pub archive_while_window_open: bool,
     pub ask_to_keep_unused_days: f64,
     pub unload_after_minutes: f64,
+    pub unload_while_window_open: bool,
     pub new_tab_position: String,
     pub autoplay_in_background: bool,
     pub play_when_shown: bool,
     pub picture_in_picture_on_leave: bool,
+    pub live_icons: bool,
     pub undo_close: bool,
     pub close_window_when_empty: bool,
     pub zoom: String,
