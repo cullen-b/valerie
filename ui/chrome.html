@@ -1298,7 +1298,15 @@ function startShown(node) {
   }
 }
 
+// A redraw between mouse down and up replaces the row under the pointer and WebKit drops the click (the × after −
+// while the next tab loads), so redraws wait for the button to come up; drags, resizes and long presses still redraw.
+let held = 0, heldState = null;
+const flushHeld = () => { held = 0; if (heldState) { const s = heldState; heldState = null; render(s); } };
+document.addEventListener("mousedown", (e) => { if (e.button === 0) held = setTimeout(flushHeld, 1000); }, true);
+document.addEventListener("mouseup", () => { if (held) { clearTimeout(held); held = 0; setTimeout(flushHeld, 0); } }, true);
 function render(state) {
+  if (held && !(drag && drag.active) && !(spDrag && spDrag.active) && !resizing && !blockDrag) { heldState = state; return; }
+  heldState = null;
   const before = S && anim("tabs") ? listSnap() : null, spFrom = S && anim("space_highlight") ? spVisual() : null;
   S = state; iconsUsed = new Set();
   folderSeen = folderNow; folderNow = new Map();
