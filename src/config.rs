@@ -405,6 +405,7 @@ pub struct TabsConfig {
     pub autoplay_in_background: bool,
     pub play_when_shown: bool,
     pub picture_in_picture_on_leave: bool,
+    pub live_icons: bool,
     pub undo_close: bool,
     pub close_window_when_empty: bool,
     pub zoom: String,

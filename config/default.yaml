@@ -300,6 +300,8 @@ tabs:
   autoplay_in_background: false   # let tabs opened in the background start playing video/audio before you look at them
   play_when_shown: true           # a video a background tab held back starts playing when you open that tab, even if the site gave up on it (true | false)
   picture_in_picture_on_leave: true  # a video that's playing pops out into a floating window when you switch away from its tab
+  live_icons: true         # a tab's icon follows the page when it changes it (GitLab/GitHub build status, unread counts);
+                           # false keeps the icon the page loaded with (true | false)
   undo_close: true         # ⌘Z (Ctrl+Z elsewhere) brings back the last closed tab when you're not typing in a box and
                            # the page doesn't use ⌘Z itself. true | false (false = ⌘Z only undoes typing; ⌘⇧T still works)
   close_window_when_empty: true  # ⌘W (Ctrl+W elsewhere) with no tab open closes the window. true | false

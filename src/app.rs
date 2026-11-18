@@ -1768,7 +1768,7 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "live_icons": self.config.tabs.live_icons, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds, "animations": animations_on(&self.config),
             "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
@@ -8546,8 +8546,9 @@ impl App {
                 let moved = real_url.clone().filter(|u| loaded && u.starts_with("http") && self.script_urls.get(&target).is_some_and(|last| last != u));
                 if let Some(t) = self.state.tabs.get_mut(&id) {
                     if let Some(f) = m["favicon"].as_str() {
-                        if matches!(scheme_of(f).as_str(), "http" | "https" | "data") && f.len() < 8192 {
+                        if matches!(scheme_of(f).as_str(), "http" | "https" | "data") && f.len() < 32768 && t.favicon.as_deref() != Some(f) {
                             t.favicon = Some(f.to_string());
+                            self.dirty = true;
                         }
                     }
                     t.playing = m["playing"].as_bool().unwrap_or(false);

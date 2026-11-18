@@ -1412,11 +1412,45 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ---------- page metadata for the sidebar ----------
+const ICON_LINKS = "link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']";
+let liveIcon = null; // the icon link the page changed last (build status, unread count): it wins over the others
+let blobIcon = ["", ""]; // a blob: icon read into a data: address, which Valerie's sidebar can show
 function favicon() {
-  const links = [...document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")];
+  if (liveIcon && liveIcon.isConnected && liveIcon.matches(ICON_LINKS) && liveIcon.href) return iconHref(liveIcon.href);
+  const links = [...document.querySelectorAll(ICON_LINKS)];
   const svg = links.find((l) => /svg/.test(l.type || l.href));
   const best = svg || links.sort((a, b) => (parseInt(b.sizes?.value) || 16) - (parseInt(a.sizes?.value) || 16)).find((l) => (parseInt(l.sizes?.value) || 16) <= 64) || links[0];
-  return best ? best.href : null;
+  return best ? iconHref(best.href) : null;
+}
+function iconHref(h) {
+  if (!h.startsWith("blob:")) return h;
+  if (blobIcon[0] !== h) {
+    blobIcon = [h, ""];
+    fetch(h).then((r) => r.blob()).then((b) => { const f = new FileReader(); f.onload = () => { if (blobIcon[0] === h) { blobIcon[1] = String(f.result); report(); } }; f.readAsDataURL(b); }).catch(() => {});
+  }
+  return blobIcon[1] || null;
+}
+// Sites change their icon to show state (GitLab and GitHub build status, Slack and Gmail unread, X's dot): follow it.
+let iconTimer = 0, iconAt = 0;
+function iconChanged(records) {
+  const changed = [];
+  for (const r of records) {
+    if (r.type === "attributes") { if (r.target.matches(ICON_LINKS)) changed.push(r.target); }
+    else {
+      for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches(ICON_LINKS)) changed.push(n);
+      for (const n of r.removedNodes) if (n.nodeType === 1 && n.matches(ICON_LINKS)) changed.removed = true;
+    }
+  }
+  if (!changed.length && !changed.removed) return;
+  if (changed.length) liveIcon = changed.find((l) => /svg/.test(l.type || l.href)) || changed[changed.length - 1];
+  // Right away: background tabs hold back timers. Animated icons: at most four updates a second.
+  if (Date.now() - iconAt >= 250) { iconAt = Date.now(); report(); }
+  else if (!iconTimer) iconTimer = setTimeout(() => { iconTimer = 0; iconAt = Date.now(); report(); }, 250);
+}
+function watchIcons() {
+  if (!(cfg.tabs && cfg.tabs.live_icons) || !document.head || watchIcons.on) return;
+  watchIcons.on = true;
+  new MutationObserver(iconChanged).observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ["href", "rel"] });
 }
 let lastMeta = "";
 function report() {
@@ -1430,7 +1464,7 @@ for (const fn of ["pushState", "replaceState"]) {
 }
 addEventListener("popstate", report); addEventListener("hashchange", report);
 document.addEventListener("play", report, true); document.addEventListener("pause", report, true); document.addEventListener("volumechange", report, true);
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", report); else report();
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => { report(); watchIcons(); }); else { report(); watchIcons(); }
 addEventListener("load", report);
 
 // ---------- a thin line along the top while the page loads (handy when the sidebar is hidden) ----------
