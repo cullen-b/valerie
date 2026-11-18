@@ -452,8 +452,6 @@ pub struct App {
     /// A question about unused saved tabs is on screen; when they were last looked for.
     asking_saved: bool,
     saved_checked: u64,
-    /// Old Today tabs were archived once since launch (otherwise only while the window is closed).
-    archived_at_launch: bool,
     /// The sync repo has a passphrase, and whether this machine knows it.
     sync_passphrase: bool,
     sync_locked: bool,
@@ -1632,7 +1630,6 @@ impl App {
             resync: false,
             asking_saved: false,
             saved_checked: 0,
-            archived_at_launch: false,
             sync_passphrase: false,
             sync_locked: false,
             asked_passphrase: None,
@@ -6680,10 +6677,7 @@ impl App {
         self.restore_next();
         let panes = self.panes();
         let archive_secs = (self.config.tabs.archive_after_hours * 3600.0) as u64;
-        // Tabs don't vanish while you're looking at the window: only at launch or while it's closed.
-        let may_archive = self.config.tabs.archive_while_window_open || self.main_hidden || !self.archived_at_launch;
-        self.archived_at_launch = true;
-        if archive_secs > 0 && may_archive {
+        if archive_secs > 0 {
             let stale: Vec<TabId> = self
                 .state
                 .spaces
@@ -6698,7 +6692,8 @@ impl App {
             }
         }
         let unload_secs = (self.config.tabs.unload_after_minutes * 60.0) as u64;
-        if unload_secs > 0 {
+        // With the window open, tabs you've opened stay loaded (graphics-buffer pressure still sleeps some).
+        if unload_secs > 0 && (self.config.tabs.unload_while_window_open || self.main_hidden) {
             let idle: Vec<TabId> = self
                 .views
                 .keys()
