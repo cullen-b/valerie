@@ -496,7 +496,7 @@ fn screenshot(port: u16, args: &[String]) -> anyhow::Result<()> {
 
 fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
     let arguments: serde_json::Value = serde_json::from_str(if args.trim().is_empty() { "{}" } else { args })?;
-    let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": tool, "arguments": arguments } });
+    let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": tool, "arguments": arguments, "_meta": { "valerie/json": true } } });
     let (status, body) = mcp::post_local(port, &mcp::load_or_create_token(), &req.to_string())
         .map_err(|_| anyhow::anyhow!("Valerie isn't running"))?;
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| anyhow::anyhow!("HTTP {status}: {body}"))?;

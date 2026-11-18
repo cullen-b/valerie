@@ -215,9 +215,10 @@ Use web_search and fetch_page alongside any other web tools you have. Reach for 
 PDFs, research across several pages, and anything another tool returned blocked, empty or thin: they have no quota and see what \
 the user sees. Keep curl for APIs and raw files.\n\
 Reading the web (no rate limits; hidden tabs with the user's logins, so sign-in pages and JavaScript apps work; the \
-user's tabs and history aren't touched): web_search finds pages (recent, news and sites filter; read: N also reads the \
-top results). fetch_page reads pages, PDFs and YouTube videos (transcript included) as Markdown; give focus (your question) to get just the sections about it, word \
-for word, and urls to read several at once.\n\
+user's tabs and history aren't touched): web_search finds pages (recent, after/before, news, images and sites filter; queries runs several \
+searches at once; read: N also reads the top results). fetch_page reads pages, PDFs and YouTube videos (transcript included) as Markdown; give focus (your question) to get just the sections about it, word \
+for word, urls to read several at once, scroll for feeds that load as you go, and offset to carry on a long page. \
+screenshot with url pictures any address in one call.\n\
 Building a site or app: check_page loads it (localhost or a file) at phone and desktop sizes and returns screenshots, \
 console errors, broken images and anything sticking out past the screen, in one call. read_network lists a page's \
 requests (status, time; bodies: true for API responses).\n\
@@ -459,6 +460,10 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
                 Ok(v) if v.get("__image_png").is_some() => {
                     json!({ "content": [{ "type": "image", "data": v["__image_png"], "mimeType": "image/png" }], "isError": false })
                 }
+                // Agents read pages and results as Markdown; `valerie call` and scripts keep the JSON.
+                Ok(v) if params["_meta"]["valerie/json"] != true && ["web_search", "fetch_page", "map_site"].contains(&name) => {
+                    json!({ "content": [{ "type": "text", "text": readable(name, &v) }], "isError": false })
+                }
                 Ok(v) => json!({ "content": [{ "type": "text", "text": text(&v) }], "isError": false }),
                 Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
             })
@@ -496,6 +501,100 @@ fn text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         v => serde_json::to_string_pretty(v).unwrap_or_default(),
+    }
+}
+
+/// Small facts as "key: value" lines (everything in `v` but `skip` and what's empty).
+fn fact_lines(v: &Value, skip: &[&str]) -> String {
+    let mut out = String::new();
+    for (k, x) in v.as_object().into_iter().flatten().filter(|(k, _)| !skip.contains(&k.as_str())) {
+        match x {
+            Value::Null => {}
+            Value::String(t) if t.trim().is_empty() => {}
+            Value::String(t) => out.push_str(&format!("{k}: {}\n", t.trim())),
+            Value::Array(list) if list.iter().all(Value::is_string) => out.push_str(&format!("{k}: {}\n", list.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))),
+            x => out.push_str(&format!("{k}: {x}\n")),
+        }
+    }
+    out
+}
+
+/// A read page the way an agent reads it: a few facts, then its Markdown as it is. In JSON every newline and quote is
+/// escaped, which costs more and flattens code samples and tables.
+fn readable_page(p: &Value) -> String {
+    let mut out = fact_lines(&json!({ "title": p["title"], "url": p["url"] }), &[]);
+    out.push_str(&fact_lines(p, &["title", "url", "content", "focus", "links", "images", "truncated", "next_offset"]));
+    if p["truncated"] == true {
+        out.push_str(&match p["next_offset"].as_u64() {
+            Some(at) => format!("truncated: true (read on with offset: {at}, or pass focus to get only the parts you need)\n"),
+            None => "truncated: true (more matched than fits: narrow the focus or raise max_chars)\n".to_string(),
+        });
+    }
+    if let Some(f) = p["focus"].as_object() {
+        out.push_str(&format!("focus: {} ({} sections matched)\n", f["query"].as_str().unwrap_or(""), f["sections_matched"]));
+        let outline: Vec<&str> = f["outline"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        if !outline.is_empty() {
+            out.push_str(&format!("outline of the whole page:\n{}\n", outline.join("\n")));
+        }
+    }
+    if let Some(c) = p["content"].as_str() {
+        out.push_str(&format!("\n---\n\n{c}\n"));
+    }
+    for (key, title) in [("links", "Links"), ("images", "Images")] {
+        if let Some(list) = p[key].as_array().filter(|l| !l.is_empty()) {
+            out.push_str(&format!("\n---\n\n{title} ({}):\n", list.len()));
+            for x in list {
+                let label = x["text"].as_str().or(x["alt"].as_str()).unwrap_or("").trim();
+                let size = x["width"].as_u64().zip(x["height"].as_u64()).map(|(w, h)| format!(" ({w}x{h})")).unwrap_or_default();
+                out.push_str(&format!("- {}{}{}{size}\n", label, if label.is_empty() { "" } else { ": " }, x["url"].as_str().unwrap_or("")));
+            }
+        }
+    }
+    out
+}
+
+fn readable_search(r: &Value) -> String {
+    let mut out = fact_lines(r, &["results"]);
+    for (i, x) in r["results"].as_array().into_iter().flatten().enumerate() {
+        out.push_str(&format!("\n{}. {}\n   {}\n", i + 1, x["title"].as_str().unwrap_or("").trim(), x["url"].as_str().unwrap_or("")));
+        let by: Vec<&str> = ["site", "date"].iter().filter_map(|k| x[*k].as_str()).collect();
+        if !by.is_empty() {
+            out.push_str(&format!("   {}\n", by.join(" · ")));
+        }
+        if let Some(t) = x["snippet"].as_str().filter(|t| !t.is_empty()) {
+            out.push_str(&format!("   {t}\n"));
+        }
+        if let Some(image) = x["image"].as_str() {
+            let size = x["width"].as_u64().zip(x["height"].as_u64()).map(|(w, h)| format!(" ({w}x{h})")).unwrap_or_default();
+            out.push_str(&format!("   image: {image}{size}\n   thumbnail: {}\n", x["thumbnail"].as_str().unwrap_or("")));
+        }
+        if let Some(c) = x["content"].as_str().filter(|c| !c.trim().is_empty()) {
+            out.push_str(&format!("\n{c}\n\n---\n"));
+        }
+    }
+    out
+}
+
+/// web_search, fetch_page and map_site answers as text to read instead of JSON.
+fn readable(name: &str, v: &Value) -> String {
+    const BETWEEN: &str = "\n\n==========\n\n";
+    match (name, v) {
+        (_, Value::String(s)) => s.clone(),
+        ("fetch_page", Value::Array(pages)) => pages.iter().map(readable_page).collect::<Vec<_>>().join(BETWEEN),
+        ("fetch_page", p) => readable_page(p),
+        ("web_search", r) if r["searches"].is_array() => r["searches"].as_array().into_iter().flatten().map(readable_search).collect::<Vec<_>>().join(BETWEEN),
+        ("web_search", r) => readable_search(r),
+        (_, m) => {
+            let mut out = fact_lines(m, &["urls", "pages"]);
+            for u in m["urls"].as_array().into_iter().flatten() {
+                out.push_str(&format!("- {}{}\n", u["url"].as_str().unwrap_or(""), u["title"].as_str().map(|t| format!(" ({t})")).unwrap_or_default()));
+            }
+            for p in m["pages"].as_array().into_iter().flatten() {
+                out.push_str(BETWEEN);
+                out.push_str(&readable_page(p));
+            }
+            out
+        }
     }
 }
 
@@ -576,31 +675,42 @@ pub fn tools() -> Vec<Value> {
     let with_args: Vec<String> = WITH_ARGS.iter().map(|(n, a)| format!("{n} {a}")).collect();
     let web = WEB_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
     let all = vec![
-        tool("web_search", "Search the web, with no quota. Get the results: title, url and snippet each, from the user's search engine in \
-             a hidden tab (their tabs and history aren't touched; no rate limits). Filter by time (recent), to news or to \
-             sites. With read: N it also reads the top N results and returns the parts of each about your question (focus), \
-             so one call answers most research questions.", json!({
+        tool("web_search", "Search the web, with no quota. Get the results: title, url, site, date and snippet each, from the user's search engine in \
+             a hidden tab (their tabs and history aren't touched; no rate limits). Filter by time (recent, or after and before), to news, to \
+             pictures (images) or to sites. With read: N it also reads the top N results and returns the parts of each about your question (focus), \
+             so one call answers most research questions. queries runs several searches at once.", json!({
             "query": { "type": "string", "description": "What to search for; operators like \"exact phrase\" and -word work" },
+            "queries": { "type": "array", "items": { "type": "string" }, "description": "Several searches at once (instead of query), up to 8; the other options apply to each" },
             "limit": { "type": "integer", "description": "Most results to return (default 10, up to 30)" },
             "recent": { "type": "string", "enum": ["day", "week", "month", "year"], "description": "Only pages from this long ago" },
+            "after": { "type": "string", "description": "Only pages from this date on, e.g. 2026-01-31" },
+            "before": { "type": "string", "description": "Only pages from before this date, e.g. 2026-06-30" },
             "news": { "type": "boolean", "description": "News articles only" },
+            "images": { "type": "boolean", "description": "Pictures instead of pages: each result has the image's address, a small copy, its size and the page it's on" },
             "sites": { "type": "array", "items": { "type": "string" }, "description": "Only these sites, e.g. [\"github.com\", \"docs.rs\"]" },
+            "exclude_sites": { "type": "array", "items": { "type": "string" }, "description": "Not these sites, e.g. [\"pinterest.com\"]" },
+            "country": { "type": "string", "description": "Results as seen from this country: a two-letter code like us, gb or de" },
             "read": { "type": "integer", "description": "Also read the top this many results (up to 5)" },
             "focus": { "type": "string", "description": "With read: what to pull out of each page (default: the query)" },
-            "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &["query"]),
+            "max_chars": { "type": "integer", "description": "With read: most characters per page (default 6000)" } }), &[]),
         tool("fetch_page", "Use this for a page that needs a login or JavaScript, or that another tool couldn't read. Read web pages and PDFs as clean Markdown, like a scraper but in a real browser with the user's \
              logins, so JavaScript apps, sign-in pages (x.com, dashboards, docs behind a login), PDFs (marked ## Page N), \
              YouTube videos (their description and timestamped transcript) and local files work, with no rate limits. \
              Give focus (a question or keywords; \"quoted phrases\" count most) to get only the sections about it, word for word \
-             under their headings, plus the page's outline: far smaller than the whole page. urls reads up to 10 at once. Runs \
-             in hidden tabs; the user's tabs and history aren't touched.", json!({
+             under their headings, plus the page's outline: far smaller than the whole page. urls reads up to 10 at once. A long \
+             page comes back with next_offset: pass it as offset to read on. Also says when the page was published and by whom, \
+             when it says so. Runs in hidden tabs; the user's tabs and history aren't touched.", json!({
             "url": { "type": "string", "description": "An address, or a file path like /Users/me/report.html" },
             "urls": { "type": "array", "items": { "type": "string" }, "description": "Several pages at once (instead of url)" },
             "focus": { "type": "string", "description": "Only the parts about this, e.g. \"rate limits for order writes\"" },
             "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Default markdown" },
             "main_only": { "type": "boolean", "description": "Only the main content, without menus, headers and footers (default true)" },
+            "selector": { "type": "string", "description": "Read only this part of the page (a CSS selector), e.g. \"#pricing\" or \"table.results\"" },
             "links": { "type": "boolean", "description": "Also list the page's links" },
+            "images": { "type": "boolean", "description": "Also list the page's pictures (address, description, size)" },
+            "scroll": { "type": "integer", "description": "Scroll down this many screens first (up to 30), for feeds, comments and lists that load more as you go" },
             "wait_for": { "type": "string", "description": "A CSS selector or text to wait for before reading (for slow pages)" },
+            "offset": { "type": "integer", "description": "Start this many characters in: the next_offset of the read before, to carry on a long page" },
             "max_chars": { "type": "integer", "description": "Longest content to return (default 40000)" } }), &[]),
         tool("map_site", "List a site's pages: from its sitemap and its links, under the address's folder (docs.rs/tokio/latest/ \
              lists just that part; under: \"/\" for the whole site). search keeps the ones about it; read: N reads the top N \
@@ -671,7 +781,8 @@ pub fn tools() -> Vec<Value> {
         tool("type", "Type text into an input, textarea, rich text box or code editor (CodeMirror, Monaco, online document editors) by ref or selector, or into whatever has the cursor. A ref on an editor's frame finds the editor inside it. Editors get the text pasted in as one edit, so whole documents with newlines work; clear: true replaces everything in the editor. Date, time, color, number and slider fields always get the whole value replaced (dates as 2026-11-15, times as 14:30). Says what the field holds afterwards if that isn't what was typed (a length limit or a format the page applies). keys: true sends the text key by key, for fields that only react to key presses (formatted phone or card fields). On a dropdown (<select>), text picks the option with that label or value; on a multiple-choice one it adds that option to the selection.", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" },
             "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" },
-            "keys": { "type": "boolean", "description": "Press each character as a key (keydown, keypress, input, keyup) instead of setting the text" } })), &["text"]),
+            "keys": { "type": "boolean", "description": "Press each character as a key (keydown, keypress, input, keyup) instead of setting the text" },
+            "fields": { "type": "array", "items": { "type": "object" }, "description": "A whole form in one call (instead of ref and text): [{ ref or selector, text, clear, keys }, …], filled in order" } })), &[]),
         tool("hover", "Move the mouse onto an element by ref or selector, for menus and tooltips that open from scripts. A page's CSS :hover styles don't change (use check_page or eval_js to look at those), so a menu that only opens on :hover stays closed: click its items with force: true.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
             "force": { "type": "boolean", "description": "Hover even if something covers it or it isn't shown" } }), &[]),
@@ -688,10 +799,16 @@ pub fn tools() -> Vec<Value> {
              Without ref, a page that doesn't scroll itself (mail and chat apps) has its biggest scrolling panel scrolled instead. \
              ref or selector alone scrolls that element into view. Says where it got to (at_top, at_bottom) and if more loaded.", json!({
             "tab": tab_prop(), "direction": { "type": "string", "enum": ["up", "down", "top", "bottom"] }, "ref": { "type": "string" }, "selector": { "type": "string" } }), &[]),
-        tool("wait_for", "Wait until a selector or text appears (and the page has loaded), inside shadow DOM and same-origin frames too.", json!({
-            "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
-        tool("screenshot", "Capture what the tab looks like as a PNG image: the visible viewport, or with full_page the whole page top to bottom.",
-             json!({ "tab": tab_prop(), "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
+        tool("wait_for", "Wait until a selector or text appears (and the page has loaded), inside shadow DOM and same-origin frames too. gone: true waits until it's no longer there (a spinner, \"Saving…\").", json!({
+            "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "gone": { "type": "boolean", "description": "Wait for it to go away instead" },
+            "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
+        tool("screenshot", "Capture what a tab looks like as a PNG image: the visible viewport, or with full_page the whole page top to bottom. \
+             With url, any address is opened out of sight, pictured and closed in one call.",
+             json!({ "tab": tab_prop(),
+                     "url": { "type": "string", "description": "Picture this address (or file path) instead of a tab, in a hidden tab with the user's logins" },
+                     "size": { "type": "string", "description": "With url: phone, tablet, laptop (default), desktop or WIDTHxHEIGHT" },
+                     "wait_for": { "type": "string", "description": "With url: a CSS selector or text to wait for first" },
+                     "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
                      "full_page": { "type": "boolean", "description": "The whole page, not just what's on screen (it's scrolled through once first, so lazy images load)" },
                      "save_to": { "type": "string", "description": "Save the PNG to this file (or folder) and return its path instead of the image" } }), &[]),
         tool("read_network", "List the page's requests since it loaded, oldest first: API calls (fetch, XHR) with method and \
@@ -1857,8 +1974,9 @@ if (document.contentType === 'application/pdf') {
     for (let i = 0; i < 50 && !window.__valeriePdfText && !window.__valeriePdfFailed; i++) await new Promise((r) => setTimeout(r, 100));
     if (!window.__valeriePdfText) throw new Error(window.__valeriePdfFailed ? 'this PDF could not be read: ' + window.__valeriePdfFailed
       : "PDFs can only be read with Valerie's PDF viewer on (pages.pdf_viewer: true)");
-    const max = A.max_chars || 40000, r = await window.__valeriePdfText(max + 1);
-    return { url: location.href, title: document.title, pdf_pages: r.pages, truncated: r.text.length > max, content: r.text.slice(0, max) };
+    const max = A.max_chars || 40000, off = A.offset || 0, r = await window.__valeriePdfText(off + max + 1);
+    const more = r.text.length > off + max;
+    return { url: location.href, title: document.title, pdf_pages: r.pages, truncated: more, next_offset: more ? off + max : undefined, content: r.text.slice(off, off + max) };
   })();
 }
 const abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return ''; } };
@@ -1867,7 +1985,11 @@ const CHROME = new Set(['NAV', 'FOOTER', 'ASIDE', 'HEADER']);
 const CHROME_ROLES = /^(navigation|banner|contentinfo|complementary|search|menu|menubar|dialog|alertdialog)$/;
 const len = (e) => (e && e.innerText || '').trim().length;
 let root = document.body || document.documentElement;
-if (A.main_only !== false) {
+if (A.selector) {
+  let picked = null; try { picked = document.querySelector(A.selector); } catch (e) { throw new Error('not a CSS selector: ' + A.selector); }
+  if (!picked) throw new Error('nothing on the page matches ' + A.selector);
+  root = picked;
+} else if (A.main_only !== false) {
   const main = document.querySelector('main, [role=main]');
   const articles = [...document.querySelectorAll('article')].sort((a, b) => len(b) - len(a));
   if (main && len(main) > 200) root = main;
@@ -1875,7 +1997,7 @@ if (A.main_only !== false) {
 }
 // A <slot> draws no box of its own; what's put in it is checked by itself.
 const hidden = (e) => e.tagName !== 'SLOT' && (e.hidden || e.getAttribute('aria-hidden') === 'true' || (e.checkVisibility ? !e.checkVisibility() && getComputedStyle(e).display !== 'contents' : getComputedStyle(e).display === 'none'));
-const skip = (e) => SKIP.has(e.tagName) || hidden(e) || (A.main_only !== false && e !== root && (CHROME.has(e.tagName) && !e.closest('article') || CHROME_ROLES.test(e.getAttribute('role') || '')));
+const skip = (e) => SKIP.has(e.tagName) || hidden(e) || (A.main_only !== false && !A.selector && e !== root && (CHROME.has(e.tagName) && !e.closest('article') || CHROME_ROLES.test(e.getAttribute('role') || '')));
 const inline = (s) => s.replace(/\s*\n\s*/g, ' ').trim();
 // An element with an open shadow root shows that instead of its children (they appear where its <slot>s are).
 function kids(e, ctx) { let out = ''; for (const c of (e.shadowRoot || e).childNodes) out += md(c, ctx); return out; }
@@ -1923,7 +2045,7 @@ function md(n, ctx) {
     }
     case 'IMG': {
       const src = abs(n.currentSrc || n.getAttribute('src') || '');
-      if (!src.startsWith('http') || (n.width && n.width < 24)) return '';
+      if (!src.startsWith('http') || (n.width && n.width < 24) || (n.height && n.height < 24) || /shields\.io|camo\.githubusercontent\.com|badge/i.test(src)) return '';
       return '![' + (n.getAttribute('alt') || '').trim() + '](' + src + ')';
     }
     case 'STRONG': case 'B': { const s = kids(n, ctx); return s.trim() ? '**' + s.trim() + '** ' : s; }
@@ -1945,23 +2067,60 @@ function md(n, ctx) {
     default: return kids(n, ctx);
   }
 }
-const max = A.max_chars || 40000;
+const max = A.max_chars || 40000, off = A.offset || 0;
 const fmt = A.format || 'markdown';
-let content = fmt === 'html' ? root.outerHTML : fmt === 'text' ? root.innerText
-  : md(root, { pre: false }).replace(/[\u200b-\u200d\ufeff]/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+(?![-\d>|])/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
-const out = { url: location.href, title: document.title, truncated: content.length > max, content: content.slice(0, max) };
-const desc = document.querySelector('meta[name=description], meta[property="og:description"]');
-if (desc && desc.content) out.description = desc.content.trim();
-if (A.links) {
-  const seen = new Set(); out.links = [];
-  for (const a of document.querySelectorAll('a[href]')) {
-    const u = abs(a.getAttribute('href')).split('#')[0];
-    if (!/^https?:/.test(u) || seen.has(u)) continue;
-    seen.add(u); out.links.push({ text: inline(a.innerText || a.getAttribute('aria-label') || '').slice(0, 120), url: u });
-    if (out.links.length >= 1000) break;
+const render = () => fmt === 'html' ? root.outerHTML : fmt === 'text' ? root.innerText
+  : md(root, { pre: false }).replace(/[​-‍﻿]/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+(?![-\d>|])/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ').trim();
+const meta = (...names) => {
+  for (const n of names) {
+    const m = document.querySelector('meta[property="' + n + '"], meta[name="' + n + '"], meta[itemprop="' + n + '"]');
+    if (m && m.content && m.content.trim()) return m.content.trim().slice(0, 200);
   }
-}
-return out;
+  return '';
+};
+const finish = (content) => {
+  const more = content.length > off + max;
+  const out = { url: location.href, title: document.title, truncated: more, content: content.slice(off, off + max) };
+  if (more || off) out.total_chars = content.length;
+  if (more) out.next_offset = off + max;
+  const desc = meta('description', 'og:description');
+  if (desc) out.description = desc;
+  // When it was written and by whom: the page's own tags, else what it tells search engines (JSON-LD).
+  let ld = {};
+  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try { for (const x of [].concat(JSON.parse(s.textContent)).flatMap((j) => (j && j['@graph']) || j)) if (x && x.datePublished && !ld.datePublished) ld = x; } catch (e) {}
+  }
+  const who = [].concat(ld.author || [])[0];
+  const facts = {
+    published: meta('article:published_time', 'datePublished', 'og:published_time', 'parsely-pub-date', 'citation_publication_date', 'citation_online_date', 'dc.date', 'date') || ld.datePublished,
+    modified: meta('article:modified_time', 'dateModified', 'og:updated_time') || ld.dateModified,
+    author: meta('author', 'parsely-author', 'citation_author') || (who && (who.name || (typeof who === 'string' ? who : ''))),
+    site: meta('og:site_name'),
+  };
+  for (const k in facts) if (facts[k] && typeof facts[k] === 'string' && !/^https?:/.test(facts[k])) out[k] = facts[k].slice(0, 200);
+  const nav = performance.getEntriesByType('navigation')[0];
+  if (nav && nav.responseStatus >= 400) out.status = nav.responseStatus;
+  if (A.links) {
+    const seen = new Set(); out.links = [];
+    for (const a of document.querySelectorAll('a[href]')) {
+      const u = abs(a.getAttribute('href')).split('#')[0];
+      if (!/^https?:/.test(u) || seen.has(u)) continue;
+      seen.add(u); out.links.push({ text: inline(a.innerText || a.getAttribute('aria-label') || '').slice(0, 120), url: u });
+      if (out.links.length >= 1000) break;
+    }
+  }
+  if (A.images) {
+    const seen = new Set(); out.images = [];
+    for (const i of root.querySelectorAll('img')) {
+      const u = abs(i.currentSrc || i.getAttribute('src') || '');
+      if (!/^https?:/.test(u) || seen.has(u) || (i.naturalWidth && i.naturalWidth < 100) || (i.naturalHeight && i.naturalHeight < 100)) continue;
+      seen.add(u); out.images.push({ url: u, alt: (i.getAttribute('alt') || '').trim().slice(0, 200), width: i.naturalWidth || undefined, height: i.naturalHeight || undefined });
+      if (out.images.length >= 200) break;
+    }
+  }
+  return out;
+};
+return finish(render());
 "#;
 
 /// Results on a search engine's page: links with a heading (Google, Bing, DuckDuckGo, Brave, Kagi and most others).
@@ -1992,10 +2151,15 @@ for (const a of anchors) {
   seen.add(url.split('#')[0]);
   let box = a;
   while (box.parentElement && box.parentElement !== document.body && anchors.filter((x) => box.parentElement.contains(x)).length === 1) box = box.parentElement;
-  const snippet = (box.innerText || '').split('\n').map((l) => l.trim())
-    .filter((l) => l.length > 2 && l !== title && l !== 'Web results' && !l.includes(' › ') && !/^https?:\/\//.test(l) && !url.includes(l))
-    .join(' ').replace(/\s+/g, ' ').replace(/\s*Read more\b.*$|\s*Missing: .*$/, '').slice(0, 400);
-  results.push({ title, url, snippet });
+  // The link itself holds the title, the site's name and its address; the rest of the box is the snippet.
+  const own_lines = (a.innerText || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const site = own_lines.find((l) => l !== title && l.length < 60 && !l.includes(' › ') && !/^https?:\/\//.test(l) && !url.includes(l));
+  let snippet = (box.innerText || '').split('\n').map((l) => l.trim())
+    .filter((l) => l.length > 2 && l !== title && l !== 'Web results' && !l.includes(' › ') && !/^https?:\/\//.test(l) && !url.includes(l) && !own_lines.includes(l))
+    .join(' ').replace(/\s+/g, ' ').replace(/\s*Read more\b.*$|\s*Missing: .*$/, '');
+  const dated = snippet.match(/^([A-Z][a-z]{2} \d{1,2}, \d{4}|\d{1,2} [A-Z][a-z]{2} \d{4}|\d+ (?:minute|hour|day|week|month|year)s? ago)\s*[—–·-]\s*/);
+  if (dated) snippet = snippet.slice(dated[0].length);
+  results.push({ title, url, site: site || undefined, date: dated ? dated[1] : undefined, snippet: snippet.slice(0, 400) });
   if (results.length >= (A.limit || 10)) break;
 }
 // News-style results: a link holding "source / headline / summary / age" as lines, with no heading element.
@@ -2021,12 +2185,21 @@ fn resolve_redirects(results: &mut Value) {
         for r in list.iter_mut().filter(|r| r["url"].as_str().is_some_and(|u| u.contains(".google.") && u.contains("/goto?"))) {
             s.spawn(move || {
                 let url = r["url"].as_str().unwrap_or("").to_string();
-                let out = crate::platform::command("curl")
-                    .args(["-s", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{redirect_url}", "--max-time", "6", "--proto", "=https", &url])
-                    .output();
-                let to = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-                if to.starts_with("http") && !to.contains(".google.") {
-                    r["url"] = json!(to);
+                // Google sometimes answers the first ask with no redirect: ask again before giving up.
+                for attempt in 0..3 {
+                    let out = crate::platform::command("curl")
+                        .args(["-s", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{http_code} %{redirect_url}", "--max-time", "6", "--proto", "=https", &url])
+                        .output();
+                    let answer = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+                    let to = answer.split_once(' ').map_or("", |(_, to)| to);
+                    if to.starts_with("http") && !to.contains(".google.") {
+                        r["url"] = json!(to);
+                        return;
+                    }
+                    if attempt == 2 {
+                        crate::log::line("mcp", format!("a Google result link didn't say where it goes ({})", answer.chars().take(80).collect::<String>()));
+                    }
+                    std::thread::sleep(Duration::from_millis(400));
                 }
             });
         }
@@ -2201,10 +2374,12 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
         // Read the whole page, then keep what's about the focus.
         args["max_chars"] = json!(2_000_000);
         args["format"] = json!("markdown");
+        args["offset"] = json!(0);
     }
+    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     // Raw files open as downloads, so the browser would only wait for nothing.
     if looks_like_a_file(url) {
-        if let Some(mut page) = plain_file(url, if focus_on.is_empty() { max } else { 2_000_000 }) {
+        if let Some(mut page) = plain_file(url, offset, if focus_on.is_empty() { max } else { 2_000_000 }) {
             keep_focus(&mut page, &focus_on, max);
             return Ok(page);
         }
@@ -2221,12 +2396,12 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
             if let Ok(mut v) = eval_for(proxy, tab, YOUTUBE_JS, 30).and_then(|v| if v["content"].is_string() { Ok(v) } else { Err(String::new()) }) {
                 let limit = args["max_chars"].as_u64().unwrap_or(40_000) as usize;
                 let text = v["content"].as_str().unwrap_or("").to_string();
-                v["truncated"] = json!(text.chars().count() > limit);
-                v["content"] = json!(text.chars().take(limit).collect::<String>());
+                cut(&mut v, &text, offset, limit);
                 return Ok(v);
             }
         }
-        let mut page = eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120)?;
+        let screens = a["scroll"].as_u64().unwrap_or(0).min(30);
+        let mut page = if screens > 0 { scrolled(proxy, tab, &args, screens)? } else { eval_for(proxy, tab, &with_args(&args, MARKDOWN_JS), 120)? };
         // Some layouts hide the story from the main-content guess: then the whole page beats an empty answer.
         if args["main_only"] != false && page["content"].as_str().is_some_and(|c| c.trim().len() < 200) {
             let mut all = args.clone();
@@ -2240,15 +2415,64 @@ fn fetch_one(proxy: &EventLoopProxy<UserEvent>, url: &str, a: &Value) -> Result<
         if let Some(b) = eval(proxy, tab, BLOCKED_JS)?.as_str().filter(|b| !b.is_empty()) {
             page["blocked"] = json!(b);
         }
+        // Nothing to read: say whether the site answered with an error (asked again without the user's logins).
+        if page["content"].as_str().is_some_and(|c| c.trim().is_empty()) && url.starts_with("http") {
+            let code = crate::platform::command("curl")
+                .args(["-s", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{http_code}", "--max-time", "8", "--proto", "=https,http", "--", url])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u16>().ok())
+                .unwrap_or(0);
+            page["note"] = json!(match code {
+                400.. => { page["status"] = json!(code); format!("The site answered with an error (HTTP {code}) and the page shows no text.") }
+                _ => "The page shows no text (it may draw pictures only, or need wait_for or scroll).".to_string(),
+            });
+        }
         Ok(page)
     })
     .map_err(|e| if e.contains("timed out") { format!("{url} didn't finish loading in time: it may be down or very slow, or this computer is busy. Try once more before giving up on it.") } else { e });
     // A browser downloads what it can't show (raw .md, .ps1 and .json files) instead of opening it.
     let mut page = match read {
         Ok(p) if p["content"].is_string() => p,
-        other => plain_file(url, if focus_on.is_empty() { max } else { 2_000_000 }).map_or(other, Ok)?,
+        other => plain_file(url, offset, if focus_on.is_empty() { max } else { 2_000_000 }).map_or(other, Ok)?,
     };
     keep_focus(&mut page, &focus_on, max);
+    Ok(page)
+}
+
+/// A page read while scrolling down it `screens` times: feeds, comments and long lists load as you go, and some drop
+/// what's scrolled past, so what each step showed is kept. Valerie drives each step (a hidden page's own timers crawl).
+fn scrolled(proxy: &EventLoopProxy<UserEvent>, tab: Option<i64>, args: &Value, screens: u64) -> Result<Value, String> {
+    let mut whole = args.clone();
+    whole["max_chars"] = json!(2_000_000);
+    whole["offset"] = json!(0);
+    let read = || eval_for(proxy, tab, &with_args(&whole, MARKDOWN_JS), 120);
+    let text = |p: &Value| p["content"].as_str().unwrap_or("").to_string();
+    let mut page = read()?;
+    let (mut blocks, mut dropped, mut still): (Vec<String>, bool, u32) = (text(&page).split("\n\n").map(str::to_string).collect(), false, 0);
+    for _ in 0..screens {
+        let down = "const se = document.scrollingElement || document.documentElement; scrollTo({ left: 0, top: se.scrollHeight, behavior: 'instant' }); return se.scrollHeight;";
+        let height = eval(proxy, tab, down)?;
+        // Until more has loaded (the page grows), or a moment for a list that swaps its rows.
+        let _ = poll(proxy, tab, "return (document.scrollingElement || document.documentElement).scrollHeight", 2, |h| h.as_f64() > height.as_f64());
+        std::thread::sleep(Duration::from_millis(400));
+        let (before, next) = (text(&page), read()?);
+        let now = text(&next);
+        still = if now == before { still + 1 } else { 0 };
+        dropped |= !now.contains(before.chars().take(300).collect::<String>().as_str());
+        for b in now.split("\n\n") {
+            if !blocks.iter().any(|x| x == b) {
+                blocks.push(b.to_string());
+            }
+        }
+        page = next;
+        if still >= 2 {
+            break;
+        }
+    }
+    let _ = eval(proxy, tab, "scrollTo({ left: 0, top: 0, behavior: 'instant' }); return true;");
+    let all = if dropped && args["format"].as_str().is_none_or(|f| f == "markdown") { blocks.join("\n\n") } else { text(&page) };
+    cut(&mut page, &all, args["offset"].as_u64().unwrap_or(0) as usize, args["max_chars"].as_u64().unwrap_or(40_000) as usize);
     Ok(page)
 }
 
@@ -2258,6 +2482,21 @@ fn keep_focus(page: &mut Value, focus_on: &str, max: usize) {
         page["content"] = f["content"].clone();
         page["truncated"] = f["truncated"].clone();
         page["focus"] = json!({ "query": focus_on, "sections_matched": f["matched"], "outline": f["outline"] });
+        if let Some(o) = page.as_object_mut() {
+            o.remove("total_chars");
+            o.remove("next_offset");
+        }
+    }
+}
+
+/// `text` from `offset` for `max` characters, with where to carry on from when there's more.
+fn cut(page: &mut Value, text: &str, offset: usize, max: usize) {
+    let total = text.chars().count();
+    page["content"] = json!(text.chars().skip(offset).take(max).collect::<String>());
+    page["truncated"] = json!(total > offset + max);
+    if total > offset + max {
+        page["total_chars"] = json!(total);
+        page["next_offset"] = json!(offset + max);
     }
 }
 
@@ -2268,15 +2507,16 @@ fn looks_like_a_file(url: &str) -> bool {
 }
 
 /// A text file at `url`, fetched without the browser (so without the user's logins).
-fn plain_file(url: &str, max: usize) -> Option<Value> {
+fn plain_file(url: &str, offset: usize, max: usize) -> Option<Value> {
     let out = crate::platform::command("curl")
         .args(["-fsSL", "--max-time", "20", "--max-filesize", "20000000", "--proto", "=https,http", "--", url])
         .output()
         .ok()
         .filter(|o| o.status.success())?;
     let text = String::from_utf8(out.stdout).ok().filter(|t| !t.trim().is_empty() && !t.contains('\0'))?;
-    let truncated = text.chars().count() > max;
-    Some(json!({ "url": url, "content": text.chars().take(max).collect::<String>(), "truncated": truncated }))
+    let mut page = json!({ "url": url });
+    cut(&mut page, &text, offset, max);
+    Some(page)
 }
 
 const STOP: &[&str] = &[
@@ -2369,59 +2609,153 @@ pub fn focus(md: &str, query: &str, max: usize) -> Value {
     json!({ "content": content.chars().take(max).collect::<String>(), "matched": matched, "truncated": truncated, "outline": outline })
 }
 
-/// Search-page address for `engine` (a search URL with %s): recency and news where the engine has them.
-fn search_url(engine: &str, query: &str, recent: &str, news: bool) -> Option<String> {
-    let q: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-    let mut u = engine.replace("%s", &q);
-    let d = match recent { "day" | "d" | "24h" => "d", "week" | "w" => "w", "month" | "m" => "m", "year" | "y" => "y", _ => "" };
+/// How a search is narrowed: how recent, between which dates (2026-01-31), news only, and for which country (us, de).
+#[derive(Default)]
+struct Narrow<'a> {
+    recent: &'a str,
+    after: &'a str,
+    before: &'a str,
+    news: bool,
+    country: &'a str,
+}
+
+/// Search-page address for `engine` (a search URL with %s), narrowed where the engine can do it.
+fn search_url(engine: &str, query: &str, n: &Narrow) -> Option<String> {
+    let enc = |q: &str| url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>();
+    let d = match n.recent { "day" | "d" | "24h" => "d", "week" | "w" => "w", "month" | "m" => "m", "year" | "y" => "y", _ => "" };
+    let dated = !n.after.is_empty() || !n.before.is_empty();
     if engine.contains("google.") {
+        let mut q = query.to_string();
+        for (word, date) in [("after", n.after), ("before", n.before)] {
+            if !date.is_empty() {
+                q.push_str(&format!(" {word}:{date}"));
+            }
+        }
+        let mut u = engine.replace("%s", &enc(&q));
         if !d.is_empty() {
             u.push_str(&format!("&tbs=qdr:{d}"));
         }
-        if news {
+        if n.news {
             u.push_str("&tbm=nws");
         }
-    } else if engine.contains("duckduckgo.") {
-        if !d.is_empty() {
-            u.push_str(&format!("&df={d}"));
+        if !n.country.is_empty() {
+            u.push_str(&format!("&gl={}", n.country));
         }
-        if news {
+        Some(u)
+    } else if engine.contains("duckduckgo.") {
+        if n.news || !n.country.is_empty() {
             return None;
         }
-    } else if !d.is_empty() || news {
-        return None; // this engine's filters aren't known: Google does it
+        let mut u = engine.replace("%s", &enc(query));
+        if dated {
+            u.push_str(&format!("&df={}..{}", if n.after.is_empty() { "1990-01-01" } else { n.after }, if n.before.is_empty() { "2100-01-01" } else { n.before }));
+        } else if !d.is_empty() {
+            u.push_str(&format!("&df={d}"));
+        }
+        Some(u)
+    } else if !d.is_empty() || dated || n.news || !n.country.is_empty() {
+        None // this engine's filters aren't known: Google does it
+    } else {
+        Some(engine.replace("%s", &enc(query)))
     }
-    Some(u)
 }
 
 const GOOGLE: &str = "https://www.google.com/search?q=%s";
 const DUCKDUCKGO: &str = "https://html.duckduckgo.com/html/?q=%s";
+const BING_IMAGES: &str = "https://www.bing.com/images/search?q=%s";
+
+/// Pictures on Bing's image results: each carries the full image, a small copy and the page it's on.
+const IMAGES_JS: &str = r#"
+const results = [], seen = new Set();
+for (const a of document.querySelectorAll('a.iusc[m]')) {
+  let m; try { m = JSON.parse(a.getAttribute('m')); } catch (e) { continue; }
+  if (!m.murl || seen.has(m.murl)) continue;
+  seen.add(m.murl);
+  const size = ((a.closest('li, .imgpt, .iuscp') || a).innerText || '').match(/(\d{2,5})\s*[x×]\s*(\d{2,5})/);
+  results.push({ title: String(m.t || '').replace(/[]/g, '').trim(), image: m.murl, thumbnail: m.turl, url: m.purl,
+    width: size ? +size[1] : undefined, height: size ? +size[2] : undefined });
+  if (results.length >= (A.limit || 10)) break;
+}
+return { engine: location.hostname, results };
+"#;
+
+fn strings(v: &Value) -> Vec<String> {
+    match v {
+        Value::Array(s) => s.iter().filter_map(|x| x.as_str().map(|x| x.trim().to_string())).filter(|x| !x.is_empty()).collect(),
+        Value::String(s) => s.split([',', ' ']).filter(|x| !x.is_empty()).map(str::to_string).collect(),
+        _ => vec![],
+    }
+}
+
+/// Several searches in one call (`queries`), side by side; otherwise the one in `query`.
+fn web_searches(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, String> {
+    let queries = strings(&match &a["queries"] { Value::String(q) => json!([q]), q => q.clone() });
+    if queries.is_empty() {
+        return web_search(proxy, a);
+    }
+    let queries: Vec<String> = queries.into_iter().take(8).collect();
+    // Agents' tool answers are cut off past ~50,000 characters: the searches share what their read pages may hold.
+    let read = a["read"].as_u64().unwrap_or(0).min(5);
+    let per = a["max_chars"].as_u64().unwrap_or(6000).min((40_000 / (queries.len() as u64 * read.max(1))).max(1000));
+    let searches: Vec<Value> = std::thread::scope(|s| {
+        let jobs: Vec<_> = queries.iter().map(|q| s.spawn(move || {
+            let mut one = a.clone();
+            one["query"] = json!(q);
+            one["max_chars"] = json!(per);
+            web_search(proxy, &one).unwrap_or_else(|e| json!({ "query": q, "error": e }))
+        })).collect();
+        jobs.into_iter().map(|j| j.join().unwrap_or(Value::Null)).collect()
+    });
+    Ok(json!({ "searches": searches }))
+}
 
 /// web_search: the user's engine (Google when it can't filter as asked), DuckDuckGo when that one blocks the search,
 /// and with `read` the top results fetched too (narrowed to `focus`, or the query).
 fn web_search(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, String> {
     let query = a["query"].as_str().unwrap_or("").trim();
     if query.is_empty() {
-        return Err("give a query".into());
+        return Err("give a query (or queries)".into());
     }
     let limit = a["limit"].as_u64().unwrap_or(10).clamp(1, 30);
-    let sites: Vec<String> = match &a["sites"] {
-        Value::Array(s) => s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
-        Value::String(s) => s.split([',', ' ']).filter(|x| !x.is_empty()).map(str::to_string).collect(),
-        _ => vec![],
-    };
-    let full = match sites.len() {
+    let sites = strings(&a["sites"]);
+    let mut full = match sites.len() {
         0 => query.to_string(),
         1 => format!("{query} site:{}", sites[0]),
         _ => format!("{query} ({})", sites.iter().map(|s| format!("site:{s}")).collect::<Vec<_>>().join(" OR ")),
     };
-    let (recent, news) = (a["recent"].as_str().unwrap_or(""), a["news"].as_bool() == Some(true));
+    for s in strings(&a["exclude_sites"]) {
+        full.push_str(&format!(" -site:{s}"));
+    }
+    let date = |key: &str| -> Result<&str, String> {
+        let d = a[key].as_str().unwrap_or("").trim();
+        let ok = d.is_empty() || (d.len() == 10 && d.char_indices().all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() }));
+        if ok { Ok(d) } else { Err(format!("{key} is a date like 2026-01-31")) }
+    };
+    let country = a["country"].as_str().unwrap_or("").trim().to_ascii_lowercase();
+    if !country.is_empty() && !(country.len() == 2 && country.chars().all(|c| c.is_ascii_lowercase())) {
+        return Err("country is a two-letter code like us, gb or de".into());
+    }
+    let n = Narrow { recent: a["recent"].as_str().unwrap_or(""), after: date("after")?, before: date("before")?, news: a["news"].as_bool() == Some(true), country: &country };
+    if a["images"].as_bool() == Some(true) {
+        let url = BING_IMAGES.replace("%s", &url::form_urlencoded::byte_serialize(full.as_bytes()).collect::<String>());
+        let mut r = in_web_tab(proxy, json!({ "url": url }), |tab| {
+            let tab = wait_ready(proxy, tab)?;
+            poll(proxy, tab, &with_args(&json!({ "limit": limit }), IMAGES_JS), 8, |v| v["results"].as_array().is_some_and(|r| !r.is_empty()))
+        })?;
+        r["query"] = json!(full);
+        if r["results"].as_array().is_none_or(Vec::is_empty) {
+            r["note"] = json!("No pictures could be read from the image search page.");
+        }
+        return Ok(r);
+    }
+    let news = n.news;
     let mine = call(proxy, "search_engine", json!({}))?.as_str().unwrap_or(GOOGLE).to_string();
-    let mut first = search_url(&mine, &full, recent, news).or_else(|| search_url(GOOGLE, &full, recent, news)).unwrap_or_default();
+    let mut first = search_url(&mine, &full, &n).or_else(|| search_url(GOOGLE, &full, &n)).unwrap_or_default();
     // Google answers a burst of searches (several agents at once) with robot checks for a while: go round it meanwhile.
     let google_resting = first.contains("google.") && !news && now_secs() < GOOGLE_BLOCKED_UNTIL.load(Ordering::Relaxed);
+    let duck = search_url(DUCKDUCKGO, &full, &n);
     if google_resting {
-        first = search_url(DUCKDUCKGO, &full, recent, false).unwrap_or(first);
+        first = duck.clone().unwrap_or(first);
     }
     let script = format!("const r = (() => {{ {} }})();\nif (!r.results || !r.results.length) r.blocked = (() => {{ {BLOCKED_JS} }})();\nreturn r;",
         with_args(&json!({ "limit": limit }), SEARCH_JS));
@@ -2435,34 +2769,83 @@ fn web_search(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, Str
             } else if url.contains("google.") {
                 GOOGLE_BLOCKED_UNTIL.store(now_secs() + 600, Ordering::Relaxed);
             }
+            // DuckDuckGo's next pages come from its "Next" button, for a list longer than one page.
+            while url.contains("duckduckgo.") && r["results"].as_array().is_some_and(|l| (8..limit as usize).contains(&l.len())) {
+                let next = "const f = document.querySelector('.nav-link form'); if (!f) return false; window.__vgOld = true; f.submit(); return true;";
+                if eval(proxy, tab, next)? != Value::Bool(true) || poll(proxy, tab, "return !window.__vgOld && document.readyState === 'complete'", 8, |v| v == &Value::Bool(true)).is_err() {
+                    break;
+                }
+                let more = eval(proxy, tab, &script)?;
+                let Some(list) = r["results"].as_array_mut() else { break };
+                let before = list.len();
+                for x in more["results"].as_array().into_iter().flatten() {
+                    if list.len() < limit as usize && !list.iter().any(|y| y["url"] == x["url"]) {
+                        list.push(x.clone());
+                    }
+                }
+                if list.len() == before {
+                    break;
+                }
+            }
             Ok(r)
         })
     };
     let empty = |r: &Value| r["results"].as_array().is_none_or(Vec::is_empty);
+    let close = |r: &Value| if !r["tab"].is_null() { let _ = call(proxy, "web_close", json!({ "tab": r["tab"] })); };
+    let mut used = first.clone();
     let mut r = run(&first)?;
     // DuckDuckGo stood in but found nothing: Google may have rested long enough.
-    if empty(&r) && google_resting {
-        let other = run(&search_url(&mine, &full, recent, news).unwrap_or_default())?;
+    let again = if empty(&r) && google_resting {
+        search_url(&mine, &full, &n).or_else(|| search_url(GOOGLE, &full, &n))
+    } else if empty(&r) && !news && !google_resting {
+        duck.clone()
+    } else {
+        None
+    };
+    if let Some(u) = again {
+        let other = run(&u)?;
         if empty(&other) {
-            let _ = call(proxy, "web_close", json!({ "tab": other["tab"] }));
+            close(&other);
         } else {
-            let _ = call(proxy, "web_close", json!({ "tab": r["tab"] }));
+            // The other engine answered: the search page that wanted a person isn't needed.
+            close(&r);
             r = other;
+            used = u;
         }
     }
-    if empty(&r) && !news && !google_resting {
-        if let Some(u) = search_url(DUCKDUCKGO, &full, recent, false) {
-            let other = run(&u)?;
-            if empty(&other) {
-                let _ = call(proxy, "web_close", json!({ "tab": other["tab"] }));
-            } else {
-                // DuckDuckGo answered: the search page that wanted a person isn't needed.
-                let _ = call(proxy, "web_close", json!({ "tab": r["tab"] }));
-                r = other;
+    // A results page holds about ten: the next pages make up a longer list.
+    let have = r["results"].as_array().map_or(0, Vec::len) as u64;
+    let page_at = |start: u64| if used.contains("google.") { Some(format!("{used}&start={start}")) } else if used.contains("bing.com/search") { Some(format!("{used}&first={}", start + 1)) } else { None };
+    if (8..limit).contains(&have) && page_at(10).is_some() {
+        // One after another: several result pages at once look like a robot.
+        for at in (10..limit).step_by(10) {
+            let m = run(&page_at(at).unwrap_or_default()).unwrap_or(Value::Null);
+            close(&m);
+            let Some(list) = r["results"].as_array_mut() else { break };
+            let before = list.len();
+            for x in m["results"].as_array().into_iter().flatten() {
+                if list.len() < limit as usize && !list.iter().any(|y| y["url"] == x["url"]) {
+                    list.push(x.clone());
+                }
+            }
+            if list.len() == before {
+                break;
             }
         }
     }
     resolve_redirects(&mut r["results"]);
+    // Google kept where its results go to itself (it does when it suspects a robot): DuckDuckGo's links are plain.
+    let hidden = |r: &Value| r["results"].as_array().into_iter().flatten().any(|x| x["url"].as_str().is_some_and(|u| u.contains(".google.") && u.contains("/goto?")));
+    if hidden(&r) {
+        GOOGLE_BLOCKED_UNTIL.store(now_secs() + 600, Ordering::Relaxed);
+        if let Some(other) = duck.as_ref().filter(|u| **u != used).and_then(|u| run(u).ok()) {
+            if empty(&other) {
+                close(&other);
+            } else {
+                r = other;
+            }
+        }
+    }
     r["query"] = json!(full);
     if empty(&r) {
         if r["blocked"].is_null() {
@@ -2486,6 +2869,10 @@ fn web_search(proxy: &EventLoopProxy<UserEvent>, a: &Value) -> Result<Value, Str
         if let Some(list) = r["results"].as_array_mut() {
             for (res, page) in list.iter_mut().zip(pages) {
                 res["content"] = page.get("content").cloned().unwrap_or_else(|| page["error"].clone());
+                // When the page says it was written beats the search page's guess.
+                if let Some(d) = page["published"].as_str() {
+                    res["date"] = json!(d);
+                }
             }
         }
     }
@@ -2821,7 +3208,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             call(proxy, "run", json!({ "cmd": cmd, "tab": tab }))
         }
         "run_command" => call(proxy, "run", a["command"].clone()),
-        "web_search" => web_search(proxy, &a),
+        "web_search" => web_searches(proxy, &a),
         "fetch_page" => match a["urls"].as_array().filter(|u| !u.is_empty()) {
             // Several pages at once, side by side in their own hidden tabs.
             Some(urls) => {
@@ -2906,7 +3293,26 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             eval(proxy, tab, &with_args(&a, &format!("{FINISH_ANIMATIONS_JS}\n{FIND_JS}\n{SNAPSHOT_JS}")))
         }
         "click" => act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"))),
-        "type" => act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}"))),
+        "type" => {
+            let type_one = |a: &Value| act(proxy, a, &with_args(a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}")));
+            let Some(fields) = a["fields"].as_array().filter(|f| !f.is_empty()) else { return type_one(&a) };
+            // A whole form in one call: each field as its own type, in order.
+            let mut done = Vec::new();
+            for (i, f) in fields.iter().enumerate() {
+                let mut one = json!({ "tab": a["tab"], "dialog": a["dialog"], "dialog_text": a["dialog_text"] });
+                for (k, v) in f.as_object().into_iter().flatten().filter(|(k, _)| k.as_str() != "submit") {
+                    one[k.as_str()] = v.clone();
+                }
+                let name = f["ref"].as_str().or(f["selector"].as_str()).unwrap_or("?").to_string();
+                let failed = |e: String| format!("field {} ({name}): {e}. {} before it were filled.", i + 1, done.len());
+                if let Some(what) = risky_action("type", &one, proxy).map_err(&failed)? {
+                    return Err(failed(format!("this would {what}, which the user approves: type it on its own, without fields")));
+                }
+                let r = type_one(&one).map_err(&failed)?;
+                done.push(json!({ "field": name, "result": r }));
+            }
+            Ok(json!(done))
+        }
         "hover" => eval(proxy, tab, &with_args(&a, &format!("{FIND_JS}\n{POINTER_JS}\nreturn hoverOn(find());"))),
         "drag" => {
             if a["to_ref"].is_null() && a["to_selector"].is_null() {
@@ -2947,24 +3353,42 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let timeout = Duration::from_millis(a["timeout_ms"].as_u64().unwrap_or(10_000));
             let js = with_args(&a, &format!("{FIND_JS}\nif (A.selector && !deepQuery(A.selector)) return false; \
                 if (A.text && !pageText().includes(A.text)) return false; return true;"));
+            // gone: until it's no longer there (a spinner, "Saving…").
+            let gone = a["gone"].as_bool() == Some(true);
             let start = Instant::now();
             loop {
-                if eval(proxy, tab, &js)? == Value::Bool(true) {
-                    return Ok(json!("ready"));
+                if eval(proxy, tab, &js)? == Value::Bool(!gone) {
+                    return Ok(json!(if gone { "gone" } else { "ready" }));
                 }
                 if start.elapsed() > timeout {
                     let what = a["selector"].as_str().or(a["text"].as_str()).unwrap_or("the page");
-                    return Err(format!("timed out after {}ms waiting for {what}", timeout.as_millis()));
+                    return Err(format!("timed out after {}ms waiting for {what}{}", timeout.as_millis(), if gone { " to go away" } else { "" }));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
         "screenshot" => {
-            let tab = wait_ready(proxy, tab)?;
-            let shot = if a["full_page"].as_bool() == Some(true) {
-                full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }))?
-            } else {
-                call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width") }))?
+            let shot_width = std::cell::Cell::new(None::<f64>);
+            let picture = |tab: Option<i64>| {
+                if a["full_page"].as_bool() == Some(true) {
+                    full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }))
+                } else {
+                    call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width").filter(|w| !w.is_null()).cloned().or(shot_width.get().map(Value::from)) }))
+                }
+            };
+            let shot = match a["url"].as_str().map(as_address).filter(|u| !u.is_empty()) {
+                // Any address, out of sight: opened, pictured and closed.
+                Some(url) => {
+                    let size = a["size"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or("laptop");
+                    let (w, h) = size_of(size).ok_or(format!("{size:?} isn't a size: phone, tablet, laptop, desktop or WIDTHxHEIGHT"))?;
+                    shot_width.set(Some(w.min(1280.0)));
+                    in_web_tab(proxy, json!({ "url": url, "width": w, "height": h }), |tab| {
+                        let tab = wait_ready(proxy, tab)?;
+                        settle(proxy, tab, a["wait_for"].as_str())?;
+                        picture(tab)
+                    })?
+                }
+                None => picture(wait_ready(proxy, tab)?)?,
             };
             match a["save_to"].as_str().filter(|p| !p.trim().is_empty()) {
                 Some(path) => save_png(&shot, path).map(|p| json!({ "saved": p })),
@@ -3033,7 +3457,7 @@ mod tests {
 
     #[test]
     fn a_plain_file_is_only_fetched_over_the_web() {
-        assert!(super::plain_file("file:///etc/hosts", 100).is_none());
+        assert!(super::plain_file("file:///etc/hosts", 0, 100).is_none());
     }
 
     #[test]
@@ -3101,13 +3525,37 @@ mod tests {
 
     #[test]
     fn search_urls_filter_where_the_engine_can() {
-        let g = super::search_url(super::GOOGLE, "nfl injuries", "week", true).unwrap();
+        use super::Narrow;
+        let g = super::search_url(super::GOOGLE, "nfl injuries", &Narrow { recent: "week", news: true, ..Default::default() }).unwrap();
         assert!(g.ends_with("q=nfl+injuries&tbs=qdr:w&tbm=nws"), "{g}");
-        assert!(super::search_url("https://kagi.com/search?q=%s", "x", "day", false).is_none());
-        assert!(super::search_url("https://kagi.com/search?q=%s", "x", "", false).is_some());
+        let kagi = "https://kagi.com/search?q=%s";
+        assert!(super::search_url(kagi, "x", &Narrow { recent: "day", ..Default::default() }).is_none());
+        assert!(super::search_url(kagi, "x", &Narrow::default()).is_some());
+        // Between dates: Google reads them from the search itself, DuckDuckGo from its own filter.
+        let dated = Narrow { after: "2026-01-01", before: "2026-02-01", ..Default::default() };
+        assert!(super::search_url(super::GOOGLE, "x", &dated).unwrap().ends_with("q=x+after%3A2026-01-01+before%3A2026-02-01"));
+        assert!(super::search_url(super::DUCKDUCKGO, "x", &dated).unwrap().ends_with("&df=2026-01-01..2026-02-01"));
+        assert!(super::search_url(super::DUCKDUCKGO, "x", &Narrow { country: "de", ..Default::default() }).is_none());
         assert_eq!(super::size_of("phone"), Some((390.0, 844.0)));
         assert_eq!(super::size_of("1024x768"), Some((1024.0, 768.0)));
         assert!(super::as_address("/tmp/a.html").starts_with("file:///tmp"));
+    }
+
+    #[test]
+    fn answers_read_as_markdown_not_json() {
+        let page = serde_json::json!({ "url": "https://a.example/x", "title": "X", "truncated": true, "next_offset": 40000, "total_chars": 90000,
+            "content": "# X\n\n```\nlet a = \"b\";\n```", "links": [{ "text": "Home", "url": "https://a.example/" }] });
+        let t = super::readable("fetch_page", &page);
+        assert!(t.starts_with("title: X\n") || t.contains("\ntitle: X\n"), "{t}");
+        assert!(t.contains("offset: 40000") && t.contains("\n---\n\n# X\n\n```\nlet a = \"b\";\n```"), "{t}");
+        assert!(t.contains("- Home: https://a.example/"), "{t}");
+        let found = serde_json::json!({ "query": "q", "engine": "www.google.com", "results": [
+            { "title": "One", "url": "https://one.example", "site": "One Co", "date": "Nov 2, 2026", "snippet": "First." }] });
+        let t = super::readable("web_search", &found);
+        assert!(t.contains("1. One\n   https://one.example\n   One Co · Nov 2, 2026\n   First."), "{t}");
+        let mut p = serde_json::json!({});
+        super::cut(&mut p, "abcdefghij", 4, 3);
+        assert_eq!((p["content"].as_str(), p["next_offset"].as_u64(), p["truncated"].as_bool()), (Some("efg"), Some(7), Some(true)));
     }
 
     #[test]

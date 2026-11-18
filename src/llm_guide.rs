@@ -590,8 +590,12 @@ Other AI apps (Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, OpenCode,
 Kiro, LM Studio, Amp) get these tools once Valerie is added to them: `"{exe}" connect` (or `connect <app id>`,
 `--list`, `--undo`), the "Connect AI Apps" command, or `mcp.connect_ai_apps: always`. `"{exe}" mcp-config` prints the
 settings for any other MCP app. `web_search`, `fetch_page` and `check_page` (off with `mcp.web_tools: false`) search and
-read the web and PDFs as Markdown (or only the parts about a `focus`) and check pages being built at phone and desktop sizes, in
-hidden tabs with the user's logins; `map_site` lists (and reads) a site's pages. Agents can work in hidden tabs of their own
+read the web, PDFs and YouTube videos (with their transcript) as Markdown (or only the parts about a `focus`) and check
+pages being built at phone and desktop sizes, in hidden tabs with the user's logins; `map_site` lists (and reads) a site's
+pages. `web_search` takes `queries` (several searches at once), `sites`, `exclude_sites`, `recent`, `after`, `before`, `news`,
+`images`, `country` and `read: N`; `fetch_page` takes `urls`, `selector` (one part of the page), `scroll` (feeds that load
+as you go), `links`, `images` and `offset` (carry on a long page from its `next_offset`); `screenshot` with a `url`
+pictures any address in one call. Over MCP these answers come as Markdown; `valerie call` prints JSON. Agents can work in hidden tabs of their own
 (`open_tab` with `hidden: true`; `mcp.hidden_tabs_close_after` minutes unused closes one, `mcp.hidden_tabs_max` caps them),
 hand the user a page for anything only a person can do, such as making an account, signing in, paying, creating an API key
 or picking an option (`ask_user` with a `url` or `tab`, a note, and a Done button or `choices`; off with
