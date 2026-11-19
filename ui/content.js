@@ -798,7 +798,7 @@ function controlKey(el) {
   const a = (n) => el.getAttribute(n) || "";
   let href = "";
   if (typeof el.href === "string" && el.href) {
-    try { const u = new URL(el.href); href = (u.origin === location.origin ? "" : u.host) + u.pathname + u.search; } catch (_) {}
+    try { const u = new URL(el.href); href = (u.origin === location.origin ? "" : u.host) + u.pathname; } catch (_) {}
   }
   const text = (FORM_TAGS.has(el.tagName) ? "" : el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
   // Numbers are dropped (counts, ids in links), so "Commits" is the same keys on every merge request.
