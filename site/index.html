@@ -68,7 +68,7 @@ html[data-fx~=disco] .stage { animation: disco 2.2s linear infinite; }
 .win { position: absolute; inset: 0; overflow: hidden; background-color: var(--wbg); color: var(--wfg); border-radius: 14px; font: 13px/1.3 var(--body);
   box-shadow: 0 0 0 1px var(--wline), 0 50px 100px -30px rgba(0,0,0,.55), 0 20px 40px -20px rgba(0,0,0,.4);
   transform: rotateY(-9deg) rotateX(3deg); transition: transform 1.2s var(--ease), rotate 1.1s var(--ease), scale 1.1s var(--ease), background-color var(--morph), border-radius var(--morph), box-shadow var(--morph), filter .6s;
-  --pl: 230px; --pt: 8px; --pr: 8px; --pb: 8px; --prad: 12px; user-select: none; -webkit-user-select: none; }
+  --pl: 230px; --pt: 0px; --pr: 0px; --pb: 0px; --prad: 16px 0 0 16px; user-select: none; -webkit-user-select: none; }
 html[data-look=v98] .win { transform: rotateY(-4deg) rotateX(1deg) rotateZ(-1.2deg); }
 html[data-look=pasture] .win { transform: rotateY(-6deg) rotateX(6deg) rotateZ(1deg); }
 html[data-look=chrome] .win { transform: rotateY(-3deg) rotateX(1deg); }
@@ -81,12 +81,12 @@ html[data-lay=task] .win { border-radius: 0; --pl: 5px; --pt: 33px; --pr: 5px; -
   box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf, 18px 18px 0 rgba(0,0,0,.25); font-family: Tahoma, "MS Sans Serif", Geneva, sans-serif; font-size: 12px; }
 html:is([data-lay=sheep], [data-lay=fish]) .win { border-radius: 22px; --pl: 0px; --pt: 150px; --pr: 0px; --pb: 0px; --prad: 0px; }
 html[data-lay=strip] .win { border-radius: 10px; --pl: 0px; --pt: 82px; --pr: 0px; --pb: 0px; --prad: 0px; }
-html[data-lay=bench] .win { --pr: 238px; }
-html[data-lay=right] .win { --pl: 8px; --pr: 230px; }
+html[data-lay=bench] .win { --pt: 6px; --pb: 6px; --pr: 234px; --prad: 12px; }
+html[data-lay=right] .win { --pl: 0px; --pr: 230px; --prad: 0 16px 16px 0; }
 html[data-lay=compact] .win { --pl: 62px; }
-html[data-lay=bottom] .win { --pl: 8px; --pb: 54px; }
-html[data-lay=dock] .win { --pl: 8px; }
-html[data-lay=notes] .win { --pl: 8px; --pt: 120px; }
+html[data-lay=bottom] .win { --pl: 0px; --pb: 54px; --prad: 0 0 16px 16px; }
+html[data-lay=dock] .win { --pl: 0px; --prad: 0px; }
+html[data-lay=notes] .win { --pl: 0px; --pt: 120px; --prad: 16px 16px 0 0; }
 html[data-lay=orbit] .win { --pl: 290px; --pr: 290px; --pt: 150px; --pb: 150px; --prad: 40px; background-color: transparent; box-shadow: none; overflow: visible; }
 html[data-lay=orbit] .page { box-shadow: 0 30px 80px rgba(0,0,0,.5); }
 html[data-lay=none] .win { border-radius: 6px; --pl: 0px; --pt: 0px; --pr: 0px; --pb: 0px; --prad: 0px; }
@@ -225,7 +225,7 @@ html[data-lay=right] .sidebits { left: auto; right: 0; }
 .tab.off { opacity: 0 !important; pointer-events: none; }
 .cam { touch-action: pan-y; } .spaces i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .3; } .spaces i.cur { opacity: 1; background: var(--accent); }
 
-.outline { right: 8px; top: 8px; bottom: 8px; width: 222px; border-radius: 12px; padding: 18px 16px; background: color-mix(in srgb, var(--wfg) 8%, transparent); transform: translateX(60px); }
+.outline { right: 6px; top: 6px; bottom: 6px; width: 222px; border-radius: 12px; padding: 18px 16px; background: color-mix(in srgb, var(--wfg) 8%, transparent); transform: translateX(60px); }
 html[data-lay=bench] .outline { opacity: 1; transform: none; transition-delay: .25s; }
 .outline b { display: block; margin-bottom: 12px; opacity: .6; font-weight: 500; }
 .outline span { display: block; padding: 7px 10px; border-radius: 7px; margin-bottom: 2px; } .outline span.sub { padding-left: 24px; opacity: .75; }
