@@ -481,11 +481,11 @@ html[data-fx~=glass] .page { opacity: .7; }
 .rail button { border: 0; background: transparent; padding: 7px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; opacity: .7; transition: background-color .3s, opacity .3s, color .3s; }
 .rail button:hover { opacity: 1; } .rail button[aria-current=true] { background: var(--ink); color: var(--bg1); opacity: 1; }
 
-/* ---------- the text: one pinned chapter per look ---------- */
+/* ---------- the text: one chapter per look, gliding past slower than the page so the scroll never stops ---------- */
 main { position: relative; z-index: 1; pointer-events: none; }
-.ch { height: 160vh; } .ch.hero { height: 135vh; }
-.ch-in { position: sticky; top: 0; height: 100vh; height: 100svh; display: flex; align-items: center; padding: 90px clamp(18px, 4vw, 56px) 60px; }
-.txt { width: min(35vw, 540px); pointer-events: auto; }
+.ch { height: 140vh; display: flex; align-items: center; } .ch.hero { height: 100vh; height: 100svh; }
+.ch-in { flex: 1; height: 100vh; height: 100svh; display: flex; align-items: center; padding: 90px clamp(18px, 4vw, 56px) 60px; }
+.txt { width: min(35vw, 540px); pointer-events: auto; will-change: transform, opacity; }
 .ch h1, .ch h2, .get h2 { margin: 0 0 22px; font-family: var(--display); line-height: .98; letter-spacing: -.01em; font-size: calc(var(--fs, 1) * clamp(34px, 5vw, 76px)); }
 .ch :is(h1, h2) .l { display: block; width: max-content; font-stretch: 50%; font-weight: 250; transition: font-stretch 1s var(--ease), font-weight 1s var(--ease); }
 .ch :is(h1, h2) .l:nth-child(2) { transition-delay: .08s; } .ch :is(h1, h2) .l:nth-child(3) { transition-delay: .16s; }
@@ -672,7 +672,7 @@ Lisbon weather · Design review
     </div></div>
   </section>
 
-  <section class="ch" id="looks" data-look="v98" data-lay="task" data-name="Any look" data-steps="v98 task|pasture field|tank tank|black none" style="--wd: 120%; --wg: 850; height: 420vh">
+  <section class="ch" id="looks" data-look="v98" data-lay="task" data-name="Any look" data-steps="v98 task|pasture field|tank tank|black none" style="--wd: 120%; --wg: 850; height: 240vh">
     <div class="ch-in"><div class="txt">
       <h2><span class="l">Make it look</span><span class="l">like anything.</span></h2>
       <p>Colors, shortcuts, menus and where every part of the window goes are all settings. Make it 1998, turn your tabs into sheep, keep them in a fish tank, or hide everything. Install a look someone else made, or describe yours to your AI.</p>
@@ -829,7 +829,7 @@ const rail = $("#rail");
 for (const ch of chapters) {
   const b = document.createElement("button");
   b.textContent = ch.dataset.name;
-  b.onclick = () => scrollTo({ top: ch.offsetTop + innerHeight * 0.12, behavior: calm ? "auto" : "smooth" });
+  b.onclick = () => scrollTo({ top: centred(ch), behavior: calm ? "auto" : "smooth" });
   rail.append(b); ch.railButton = b;
 }
 
@@ -854,14 +854,20 @@ function measure() {
   fit(); onScroll();
 }
 const clamp = (n) => Math.max(0, Math.min(1, n));
+// how far each chapter's text lags the page (0 scrolls normally, 1 stays put), and how far from the middle it's fully shown and gone (screens)
+const glide = (ch) => (innerWidth >= 860 ? { k: ch.dataset.steps ? 0.75 : 0.5, full: 0.12, gone: 0.38 } : { k: ch.dataset.steps ? 0.88 : 0.75, full: 0.06, gone: 0.2 });
+// the scroll position that puts a chapter's text `at` screens below the middle
+const centred = (ch, at = 0) => ch.offsetTop + ch.offsetHeight / 2 - innerHeight / 2 - at * innerHeight / (1 - glide(ch).k);
+let lookAt = 0;
 function onScroll() {
-  const vh = innerHeight; let active = chapters[0];
+  const vh = innerHeight; let active = chapters[0], near = Infinity;
   for (const ch of chapters) {
-    const r = ch.getBoundingClientRect(), top = r.top / vh, bottom = r.bottom / vh, first = ch === chapters[0], last = ch === chapters.at(-1);
-    const o = Math.min(first ? 1 : clamp((0.5 - top) / 0.34), last && innerWidth >= 860 ? 1 : clamp((bottom - 0.74) / 0.22));
+    const r = ch.getBoundingClientRect(), d = (r.top + r.height / 2 - vh / 2) / vh, g = glide(ch), at = d * (1 - g.k);
+    const o = ch === chapters[0] && at > 0 ? 1 : clamp((g.gone - Math.abs(at)) / (g.gone - g.full));
     const txt = ch.firstElementChild.firstElementChild;
+    txt.style.transform = `translate3d(0, ${-d * g.k * vh}px, 0)`;
     txt.style.opacity = o; txt.style.visibility = o < 0.02 ? "hidden" : "";
-    if (top < 0.7) active = ch;
+    if (Math.abs(at) < near) { near = Math.abs(at); active = ch; if (ch.dataset.steps) lookAt = at / g.gone; }
   }
   if (active !== current) {
     current = active; picked = null; press();
@@ -870,11 +876,11 @@ function onScroll() {
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
-  const r = active.getBoundingClientRect(), prog = clamp(-r.top / (r.height - vh || 1)), p = prog - 0.5;
   const steps = active.dataset.steps?.split("|");
-  if (steps) showLook(Math.min(steps.length - 1, Math.floor(prog * steps.length)));
+  if (steps) showLook(Math.min(steps.length - 1, Math.floor(clamp((0.8 - lookAt) / 1.6) * steps.length)));
   picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : steps ? wear(...steps[lookStep].split(" ")) : wear(spaceLook(), active.dataset.lay);
-  want.drift = -p * 34; kick();
+  // the window bobs gently with the whole page, never jumping between chapters
+  want.drift = Math.sin(scrollY / vh * 1.3) * 14; kick();
 }
 function frame() {
   ticking = false;
@@ -895,8 +901,8 @@ function showLook(n) {
   $("#lookset").textContent = LOOKSETS[n];
 }
 lookSegs.forEach((b, i) => (b.onclick = () => {
-  const ch = $("#looks"), span = ch.offsetHeight - innerHeight;
-  scrollTo({ top: ch.offsetTop + span * (i + 0.5) / lookSegs.length, behavior: calm ? "auto" : "smooth" });
+  const ch = $("#looks");
+  scrollTo({ top: centred(ch, glide(ch).gone * (0.8 - 1.6 * (i + 0.5) / lookSegs.length)), behavior: calm ? "auto" : "smooth" });
 }));
 addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", measure);
