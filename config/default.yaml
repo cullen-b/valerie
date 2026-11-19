@@ -822,8 +822,8 @@ vim:
     "i": insert
     "/": find
     "yy": copy_url
-    "H": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
-    "L": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
+    "H": prev_space          # H to the space on the left, L to the right (like J/K for tabs). For split-view panes
+    "L": next_space          # instead: "H": { cmd: focus_pane, direction: left } and "L": { cmd: focus_pane, direction: right }
     "r": reload
     "R": hard_reload
     "x": close_tab
