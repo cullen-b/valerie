@@ -40,6 +40,8 @@ pub enum Source {
     Panel(u32),
     Chrome,
     Overlay,
+    /// The command bar in its own panel over other apps (it says what the overlay says).
+    FloatBar,
     Chat,
     Terminal,
     Answer,
@@ -441,8 +443,11 @@ pub struct App {
     /// Menus whose items follow what's in Valerie: Recently Closed, recent pages, Bookmarks.
     dyn_menus: DynMenus,
     bar_open: bool,
-    /// The app the command bar was opened from by a global shortcut: closing the bar without picking anything goes back to it.
-    bar_return_to: Option<i32>,
+    /// The command bar's own panel for opening it over other apps, made the first time; and whether the bar is open there.
+    float_bar: Option<(Window, WebView)>,
+    bar_floating: bool,
+    /// What to show in that panel once its page has loaded.
+    float_pending: Option<String>,
     /// How tall the command bar drew itself (only used where its view is just the bar: `bar_bounds`).
     bar_height: f64,
     remote: Vec<sync::DeviceTabs>,
@@ -1630,7 +1635,9 @@ impl App {
             menu_cmds: HashMap::new(),
             dyn_menus: DynMenus::default(),
             bar_open: false,
-            bar_return_to: None,
+            float_bar: None,
+            bar_floating: false,
+            float_pending: None,
             bar_height: 120.0,
             remote: Vec::new(),
             dirty: false,
@@ -2808,6 +2815,9 @@ impl App {
                 let _ = self.chrome.load_html(&html());
             }
             "palette.html" => {
+                if let Some((_, v)) = &self.float_bar {
+                    let _ = v.load_html(&html());
+                }
                 let _ = self.overlay.load_html(&html());
             }
             "little.html" => {
@@ -4071,7 +4081,7 @@ impl App {
             self.queue_event("space_switched", self.state.active_tab(), None);
             self.prepare_little_later();
             if self.bar_open {
-                let _ = self.overlay.evaluate_script(&format!("palette.spaceChanged({})", json!(self.theme_for(i))));
+                let _ = self.bar_view().evaluate_script(&format!("palette.spaceChanged({})", json!(self.theme_for(i))));
             }
         }
         let settings_changed = self.apply_space_settings();
@@ -4395,7 +4405,7 @@ impl App {
             } else {
                 "tab"
             };
-            if Some(t.id) == active {
+            if Some(t.id) == active && !self.bar_floating {
                 continue;
             }
             items.push(json!({ "kind": kind, "title": t.display_title(), "url": t.url, "tab": t.id, "favicon": t.favicon, "rank": rank,
@@ -4515,13 +4525,86 @@ impl App {
         } else {
             vec![]
         };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "plugin_search": plugin_search, "agent": self.config.agent_for("chat").0, "options": self.config.command_bar, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "plugin_search": plugin_search, "agent": self.config.agent_for("chat").0, "options": self.config.command_bar, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items, "floating": self.bar_floating });
+        if self.bar_floating {
+            let script = format!("palette.open({data})");
+            self.bar_open = true;
+            match &self.float_bar {
+                Some((w, v)) if self.float_pending.is_none() => {
+                    let _ = v.evaluate_script(&script);
+                    platform::show_floating_panel(w);
+                    let _ = focus_view(v);
+                }
+                _ => self.float_pending = Some(script),
+            }
+            return;
+        }
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
         let _ = focus_view(&self.overlay);
         self.repaint_under_bar();
         self.bar_open = true;
+    }
+
+    /// The command bar alone, in its own panel over whatever app is in front (`command_bar.over_other_apps`).
+    fn open_floating_bar(&mut self, mode: BarMode, elwt: &EventLoopWindowTarget<UserEvent>) {
+        self.close_bar();
+        if self.float_bar.is_none() {
+            let built = WindowBuilder::new()
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_visible(false)
+                .with_resizable(false)
+                .with_inner_size(LogicalSize::new(self.config.command_bar.width, 120.0))
+                .build(elwt)
+                .map_err(|e| e.to_string())
+                .and_then(|w| {
+                    platform::make_floating_panel(&w);
+                    let p = self.proxy.clone();
+                    let size = w.inner_size().to_logical::<f64>(w.scale_factor());
+                    let v = platform::ui_builder(&self.chrome)
+                        .with_html(ui_page("palette.html", &self.config))
+                        .with_bounds(rect(0.0, 0.0, size.width, size.height))
+                        .with_transparent(true)
+                        .with_accept_first_mouse(true)
+                        .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::FloatBar, msg: r.into_body() }))
+                        .child_of(&w)
+                        .map_err(|e| e.to_string())?;
+                    platform::follow_window(&v, platform::Follow::Fill);
+                    Ok((w, v))
+                });
+            match built {
+                Ok(fb) => {
+                    self.float_bar = Some(fb);
+                    self.float_pending = Some(String::new());
+                }
+                Err(e) => {
+                    crate::log::line("command bar", format!("couldn't open the command bar over other apps: {e}"));
+                    platform::activate_app();
+                    self.show_main();
+                    return self.open_bar(mode);
+                }
+            }
+        }
+        if let Some((w, _)) = &self.float_bar {
+            // On the screen with the pointer, as far down as the bar sits in Valerie's window.
+            let at = w.cursor_position().ok().and_then(|p| w.monitor_from_point(p.x, p.y)).or_else(|| w.primary_monitor());
+            if let Some(m) = at {
+                let scale = m.scale_factor();
+                let (pos, size) = (m.position().to_logical::<f64>(scale), m.size().to_logical::<f64>(scale));
+                let width = self.config.command_bar.width.min(size.width - 48.0);
+                w.set_inner_size(LogicalSize::new(width, w.inner_size().to_logical::<f64>(scale).height));
+                w.set_outer_position(tao::dpi::LogicalPosition::new(pos.x + (size.width - width) / 2.0, pos.y + size.height * self.config.command_bar.top / 100.0));
+            }
+        }
+        self.bar_floating = true;
+        self.open_bar(mode);
+    }
+
+    /// The view the command bar is open in (its own panel when it's over other apps).
+    fn bar_view(&self) -> &WebView {
+        self.float_bar.as_ref().filter(|_| self.bar_floating).map(|(_, v)| v).unwrap_or(&self.overlay)
     }
 
     /// One line of text in the command bar overlay (shown above everything, whatever the sidebar's size).
@@ -4768,7 +4851,14 @@ impl App {
             return;
         }
         self.bar_open = false;
-        self.bar_return_to = None;
+        if std::mem::take(&mut self.bar_floating) {
+            self.float_pending = None;
+            if let Some((w, v)) = &self.float_bar {
+                let _ = v.evaluate_script("palette.hide()");
+                w.set_visible(false);
+            }
+            return;
+        }
         let _ = self.overlay.evaluate_script("palette.hide()");
         let _ = self.overlay.set_visible(false);
         self.repaint_under_bar();
@@ -6976,13 +7066,7 @@ impl App {
                 }
                 self.open_bar(mode)
             }
-            Command::CloseCommandBar => {
-                let back = self.bar_return_to.take();
-                self.close_bar();
-                if let Some(pid) = back {
-                    platform::activate_pid(pid);
-                }
-            }
+            Command::CloseCommandBar => self.close_bar(),
             Command::NewTab { url, space, background } => {
                 if self.main_hidden {
                     self.show_main();
@@ -7448,7 +7532,17 @@ impl App {
                     let list = self.state.order(self.state.active_space, true);
                     list.iter().copied().find(|t| *t != a && self.state.split_of(*t).is_none())
                 });
-                let Some(other) = other else { return self.toast("Open another tab to split with") };
+                let Some(mut other) = other else { return self.toast("Open another tab to split with") };
+                // Joining a split moves the tab beside its partner, so a pinned tab is copied instead of leaving its place.
+                if self.config.layout.split_copies_pinned && self.state.is_pinned(other) && self.state.section_of(other) != self.state.section_of(a) {
+                    let (url, title) = self.state.tabs.get(&other).map(|t| (t.url.clone(), t.title.clone())).unwrap_or_default();
+                    let copy = self.state.add_tab(self.state.space_of(a).unwrap_or(self.state.active_space), &url, true);
+                    if let Some(t) = self.state.tabs.get_mut(&copy) {
+                        t.title = title;
+                    }
+                    self.queue_event("tab_opened", Some(copy), None);
+                    other = copy;
+                }
                 let from = self.state.space_of(other);
                 let max = self.config.layout.split_max_panes.max(2);
                 if !self.state.join_split(a, other, max) {
@@ -8452,6 +8546,33 @@ impl App {
         }
         let Ok(m) = serde_json::from_str::<Value>(&msg) else { return };
         let kind = m["t"].as_str().unwrap_or("");
+        if let Source::FloatBar = from {
+            match kind {
+                "ready" => {
+                    if let Some(script) = self.float_pending.take().filter(|_| self.bar_floating) {
+                        if let Some((w, v)) = &self.float_bar {
+                            let _ = v.evaluate_script(&script);
+                            platform::show_floating_panel(w);
+                            let _ = focus_view(v);
+                        }
+                    }
+                    return;
+                }
+                "bar_height" => {
+                    if let (Some((w, _)), Some(h)) = (&self.float_bar, m["height"].as_f64()) {
+                        let width = w.inner_size().to_logical::<f64>(w.scale_factor()).width;
+                        w.set_inner_size(LogicalSize::new(width, h.max(1.0)));
+                        if self.bar_floating {
+                            platform::show_floating_panel(w);
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        let floating_pick = matches!(from, Source::FloatBar) && self.bar_floating;
+        let from = if let Source::FloatBar = from { Source::Overlay } else { from };
         let own_page = match from {
             Source::Chrome => Some("chrome.html"),
             Source::Overlay => Some("palette.html"),
@@ -8625,9 +8746,14 @@ impl App {
                     }
                     Source::Chrome | Source::Chat | Source::Terminal | Source::Answer | Source::Welcome | Source::Market | Source::Panel(_) => self.focused_little = None,
                     Source::SplitHandle(_) => return,
-                    Source::Overlay => {
+                    Source::Overlay | Source::FloatBar => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
+                            // Picked from the bar over another app: Valerie comes forward for it (a copy needn't).
+                            if floating_pick && !matches!(cmd, Command::CopyText { .. } | Command::CopyPassword { .. }) {
+                                platform::activate_app();
+                                self.show_main();
+                            }
                         }
                     }
                 }
@@ -9402,7 +9528,7 @@ impl App {
             UserEvent::PluginConfirmed { plugin, title, context } => self.run_plugin_command(&plugin, &title, context, true, elwt),
             UserEvent::SearchResults { query, plugin, title, items } => {
                 if self.bar_open && !items.is_empty() {
-                    let _ = self.overlay.evaluate_script(&format!("palette.more({}, {}, {}, {})", json!(query), json!(plugin), json!(title), json!(items)));
+                    let _ = self.bar_view().evaluate_script(&format!("palette.more({}, {}, {}, {})", json!(query), json!(plugin), json!(title), json!(items)));
                 }
             }
             UserEvent::WidgetText { key, text } => {
@@ -9464,18 +9590,23 @@ impl App {
                 if let Some(cmd) = self.global_keys.get(i).cloned() {
                     // Pressed in another app: bring Valerie forward first (a little window comes on its own). Pressed in
                     // Valerie, it acts like an ordinary shortcut (in a little window too).
-                    let from = platform::frontmost_app().filter(|&pid| pid != std::process::id() as i32);
-                    if from.is_some() {
+                    let other_app = platform::frontmost_app().is_some_and(|pid| pid != std::process::id() as i32);
+                    if let Command::OpenCommandBar { mode } = &cmd {
+                        // From another app, just the bar comes, over that app; the same key again puts it away.
+                        if self.bar_floating {
+                            return self.close_bar();
+                        }
+                        if other_app && self.config.command_bar.over_other_apps && cfg!(target_os = "macos") && *mode != BarMode::Current {
+                            return self.open_floating_bar(*mode, elwt);
+                        }
+                    }
+                    if other_app {
                         platform::activate_app();
                         if !matches!(cmd, Command::NewLittleWindow | Command::OpenLittleWindow { .. }) {
                             self.show_main();
                         }
                     }
-                    let bar = matches!(cmd, Command::OpenCommandBar { .. });
                     self.dispatch(cmd, elwt);
-                    if bar && self.bar_open && self.config.command_bar.back_to_app {
-                        self.bar_return_to = from;
-                    }
                 }
             }
             UserEvent::RestartNow => self.dispatch(Command::Restart, elwt),
@@ -10181,7 +10312,7 @@ impl App {
             }
             "screenshot_ui" | "read_ui" => {
                 let view = match args["part"].as_str().unwrap_or("sidebar") {
-                    "command_bar" => Some(&self.overlay),
+                    "command_bar" => Some(self.bar_view()),
                     "chats" => self.chat_view.as_ref(),
                     "terminal" => self.terminal_view.as_ref(),
                     "welcome" => self.welcome_view.as_ref(),
@@ -10274,6 +10405,15 @@ impl App {
 
     fn window_event(&mut self, id: WindowId, ev: WindowEvent, elwt: &EventLoopWindowTarget<UserEvent>) {
         let main = id == self.window.id();
+        if self.float_bar.as_ref().is_some_and(|(w, _)| w.id() == id) {
+            // A click anywhere else puts the bar away.
+            if let WindowEvent::Focused(false) = ev {
+                if self.bar_floating {
+                    self.close_bar();
+                }
+            }
+            return;
+        }
         match ev {
             WindowEvent::Focused(f) if main => {
                 self.window_focused = f;
@@ -13641,6 +13781,9 @@ impl App {
         };
         apply(&self.chrome, "chrome.html");
         apply(&self.overlay, "palette.html");
+        if let Some((_, v)) = &self.float_bar {
+            apply(v, "palette.html");
+        }
         for (v, page) in [(&self.chat_view, "chat.html"), (&self.terminal_view, "terminal.html"), (&self.answer_view, "answer.html"), (&self.market_view, "plugins.html"), (&self.welcome_view, "welcome.html")] {
             if let Some(v) = v {
                 apply(v, page);

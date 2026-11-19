@@ -167,7 +167,7 @@ changed in plain words. Some translations:
 | "Swiping skips two spaces" / "swipes feel too touchy" | `sidebar.swipe_settle_ms: 900` (longer wait before a hard swipe can switch again), `sidebar.swipe_distance: 140` |
 | "Pinch to zoom" / "no swiping back" | `gestures.pinch_to_zoom: true`, `gestures.swipe_to_go_back: false` |
 | "Stop cmd+D taking over other apps" / "give cmd+D back" | `global_keybindings: {{ "CmdOrCtrl+D": null }}` (cmd+D still opens the command bar inside Valerie) |
-| "Esc in the command bar should leave me in Valerie" | `command_bar: {{ back_to_app: false }}` |
+| "cmd+D from another app should bring Valerie's window forward too" | `command_bar: {{ over_other_apps: false }}` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "Sidebar only when I push the mouse to the edge" / "the page shouldn't resize when it shows" | `layout.sidebar_visible: false`, `layout.reveal_sidebar_on_edge: true`, `layout.reveal_sidebar_over_page: true` (`false` squeezes the page instead) |
 | "Always show the little window's bar" / "hide it until I point at the top" | `little_window.top_bar: always` / `hover` |

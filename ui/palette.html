@@ -47,6 +47,10 @@ html.bar-only, html.bar-only body { background: var(--bg); }
 html.bar-only #backdrop { display: none; }
 html.bar-only #card { position: static; width: 100%; border-radius: 0; box-shadow: inset 0 0 0 1px var(--line); transform: none; opacity: 1; transition: none; }
 html.bar-only #list { max-height: 430px; }
+/* Over another app: the panel is the card's size, so no backdrop and no offset; the panel draws the shadow. */
+html.floating #backdrop { display: none; }
+html.floating #card { position: static; width: 100%; transform: none; transition: none; box-shadow: inset 0 0 0 1px var(--line); }
+html.floating #list { max-height: 430px; }
 /* Animations: each only while its anim-* class is on <html> (ui/custom.js). The card's open and close run from the script. */
 @keyframes scope-in { from { opacity: 0; transform: scale(.9); } }
 html.anim-command-bar #backdrop, html.anim-command-bar #card { transition: none; }
@@ -280,7 +284,7 @@ function more(query, plugin, title, items) {
 }
 
 const anim = (k) => !!(window.__valerieUi && __valerieUi.anim && __valerieUi.anim(k));
-const barOnly = () => document.documentElement.classList.contains("bar-only");
+const barOnly = () => document.documentElement.classList.contains("bar-only") || document.documentElement.classList.contains("floating");
 const card = document.getElementById("card"), backdrop = document.getElementById("backdrop"), hl = document.createElement("div");
 hl.id = "highlight";
 let swinging = [], hAnim = null, firstDraw = true;
@@ -409,11 +413,17 @@ function applyTheme(t) {
   else r.style.removeProperty("--bg");
 }
 
+let sizeWatch = null;
 window.palette = {
   more,
   open(data) {
     D = data; extra = {};
     const r = document.documentElement;
+    r.classList.toggle("floating", !!data.floating);
+    if (data.floating && !sizeWatch) {
+      sizeWatch = new ResizeObserver(([e]) => send({ t: "bar_height", height: Math.ceil(e.target.getBoundingClientRect().height) }));
+      sizeWatch.observe(card);
+    }
     applyTheme(data.theme);
     document.getElementById("foot").style.display = data.options && data.options.footer_hints === false ? "none" : "";
     const o = data.options || {};
