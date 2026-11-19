@@ -109,6 +109,8 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 .wire { position: absolute; left: 60px; right: 60px; top: 50%; height: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 8px, transparent 8px 16px); animation: flow 1.2s linear infinite; opacity: .7; }
 @keyframes flow { to { background-position: 16px 0; } }
 .code { font: 700 34px ui-monospace, Menlo, monospace; letter-spacing: 4px; padding: 14px 20px; border-radius: 14px; background: var(--card2); display: inline-block; margin: 6px 0 10px; user-select: text; }
+.noacct { margin-top: 22px; padding: 14px 16px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.noacct .hint { margin: 4px 0 12px; color: var(--dim); font-size: 13.5px; line-height: 1.5; } .noacct .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .done-line { display: flex; align-items: center; gap: 10px; color: var(--ok); font-weight: 600; }
 h2.section { font-size: 22px; letter-spacing: -.4px; margin: 34px 0 6px; font-weight: 680; text-wrap: balance; }
 .err { color: var(--bad); font-size: 13.5px; margin-top: 8px; }
@@ -399,8 +401,16 @@ function syncStep(root) {
   const wrap = el("div", "sync"), left = el("div");
   left.append(el("p", "lead", "Settings, spaces, pinned tabs and folders follow you to every computer. They live in a private GitHub repo that only you can see, and change history comes free."));
   const s = S.sync || (W.sync ? { step: "done", repo: W.sync } : null);
-  if (!s) left.append(btn("Sign in with GitHub", "primary", () => { S.sync = { step: "waiting" }; draw(); send({ t: "sync" }); }));
-  else if (s.step === "waiting") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Signing in to GitHub…")); left.append(w); }
+  if (!s) {
+    left.append(btn("Sign in with GitHub", "primary", () => { S.sync = { step: "waiting" }; draw(); send({ t: "sync" }); }));
+    const none = el("div", "noacct");
+    none.append(el("b", null, "No GitHub account?"),
+      el("p", "hint", "Making one is free and takes about a minute, and it's worth it: a new computer or a fresh install picks up right where you left off. Or skip sync for now and turn it on later with Set Up Sync in the command bar."));
+    const row = el("div", "row");
+    row.append(btn("Make a free account", "small", () => send({ t: "open", url: "https://github.com/signup" })),
+      btn("Skip sync for now", "small ghost", () => S.only ? send({ t: "done" }) : go(S.step + 1)));
+    none.append(row); left.append(none);
+  } else if (s.step === "waiting") { const w = el("div", "working"); w.append(el("div", "spinner"), el("span", null, "Signing in to GitHub…")); left.append(w); }
   else if (s.step === "code") {
     left.append(el("div", null, "Paste this code in the GitHub window (it's already on your clipboard):"), el("div", "code", s.code),
       el("div", "note", "When GitHub says you're done, come back here. This screen updates by itself."));
