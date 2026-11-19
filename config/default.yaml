@@ -222,6 +222,8 @@ command_bar:
                            # opens it where you are). false = Shift+Enter does the same as Enter. true | false
   send_to_chats_tip: true  # the first time you ask an agent from the command bar, one message says Shift+Enter sends it
                            # to Chats instead (shown once, ever). true | false
+  back_to_app: true        # opened with a global shortcut from another app (cmd+D), closing the bar with Esc or a click
+                           # outside takes you back to that app. false = stay in Valerie. true | false
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
   width: 680               # command bar width, pixels
   top: 18                  # how far down the window it opens, percent of the window height
@@ -738,7 +740,10 @@ keybindings:
 #   "Ctrl+Alt+Space": open_command_bar       # brings Valerie forward with the command bar open
 # Set one to null to turn it off. Another app (Karabiner, Raycast, a script) can open a little window with
 #   open -b dev.valerie.browser 'valerie://little'       (or 'valerie://little?url=https://…' for a page)
+# A global shortcut takes that key from every other app, so "CmdOrCtrl+D" here means no cmd+D in other apps (VS Code's add
+#   next match, Finder's duplicate, "Don't Save" in dialogs, Safari's bookmark); set it to null to give it back.
 global_keybindings:
+  "CmdOrCtrl+D": open_command_bar       # cmd+D from any app: the command bar with your recent tabs; Tab moves down, Enter goes there
   "Ctrl+Semicolon": new_little_window   # Ctrl+; a new little window from any app, asking where to go
 
 # The menu bar at the top of the screen. Its menus: Valerie, File, Edit, View, History, Bookmarks, Tabs, Spaces, Tools, Plugins, Window, Help.

@@ -379,6 +379,8 @@ pub struct CommandBarConfig {
     pub customize_row: bool,
     pub shift_enter_to_chats: bool,
     pub send_to_chats_tip: bool,
+    #[serde(default = "yes")]
+    pub back_to_app: bool,
     pub width: f64,
     pub top: f64,
     pub font_size: f64,
