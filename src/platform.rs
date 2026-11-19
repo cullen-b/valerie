@@ -588,6 +588,58 @@ mod mac {
         });
     }
 
+    /// Only the webview the mouse is actually over sets the cursor. AppKit sends mouse moves to every view whose area
+    /// holds the mouse, covered or not, so the sidebar's full-window view under a page kept setting the arrow while
+    /// the page set the text cursor, and the cursor flickered between them. A covered view gets one more move (so
+    /// its hover effects end), then none until the mouse is back over it. Added to wry's webview class once.
+    pub fn cursor_from_top_view_only(wv: &WebView) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::sel;
+        use std::{cell::RefCell, collections::HashSet};
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        thread_local! { static COVERED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new()); }
+        unsafe extern "C-unwind" fn mouse_moved(this: *mut AnyObject, _: Sel, event: *mut AnyObject) {
+            let covered = || -> bool {
+                let window: *mut AnyObject = msg_send![this, window];
+                let content: *mut AnyObject = if window.is_null() { std::ptr::null_mut() } else { msg_send![window, contentView] };
+                if content.is_null() {
+                    return false;
+                }
+                let frame: *mut AnyObject = msg_send![content, superview];
+                let at: objc2_foundation::NSPoint = msg_send![event, locationInWindow];
+                let at: objc2_foundation::NSPoint = if frame.is_null() { at } else { msg_send![frame, convertPoint: at, fromView: std::ptr::null_mut::<AnyObject>()] };
+                let hit: *mut AnyObject = msg_send![content, hitTest: at];
+                !hit.is_null() && !msg_send![hit, isDescendantOf: this]
+            };
+            let first = COVERED.with(|c| {
+                let mut c = c.borrow_mut();
+                if covered() {
+                    c.insert(this as usize)
+                } else {
+                    c.remove(&(this as usize));
+                    true
+                }
+            });
+            if first {
+                if let Some(sup) = AnyClass::get(c"WKWebView") {
+                    let _: () = msg_send![super(&*this, sup), mouseMoved: event];
+                }
+            }
+        }
+        ONCE.call_once(|| unsafe {
+            let cls = AnyClass::get(c"WryWebView").unwrap_or_else(|| (*ptr(wv)).class());
+            let added = objc2::ffi::class_addMethod(
+                cls as *const AnyClass as *mut AnyClass,
+                sel!(mouseMoved:),
+                std::mem::transmute::<*const (), Imp>(mouse_moved as *const ()),
+                c"v@:@".as_ptr(),
+            );
+            if !added.as_bool() {
+                crate::log::line("cursor", "couldn't add mouseMoved: to the webview class; the cursor may flicker over pages");
+            }
+        });
+    }
+
     /// The floating video's return button. WebKit asks the UI delegate before the video comes back, on screen or not;
     /// a hidden tab can't be relied on to report it, and only the button itself calls this.
     pub fn on_video_return(wv: &WebView, f: Box<dyn Fn(usize) + Send + Sync>) {
@@ -2826,7 +2878,10 @@ pub fn test_windows() -> Option<String> {
 
 pub fn install_page_dialogs(wv: &WebView) {
     #[cfg(target_os = "macos")]
-    mac::install_page_dialogs(wv);
+    {
+        mac::install_page_dialogs(wv);
+        mac::cursor_from_top_view_only(wv);
+    }
     #[cfg(not(target_os = "macos"))]
     let _ = wv;
 }
