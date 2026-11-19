@@ -449,7 +449,9 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: calc(100svh - 370px); overflow-y: auto; padding: 3px 3px 14px; margin: -3px; overscroll-behavior: contain; scrollbar-width: thin; -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); }
 .chips button { border: 1.5px solid color-mix(in srgb, var(--ink) 35%, transparent); background: color-mix(in srgb, var(--bg1) 60%, transparent); padding: 6px 12px; border-radius: 999px; font-size: 13.5px; cursor: pointer; white-space: nowrap; transition: transform .18s var(--ease), background-color .2s, color .2s, border-color .2s; }
 .chips button:hover { border-color: var(--ink); transform: translateY(-2px); } .chips button:active { transform: scale(.95); }
-.chips button.lucky { background: var(--accent); border-color: var(--accent); color: var(--onacc); font-weight: 600; }
+.chips { align-items: center; }
+.chips button.lucky { background: var(--accent); border-color: var(--accent); color: var(--onacc); font: 800 19px var(--display); font-stretch: 110%; padding: 13px 26px; margin-right: 4px; box-shadow: 0 8px 24px -8px var(--accent); }
+.chips button.lucky:hover { transform: translateY(-3px) scale(1.04); }
 .chips button[aria-pressed=true] { background: var(--ink); color: var(--bg1); border-color: var(--ink); }
 
 .get { position: relative; pointer-events: auto; width: min(41vw, 620px); padding: 16vh clamp(18px, 4vw, 56px) 40px; min-height: 100vh; }
@@ -474,6 +476,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   .btn { min-height: 46px; padding: 0 18px; }
   .vs { font-size: 13px; } .vs ~ .set, .ch:has(.vs) p:not(.fine) { display: none; }
   .ask { min-height: 44px; margin-bottom: 10px; font-size: 14.5px; }
+  .chips button.lucky { grid-row: span 2; align-self: stretch; font-size: 18px; padding: 0 22px; }
   .chips { display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); justify-content: start; max-height: none; overflow: auto hidden; margin: 0 -18px; padding: 3px 18px 8px; -webkit-mask-image: none; mask-image: none; scrollbar-width: none; }
   .win, html[data-look] .win { transform: rotateY(-4deg) rotateX(3deg); }
   .get { width: 100%; padding-top: 70px; background: var(--bg2); border-radius: 26px 26px 0 0; box-shadow: 0 -30px 60px rgba(0,0,0,.3); }
