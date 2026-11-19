@@ -824,8 +824,8 @@ vim:
     "i": insert
     "/": find
     "yy": copy_url
-    "H": prev_space          # H to the space on the left, L to the right (like J/K for tabs). For split-view panes
-    "L": next_space          # instead: "H": { cmd: focus_pane, direction: left } and "L": { cmd: focus_pane, direction: right }
+    "H": prev_space          # H to the space on the left, L to the right (like J/K for tabs)
+    "L": next_space
     "r": reload
     "R": hard_reload
     "x": close_tab
@@ -838,8 +838,9 @@ vim:
     "O": { cmd: open_command_bar, mode: current }
     "t": new_tab
     "s": toggle_sidebar
-    "]s": next_space
-    "[s": prev_space
+    "[": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
+    "]": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
+                             # (spaces were "[s" / "]s"; to have those back, also set "[": null and "]": null)
 
 
 # --------------------------------------------------------------------------------------------------------------
