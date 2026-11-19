@@ -189,6 +189,8 @@ pub enum UserEvent {
     ExtensionGrant { name: String, print: String, allowed: bool },
     /// An extension finished loading (or couldn't).
     ExtensionLoaded { name: String, result: Result<(), String>, announce: bool },
+    /// An extension asked to open, switch to or close a tab, or to show its popup.
+    ExtensionAsk(crate::extensions::Ask),
 }
 
 /// History › Recently Closed, the recent pages under it, and the Bookmarks menu: refilled only when what they show changes.
@@ -2118,7 +2120,7 @@ impl App {
             })
             .with_navigation_handler(move |url| {
                 let scheme = scheme_of(&url);
-                if matches!(scheme.as_str(), "http" | "https" | "about" | "data" | "blob" | "file" | "valerie") {
+                if matches!(scheme.as_str(), "http" | "https" | "about" | "data" | "blob" | "file" | "valerie" | "webkit-extension") {
                     return true;
                 }
                 send(&p5, UserEvent::ExternalScheme(url));
@@ -2200,7 +2202,20 @@ impl App {
                 self.view_profiles.get(t) == Some(&profile) && self.state.tabs.get(t).and_then(|o| site_of(&o.url)).as_ref() == Some(&site)
             })
         });
-        let mut built = self.with_profile(&profile, mate, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window));
+        #[cfg(target_os = "macos")]
+        let ext_page = crate::extensions::page_configuration_for(&url);
+        #[cfg(not(target_os = "macos"))]
+        let ext_page: Option<()> = None;
+        let mut built = match ext_page {
+            // An extension's own page (its options, say) is built the way WebKit requires for it.
+            #[cfg(target_os = "macos")]
+            Some(c) => {
+                use wry::WebViewBuilderExtMacos;
+                let base = WebViewBuilder::new().with_webview_configuration(unsafe { objc2::rc::Retained::cast_unchecked(c) });
+                self.page_builder(base, Target::Tab(tab), &url).child_of(&self.window)
+            }
+            _ => self.with_profile(&profile, mate, |app, base| app.page_builder(base, Target::Tab(tab), &url).child_of(&app.window)),
+        };
         // Some WebKit versions refuse to share a page's process; the page then gets one of its own.
         if let (Err(e), Some(_)) = (&built, mate) {
             crate::log::line("page", format!("couldn't share a web process with the site's other tab ({e}); using its own"));
@@ -3754,6 +3769,7 @@ impl App {
     }
 
     fn render(&self) {
+        self.sync_extension_tabs();
         let theme = self.theme_for(self.state.active_space);
         let light = theme.mode == "light";
         let bg = theme.background.first().cloned().unwrap_or_else(|| if light { "#fbfaf8".into() } else { "#16151c".into() });
@@ -3955,6 +3971,12 @@ impl App {
         self.keyed.remove(&Target::Tab(tab)); // you went there yourself, not by a keyboard click on the page
         if let Some(t) = self.state.tabs.get_mut(&tab) {
             t.url = url.to_string();
+        }
+        // Extension pages and web pages can't share a page: going between them builds a new one.
+        let swap = self.views.get(&tab).is_some_and(|v| v.url().ok().map(|u| crate::extensions::extension_host(&u)) != Some(crate::extensions::extension_host(url)));
+        if swap {
+            self.drop_view(tab);
+            self.ready_views.remove(&tab);
         }
         match self.views.get(&tab) {
             Some(v) => {
@@ -8364,6 +8386,19 @@ impl App {
                 self.show_extensions();
             }
             Command::ExtensionAction { name, options } => self.extension_action(&name, options),
+            Command::AddExtension { app } => {
+                self.close_bar();
+                let found = crate::extensions::in_apps().into_iter().find(|a| a.app.eq_ignore_ascii_case(app.trim()));
+                match found.map(|a| crate::extensions::add_from_app(&a, &crate::extensions::dir(&self.config.extensions))) {
+                    Some(Ok(name)) => {
+                        self.toast(&format!("Added {app}'s extension. Valerie asks before loading it"));
+                        crate::log::line("extensions", format!("linked {app}'s Safari extension as {name}"));
+                        self.load_extensions(true);
+                    }
+                    Some(Err(e)) => self.toast(&format!("Couldn't add {app}'s extension: {e:#}")),
+                    None => self.toast(&format!("No app called {app} with a Safari extension")),
+                }
+            }
             Command::TogglePlugin { name, on, extension } => {
                 self.close_bar();
                 self.toggle_plugin(&name, on, extension);
@@ -9358,11 +9393,12 @@ impl App {
                 self.load_extensions(true);
                 self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
             }
+            UserEvent::ExtensionAsk(ask) => self.extension_asked(ask),
             UserEvent::ExtensionLoaded { name, result, announce } => {
                 self.ext_loading = self.ext_loading.saturating_sub(1);
                 match result {
                     Ok(()) if announce => self.toast(&format!("Extension loaded: {name}")),
-                    Ok(()) => {}
+                    Ok(()) => crate::log::line("extensions", format!("{name} loaded")),
                     Err(e) => self.toast(&format!("Extension {name}: {e}")),
                 }
                 // Pages made before this don't have it: once the last one's in, rebuild them (on screen now, the rest
@@ -10414,6 +10450,8 @@ impl App {
             self.toast(&format!("Valerie {bad} kept crashing when it opened, so you're back on {now}. Your tabs and settings are as they were"));
         }
         self.queue_event("valerie_started", self.state.active_tab(), None);
+        let p = self.proxy.clone();
+        crate::extensions::connect(move |ask| send(&p, UserEvent::ExtensionAsk(ask)));
         self.load_extensions(false);
         if self.config.app.command_line_tool {
             std::thread::spawn(|| match install_command_line_tool(true) {
@@ -12313,7 +12351,7 @@ impl App {
         let loaded = crate::extensions::loaded();
         // Then a switch would do nothing.
         let off_because = if !crate::extensions::supported() {
-            Some("needs macOS 15.4 or later")
+            Some(crate::extensions::unsupported_reason())
         } else if !self.config.extensions.enabled {
             Some("all extensions are off in settings")
         } else {
@@ -13633,12 +13671,13 @@ impl App {
             if self.state.extension_grants.get(&e.name) == Some(&e.print) {
                 self.ext_loading += 1;
                 let (p, name) = (self.proxy.clone(), e.name.clone());
-                crate::extensions::load(e.name.clone(), &e.dir, move |result| send(&p, UserEvent::ExtensionLoaded { name, result, announce }));
+                crate::extensions::load(e.name.clone(), &e.dir, e.appex, move |result| send(&p, UserEvent::ExtensionLoaded { name, result, announce }));
             } else if !self.ext_asking {
                 self.ext_asking = true;
                 let wants = if e.wants.is_empty() { "nothing special".to_string() } else { e.wants.iter().take(12).cloned().collect::<Vec<_>>().join(", ") };
                 let (p, name, print) = (self.proxy.clone(), e.name.clone(), e.print.clone());
-                platform::ask(&self.chrome, &format!("Load the extension “{}”?", e.title), &format!("It was added to your extensions folder. It asks for: {wants}."), "Load", "Not Now", move |ok| {
+                let missing = if e.limits.is_empty() { String::new() } else { format!(" Valerie can't give it: {}, so those parts won't work.", e.limits.join(", ")) };
+                platform::ask(&self.chrome, &format!("Load the extension “{}”?", e.title), &format!("It was added to your extensions folder. It asks for: {wants}.{missing}"), "Load", "Not Now", move |ok| {
                     send(&p, UserEvent::ExtensionGrant { name, print, allowed: ok });
                 });
             }
@@ -13701,8 +13740,15 @@ impl App {
     /// The extensions in the command bar: open a popup or options page, or see why one isn't running.
     fn show_extensions(&mut self) {
         let found = crate::extensions::find(&crate::extensions::dir(&self.config.extensions));
-        if found.is_empty() {
-            return self.toast(&format!("No extensions yet: put an unpacked extension's folder in {}", crate::extensions::dir(&self.config.extensions).display()));
+        // Safari extensions in installed apps that aren't in the folder yet.
+        let have: Vec<std::path::PathBuf> = found.iter().filter(|e| e.appex).filter_map(|e| std::fs::canonicalize(&e.dir).ok()).collect();
+        let offers: Vec<crate::extensions::InApp> = if self.config.extensions.offer_from_apps {
+            crate::extensions::in_apps().into_iter().filter(|a| !have.contains(&std::fs::canonicalize(&a.appex).unwrap_or_default())).collect()
+        } else {
+            vec![]
+        };
+        if found.is_empty() && offers.is_empty() {
+            return self.toast(&format!("No extensions yet: install an app that comes with a Safari extension, or put an unpacked extension's folder in {}", crate::extensions::dir(&self.config.extensions).display()));
         }
         let loaded = crate::extensions::loaded();
         let mut items = Vec::new();
@@ -13710,7 +13756,7 @@ impl App {
             let on = loaded.contains(&e.name);
             let can_switch = crate::extensions::supported() && self.config.extensions.enabled;
             let status = if !crate::extensions::supported() {
-                "needs macOS 15.4 or later"
+                crate::extensions::unsupported_reason()
             } else if !self.config.extensions.enabled {
                 "extensions are off (extensions.enabled)"
             } else if on {
@@ -13722,7 +13768,8 @@ impl App {
             } else {
                 "waiting for you to allow it"
             };
-            let sub = format!("{} {} · {status}", e.title, e.version);
+            let missing = if e.limits.is_empty() { String::new() } else { format!(" · won't work here: {}", e.limits.join(", ")) };
+            let sub = format!("{} {} · {status}{missing}", e.title, e.version);
             let before = items.len();
             if on && e.button {
                 items.push(json!({ "kind": "plugin", "title": format!("{}: button / popup", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name } }));
@@ -13739,7 +13786,52 @@ impl App {
                 items.push(json!({ "kind": "plugin", "title": e.title, "sub": sub, "cmd": { "cmd": "copy_text", "text": e.dir.to_string_lossy() } }));
             }
         }
+        for a in offers {
+            let sub = format!("Safari extension that came with {} · Valerie asks before loading it", a.app);
+            items.push(json!({ "kind": "plugin", "title": format!("Add {}", a.app), "sub": sub, "cmd": { "cmd": "add_extension", "app": a.app } }));
+        }
         self.open_list("Extensions", items);
+    }
+
+    fn extension_asked(&mut self, ask: crate::extensions::Ask) {
+        use crate::extensions::Ask;
+        match ask {
+            Ask::Activate(tab) => self.activate(tab),
+            Ask::Close(tab) => self.close(tab),
+            Ask::Open { url, active, reply } => {
+                let tab = self.open_tab(&url, None, active);
+                self.render();
+                crate::extensions::opened(reply, tab);
+            }
+            Ask::FocusWindow => self.show_main(),
+            Ask::Popup(name) => self.show_extension_popup(&name, false),
+        }
+    }
+
+    /// Tell the extensions about the tabs: the open space's, then any other loaded page.
+    fn sync_extension_tabs(&self) {
+        if crate::extensions::loaded().is_empty() {
+            return;
+        }
+        let mut ids = self.state.order(self.state.active_space, false);
+        ids.retain(|t| self.views.contains_key(t));
+        ids.extend(self.views.keys().filter(|t| !ids.contains(t) && self.state.tabs.contains_key(t)).copied().collect::<Vec<_>>());
+        let seen: Vec<crate::extensions::Seen> = ids
+            .iter()
+            .filter_map(|id| {
+                let t = self.state.tabs.get(id)?;
+                #[cfg(target_os = "macos")]
+                let view = self.views.get(id).map(|v| {
+                    use wry::WebViewExtMacOS;
+                    objc2::rc::Retained::as_ptr(&v.webview()) as *mut std::ffi::c_void
+                });
+                #[cfg(not(target_os = "macos"))]
+                let view = None;
+                Some(crate::extensions::Seen { id: *id, url: &t.url, title: &t.title, loading: t.loading, view })
+            })
+            .collect();
+        crate::extensions::sync(&seen, self.state.active_tab());
+        crate::extensions::log_errors();
     }
 
     fn extension_action(&mut self, name: &str, options: bool) {
@@ -13753,6 +13845,11 @@ impl App {
             }
             return;
         }
+        self.show_extension_popup(name, true);
+    }
+
+    /// `toggle`: the button was pressed, so a popup that's showing closes.
+    fn show_extension_popup(&mut self, name: &str, toggle: bool) {
         #[cfg(target_os = "macos")]
         {
             use wry::WebViewExtMacOS;
@@ -13760,10 +13857,12 @@ impl App {
             let (x, y, w, _) = self.content_area(size.width, size.height);
             let v = self.chrome.webview();
             let ptr = objc2::rc::Retained::as_ptr(&v) as *mut objc2::runtime::AnyObject;
-            if let Err(e) = crate::extensions::show_action(name, ptr, x + w - 60.0, y + 8.0) {
+            if let Err(e) = crate::extensions::show_action(name, self.state.active_tab(), ptr, x + w - 60.0, y + 8.0, toggle) {
                 self.toast(&format!("{name}: {e}"));
             }
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (name, toggle);
     }
 }
 

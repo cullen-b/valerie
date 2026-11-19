@@ -173,6 +173,9 @@ sidebar:
   alt_click_to_split: true # Option-click a tab (Alt-click on Windows and Linux) to show it in split view beside the tab you're on. true | false
   drag_folders: true       # drag a folder by its row to move it (its tabs come along): reorder, put it in another folder,
                            # move it between pinned and kept, or rest on a space's button to take it there. true | false
+  drag_to_edge_switches_space: true # hold a dragged tab at the sidebar's left or right edge to move to the space before or after;
+                           # keep holding to go on to the next. true | false
+  drag_to_edge_ms: 700     # how long the tab rests at the edge before each switch, milliseconds
   reorder_spaces: true     # drag a space's button along the bottom of the sidebar to change the order of your spaces. true | false
   split_rows: true         # tabs in split view show as one row (one wide tile among pinned icons) that you drag, pin
                            # and keep as one. false = separate rows, marked with a bar. true | false
@@ -1096,8 +1099,13 @@ app:
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
+# A Safari extension inside an app (a `Name.appex` bundle, or a symlink to one) also loads from that folder; those
+# are the best choice. Chrome Web Store ones run too, minus Chrome-only parts: `valerie extensions` says what won't work.
 extensions:
   enabled: true            # load the extensions in that folder. true | false
   turned_off: []           # extensions that stay off, by folder name, e.g. [youtube-theater]. The switches in
                            # "Plugins" change this list; removing a name turns that extension back on
   folder: ""               # where they live; empty = the extensions folder next to this file
+  chrome_web_store: true   # let `valerie extensions add <Chrome Web Store link or id>` add extensions. true | false
+  offer_from_apps: true    # "Extensions" offers the Safari extensions that come with your installed apps (Bitwarden,
+                           # 1Password, …) and `valerie extensions` lists them. true | false

@@ -433,7 +433,8 @@ Closed chats go to a folded "Closed" list at the bottom of the Chats sidebar (`c
 brings one back (a coding chat gets its worktree again).
 Spaces: right-click a space's icon to rename or remove it (`delete_space` archives its tabs and takes a space from
 config.yaml out of the user's `spaces` list). Drag a tab onto a space's icon to move it there, or rest on the icon to
-switch and drop it in place. With `sidebar.favorites` off (the default) there's one Pinned section per space.
+switch and drop it in place; or hold it at the sidebar's left or right edge to step to the space before or after
+(`sidebar.drag_to_edge_switches_space`, `sidebar.drag_to_edge_ms`). With `sidebar.favorites` off (the default) there's one Pinned section per space.
 
 ## Settings
 
@@ -632,13 +633,33 @@ Examples:
 
 ## Browser extensions
 
-Unpacked web extensions (a folder with a manifest.json, as for Safari or Chrome "load unpacked") go in `extensions/`
-(macOS 15.4 or later). Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
-and opens their popups and options pages. To turn one off, never move or delete its folder: use
+Valerie runs web extensions on Safari's engine (WebKit), on macOS 15.4 or later; not yet on Windows or Linux. Three ways in:
+- **A Safari extension that comes with an app** (Bitwarden, 1Password and others ship one inside their Mac app): the
+  best choice, because it's the version made for this engine and it can talk to its app (biometric unlock, for
+  example). "Extensions" in the command bar offers the ones in installed apps; or run `"{exe}" extensions add <app name>`
+  (`extensions.offer_from_apps: false` stops the offers). It becomes a link to the app's `.appex` in `extensions/`.
+- **From the Chrome Web Store**: `"{exe}" extensions add <store link or 32-letter id>` (`extensions.chrome_web_store:
+  false` turns that off). It's the Chrome version running on Safari's engine: many work, some don't (Bitwarden's
+  Chrome version doesn't start; use its Safari one).
+- **Unpacked** (a folder with a manifest.json, as for Safari or Chrome "load unpacked") in `extensions/`.
+
+Valerie asks the user once before loading each one. `"{exe}" extensions` lists them with what won't work in each.
+
+**What works:** page scripts and styles, the background script, `tabs` and `windows` (which tab you're on, opening,
+switching and closing tabs), `scripting`, `storage` (kept across restarts), `alarms`, `cookies`, `webRequest`,
+`webNavigation`, `declarativeNetRequest` (content blocking), `clipboardWrite`, native messaging for Safari extensions
+from an app, popups and options pages (from "Extensions" in the command bar).
+**What doesn't:** Chrome-only APIs such as `offscreen`, `sidePanel`, `notifications`, `idle`, `identity`, `downloads`,
+`bookmarks`, `history` and `debugger`; extensions' right-click menu items and keyboard shortcuts (not shown in Valerie
+yet); permissions an extension asks for after it's loaded; badges on a toolbar button (Valerie has no extension
+toolbar: buttons live in "Extensions"); private windows (they run without extensions). Valerie names what won't work in
+each extension when it asks to load it.
+
+To turn one off, never move or delete its folder: use
 `"{exe}" plugins off <name>` (`on` turns it back on), the switch in "Plugins", or `extensions.turned_off: [<folder name>]`.
 It stops right away, and open pages reload without it. `extensions.enabled: false` turns them all off. A new folder is
-picked up without a restart. To change how a site behaves, prefer a plugin with a `script.js`: it works on every platform and
-can use Valerie's commands and settings. Both can be shared in the marketplace.
+picked up without a restart. To change how a site behaves, prefer a plugin with a `script.js`: it works on every
+platform and can use Valerie's commands and settings. Both can be shared in the marketplace.
 
 ## Limits
 
