@@ -79,6 +79,7 @@ pub fn find(root: &Path) -> Vec<Found> {
 
 /// Something an extension asks Valerie to do with its tabs.
 #[derive(Debug, Clone)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // extensions only run on macOS so far
 pub enum Ask {
     Activate(u64),
     Close(u64),
@@ -96,6 +97,7 @@ pub fn extension_host(url: &str) -> Option<String> {
 }
 
 /// A tab as extensions see it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // extensions only run on macOS so far
 pub struct Seen<'a> {
     pub id: u64,
     pub url: &'a str,
