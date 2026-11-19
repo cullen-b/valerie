@@ -1021,9 +1021,15 @@ function press() {
     b.setAttribute("aria-pressed", !!picked && !!(a.fx || a.look || a.lay) && fx.every((f) => picked.fx.has(f)) && (!a.look || a.look === picked.look) && (!a.lay || a.lay === picked.lay));
   }
 }
-function apply(a) {
+function apply(a, undo) {
   picked = picked || home();
   if (a.reset) picked = home();
+  else if (undo) {
+    // asking again takes it back: its extras come off and its look or layout goes back to the plain one
+    const plain = home();
+    for (const f of a.fx?.split(" ") ?? []) picked.fx.delete(f);
+    if (a.look) picked.look = plain.look; if (a.lay) picked.lay = plain.lay;
+  }
   else if (a.lucky) {
     const any = (list) => list[Math.floor(Math.random() * list.length)];
     picked = { look: any(LOOKS), lay: any(LAYS), fx: new Set([any(FX), any(FX)].slice(0, Math.floor(Math.random() * 3))) };
@@ -1040,6 +1046,7 @@ function chip(text, ask, cls, into = chipBox) {
   b.textContent = text; b.ask = ask; if (cls) b.className = cls;
   b.onclick = () => {
     const out = $("#asked"), mine = ++typing;
+    if (b.getAttribute("aria-pressed") === "true") { out.textContent = ""; return apply(ask, true); }
     if (calm) { out.textContent = text; return apply(ask); }
     out.textContent = ""; let n = 0;
     (function step() {
