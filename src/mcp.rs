@@ -246,7 +246,7 @@ struct Caller {
 pub const LOOKING: &[&str] = &[
     "list_spaces", "list_tabs", "read_page", "snapshot", "screenshot", "wait_for", "read_chat", "list_chats", "search_history",
     "list_archived", "list_closed_tabs", "list_downloads", "site_state", "screenshot_ui", "read_ui", "read_logs", "get_settings",
-    "list_pages", "list_layouts", "check_panel", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user",
+    "list_pages", "list_layouts", "check_panel", "read_console", "read_terminal", "web_search", "fetch_page", "check_page", "map_site", "read_network", "ask_user", "wait_for_tab",
 ];
 
 /// The confirm tool that always reaches a person: "Always Allow" can't cover it.
@@ -774,7 +774,7 @@ pub fn tools() -> Vec<Value> {
             "format": { "type": "string", "enum": ["text", "markdown", "html"], "description": "Default text" } }), &[]),
         tool("snapshot", "List the page's interactive elements with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too. Only what's shown on the page is listed (not what sits in a closed menu or section). Each has its label and, where it applies, href (same-site links as a path), value (a list for a multiple-choice <select>), checked, expanded, options (dropdowns), editor (a rich text or code editor), disabled, readonly, offscreen, and covered (what sits on top of it, e.g. an open dialog). other_site_frames lists embedded frames from another site, which these tools can't reach inside: open that address in its own tab to work in it. truncated: true means there were more than 500. Refs reset on every snapshot.",
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
-        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would (on macOS a real mouse click, which sites trust): on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new, opened a new tab, or showed an alert, confirm or prompt (answered by dialog). Refuses what a person couldn't click: something covered (a dialog or banner), hidden (in a closed menu or section) or disabled; force: true clicks covered, hidden and aria-disabled ones anyway. double: true double-clicks; button: right right-clicks (opens the page's own context menu).", with_dialog(json!({
+        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would (on macOS and Windows a real mouse click, which sites trust): on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new, opened a new tab, or showed an alert, confirm or prompt (answered by dialog). Refuses what a person couldn't click: something covered (a dialog or banner), hidden (in a closed menu or section) or disabled; force: true clicks covered, hidden and aria-disabled ones anyway. double: true double-clicks; button: right right-clicks (opens the page's own context menu).", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
             "force": { "type": "boolean", "description": "Click even if something covers it or it isn't shown" },
             "double": { "type": "boolean", "description": "Double-click" },
@@ -803,6 +803,12 @@ pub fn tools() -> Vec<Value> {
         tool("wait_for", "Wait until a selector or text appears (and the page has loaded), inside shadow DOM and same-origin frames too. gone: true waits until it's no longer there (a spinner, \"Saving…\").", json!({
             "tab": tab_prop(), "selector": { "type": "string" }, "text": { "type": "string" }, "gone": { "type": "boolean", "description": "Wait for it to go away instead" },
             "timeout_ms": { "type": "integer", "default": 10000 } }), &[]),
+        tool("wait_for_tab", "Wait until a tab whose title or address holds all of `query`'s words is open, and return it \
+             ({ tab, url, title }). For a page another app or a link opens in Valerie: a desktop app's sign-in, an email \
+             confirmation, a pop-up. Only tabs opened after the call count, unless any_tab is true.", json!({
+            "query": { "type": "string", "description": "Words in the title or address, e.g. \"accounts.google.com oauth\"" },
+            "any_tab": { "type": "boolean", "description": "Also match tabs that were already open (default false)" },
+            "timeout_ms": { "type": "integer", "default": 30000 } }), &["query"]),
         tool("screenshot", "Capture what a tab looks like as a PNG image: the visible viewport, or with full_page the whole page top to bottom. \
              With url, any address is opened out of sight, pictured and closed in one call.",
              json!({ "tab": tab_prop(),
@@ -3171,6 +3177,33 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
     let tab = a.get("tab").and_then(|t| t.as_i64());
     match name {
         "list_tabs" => list_tabs(proxy, a),
+        "wait_for_tab" => {
+            let words: Vec<String> = a["query"].as_str().unwrap_or("").to_lowercase().split_whitespace().map(str::to_string).collect();
+            if words.is_empty() {
+                return Err("give query: words in the tab's title or address".into());
+            }
+            let hits = |rows: &[Value]| -> Vec<Value> {
+                rows.iter().filter(|t| {
+                    let hay = format!("{} {}", t["title"].as_str().unwrap_or(""), t["url"].as_str().unwrap_or("")).to_lowercase();
+                    words.iter().all(|w| hay.contains(w.as_str()))
+                }).cloned().collect()
+            };
+            let before = if a["any_tab"].as_bool() == Some(true) { vec![] } else { open_tabs(proxy).unwrap_or_default() };
+            let timeout = Duration::from_millis(a["timeout_ms"].as_u64().unwrap_or(30_000).min(600_000));
+            let start = Instant::now();
+            loop {
+                let now = open_tabs(proxy).unwrap_or_default();
+                let fresh: Vec<Value> = now.into_iter().filter(|t| !before.iter().any(|b| b["tab"] == t["tab"])).collect();
+                if let Some(t) = hits(&fresh).into_iter().next() {
+                    return Ok(json!({ "tab": t["tab"], "url": t["url"], "title": t["title"] }));
+                }
+                if start.elapsed() > timeout {
+                    return Err(format!("no new tab matching “{}” within {}s. read_logs with area links says whether another app sent Valerie a link.",
+                        words.join(" "), timeout.as_secs()));
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        }
         "list_spaces" | "open_tab" | "open_link" | "navigate" | "activate_tab" | "close_tab" | "read_chat" | "list_chats"
         | "search_history" | "delete_history" | "list_archived" | "list_closed_tabs" | "list_downloads" | "site_state" | "read_ui" => call(proxy, name, a),
         "clear_site_data" => call_wait(proxy, "clear_site_data", a, 600),
@@ -3295,7 +3328,9 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let wait = a["wait_seconds"].as_u64().unwrap_or(300).clamp(5, 600);
             match call_wait(proxy, "ask_user", a, wait) {
                 Err(e) if e.starts_with("timed out") => Ok(json!({ "done": false, "still_with_user": true, "tab": tab,
-                    "waited_seconds": wait, "next": "The user hasn't pressed Done yet. They got a notification on this computer (another comes each time you wait on), but they may be away from it: also tell them through your own channel if you have one (a push notification, a chat message), then call ask_user again with this tab (no note or url) to keep waiting. A sign-in page can expire while it waits; if it does, open it again before asking." })),
+                    // Where the page is now: a sign-in left waiting can expire ("Your session ended").
+                    "page_now": eval(proxy, tab.as_i64(), &format!("{FIND_JS}\nreturn {{ url: location.href, title: document.title, text: pageText().replace(/\\s+/g, ' ').slice(0, 300) }};")).ok(),
+                    "waited_seconds": wait, "next": "The user hasn't pressed Done yet. They got a notification on this computer (another comes each time you wait on), but they may be away from it: also tell them through your own channel if you have one (a push notification, a chat message), then call ask_user again with this tab (no note or url) to keep waiting. Check page_now: a sign-in page can expire while it waits (\"session ended\", an error page); if it has, open it again and ask again." })),
                 r => r,
             }
         }
@@ -3346,7 +3381,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
         "click" => {
             let script_click = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"));
             let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
-            if !config.mcp.real_clicks || !cfg!(target_os = "macos") {
+            if !config.mcp.real_clicks || !cfg!(any(target_os = "macos", target_os = "windows")) {
                 return act(proxy, &a, &script_click);
             }
             act_with(proxy, &a, |tab| {

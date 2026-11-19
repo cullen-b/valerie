@@ -2452,14 +2452,17 @@ pub fn bench_in_view(wv: &WebView) {
     let _ = wv;
 }
 
-/// A real mouse click in the page at (x, y) CSS pixels, which sites trust like the user's own. Only on macOS so far.
-pub fn real_click(wv: &WebView, x: f64, y: f64, right: bool, clicks: isize) -> Result<(), String> {
+/// A real mouse click in the page at (x, y) CSS pixels, which sites trust like the user's own (macOS and Windows; Linux
+/// says it can't). Calls `done` later on the main thread.
+pub fn real_click(wv: &WebView, x: f64, y: f64, right: bool, clicks: isize, done: impl FnOnce(Result<(), String>) + 'static) {
     #[cfg(target_os = "macos")]
-    return mac::real_click(wv, x, y, right, clicks);
-    #[cfg(not(target_os = "macos"))]
+    done(mac::real_click(wv, x, y, right, clicks));
+    #[cfg(target_os = "windows")]
+    win::real_click(wv, x, y, right, clicks, Box::new(done));
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (wv, x, y, right, clicks);
-        Err("real clicks are only on macOS so far".into())
+        done(Err("real clicks aren't available on this system".into()));
     }
 }
 
@@ -2746,6 +2749,26 @@ mod win {
             json!({ "format": "png", "clip": { "x": v["pageX"].as_f64().unwrap_or(0.0), "y": v["pageY"].as_f64().unwrap_or(0.0),
                 "width": vw, "height": v["clientHeight"].as_f64().unwrap_or(1.0), "scale": (width / vw).clamp(0.1, 4.0) } })
         });
+    }
+
+    /// Moves, presses and lets go through DevTools, which the page gets as the user's own input (isTrusted).
+    pub fn real_click(wv: &WebView, x: f64, y: f64, right: bool, clicks: isize, done: Box<dyn FnOnce(Result<(), String>)>) {
+        let button = if right { "right" } else { "left" };
+        let mut steps = vec![json!({ "type": "mouseMoved", "x": x, "y": y })];
+        for n in 1..=clicks.max(1) {
+            for kind in ["mousePressed", "mouseReleased"] {
+                steps.push(json!({ "type": kind, "x": x, "y": y, "button": button, "buttons": if kind == "mousePressed" { if right { 2 } else { 1 } } else { 0 }, "clickCount": n }));
+            }
+        }
+        fn send(wv: ICoreWebView2, mut steps: std::collections::VecDeque<Value>, done: Box<dyn FnOnce(Result<(), String>)>) {
+            let Some(step) = steps.pop_front() else { return done(Ok(())) };
+            let w = wv.clone();
+            cdp(&wv, "Input.dispatchMouseEvent", step, move |r| match r {
+                Ok(_) => send(w, steps, done),
+                Err(e) => done(Err(format!("the click couldn't be sent: {e}"))),
+            });
+        }
+        send(wv.webview(), steps.into(), done);
     }
 
     /// Drawn at up to 2 pixels a CSS pixel, fewer for very long pages, to stay near 30 million pixels (like macOS).

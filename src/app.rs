@@ -10155,11 +10155,16 @@ impl App {
                 }
                 None => Err("no tab (open one first)".into()),
             },
-            "real_click" => match self.target_tab(tab_arg).and_then(|t| self.views.get(&t)) {
-                Some(v) => platform::real_click(v, args["x"].as_f64().unwrap_or(0.0), args["y"].as_f64().unwrap_or(0.0),
-                    args["right"].as_bool() == Some(true), args["clicks"].as_i64().unwrap_or(1) as isize).map(|()| json!(true)),
-                None => Err("tab has no page".into()),
-            },
+            "real_click" => {
+                let Some(v) = self.target_tab(tab_arg).and_then(|t| self.views.get(&t)) else {
+                    let _ = reply.send(Err("tab has no page".into()));
+                    return;
+                };
+                platform::real_click(v, args["x"].as_f64().unwrap_or(0.0), args["y"].as_f64().unwrap_or(0.0),
+                    args["right"].as_bool() == Some(true), args["clicks"].as_i64().unwrap_or(1) as isize,
+                    move |r| { let _ = reply.send(r.map(|()| json!(true))); });
+                return;
+            }
             "screenshot" => {
                 let Some(t) = self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) else {
                     let _ = reply.send(Err("no tab".into()));

@@ -612,7 +612,7 @@ looks like spending money (`mcp.paying_words`), or any of those on a page that t
 a pay button), waits for the user's yes every time, even with full access, and so does typing into a card field. An `eval_js`
 script is stopped if it clicks, submits or sends anything like that, and told to use `click` instead; scripts that only read
 are never stopped. `mcp.ask_before_paying: false` turns all of this off, and an agent changing either setting needs the user's yes too.
-On macOS `click` is a real mouse click inside the page (sites that ignore script clicks, like Google's Share and Send
+On macOS and Windows `click` is a real mouse click inside the page (sites that ignore script clicks, like Google's Share and Send
 buttons, take it; the user's cursor doesn't move), falling back to a script's click where a real one can't reach;
 `mcp.real_clicks: false` makes every click a script's. `eval_js` scripts can `await` at the top level.
 

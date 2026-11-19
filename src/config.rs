@@ -1102,7 +1102,7 @@ pub struct McpConfig {
     #[serde(deserialize_with = "network_log_mode")]
     pub network_log: String,
     pub ask_before_paying: bool,
-    /// Agents' clicks as real mouse clicks inside the page (macOS), which sites trust; false sends script clicks.
+    /// Agents' clicks as real mouse clicks inside the page (macOS, Windows), which sites trust; false sends script clicks.
     pub real_clicks: bool,
     pub paying_words: Vec<String>,
     pub answer_in_background: bool,
