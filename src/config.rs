@@ -976,6 +976,10 @@ pub struct LittleWindowConfig {
     pub full_screen_bar: String,
     #[serde(default = "above")]
     pub bar_reveal: String,
+    #[serde(default = "reveal_zone")]
+    pub reveal_zone: f64,
+    #[serde(default = "page_corner_radius")]
+    pub page_corner_radius: f64,
     pub space_picker: bool,
     pub copy_button: bool,
     pub keep_open_when_main_closes: bool,
@@ -1241,6 +1245,14 @@ pub struct AgentJob {
 
 fn above() -> String {
     "above".into()
+}
+
+fn reveal_zone() -> f64 {
+    24.0
+}
+
+fn page_corner_radius() -> f64 {
+    10.0
 }
 
 fn room() -> String {

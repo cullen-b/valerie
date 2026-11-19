@@ -6,7 +6,8 @@
 :root { --bg1: #171a2b; --bg2: #2a1f3d; --accent: #9d8cff; --fg: #ecebf5; --dim: rgba(236,235,245,.55); --hover: rgba(255,255,255,.08); }
 :root.light { --fg: #23201c; --dim: rgba(35,32,28,.5); --hover: rgba(0,0,0,.06); }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
+html { height: 100%; overflow: hidden; }
+body { height: 36px; overflow: hidden; }
 body {
   font: 12.5px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--fg); -webkit-user-select: none; user-select: none;
   background: linear-gradient(90deg, var(--bg1), var(--bg2)); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 78px;
@@ -80,7 +81,7 @@ addr.onkeydown = (e) => {
 document.body.onmousedown = (e) => { if ((e.target === document.body || e.target.id === "title" || e.target.id === "tabs") && e.button === 0) send(e.detail === 2 ? { t: "title_double_click" } : { t: "drag" }); };
 // Leaving through the top or sides puts the bar away (the page below handles the mouse moving down onto it).
 document.documentElement.addEventListener("mouseleave", (e) => {
-  if (e.clientY < innerHeight - 2 && !document.body.classList.contains("ask")) send({ t: "bar_away" });
+  if (e.clientY < document.body.offsetHeight - 2 && !document.body.classList.contains("ask")) send({ t: "bar_away" });
 });
 // ⌘T (Ctrl+T elsewhere) here opens a tab too, while keybindings leaves the key free (tabKey).
 let tabKey = false, lastPage;

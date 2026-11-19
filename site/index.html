@@ -481,11 +481,11 @@ html[data-fx~=glass] .page { opacity: .7; }
 .rail button { border: 0; background: transparent; padding: 7px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; opacity: .7; transition: background-color .3s, opacity .3s, color .3s; }
 .rail button:hover { opacity: 1; } .rail button[aria-current=true] { background: var(--ink); color: var(--bg1); opacity: 1; }
 
-/* ---------- the text: one pinned chapter per look ---------- */
+/* ---------- the text: one chapter per look, gliding past slower than the page so the scroll never stops ---------- */
 main { position: relative; z-index: 1; pointer-events: none; }
-.ch { height: 160vh; } .ch.hero { height: 135vh; }
-.ch-in { position: sticky; top: 0; height: 100vh; height: 100svh; display: flex; align-items: center; padding: 90px clamp(18px, 4vw, 56px) 60px; }
-.txt { width: min(35vw, 540px); pointer-events: auto; }
+.ch { height: 140vh; display: flex; align-items: center; } .ch.hero { height: 100vh; height: 100svh; }
+.ch-in { flex: 1; height: 100vh; height: 100svh; display: flex; align-items: center; padding: 90px clamp(18px, 4vw, 56px) 60px; }
+.txt { width: min(35vw, 540px); pointer-events: auto; will-change: transform, opacity; }
 .ch h1, .ch h2, .get h2 { margin: 0 0 22px; font-family: var(--display); line-height: .98; letter-spacing: -.01em; font-size: calc(var(--fs, 1) * clamp(34px, 5vw, 76px)); }
 .ch :is(h1, h2) .l { display: block; width: max-content; font-stretch: 50%; font-weight: 250; transition: font-stretch 1s var(--ease), font-weight 1s var(--ease); }
 .ch :is(h1, h2) .l:nth-child(2) { transition-delay: .08s; } .ch :is(h1, h2) .l:nth-child(3) { transition-delay: .16s; }
@@ -513,10 +513,17 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .ask { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 16px; border-radius: 14px; margin-bottom: 14px; background: color-mix(in srgb, var(--ink) 11%, transparent); font-size: 16px; }
 .ask b { color: var(--accent); font: 800 18px var(--display); } .ask span:empty::before { content: "Say it in plain words. Or tap a few, they stack."; opacity: .6; }
 .ask .caret { width: 2px; height: 20px; background: var(--accent); animation: blink 1s steps(1) infinite; margin-left: -8px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: calc(100svh - 370px); overflow-y: auto; padding: 3px 3px 14px; margin: -3px; overscroll-behavior: contain; scrollbar-width: thin; -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); }
+.chips { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+/* each row of requests drifts sideways forever; the track holds two copies so the loop is seamless */
+.chips .row { align-self: stretch; overflow: hidden; padding: 4px 0; -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); }
+.chips .track { display: flex; width: max-content; animation: drift var(--dur, 60s) linear infinite; }
+.chips .row:nth-child(even) .track { animation-direction: reverse; }
+.chips .row:is(:hover, :focus-within) .track { animation-play-state: paused; }
+.chips .track button { margin-right: 6px; }
+@keyframes drift { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .chips .track { animation: none; } .chips .row { overflow-x: auto; scrollbar-width: none; } }
 .chips button { border: 1.5px solid color-mix(in srgb, var(--ink) 35%, transparent); background: color-mix(in srgb, var(--bg1) 60%, transparent); padding: 6px 12px; border-radius: 999px; font-size: 13.5px; cursor: pointer; white-space: nowrap; transition: transform .18s var(--ease), background-color .2s, color .2s, border-color .2s; }
 .chips button:hover { border-color: var(--ink); transform: translateY(-2px); } .chips button:active { transform: scale(.95); }
-.chips { align-items: center; }
 .chips button.lucky { background: var(--accent); border-color: var(--accent); color: var(--onacc); font: 800 19px var(--display); font-stretch: 110%; padding: 13px 26px; margin-right: 4px; box-shadow: 0 8px 24px -8px var(--accent); }
 .chips button.lucky:hover { transform: translateY(-3px) scale(1.04); }
 .chips button[aria-pressed=true] { background: var(--ink); color: var(--bg1); border-color: var(--ink); }
@@ -544,8 +551,8 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   .quick { gap: 10px; margin-bottom: 14px; padding: 10px 0; } .quick dt { font-size: 20px; } .quick dd { font-size: 12px; } .hero .hint { display: none; }
   .vs { font-size: 13px; } .vs ~ .set, .ch:has(.vs) p:not(.fine) { display: none; }
   .ask { min-height: 44px; margin-bottom: 10px; font-size: 14.5px; }
-  .chips button.lucky { grid-row: span 2; align-self: stretch; font-size: 18px; padding: 0 22px; }
-  .chips { display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); justify-content: start; max-height: none; overflow: auto hidden; margin: 0 -18px; padding: 3px 18px 8px; -webkit-mask-image: none; mask-image: none; scrollbar-width: none; }
+  .chips button.lucky { font-size: 18px; padding: 11px 22px; }
+  .chips { gap: 4px; margin: 0 -18px; padding: 0 18px; } .chips .row { margin: 0 -18px; }
   .win, html[data-look] .win { transform: rotateY(-4deg) rotateX(3deg); }
   .get { width: 100%; padding-top: 70px; background: var(--bg2); border-radius: 26px 26px 0 0; box-shadow: 0 -30px 60px rgba(0,0,0,.3); }
 }
@@ -657,7 +664,7 @@ Lisbon weather · Design review
       <dl class="quick">
         <div><dt>14 MB</dt><dd>to download. Chrome is 289.</dd></div>
         <div><dt>0.6 s</dt><dd>from launch to a page on screen.</dd></div>
-        <div><dt>Rust</dt><dd>all the way down, on Safari's engine.</dd></div>
+        <div><dt>Rust</dt><dd>modern and efficient.</dd></div>
       </dl>
       <div class="ctas"><a class="btn primary" data-dl href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Download for Mac</a><a class="btn" href="#install">Other ways</a></div>
       <p class="fine" id="ver">Free and open source.</p>
@@ -665,26 +672,12 @@ Lisbon weather · Design review
     </div></div>
   </section>
 
-  <section class="ch" data-look="v98" data-lay="task" data-name="Valerie 98" style="--wd: 135%; --wg: 900">
+  <section class="ch" id="looks" data-look="v98" data-lay="task" data-name="Any look" data-steps="v98 task|pasture field|tank tank|black none" style="--wd: 120%; --wg: 850; height: 240vh">
     <div class="ch-in"><div class="txt">
-      <h2><span class="l">Ask for 1998.</span><span class="l">Get 1998.</span></h2>
-      <p>A layout is one small file that says where everything goes and how it looks. This one trades the sidebar for a title bar and a taskbar.</p>
-      <pre class="set" translate="no">layout: { arrangement: valerie-98 }  <i># config.yaml</i></pre>
-    </div></div>
-  </section>
-
-  <section class="ch" data-look="pasture" data-lay="field" data-name="Pasture" style="--wd: 88%; --wg: 600; --fs: 1.15">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Or make your</span><span class="l">tabs sheep.</span></h2>
-      <p>Click a sheep to go to its tab, or a little window to bring it forward. Plugins can redraw any part of the window: install one, or ask your AI to write it.</p>
-      <pre class="set" translate="no">layout: { arrangement: pasture }</pre>
-    </div></div>
-  </section>
-
-  <section class="ch" data-look="tank" data-lay="tank" data-name="Aquarium" style="--wd: 118%; --wg: 700">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Or keep them</span><span class="l">in a fish tank.</span></h2>
-      <p>Every tab a fish, every page a little window drifting by. Nobody has shipped this one yet: describe it to your AI, then share it in the plugin marketplace for everyone else.</p>
+      <h2><span class="l">Make it look</span><span class="l">like anything.</span></h2>
+      <p>Colors, shortcuts, menus and where every part of the window goes are all settings. Make it 1998, turn your tabs into sheep, keep them in a fish tank, or hide everything. Install a look someone else made, or describe yours to your AI.</p>
+      <div class="seg" id="lookseg" role="group" aria-label="Look"><button aria-pressed="true">1998</button><button>Sheep</button><button>Fish tank</button><button>Bare</button></div>
+      <pre class="set" translate="no" id="lookset">layout: { arrangement: valerie-98 }</pre>
     </div></div>
   </section>
 
@@ -734,17 +727,8 @@ shortcuts_like: chrome</pre>
   <section class="ch" id="exts" data-look="grape" data-lay="side" data-name="Extensions" style="--wd: 104%; --wg: 800">
     <div class="ch-in"><div class="txt">
       <h2><span class="l">Your extensions.</span><span class="l">Plus every one</span><span class="l">you can dream up.</span></h2>
-      <p>Valerie runs web extensions, and when the one you want doesn't exist, your AI writes it. One person asked for YouTube to always open in theater mode. Five minutes later it did.</p>
+      <p>Valerie runs web extensions, and when the one you want doesn't exist, your AI writes it.</p>
       <div class="ctas"><button class="btn sm" id="dream">Dream up another</button></div>
-      <pre class="set" translate="no">valerie plugins share youtube-theater  <i># give it to everyone</i></pre>
-    </div></div>
-  </section>
-
-  <section class="ch" data-look="black" data-lay="none" data-name="Bare" style="--wd: 62%; --wg: 300; --fs: 1.7">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Or hide</span><span class="l">all of it.</span></h2>
-      <p>One box finds your tabs, history, the web and your AI. Vim keys move you around. No ads, trackers or cookie banners.</p>
-      <pre class="set" translate="no">layout: { sidebar_visible: false }</pre>
     </div></div>
   </section>
 
@@ -845,7 +829,7 @@ const rail = $("#rail");
 for (const ch of chapters) {
   const b = document.createElement("button");
   b.textContent = ch.dataset.name;
-  b.onclick = () => scrollTo({ top: ch.offsetTop + innerHeight * 0.12, behavior: calm ? "auto" : "smooth" });
+  b.onclick = () => scrollTo({ top: centred(ch), behavior: calm ? "auto" : "smooth" });
   rail.append(b); ch.railButton = b;
 }
 
@@ -870,14 +854,20 @@ function measure() {
   fit(); onScroll();
 }
 const clamp = (n) => Math.max(0, Math.min(1, n));
+// how far each chapter's text lags the page (0 scrolls normally, 1 stays put), and how far from the middle it's fully shown and gone (screens)
+const glide = (ch) => (innerWidth >= 860 ? { k: ch.dataset.steps ? 0.75 : 0.5, full: 0.12, gone: 0.38 } : { k: ch.dataset.steps ? 0.88 : 0.75, full: 0.06, gone: 0.2 });
+// the scroll position that puts a chapter's text `at` screens below the middle
+const centred = (ch, at = 0) => ch.offsetTop + ch.offsetHeight / 2 - innerHeight / 2 - at * innerHeight / (1 - glide(ch).k);
+let lookAt = 0;
 function onScroll() {
-  const vh = innerHeight; let active = chapters[0];
+  const vh = innerHeight; let active = chapters[0], near = Infinity;
   for (const ch of chapters) {
-    const r = ch.getBoundingClientRect(), top = r.top / vh, bottom = r.bottom / vh, first = ch === chapters[0], last = ch === chapters.at(-1);
-    const o = Math.min(first ? 1 : clamp((0.5 - top) / 0.34), last && innerWidth >= 860 ? 1 : clamp((bottom - 0.74) / 0.22));
+    const r = ch.getBoundingClientRect(), d = (r.top + r.height / 2 - vh / 2) / vh, g = glide(ch), at = d * (1 - g.k);
+    const o = ch === chapters[0] && at > 0 ? 1 : clamp((g.gone - Math.abs(at)) / (g.gone - g.full));
     const txt = ch.firstElementChild.firstElementChild;
+    txt.style.transform = `translate3d(0, ${-d * g.k * vh}px, 0)`;
     txt.style.opacity = o; txt.style.visibility = o < 0.02 ? "hidden" : "";
-    if (top < 0.7) active = ch;
+    if (Math.abs(at) < near) { near = Math.abs(at); active = ch; if (ch.dataset.steps) lookAt = at / g.gone; }
   }
   if (active !== current) {
     current = active; picked = null; press();
@@ -886,9 +876,11 @@ function onScroll() {
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
-  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : wear(inSpaces ? SPACES[space].look : active.dataset.look, active.dataset.lay);
-  const r = active.getBoundingClientRect(), p = clamp(-r.top / (r.height - vh || 1)) - 0.5;
-  want.drift = -p * 34; kick();
+  const steps = active.dataset.steps?.split("|");
+  if (steps) showLook(Math.min(steps.length - 1, Math.floor(clamp((0.8 - lookAt) / 1.6) * steps.length)));
+  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : steps ? wear(...steps[lookStep].split(" ")) : wear(spaceLook(), active.dataset.lay);
+  // the window bobs gently with the whole page, never jumping between chapters
+  want.drift = Math.sin(scrollY / vh * 1.3) * 14; kick();
 }
 function frame() {
   ticking = false;
@@ -898,6 +890,20 @@ function frame() {
   if (Math.abs(want.drift - drift) + Math.abs(want.tiltX - tiltX) + Math.abs(want.tiltY - tiltY) > 0.02) kick();
 }
 function kick() { if (!ticking) { ticking = true; requestAnimationFrame(frame); } }
+// the "Any look" chapter steps through several looks as you scroll through it
+const LOOKSETS = ["layout: { arrangement: valerie-98 }", "layout: { arrangement: pasture }", "# or ask your AI for a fish tank", "layout: { sidebar_visible: false }"];
+const lookSegs = $$("#lookseg button");
+let lookStep = 0;
+function showLook(n) {
+  if (n === lookStep) return;
+  lookStep = n; picked = null; press();
+  lookSegs.forEach((b, i) => b.setAttribute("aria-pressed", i === n));
+  $("#lookset").textContent = LOOKSETS[n];
+}
+lookSegs.forEach((b, i) => (b.onclick = () => {
+  const ch = $("#looks");
+  scrollTo({ top: centred(ch, glide(ch).gone * (0.8 - 1.6 * (i + 0.5) / lookSegs.length)), behavior: calm ? "auto" : "smooth" });
+}));
 addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", measure);
 // the window leans a little toward the mouse
@@ -938,8 +944,11 @@ pages.forEach((pg, n) => (pg.onclick = () => { const i = tabs.findIndex((t) => t
 
 // ---------- spaces: swipe the window, press an arrow key, or pick one ----------
 let switched = false;  // the swipe hint shows until they switch space once
+// spaces switch in the Spaces chapter and on the front page, where Personal shows every tab
+const swipeable = () => inSpaces || current === chapters[0];
+const spaceLook = () => (inSpaces || space ? SPACES[space].look : current.dataset.look);
 function showSpace() {
-  setTabs(inSpaces ? SPACES[space].tabs : EVERYTHING);
+  setTabs(inSpaces || space ? SPACES[space].tabs : EVERYTHING);
   const sp = SPACES[space];
   $("#spname").textContent = sp.name;
   $("#swipehint").classList.toggle("on", inSpaces && !switched);
@@ -949,10 +958,10 @@ function showSpace() {
 }
 let sliding = false;
 function goSpace(n) {
-  if (!inSpaces || sliding || n === space || n < 0 || n >= SPACES.length) return;
+  if (!swipeable() || sliding || n === space || n < 0 || n >= SPACES.length) return;
   const dir = n > space ? 1 : -1, slide = (from, to, o) => tabs.map((t, i) => t.animate([{ transform: `translateX(${from}px)`, opacity: +!o }, { transform: `translateX(${to}px)`, opacity: +o }],
     { duration: 190, delay: i * 22, easing: "cubic-bezier(.22,.9,.24,1)", fill: "both" }));
-  const land = () => { space = n; switched = true; showSpace(); wear(SPACES[n].look, current.dataset.lay); };
+  const land = () => { space = n; switched = true; showSpace(); wear(spaceLook(), current.dataset.lay); };
   if (calm) return land();
   sliding = true;
   Promise.all(slide(0, -70 * dir, 0).map((a) => a.finished)).then((out) => {
@@ -962,10 +971,10 @@ function goSpace(n) {
 }
 segs.forEach((b, n) => (b.onclick = () => goSpace(n)));
 dots.forEach((d, n) => (d.onclick = () => goSpace(n)));
-addEventListener("keydown", (e) => { if (inSpaces && !e.metaKey && !e.ctrlKey && !e.altKey) { if (e.key === "ArrowRight") goSpace(space + 1); if (e.key === "ArrowLeft") goSpace(space - 1); } });
+addEventListener("keydown", (e) => { if (swipeable() && !e.metaKey && !e.ctrlKey && !e.altKey) { if (e.key === "ArrowRight") goSpace(space + 1); if (e.key === "ArrowLeft") goSpace(space - 1); } });
 let swiped = 0, rest = 0;
 addEventListener("wheel", (e) => {
-  if (!inSpaces || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  if (!swipeable() || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
   e.preventDefault();  // a sideways swipe changes space here instead of going back a page
   if (Date.now() < rest) return;
   swiped += e.deltaX;
@@ -1087,7 +1096,7 @@ const ASKS = [
 const LOOKS = Object.keys(PAL), LAYS = ["side", "right", "compact", "bottom", "strip", "task", "tank", "field", "stand", "sky", "road", "tank", "field", "stand", "sky", "road", "dock", "desk", "orbit", "notes", "bench", "none"], FX = [...new Set(ASKS.flatMap((a) => a[1].fx?.split(" ") ?? []))];
 const chipBox = $("#chips"), home = () => ({ look: "rose", lay: "side", fx: new Set() });
 function press() {
-  for (const b of chipBox.children) {
+  for (const b of $$("button", chipBox)) {
     const a = b.ask, fx = a.fx?.split(" ") ?? [];
     b.setAttribute("aria-pressed", !!picked && !!(a.fx || a.look || a.lay) && fx.every((f) => picked.fx.has(f)) && (!a.look || a.look === picked.look) && (!a.lay || a.lay === picked.lay));
   }
@@ -1106,7 +1115,7 @@ function apply(a) {
   wear(picked.look, picked.lay, [...picked.fx].join(" ")); press();
 }
 let typing = 0;
-function chip(text, ask, cls) {
+function chip(text, ask, cls, into = chipBox) {
   const b = document.createElement("button");
   b.textContent = text; b.ask = ask; if (cls) b.className = cls;
   b.onclick = () => {
@@ -1119,12 +1128,24 @@ function chip(text, ask, cls) {
       n < text.length ? setTimeout(step, 16) : apply(ask);
     })();
   };
-  chipBox.append(b);
+  into.append(b);
+  return b;
 }
 const mbclock = $("#mbclock"), tick = () => (mbclock.textContent = new Date().toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
 tick(); setInterval(tick, 30000);
 chip("Surprise me", { lucky: true }, "lucky");
-for (const [text, ask] of ASKS) chip(text, ask);
+// the requests in drifting rows; the second copy in each row is only there to close the loop
+const ROWS = innerWidth < 860 ? 4 : 6, tracks = [];
+for (let r = 0; r < ROWS; r++) {
+  const row = document.createElement("div"), track = document.createElement("div");
+  row.className = "row"; track.className = "track"; row.append(track); chipBox.append(row); tracks.push(track);
+  const mine = ASKS.filter((_, i) => i % ROWS === r);
+  for (const [text, ask] of mine) chip(text, ask, "", track);
+  if (!calm) for (const [text, ask] of mine) { const b = chip(text, ask, "", track); b.tabIndex = -1; b.setAttribute("aria-hidden", "true"); }
+}
+// every row moves at the same slow pace, whatever its length
+const pace = () => tracks.forEach((t) => t.style.setProperty("--dur", t.scrollWidth / 2 / 14 + "s"));
+document.fonts.ready.then(pace); addEventListener("resize", pace);
 
 for (const b of $$(".cmd button")) b.onclick = () => {
   navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500);
