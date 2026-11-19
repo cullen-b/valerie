@@ -783,8 +783,9 @@ function collectHintables() {
   }
   return out;
 }
+const hintChars = () => [...new Set((cfg.vim.hint_characters || "sadfjklewcmpgh").toLowerCase())].join("");
 function labels(n) {
-  const chars = (cfg.vim.hint_characters || "sadfjklewcmpgh").toLowerCase();
+  const chars = hintChars();
   let out = [""];
   while (out.length < n || (out.length === 1 && out[0] === "")) {
     const prefix = out.shift();
@@ -792,13 +793,47 @@ function labels(n) {
   }
   return out.slice(0, n);
 }
+// What a control is, not where it sits: its text, link and names.
+function controlKey(el) {
+  const a = (n) => el.getAttribute(n) || "";
+  let href = "";
+  if (typeof el.href === "string" && el.href) {
+    try { const u = new URL(el.href); href = (u.origin === location.origin ? "" : u.host) + u.pathname + u.search; } catch (_) {}
+  }
+  const text = (FORM_TAGS.has(el.tagName) ? "" : el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  // Numbers are dropped (counts, ids in links), so "Commits" is the same keys on every merge request.
+  return [el.tagName, a("role"), a("type"), a("name"), /\d/.test(el.id) ? "" : el.id, a("data-testid") || a("data-qa-selector"),
+    href, a("aria-label"), a("title"), a("placeholder"), text].join("|").replace(/\d+/g, "#");
+}
+function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+// Same-length labels hashed from each control's key, so a button keeps its letters across visits and pages.
+function stableLabels(keys) {
+  const chars = hintChars(), n = chars.length;
+  if (n < 2) return labels(keys.length);
+  let len = 2; while (n ** len * 0.6 < keys.length) len++;
+  const slots = n ** len, taken = new Set(), out = new Array(keys.length);
+  const order = keys.map((k, i) => ({ k, i, h: fnv1a(k) })).sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  for (const { h, i } of order) {
+    let s = h % slots; while (taken.has(s)) s = (s + 1) % slots;
+    taken.add(s);
+    let l = ""; for (let j = 0, v = s; j < len; j++, v = Math.floor(v / n)) l = chars[v % n] + l;
+    out[i] = l;
+  }
+  return out;
+}
 function startHints(newTab) {
   const t0 = performance.now();
   const items = collectHintables();
   if (!items.length) return toast("Nothing to click");
+  if (cfg.vim.hint_labels !== "reading_order") {
+    // Repeats ("Reply" on every comment) are told apart by their order on the page.
+    const seen = new Map();
+    for (const it of items) { const k = controlKey(it.el), c = seen.get(k) || 0; seen.set(k, c + 1); it.key = k + "#" + c; }
+  }
   // Reading order: top to bottom, then left to right, so nearby things get similar labels.
   items.sort((a, b) => Math.round(a.r.top / 8) - Math.round(b.r.top / 8) || a.r.left - b.r.left);
-  const root = ui(), ls = labels(items.length), frag = document.createDocumentFragment();
+  const ls = cfg.vim.hint_labels === "reading_order" ? labels(items.length) : stableLabels(items.map((it) => it.key));
+  const root = ui(), frag = document.createDocumentFragment();
   hints = { newTab, typed: "", items: items.map(({ el, r }, i) => {
     const d = document.createElement("div"); d.className = "hint"; d.textContent = ls[i];
     d.style.transform = `translate(${Math.max(r.left - 2, 0)}px, ${Math.max(r.top - 2, 0)}px)`;
