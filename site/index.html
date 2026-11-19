@@ -79,7 +79,6 @@ html[data-look=rose] .win { transform: rotateY(-10deg) rotateX(2deg) rotateZ(1.2
 html:is([data-look=matrix], [data-look=amber]) .win { font-family: var(--mono); }
 html[data-lay=task] .win { border-radius: 0; --pl: 5px; --pt: 33px; --pr: 5px; --pb: 41px; --prad: 0px;
   box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf, 18px 18px 0 rgba(0,0,0,.25); font-family: Tahoma, "MS Sans Serif", Geneva, sans-serif; font-size: 12px; }
-html:is([data-lay=sheep], [data-lay=fish]) .win { border-radius: 22px; --pl: 0px; --pt: 150px; --pr: 0px; --pb: 0px; --prad: 0px; }
 html[data-lay=strip] .win { border-radius: 10px; --pl: 0px; --pt: 82px; --pr: 0px; --pb: 0px; --prad: 0px; }
 html[data-lay=bench] .win { --pt: 6px; --pb: 6px; --pr: 234px; --prad: 12px; }
 html[data-lay=right] .win { --pl: 0px; --pr: 230px; --prad: 0 16px 16px 0; }
@@ -97,7 +96,8 @@ html[data-lay=none] .win { border-radius: 6px; --pl: 0px; --pt: 0px; --pr: 0px; 
   filter: sepia(var(--f-s, 0)) blur(var(--f-b, 0px));
   transition: left var(--morph) var(--ease), top var(--morph) var(--ease), right var(--morph) var(--ease), bottom var(--morph) var(--ease), border-radius var(--morph), filter .6s, opacity .6s; }
 html[data-lay=task] .page { box-shadow: inset 1px 1px #808080, inset -1px -1px #fff, inset 2px 2px #0a0a0a; }
-.pg { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .3s, visibility .3s, filter .6s; font-family: var(--body); overflow: hidden; }
+.pg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; scale: 1; transform-origin: 0 0; opacity: 0; visibility: hidden; font-family: var(--body); overflow: hidden;
+  transition: opacity .3s, visibility .3s, filter .6s, left .9s var(--ease), top .9s var(--ease), width .9s var(--ease), height .9s var(--ease), scale .9s var(--ease), border-radius .9s, box-shadow .9s; }
 .pg.cur { opacity: 1; visibility: visible; }
 .mag { background: #fbf9f5; }
 .mag .nav { display: flex; align-items: center; gap: 22px; height: 46px; padding: 0 30px; font-size: 12.5px; color: #55525c; } .mag .nav b { font: 700 19px Georgia, serif; color: #1d1c21; margin-right: auto; } .mag .nav em { font-style: normal; background: #1d1c21; color: #fff; padding: 5px 12px; border-radius: 20px; }
@@ -165,13 +165,13 @@ html[data-lay=task] .tab { --x: calc(88px + var(--i) * 150px); --y: 625px; --w: 
 html[data-lay=task] .tab.cur { font-weight: 700; background-image: repeating-conic-gradient(#fff 0 25%, #c0c0c0 0 50%); background-size: 2px 2px;
   box-shadow: inset 1px 1px #0a0a0a, inset -1px -1px #fff, inset 2px 2px #808080, inset -2px -2px #dfdfdf; }
 html[data-lay=task] .tab .fav { border-radius: 0; }
-html[data-lay=sheep] .tab { --x: var(--sx); --y: var(--sy); --w: 76px; --h: 48px; border-radius: 26px; background-color: #fff; justify-content: center; padding: 0;
+html[data-lay=field] .tab { --x: var(--sx); --y: var(--sy); --w: 76px; --h: 48px; border-radius: 26px; background-color: #fff; justify-content: center; padding: 0;
   box-shadow: -22px -3px 0 -11px #fff, -6px -15px 0 -10px #fff, 14px -13px 0 -10px #fff, 0 12px 0 -14px rgba(0,0,0,.18);
   animation: graze var(--gt, 7s) ease-in-out infinite alternate; }
-html[data-lay=sheep] .tab .head, html[data-lay=sheep] .tab::before, html[data-lay=sheep] .tab::after { opacity: 1; }
-html[data-lay=sheep] .tab .lbl { position: absolute; top: calc(100% + 15px); left: 50%; translate: -50% 0; max-width: 120px; padding: 1px 7px; border-radius: 9px; font-size: 11px; background: rgba(255,255,255,.75); color: #12301c; }
-html[data-lay=sheep] .tab.cur .lbl { background: #12301c; color: #fff; }
-html[data-lay=sheep] .tab:hover { transform: translateY(-12px) rotate(-5deg); animation-play-state: paused; }
+html[data-lay=field] .tab .head, html[data-lay=field] .tab::before, html[data-lay=field] .tab::after { opacity: 1; }
+html[data-lay=field] .tab .lbl { position: absolute; top: calc(100% + 15px); left: 50%; translate: -50% 0; max-width: 120px; padding: 1px 7px; border-radius: 9px; font-size: 11px; background: rgba(255,255,255,.75); color: #12301c; }
+html[data-lay=field] .tab.cur .lbl { background: #12301c; color: #fff; }
+html[data-lay=field] .tab:hover { transform: translateY(-12px) rotate(-5deg); animation-play-state: paused; }
 @keyframes graze { from { margin-left: -14px; } to { margin-left: 16px; } }
 html[data-lay=compact] .tab { --x: 10px; --y: calc(58px + var(--i) * 50px); --w: 42px; --h: 42px; justify-content: center; padding: 0; border-radius: 12px; }
 html:is([data-lay=compact], [data-lay=dock]) .tab .lbl { display: none; }
@@ -195,13 +195,13 @@ html[data-lay=orbit][data-settled] .cam { animation: orbit 50s linear infinite; 
 html[data-lay=orbit][data-settled] .tab { transition: translate 0s, transform .3s var(--ease), box-shadow .35s; }
 @property --spin { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
 @keyframes orbit { to { --spin: 360deg; } }
-html[data-lay=fish] .tab { --x: var(--sx); --y: calc(var(--sy) + 4px); --w: 78px; --h: 42px; padding: 0; border-radius: 50%; background-color: var(--c); box-shadow: inset 0 -8px 0 rgba(0,0,0,.14); animation: graze var(--gt, 7s) ease-in-out infinite alternate; }
-html[data-lay=fish] .tab .fav { display: none; }
-html[data-lay=fish] .tab::before { opacity: 1; left: -18px; top: 5px; bottom: auto; width: 26px; height: 32px; border-radius: 0; background: var(--c); clip-path: polygon(0 0, 100% 50%, 0 100%); z-index: 0; }
-html[data-lay=fish] .tab::after { opacity: 1; right: 13px; top: 11px; bottom: auto; width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(#111 0 2.5px, #fff 3px); z-index: 1; }
-html[data-lay=fish] .tab .lbl { position: absolute; top: calc(100% + 8px); left: 50%; translate: -50% 0; max-width: 130px; padding: 1px 7px; border-radius: 9px; font-size: 11px; background: rgba(255,255,255,.8); color: #0c2b45; }
-html[data-lay=fish] .tab.cur .lbl { background: #0c2b45; color: #fff; }
-html[data-lay=fish] .tab:hover { transform: translateY(-8px) rotate(-8deg); animation-play-state: paused; }
+html[data-lay=tank] .tab { --x: var(--sx); --y: calc(var(--sy) + 4px); --w: 78px; --h: 42px; padding: 0; border-radius: 50%; background-color: var(--c); box-shadow: inset 0 -8px 0 rgba(0,0,0,.14); animation: graze var(--gt, 7s) ease-in-out infinite alternate; }
+html[data-lay=tank] .tab .fav { display: none; }
+html[data-lay=tank] .tab::before { opacity: 1; left: -18px; top: 5px; bottom: auto; width: 26px; height: 32px; border-radius: 0; background: var(--c); clip-path: polygon(0 0, 100% 50%, 0 100%); z-index: 0; }
+html[data-lay=tank] .tab::after { opacity: 1; right: 13px; top: 11px; bottom: auto; width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(#111 0 2.5px, #fff 3px); z-index: 1; }
+html[data-lay=tank] .tab .lbl { position: absolute; top: calc(100% + 8px); left: 50%; translate: -50% 0; max-width: 130px; padding: 1px 7px; border-radius: 9px; font-size: 11px; background: rgba(255,255,255,.8); color: #0c2b45; }
+html[data-lay=tank] .tab.cur .lbl { background: #0c2b45; color: #fff; }
+html[data-lay=tank] .tab:hover { transform: translateY(-8px) rotate(-8deg); animation-play-state: paused; }
 html[data-fx~=big]:is([data-lay=side], [data-lay=bench], [data-lay=agent], [data-lay=right]) .tab { --h: 50px; --step: 56px; font-size: 20px; }
 html[data-fx~=big] .tab .fav { width: 20px; height: 20px; }
 html[data-lay=none] .tab { --x: -260px; --y: calc(92px + var(--i) * 40px); --w: 210px; --h: 34px; opacity: 0; pointer-events: none; }
@@ -247,13 +247,6 @@ html[data-lay=task] :is(.titlebar, .taskbar) { opacity: 1; transform: none; }
 .stripbits { left: 16px; top: 15px; transform: translateY(-20px); } .stripbits .lights { position: static; }
 html[data-lay=strip] :is(.toolbar, .stripbits) { opacity: 1; transform: none; }
 
-.meadow { left: 0; right: 0; top: 0; height: 150px; background: linear-gradient(#bfe6fb 0 38%, #8fd07c 38% 100%); transform: translateY(-60px); }
-.meadow::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: repeating-linear-gradient(90deg, #a47645 0 5px, transparent 5px 26px), linear-gradient(transparent 6px, #b98a57 6px 9px, transparent 9px 14px, #b98a57 14px 17px, transparent 17px); }
-.meadow .gate { position: absolute; right: 26px; bottom: 0; width: 56px; height: 46px; border: 4px solid #a47645; border-bottom: 0; border-radius: 8px 8px 0 0; background: #8fd07c; display: grid; place-items: center; font: 700 22px var(--body); color: #6d4a22; }
-html[data-lay=sheep] .meadow { opacity: 1; transform: none; }
-.water { left: 0; right: 0; top: 0; height: 150px; transform: translateY(-60px); background: radial-gradient(circle at 12% 70%, rgba(255,255,255,.5) 0 4px, transparent 5px), radial-gradient(circle at 14% 40%, rgba(255,255,255,.4) 0 3px, transparent 4px), radial-gradient(circle at 78% 60%, rgba(255,255,255,.5) 0 5px, transparent 6px), radial-gradient(circle at 80% 25%, rgba(255,255,255,.4) 0 3px, transparent 4px), linear-gradient(#5fc3ee, #1b6fb5); }
-.water::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 16px; background: radial-gradient(circle at 50% 100%, #e7cf9a 0 14px, transparent 15px) 0 0 / 38px 16px, #d9bd7f; }
-html[data-lay=fish] .water { opacity: 1; transform: none; }
 .dockbar { left: 346px; top: 566px; width: 350px; height: 76px; border-radius: 24px; background: rgba(255,255,255,.4); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 0 0 1px rgba(255,255,255,.4), 0 14px 30px rgba(0,0,0,.25); transform: translateY(90px); z-index: 4; }
 html[data-lay=dock] .dockbar { opacity: 1; transform: none; }
 
@@ -281,6 +274,97 @@ html[data-lay=agent] .little { opacity: 1; transform: none; transition-delay: .3
 html[data-lay=agent] .cursor { opacity: 1; animation: point 5s var(--ease) infinite; }
 @keyframes point { 0%, 12% { translate: 700px 560px; } 45%, 100% { translate: 896px 190px; } }
 @keyframes press { 0%, 48%, 60%, 100% { scale: 1; box-shadow: 0 0 0 0 rgba(76,194,255,.6); } 52% { scale: .92; } 58% { box-shadow: 0 0 0 14px rgba(76,194,255,0); } }
+
+
+/* ---------- worlds: the whole window becomes a scene, tabs roam it, and every page is a small window ---------- */
+html[data-world] .win { border-radius: 26px; --pl: 0px; --pt: 0px; --pr: 0px; --pb: 0px; --prad: 0px; }
+html[data-world] .page { background: transparent; overflow: visible; pointer-events: none; z-index: 2; }
+html[data-world] .pg { left: var(--px); top: var(--py); width: 800px; height: 560px; scale: var(--mini, .3); border-radius: 30px; cursor: pointer; pointer-events: auto;
+  box-shadow: 0 0 0 7px rgba(255,255,255,.75), 0 40px 70px rgba(0,0,0,.4); animation: bob var(--bt, 9s) ease-in-out var(--bd, 0s) infinite alternate; }
+html[data-world] .pg.used { opacity: 1; visibility: visible; }
+html[data-world] .pg.cur { left: var(--cx2, 296px); top: var(--cy2, 150px); scale: var(--big, .56); z-index: 3; }
+.pg.s0 { --px: 30px; --py: 40px; --bx: 34px; --by: 26px; --bt: 9s; } .pg.s1 { --px: 776px; --py: 56px; --bx: -30px; --by: 34px; --bt: 11s; --bd: -4s; }
+.pg.s2 { --px: 36px; --py: 446px; --bx: 40px; --by: -30px; --bt: 13s; --bd: -7s; } .pg.s3 { --px: 772px; --py: 436px; --bx: -36px; --by: -24px; --bt: 10s; --bd: -2s; }
+.pg.s4 { --px: 404px; --py: 8px; --bx: 26px; --by: 16px; --bt: 12s; --bd: -5s; }
+@keyframes bob { from { transform: translate(0, 0) rotate(-1.5deg); } to { transform: translate(var(--bx, 20px), var(--by, 20px)) rotate(1.5deg); } }
+@keyframes swing { from { transform: rotate(-3deg); } to { transform: rotate(3deg); } }
+@keyframes roam { 0% { transform: translate(0, 0); } 25% { transform: translate(calc(var(--sw) * .5), var(--sh)); } 49.9% { transform: translate(var(--sw), 0); } 50% { transform: translate(var(--sw), 0) scaleX(-1); }
+  75% { transform: translate(calc(var(--sw) * .5), calc(var(--sh) * -1)) scaleX(-1); } 99.9% { transform: translate(0, 0) scaleX(-1); } 100% { transform: translate(0, 0); } }
+@keyframes unflip { 0%, 49.9%, 100% { transform: none; } 50%, 99.9% { transform: scaleX(-1); } }
+@keyframes floaty { from { transform: translate(0, 0) rotate(-2deg); } to { transform: translate(calc(var(--sw) * .6), var(--sh)) rotate(2deg); } }
+@keyframes convey { from { transform: translateX(-220px); } to { transform: translateX(1100px); } }
+@keyframes drive { from { transform: translateX(-260px); } to { transform: translateX(1120px); } }
+@keyframes driveback { from { transform: translateX(1120px) scaleX(-1); } to { transform: translateX(-260px) scaleX(-1); } }
+@keyframes rise { from { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: .9; } to { transform: translateY(-640px) scale(1.2); opacity: 0; } }
+@keyframes sway { from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
+@keyframes cloud { from { transform: translateX(-260px); } to { transform: translateX(1120px); } }
+.tab:nth-of-type(1) { --wx: 60px; --wy: 120px; --sw: 760px; --sh: 60px; --wt: 19s; --wd: -3s; } .tab:nth-of-type(2) { --wx: 140px; --wy: 260px; --sw: 640px; --sh: -50px; --wt: 24s; --wd: -11s; }
+.tab:nth-of-type(3) { --wx: 40px; --wy: 400px; --sw: 820px; --sh: 40px; --wt: 16s; --wd: -6s; } .tab:nth-of-type(4) { --wx: 220px; --wy: 520px; --sw: 560px; --sh: -30px; --wt: 27s; --wd: -17s; }
+.tab:nth-of-type(5) { --wx: 100px; --wy: 40px; --sw: 700px; --sh: 70px; --wt: 21s; --wd: -9s; }
+html[data-world] .tab:hover, html[data-world] .tab:hover .lbl { animation-play-state: paused; }
+html[data-world] .tab.cur { filter: drop-shadow(0 0 10px #fff) drop-shadow(0 0 3px #fff); }
+.scenery { inset: 0; overflow: hidden; transition: opacity .6s; } .scenery i { position: absolute; display: none; }
+html[data-world] .scenery { opacity: 1; }
+
+/* aquarium */
+html[data-lay=tank] .win { background-image: linear-gradient(#5cc4f0, #1a7cc4 45%, #0b3f7a); box-shadow: 0 0 0 10px rgba(255,255,255,.28), 0 0 0 12px rgba(255,255,255,.5), 0 50px 100px -30px rgba(0,0,0,.6); }
+html[data-lay=tank] .tab { --x: var(--wx); --y: var(--wy); scale: 1.3; animation: roam var(--wt) linear var(--wd) infinite; }
+html[data-lay=tank] .tab .lbl { animation: unflip var(--wt) linear var(--wd) infinite; }
+html[data-lay=tank] .scenery { background: linear-gradient(105deg, transparent 18%, rgba(255,255,255,.1) 20% 27%, transparent 29% 44%, rgba(255,255,255,.07) 46% 50%, transparent 52% 70%, rgba(255,255,255,.09) 72% 80%, transparent 82%),
+  radial-gradient(circle at 50% 100%, #e7cf9a 0 26px, transparent 27px) 0 100% / 70px 30px repeat-x, linear-gradient(transparent calc(100% - 22px), #d9bd7f 0); }
+html[data-lay=tank] .scenery::before, html[data-lay=tank] .scenery::after { content: ""; position: absolute; bottom: 10px; left: 120px; width: 30px; height: 190px; border-radius: 60% 60% 0 0 / 100% 100% 0 0; background: #1f9d6b; box-shadow: 34px 40px 0 -4px #17805a, -30px 70px 0 -6px #28b57c; transform-origin: 50% 100%; animation: sway 4s ease-in-out infinite alternate; }
+html[data-lay=tank] .scenery::after { left: 860px; height: 150px; animation-duration: 5s; animation-delay: -2s; }
+html[data-lay=tank] .scenery i { display: block; bottom: 20px; width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.8); animation: rise 7s linear infinite; }
+html[data-lay=tank] .scenery i:nth-child(1) { left: 150px; } html[data-lay=tank] .scenery i:nth-child(2) { left: 170px; width: 9px; height: 9px; animation-delay: -2.5s; animation-duration: 6s; }
+html[data-lay=tank] .scenery i:nth-child(3) { left: 520px; animation-delay: -4s; animation-duration: 9s; } html[data-lay=tank] .scenery i:nth-child(4) { left: 545px; width: 8px; height: 8px; animation-delay: -1s; }
+html[data-lay=tank] .scenery i:nth-child(5) { left: 880px; width: 12px; height: 12px; animation-delay: -5.5s; animation-duration: 8s; } html[data-lay=tank] .scenery i:nth-child(6) { left: 905px; animation-delay: -3s; animation-duration: 10s; }
+
+/* pasture */
+html[data-lay=field] .win { background-image: radial-gradient(120% 70% at 30% 108%, #74c063 0 60%, transparent 60.3%), radial-gradient(110% 60% at 85% 104%, #8fd07c 0 60%, transparent 60.3%), linear-gradient(#a9dcf8, #dff2fb 46%, #8fd07c 46%); }
+html[data-lay=field] .tab { --x: var(--wx); --y: calc(262px + var(--wy) * .56); scale: 1.3; animation: roam var(--wt) linear var(--wd) infinite; }
+html[data-lay=field] .tab .lbl { animation: unflip var(--wt) linear var(--wd) infinite; }
+html[data-lay=field] .scenery { background: radial-gradient(circle, #fff 0 3px, transparent 4px) 40px 500px / 190px 130px, radial-gradient(circle, #ffe14a 0 3px, transparent 4px) 130px 560px / 230px 110px, radial-gradient(circle, #ff9ac1 0 3px, transparent 4px) 10px 610px / 170px 150px;
+  -webkit-mask-image: linear-gradient(transparent 52%, #000 56%); mask-image: linear-gradient(transparent 52%, #000 56%); }
+
+/* hot dog stand */
+html[data-lay=stand] .win { background-image: linear-gradient(transparent 506px, #8a0d0a 506px 518px, #d3221c 518px), repeating-linear-gradient(90deg, #ffd84d 0 52px, #ffcf33 52px 104px); --mini: .2; --big: .5; --cx2: 320px; --cy2: 104px; }
+html[data-lay=stand] .scenery { background: radial-gradient(circle at 50% 0, transparent 0 29px, #ffd84d 30px) 0 62px / 80px 34px repeat-x, repeating-linear-gradient(90deg, #e8201a 0 80px, #fff 80px 160px) 0 0 / 100% 78px no-repeat;
+  -webkit-mask-image: linear-gradient(#000 96px, transparent 96px); mask-image: linear-gradient(#000 96px, transparent 96px); }
+html[data-lay=stand] .pg { animation: swing var(--bt, 4s) ease-in-out var(--bd, 0s) infinite alternate; }
+html[data-lay=stand] .pg.s0 { --px: 40px; --py: 106px; } html[data-lay=stand] .pg.s1 { --px: 840px; --py: 106px; } html[data-lay=stand] .pg.s2 { --px: 40px; --py: 236px; } html[data-lay=stand] .pg.s3 { --px: 840px; --py: 236px; } html[data-lay=stand] .pg.s4 { --px: 40px; --py: 366px; }
+html[data-lay=stand] .tab { --x: 0px; --y: 440px; --w: 150px; --h: 46px; padding: 0; border-radius: 23px; background-color: #e9b872; box-shadow: inset 0 -9px 0 #cf9a52, 0 10px 0 -4px rgba(0,0,0,.25); animation: convey 20s linear calc(var(--i) * -4s) infinite; }
+html[data-lay=stand] .tab .fav { display: none; }
+html[data-lay=stand] .tab::before { opacity: 1; left: -12px; right: -12px; top: 7px; bottom: auto; width: auto; height: 24px; border-radius: 12px; background: linear-gradient(#c9502f, #a8351d); z-index: 0; }
+html[data-lay=stand] .tab::after { opacity: 1; left: 6px; right: 6px; top: 12px; bottom: auto; width: auto; height: 12px; border-radius: 0; z-index: 1; background: linear-gradient(135deg, #ffd21f 25%, transparent 25%) -6px 0 / 12px 12px, linear-gradient(225deg, #ffd21f 25%, transparent 25%) -6px 0 / 12px 12px, linear-gradient(315deg, #ffd21f 25%, transparent 25%) 0 0 / 12px 12px, linear-gradient(45deg, #ffd21f 25%, transparent 25%) 0 0 / 12px 12px; }
+html[data-lay=stand] .tab .lbl { position: absolute; bottom: calc(100% + 10px); left: 50%; translate: -50% 0; padding: 2px 9px; border-radius: 4px; font-size: 12px; font-weight: 600; background: #fff; color: #7a0000; box-shadow: 0 2px 0 rgba(0,0,0,.2); }
+html[data-lay=stand] .tab.cur .lbl { background: #7a0000; color: #fff200; }
+
+/* hot air balloons */
+html[data-lay=sky] .win { background-image: radial-gradient(90% 40% at 20% 112%, #6fbf73 0 60%, transparent 60.4%), radial-gradient(90% 34% at 80% 110%, #8bd08a 0 60%, transparent 60.4%), linear-gradient(#ffd3a3, #f7b8a8 30%, #a7d3f5 70%); }
+html[data-lay=sky] .scenery i { display: block; width: 150px; height: 40px; border-radius: 40px; background: rgba(255,255,255,.85); box-shadow: 40px -18px 0 4px rgba(255,255,255,.85); animation: cloud 50s linear infinite; }
+html[data-lay=sky] .scenery i:nth-child(1) { top: 70px; } html[data-lay=sky] .scenery i:nth-child(2) { top: 210px; scale: .7; animation-duration: 70s; animation-delay: -30s; } html[data-lay=sky] .scenery i:nth-child(3) { top: 360px; scale: .5; animation-duration: 90s; animation-delay: -55s; }
+html[data-lay=sky] .scenery i:nth-child(n+4) { display: none; }
+html[data-lay=sky] .tab { --x: calc(var(--wx) * 2.2); --y: calc(24px + var(--wy) * .7); --w: 74px; --h: 86px; padding: 0; border-radius: 50% 50% 46% 46% / 56% 56% 44% 44%; background-color: var(--c);
+  background-image: repeating-linear-gradient(90deg, transparent 0 14px, rgba(255,255,255,.75) 14px 28px); box-shadow: inset -10px -8px 0 rgba(0,0,0,.12); animation: floaty var(--wt) ease-in-out var(--wd) infinite alternate; }
+html[data-lay=sky] .tab .fav { display: none; }
+html[data-lay=sky] .tab::before { opacity: 1; left: 24px; top: 84px; bottom: auto; width: 26px; height: 20px; border-radius: 0; background: none; border: solid #7a5230; border-width: 0 2px; z-index: 0; }
+html[data-lay=sky] .tab::after { opacity: 1; left: 24px; right: auto; top: 102px; bottom: auto; width: 26px; height: 18px; border-radius: 3px 3px 6px 6px; background: #a06a3c; z-index: 0; }
+html[data-lay=sky] .tab .lbl { position: absolute; top: calc(100% + 40px); left: 50%; translate: -50% 0; padding: 1px 8px; border-radius: 9px; font-size: 11.5px; background: rgba(255,255,255,.85); color: #3a2a1a; }
+html[data-lay=sky] .tab.cur .lbl { background: #3a2a1a; color: #fff; }
+
+/* rush hour */
+html[data-lay=road] .win { background-image: repeating-linear-gradient(90deg, #f2f2f2 0 50px, transparent 50px 110px), linear-gradient(transparent 372px, #55555f 372px 380px, #2b2b34 380px), linear-gradient(#2b1b4d, #7a3b78 30%, #f08a5d 372px); background-size: 100% 6px, auto, auto; background-position: 0 488px, 0 0, 0 0; background-repeat: no-repeat; --mini: .2; --big: .4; --cx2: 360px; --cy2: 28px; }
+html[data-lay=road] .scenery { background: #1c1730; clip-path: polygon(0 372px, 0 250px, 70px 250px, 70px 190px, 150px 190px, 150px 280px, 230px 280px, 230px 150px, 300px 150px, 300px 300px, 720px 300px, 720px 170px, 800px 170px, 800px 260px, 880px 260px, 880px 120px, 960px 120px, 960px 230px, 1040px 230px, 1040px 372px); }
+html[data-lay=road] .scenery::before { content: ""; position: absolute; inset: 130px 0 0; background: radial-gradient(#ffd98a 0 2.5px, transparent 3px) 8px 6px / 22px 26px; opacity: .7; }
+html[data-lay=road] .pg { animation: none; }
+html[data-lay=road] .pg.s0 { --px: 40px; --py: 30px; } html[data-lay=road] .pg.s1 { --px: 840px; --py: 30px; } html[data-lay=road] .pg.s2 { --px: 40px; --py: 170px; } html[data-lay=road] .pg.s3 { --px: 840px; --py: 170px; } html[data-lay=road] .pg.s4 { --px: 440px; --py: 258px; }
+html[data-lay=road] .tab { --x: 0px; --y: 410px; --w: 150px; --h: 42px; padding: 0 12px; justify-content: center; border-radius: 14px 26px 10px 10px; background-color: var(--c); color: #fff; font-weight: 600; font-size: 12px;
+  box-shadow: inset 0 -10px 0 rgba(0,0,0,.18), 60px 16px 26px -6px rgba(255,236,160,.55); animation: drive 13s linear calc(var(--i) * -2.6s) infinite; }
+html[data-lay=road] .tab:nth-of-type(even) { --y: 528px; animation: driveback 16s linear calc(var(--i) * -3.3s) infinite; }
+html[data-lay=road] .tab:nth-of-type(even) .lbl { transform: scaleX(-1); }
+html[data-lay=road] .tab .fav { display: none; }
+html[data-lay=road] .tab::before { opacity: 1; left: 30px; top: -20px; bottom: auto; width: 74px; height: 22px; border-radius: 16px 20px 0 0; background: linear-gradient(90deg, var(--c) 0 6px, #bfe6ff 6px 34px, var(--c) 34px 40px, #bfe6ff 40px 68px, var(--c) 68px); z-index: 0; }
+html[data-lay=road] .tab::after { opacity: 1; left: 18px; right: auto; bottom: -11px; width: 24px; height: 24px; border-radius: 50%; background: radial-gradient(#bbb 0 4px, #1a1a1f 5px); box-shadow: 88px 0 0 -0px #1a1a1f; z-index: 1; }
 
 html[data-fx~=upside] .win { rotate: 180deg; }
 html[data-fx~=tilt] .win { rotate: -14deg; }
@@ -315,6 +399,7 @@ html[data-fx~=glass] .page { opacity: .7; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--onacc); } .btn.primary:hover { transform: translateY(-2px); } .btn.primary:active { transform: scale(.96); }
 .btn.sm { min-height: 38px; padding: 0 16px; border-radius: 10px; font-size: 15px; }
 
+@media (max-width: 1180px) { .rail { display: none !important; } }
 .rail { position: fixed; z-index: 4; bottom: 22px; left: var(--cx, 69vw); translate: -50% 0; display: flex; gap: 4px; padding: 5px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 9%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .rail button { border: 0; background: transparent; padding: 7px 12px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; opacity: .7; transition: background-color .3s, opacity .3s, color .3s; }
 .rail button:hover { opacity: 1; } .rail button[aria-current=true] { background: var(--ink); color: var(--bg1); opacity: 1; }
@@ -398,7 +483,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   <div class="world stars"></div>
   <div class="cam" id="cam">
     <div class="win" id="win">
-      <div class="part meadow"><div class="gate">+</div></div>
+      <div class="part scenery"><i></i><i></i><i></i><i></i><i></i><i></i></div>
       <div class="part sidebits"><div class="lights"><i></i><i></i><i></i></div><div class="pill" data-url>northboundjournal.com</div><div class="spname" id="spname">Personal</div><div class="spaces" id="dots"><i class="cur"></i><i></i><i></i></div></div>
       <div class="part stripbits"><div class="lights"><i></i><i></i><i></i></div></div>
       <div class="part toolbar"><i>←</i><i>→</i><i>↻</i><span data-url>northboundjournal.com</span><i>⋮</i></div>
@@ -439,7 +524,6 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
           <div class="day"><b>Fri</b><div class="gap"></div><div class="cl" style="--c:#f2b632">Essay due<span>12:00</span></div><div class="gap" style="--f:2"></div></div></div></div>
       </div>
       <div class="part outline"><b>Outline</b><span class="cur">Seven days on the Lofoten coast</span><span class="sub">Getting there</span><span class="sub">Where to stay</span><span class="sub">What to pack</span><span>The route, day by day</span><span>Costs</span></div>
-      <div class="part water"></div>
       <div class="part dockbar"></div>
       <div class="part taskbar"><div class="start">Start</div><div class="clock">4:20 PM</div></div>
       <button class="tab cur" tabindex="-1"><i class="fav"></i><span class="lbl">Northbound</span><b class="head"></b></button>
@@ -487,11 +571,18 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
     </div></div>
   </section>
 
-  <section class="ch" data-look="pasture" data-lay="sheep" data-name="Pasture" style="--wd: 88%; --wg: 600; --fs: 1.15">
+  <section class="ch" data-look="pasture" data-lay="field" data-name="Pasture" style="--wd: 88%; --wg: 600; --fs: 1.15">
     <div class="ch-in"><div class="txt">
       <h2><span class="l">Or make your</span><span class="l">tabs sheep.</span></h2>
-      <p>Click a sheep to go to its tab. The gate makes a new one. Plugins can redraw any part of the window: install one, or ask your AI to write it.</p>
+      <p>Click a sheep to go to its tab, or a little window to bring it forward. Plugins can redraw any part of the window: install one, or ask your AI to write it.</p>
       <pre class="set" translate="no">layout: { arrangement: pasture }</pre>
+    </div></div>
+  </section>
+
+  <section class="ch" data-look="tank" data-lay="tank" data-name="Aquarium" style="--wd: 118%; --wg: 700">
+    <div class="ch-in"><div class="txt">
+      <h2><span class="l">Or keep them</span><span class="l">in a fish tank.</span></h2>
+      <p>Every tab a fish, every page a little window drifting by. Nobody has shipped this one yet: describe it to your AI, then share it in the plugin marketplace for everyone else.</p>
     </div></div>
   </section>
 
@@ -585,6 +676,9 @@ const PAL = {
   forest: ["#10211b", "#1d3a2c", "#e6f2ea", "#5fd39a", "#0c1f16", "#173026", "#e6f2ea"],
   ocean: ["#0e1c2e", "#123a52", "#e6f1f8", "#4cc2ff", "#06202f", "#11293f", "#e6f1f8"],
   black: ["#000000", "#0b0b14", "#ededf5", "#9a9aff", "#0a0a20", "#000000", "#ededf5"],
+  tank: ["#0b3b6b", "#0a2a4d", "#e8f6ff", "#5fd8ff", "#06202f", "#1a7cc4", "#e8f6ff"],
+  dusk: ["#2b1b4d", "#7a3b78", "#fff0e6", "#ffb26b", "#2b1b4d", "#2b2b34", "#fff0e6"],
+  dawn: ["#ffd3a3", "#a7d3f5", "#33264a", "#c2452f", "#ffffff", "#a7d3f5", "#33264a", 1],
   rose: ["#2b1520", "#4a1f33", "#f8e9ef", "#ff7ab6", "#2b0d1a", "#3a1b2a", "#f8e9ef"],
   grape: ["#1d1430", "#3b1f5e", "#efe6ff", "#c58bff", "#1d0d33", "#2a1b47", "#efe6ff"],
   ember: ["#24130c", "#4a2412", "#ffeee0", "#ff9a4c", "#2a1205", "#33190f", "#ffeee0"],
@@ -604,6 +698,7 @@ const PAL = {
   lava: ["#1a0000", "#5a0d00", "#ffe9d6", "#ff5a1f", "#1a0000", "#2a0500", "#ffe9d6"],
   highlighter: ["#faff00", "#e9f000", "#111111", "#ff00aa", "#ffffff", "#111111", "#faff00", 1],
 };
+const WORLDS = new Set(["tank", "field", "stand", "sky", "road"]);
 const VARS = ["--bg1", "--bg2", "--ink", "--accent", "--onacc", "--wbg", "--wfg"];
 
 // ---------- which look is showing: colors, where the tabs go, and any extras stacked on top ----------
@@ -617,6 +712,7 @@ function wear(look, lay, fx = "") {
   root.style.setProperty("--wline", lay === "task" ? "transparent" : pal[7] ? "rgba(0,0,0,.16)" : "rgba(255,255,255,.12)");
   root.style.colorScheme = pal[7] ? "light" : "dark";
   root.dataset.look = look; root.dataset.lay = lay; root.dataset.fx = fx;
+  WORLDS.has(lay) ? (root.dataset.world = "") : delete root.dataset.world;
   // planets start circling once they've flown into place
   delete root.dataset.settled; clearTimeout(settle);
   if (lay === "orbit" && !calm) settle = setTimeout(() => (root.dataset.settled = ""), 1300);
@@ -706,14 +802,17 @@ function showTab(i) {
   $("[data-title]").textContent = `${SITES[page][1]} - Valerie 98`;
 }
 function setTabs(list) {
+  for (const pg of pages) pg.classList.remove("used", "s0", "s1", "s2", "s3", "s4");
   tabs.forEach((t, i) => {
     const d = list[i];
     t.classList.toggle("off", !d);
-    if (d) { t.querySelector(".lbl").textContent = d.label; t.style.setProperty("--c", d.color); t.page = d.page; }
+    if (d) { t.querySelector(".lbl").textContent = d.label; t.style.setProperty("--c", d.color); t.page = d.page; pages[d.page].classList.add("used", "s" + i); }
   });
   showTab(0);
 }
 tabs.forEach((t, i) => (t.onclick = () => showTab(i)));
+// in a world, a little window comes forward when it's clicked
+pages.forEach((pg, n) => (pg.onclick = () => { const i = tabs.findIndex((t) => t.page === n && !t.classList.contains("off")); if (i >= 0 && root.dataset.world !== undefined) showTab(i); }));
 
 // ---------- spaces: swipe the window, press an arrow key, or pick one ----------
 function showSpace() {
@@ -759,8 +858,10 @@ addEventListener("pointercancel", () => (downX = null));
 
 // ---------- "what should yours look like": a wall of requests. Looks and layouts swap, extras stack ----------
 const ASKS = [
-  ["Make it 1998 again", { look: "v98", lay: "task" }], ["Turn my tabs into sheep", { look: "pasture", lay: "sheep" }], ["Tabs orbit the page like planets", { look: "black", lay: "orbit" }],
-  ["Pink, please", { look: "rose" }], ["Flip it upside down", { fx: "upside" }], ["Make it an aquarium", { look: "ocean", lay: "fish" }], ["Hot dog stand", { look: "hotdog" }],
+  ["Make it an aquarium", { look: "tank", lay: "tank" }], ["Turn my tabs into sheep", { look: "pasture", lay: "field" }], ["Open a hot dog stand", { look: "hotdog", lay: "stand" }],
+  ["Tabs are hot air balloons", { look: "dawn", lay: "sky" }], ["Rush hour: tabs are cars", { look: "dusk", lay: "road" }], ["Tabs orbit the page like planets", { look: "black", lay: "orbit" }],
+  ["Make it 1998 again", { look: "v98", lay: "task" }],
+  ["Pink, please", { look: "rose" }], ["Flip it upside down", { fx: "upside" }], ["Ketchup and mustard", { look: "hotdog" }],
   ["Tabs are sticky notes", { lay: "notes" }], ["Wobble like jelly", { fx: "jelly" }], ["Enter the Matrix", { look: "matrix" }], ["Give me a dock", { lay: "dock" }],
   ["Comic Sans. Everything.", { fx: "comic" }], ["Vaporwave", { look: "vapor" }], ["Tabs on top, like Chrome", { look: "chrome", lay: "strip" }], ["Make it tiny", { fx: "tiny" }],
   ["Game Boy green", { look: "gameboy" }], ["Sidebar on the right", { lay: "right" }], ["Old TV scanlines", { fx: "crt" }], ["Blueprint", { look: "blueprint" }],
@@ -774,7 +875,7 @@ const ASKS = [
   ["Campfire", { look: "ember" }], ["Sepia pages", { fx: "sepia" }], ["Beach day", { look: "sand" }], ["Deep ocean", { look: "ocean" }], ["Midnight", { look: "classic" }], ["Pitch black", { look: "black" }],
   ["A classic sidebar", { lay: "side" }], ["Back to normal", { reset: true }],
 ];
-const LOOKS = Object.keys(PAL), LAYS = ["side", "right", "compact", "bottom", "strip", "task", "sheep", "fish", "dock", "orbit", "notes", "bench", "none"], FX = [...new Set(ASKS.map((a) => a[1].fx).filter(Boolean))];
+const LOOKS = Object.keys(PAL), LAYS = ["side", "right", "compact", "bottom", "strip", "task", "tank", "field", "stand", "sky", "road", "tank", "field", "stand", "sky", "road", "dock", "orbit", "notes", "bench", "none"], FX = [...new Set(ASKS.map((a) => a[1].fx).filter(Boolean))];
 const chipBox = $("#chips"), home = () => ({ look: "rose", lay: "side", fx: new Set() });
 function press() {
   for (const b of chipBox.children) {
