@@ -131,6 +131,12 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["over", "above"].contains(&c.little_window.bar_reveal.as_str()) {
                 problems.push(format!("little_window: bar_reveal is {:?}; use over or above", c.little_window.bar_reveal));
             }
+            if !(1.0..=200.0).contains(&c.little_window.reveal_zone) {
+                problems.push(format!("little_window: reveal_zone is {}; use pixels from 1 to 200", c.little_window.reveal_zone));
+            }
+            if !(0.0..=40.0).contains(&c.little_window.page_corner_radius) {
+                problems.push(format!("little_window: page_corner_radius is {}; use pixels from 0 to 40", c.little_window.page_corner_radius));
+            }
             if !["room", "over"].contains(&c.little_window.full_screen_bar.as_str()) {
                 problems.push(format!("little_window: full_screen_bar is {:?}; use room or over", c.little_window.full_screen_bar));
             }

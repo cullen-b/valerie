@@ -1817,6 +1817,7 @@ impl App {
         if let Target::Little(id, _) = target {
             let hover = self.little_bar_hides();
             c["edge"] = json!(hover.then_some("top"));
+            c["edge_zone"] = json!(self.config.little_window.reveal_zone.max(1.0));
             c["peek"] = json!(hover && self.littles.get(&id).is_some_and(|l| l.bar_out));
             c["little_tabs"] = json!(self.little_tab_key());
         }
@@ -3366,9 +3367,15 @@ impl App {
             let room = hover && self.little_fills_screen(l);
             let shown = !hover || room || l.bar_out;
             let top = if !hover || room || l.bar_out && !l.bar_over { LITTLE_BAR } else { 0.0 };
-            let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR));
+            let r = if top > 0.0 { self.little_corner() } else { 0.0 };
+            // The bar reaches down behind the page's rounded corners, so they show the bar's colour.
+            let _ = l.bar.set_bounds(rect(0.0, 0.0, s.width, LITTLE_BAR + r));
             let _ = l.bar.set_visible(shown);
             let _ = l.view.set_bounds(rect(0.0, top, s.width, (s.height - top).max(1.0)));
+            platform::round_corners(&l.view, r, if r > 0.0 { platform::Corners::Top } else { platform::Corners::None });
+            if r > 0.0 && !l.bar_over {
+                platform::bring_to_front(&l.view);
+            }
             platform::follow_window(&l.bar, platform::Follow::Top);
             platform::follow_window(&l.view, platform::Follow::Fill);
             if l.bar_over && !room {
@@ -3386,6 +3393,11 @@ impl App {
         self.config.little_window.full_screen_bar == "room" && (l.window.fullscreen().is_some() || l.window.is_maximized())
     }
 
+    /// `little_window.page_corner_radius`: the page's top corners while the bar shows above it.
+    fn little_corner(&self) -> f64 {
+        self.config.little_window.page_corner_radius.max(0.0)
+    }
+
     /// `little_window.top_bar: hover`: the bar stays hidden until the mouse comes to the window's top.
     fn little_bar_hides(&self) -> bool {
         self.config.little_window.top_bar != "always"
@@ -3397,6 +3409,7 @@ impl App {
         let hover = self.little_bar_hides();
         // little_window.bar_reveal: over (slide over the page's top) | above (the window grows upward to fit it).
         let over = self.config.little_window.bar_reveal != "above";
+        let corner = self.little_corner();
         let Some(room) = self.littles.get(&id).map(|l| self.little_fills_screen(l)) else { return };
         let Some(l) = self.littles.get_mut(&id) else { return };
         if !hover || room {
@@ -3417,10 +3430,17 @@ impl App {
         platform::follow_window(&l.bar, platform::Follow::Top);
         let slid = if out {
             platform::bring_to_front(&l.view);
-            let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR));
-            let _ = l.bar.set_visible(true);
             let fills = l.window.fullscreen().is_some() || l.window.is_maximized();
+            let above = !fills && !over;
+            let _ = l.bar.set_bounds(rect(0.0, 0.0, w, LITTLE_BAR + if above { corner } else { 0.0 }));
+            let _ = l.bar.set_visible(true);
+            if above && corner > 0.0 {
+                platform::round_corners(&l.view, corner, platform::Corners::Top);
+            }
             l.bar_over = fills || over || !platform::grow_window_top(&l.window, LITTLE_BAR, LITTLE_BAR_OUT);
+            if l.bar_over {
+                platform::round_corners(&l.view, 0.0, platform::Corners::None);
+            }
             let _ = l.bar.evaluate_script("window.little && little.reveal()");
             if l.bar_over {
                 let _ = l.bar.set_bounds(rect(0.0, -LITTLE_BAR, w, LITTLE_BAR));
@@ -3465,6 +3485,7 @@ impl App {
         }
         let mut moves = Vec::new();
         let mut any = false;
+        let zone = self.config.little_window.reveal_zone.max(1.0);
         for (id, l) in self.littles.iter_mut().filter(|(_, l)| l.loading) {
             any = true;
             let (Ok(mouse), Ok(at)) = (l.window.cursor_position(), l.window.inner_position()) else { continue };
@@ -3477,9 +3498,9 @@ impl App {
                 continue;
             }
             // Like the page's own checks, only a move counts: up into the top, or down and away, not a resting mouse.
-            if !l.bar_out && (0.0..=6.0).contains(&y) && before.is_some_and(|b| b > y) {
+            if !l.bar_out && (0.0..=zone).contains(&y) && before.is_some_and(|b| b > y) {
                 moves.push((*id, true));
-            } else if l.bar_out && before.is_some_and(|b| b != y) && (!over && y >= 0.0 || y > LITTLE_BAR + 56.0) {
+            } else if l.bar_out && before.is_some_and(|b| b != y) && (!over && y >= 0.0 || y > LITTLE_BAR + (zone + 32.0).max(56.0)) {
                 moves.push((*id, false));
             }
         }

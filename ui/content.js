@@ -1260,9 +1260,9 @@ document.addEventListener("mousemove", (e) => {
   // The mouse left the widened split-view gap for this page: let it slim back down.
   if (cfg.split_grab && e.timeStamp - grabAt > 300) { grabAt = e.timeStamp; post({ t: "split_unhover" }); }
   // A little window's bar (edge "top") stays out while the mouse is still near the page's top.
-  if (cfg.peek) { if ((cfg.edge !== "top" || e.clientY > 56) && e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
+  if (cfg.peek) { if ((cfg.edge !== "top" || e.clientY > Math.max(56, (cfg.edge_zone || 6) + 32)) && e.timeStamp - edgeAt > 400) { edgeAt = e.timeStamp; post({ t: "unpeek" }); } return; }
   if (!cfg.edge || e.timeStamp - edgeAt < 300 || performance.now() < edgeArmedAt) return;
-  const hit = cfg.edge === "top" ? e.clientY <= 6 && e.movementY < 0
+  const hit = cfg.edge === "top" ? e.clientY <= (cfg.edge_zone || 6) && e.movementY < 0
     : cfg.edge === "left" ? e.clientX <= 2 && e.movementX < 0 : e.clientX >= innerWidth - 3 && e.movementX > 0;
   if (hit) { edgeAt = e.timeStamp; post({ t: "edge" }); }
 }, { passive: true });
