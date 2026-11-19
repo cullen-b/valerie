@@ -1068,6 +1068,10 @@ impl Binding {
     }
 }
 
+fn hint_mode_stay() -> String {
+    "stay".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VimConfig {
     pub enabled: bool,
@@ -1085,6 +1089,7 @@ pub struct VimConfig {
     pub hint_characters: String,
     pub hint_labels: String,
     pub remember_hints: bool,
+    #[serde(default = "hint_mode_stay")]
     pub hint_mode: String,
     pub copy_zones: f64,
     pub excluded_hosts: Vec<String>,
