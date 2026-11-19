@@ -446,6 +446,7 @@ function withSite(c) {
   if (s.cookie_banners) out.privacy = { ...c.privacy, cookie_banners: s.cookie_banners };
   if (s.dark_mode) out.site_dark = s.dark_mode;
   if (s.location) out.location_here = s.location;
+  if (s.hints) out.hint_pins = s.hints;
   return out;
 }
 
@@ -808,39 +809,70 @@ function controlKey(el) {
     href, a("aria-label"), a("title"), a("placeholder"), text].join("|").replace(/\d+/g, "#");
 }
 function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
-// Same-length labels hashed from each control's key, so a button keeps its letters across visits and pages.
-function stableLabels(keys) {
-  const chars = hintChars(), n = chars.length;
-  if (n < 2) return labels(keys.length);
-  let len = 2; while (n ** len * 0.6 < keys.length) len++;
-  const slots = n ** len, taken = new Set(), out = new Array(keys.length);
-  const order = keys.map((k, i) => ({ k, i, h: fnv1a(k) })).sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
-  for (const { h, i } of order) {
-    let s = h % slots; while (taken.has(s)) s = (s + 1) % slots;
-    taken.add(s);
-    let l = ""; for (let j = 0, v = s; j < len; j++, v = Math.floor(v / n)) l = chars[v % n] + l;
-    out[i] = l;
+const hintId = (key) => fnv1a(key).toString(36);
+// What a button says, for matching pins: counts like "Commits 4" or "Approve (2)" left out.
+const said = (t) => (t || "").replace(/[([]?\d+[)\]]?/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+// Labels hashed from each control's key, so a button keeps its letters across visits and pages. Pinned labels
+// (sites.<host>.hints) and ones used before on this site (vim.remember_hints) come first and stay reserved even when
+// their button isn't on the page, so a remembered key never clicks something else.
+function stableLabels(items) {
+  const chars = hintChars(), n = chars.length, out = new Array(items.length);
+  if (n < 2) return labels(items.length);
+  const ok = (l) => l && [...l].every((c) => chars.includes(c));
+  const reserved = new Set(), within = new Set();
+  const free = (l) => { if (reserved.has(l) || within.has(l)) return false; for (let k = 1; k < l.length; k++) if (reserved.has(l.slice(0, k))) return false; return true; };
+  const reserve = (l) => { reserved.add(l); for (let k = 1; k < l.length; k++) within.add(l.slice(0, k)); };
+  const claim = (list, fits) => list.filter(([k, l]) => k && fits(l) && free(l) && (reserve(l), true));
+  // Pins may use any letter or digit; one outside hint_characters can't clash with anything.
+  const pins = claim(Object.entries(cfg.hint_pins || {}).map(([name, l]) => [said(name), String(l).toLowerCase()]), (l) => /^[a-z0-9]{1,4}$/.test(l));
+  const known = claim(Object.entries(cfg.hint_memory || {}), ok);
+  const byId = new Map(known), given = new Set();
+  for (const [name, l] of pins) {
+    const i = items.findIndex((it, j) => !out[j] && [it.el.getAttribute("aria-label"), it.el.getAttribute("title"), it.el.getAttribute("placeholder"), it.el.textContent].some((t) => said(t) === name));
+    if (i >= 0) { out[i] = l; given.add(l); }
+  }
+  items.forEach((it, i) => { const l = byId.get(it.id); if (!out[i] && l && !given.has(l)) { out[i] = l; given.add(l); } });
+  // Everything else: same-length labels from the free ones; a button whose own label is taken moves to the next free one.
+  const rest = items.map((it, i) => ({ i, k: it.key, h: fnv1a(it.key) })).filter((x) => !out[x.i]);
+  let len = 2, slots = [];
+  for (;; len++) {
+    slots = [];
+    for (let s = 0; s < n ** len; s++) { let l = ""; for (let j = 0, v = s; j < len; j++, v = Math.floor(v / n)) l = chars[v % n] + l; slots.push(free(l) ? l : null); }
+    if (slots.filter(Boolean).length * 0.6 >= rest.length || len >= 4) break;
+  }
+  rest.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  const taken = new Set(), losers = [];
+  for (const x of rest) { const s = x.h % slots.length; if (slots[s] && !taken.has(s)) { taken.add(s); out[x.i] = slots[s]; } else losers.push(x); }
+  for (const x of losers) {
+    let s = x.h % slots.length, tries = 0;
+    while ((!slots[s] || taken.has(s)) && tries++ < slots.length) s = (s + 1) % slots.length;
+    if (tries > slots.length) continue;
+    taken.add(s); out[x.i] = slots[s];
   }
   return out;
 }
 function startHints(newTab) {
   const t0 = performance.now();
-  const items = collectHintables();
+  let items = collectHintables();
   if (!items.length) return toast("Nothing to click");
-  if (cfg.vim.hint_labels !== "reading_order") {
+  const stable = cfg.vim.hint_labels !== "reading_order";
+  if (stable) {
     // Repeats ("Reply" on every comment) are told apart by their order on the page.
     const seen = new Map();
-    for (const it of items) { const k = controlKey(it.el), c = seen.get(k) || 0; seen.set(k, c + 1); it.key = k + "#" + c; }
+    for (const it of items) { const k = controlKey(it.el), c = seen.get(k) || 0; seen.set(k, c + 1); it.key = k + "#" + c; it.id = hintId(it.key); }
+    const ls = stableLabels(items);
+    items.forEach((it, i) => { it.label = ls[i]; });
+    items = items.filter((it) => it.label);
   }
   // Reading order: top to bottom, then left to right, so nearby things get similar labels.
   items.sort((a, b) => Math.round(a.r.top / 8) - Math.round(b.r.top / 8) || a.r.left - b.r.left);
-  const ls = cfg.vim.hint_labels === "reading_order" ? labels(items.length) : stableLabels(items.map((it) => it.key));
+  const ls = stable ? items.map((it) => it.label) : labels(items.length);
   const root = ui(), frag = document.createDocumentFragment();
-  hints = { newTab, typed: "", items: items.map(({ el, r }, i) => {
+  hints = { newTab, typed: "", items: items.map(({ el, r, id }, i) => {
     const d = document.createElement("div"); d.className = "hint"; d.textContent = ls[i];
     d.style.transform = `translate(${Math.max(r.left - 2, 0)}px, ${Math.max(r.top - 2, 0)}px)`;
     frag.appendChild(d);
-    return { e: el, label: ls[i], d };
+    return { e: el, label: ls[i], d, id };
   }), ms: performance.now() - t0 };
   root.appendChild(frag);
   mode = "hints";
@@ -865,10 +897,20 @@ function hintKey(k) {
   }
   if (left === 1 && last.label === typed) {
     const nt = hints.newTab; stopHints();
+    rememberHint(last);
     const r = anim("keyboard_click") && last.e.getBoundingClientRect();
     activate(last.e, nt); if (r) clickRing(r);
   }
   else if (!left) stopHints();
+}
+// The label you just used stays with that button on this site (vim.remember_hints), unless it's pinned already.
+function rememberHint(h) {
+  if (!h.id || !cfg.vim.remember_hints || Object.values(cfg.hint_pins || {}).some((l) => String(l).toLowerCase() === h.label)) return;
+  const mem = cfg.hint_memory || (cfg.hint_memory = {});
+  if (mem[h.id] === h.label) return;
+  for (const k of Object.keys(mem)) if (mem[k] === h.label) delete mem[k];
+  mem[h.id] = h.label;
+  post({ t: "hint_used", id: h.id, label: h.label });
 }
 // A ring that grows off what a hint clicked and fades; drawn after the click so it never holds it up.
 let ring = null;

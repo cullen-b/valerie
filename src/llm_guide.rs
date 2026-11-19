@@ -127,6 +127,7 @@ changed in plain words. Some translations:
 | "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0` (also stops every small animation under `animations:`), `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
 | "Stop that one animation" (tabs sliding, the logo drawing, the ring after `f`) | its switch under `animations:` (e.g. `animations.tabs: false`); `config/default.yaml` lists them all |
 | "Messages vanish before I read them" | `toast_seconds: 5` |
+| "Give the Merge button the key m" / "same `f` letters every time" | `sites: {{ gitlab.com: {{ hints: {{ Merge: m }} }} }}` (by what the button says, numbers ignored; 1-4 letters or digits, none starting another). Labels used once stay put on their own with `vim.remember_hints: true`; `vim.hint_labels: stable` keeps the rest steady |
 | "Copy text without the mouse" / "copy mode splits too much or too little" | `c` (`vim.bindings`, `copy_mode`): letters pick a part of the page, then a line, a word; `a` copies all of it. `vim.copy_zones` (how many parts at first) |
 | "Make it private" / "stop tracking me" | `content_blocking.enabled: true`, `privacy.strip_tracking: true`, `privacy.cookie_banners: reject` |
 | "Dark mode everywhere" | `pages.dark_mode: always` (or `system` to follow the computer) |

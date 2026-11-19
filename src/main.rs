@@ -418,6 +418,14 @@ fn check_new_settings(c: &Config) -> Vec<String> {
         if s.zoom.is_some_and(|z| !(25.0..=500.0).contains(&z)) {
             p.push(format!("sites.{site}: zoom is a percent from 25 to 500"));
         }
+        for (name, l) in s.hints.iter().flatten() {
+            let l = l.to_lowercase();
+            if l.is_empty() || l.len() > 4 || !l.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+                p.push(format!("sites.{site}: hints.{name:?} must be 1 to 4 letters or digits"));
+            } else if let Some((other, _)) = s.hints.iter().flatten().find(|(o, ol)| *o != name && l.starts_with(&ol.to_lowercase())) {
+                p.push(format!("sites.{site}: hints.{name:?} ({l}) starts with {other:?}'s letters, so it could never be typed"));
+            }
+        }
         for (k, v) in s.links.iter().flatten() {
             one_of(&mut p, format!("sites.{site}: links key"), k, LINK_KEYS);
             one_of(&mut p, format!("sites.{site}: links.{k}"), v, LINK_ACTIONS);
