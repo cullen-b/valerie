@@ -1431,7 +1431,7 @@ function iconHref(h) {
   return blobIcon[1] || null;
 }
 // Sites change their icon to show state (GitLab and GitHub build status, Slack and Gmail unread, X's dot): follow it.
-let iconTimer = 0, iconAt = 0;
+let iconTimer = 0, iconTimes = [];
 function iconChanged(records) {
   const changed = [];
   for (const r of records) {
@@ -1443,9 +1443,10 @@ function iconChanged(records) {
   }
   if (!changed.length && !changed.removed) return;
   if (changed.length) liveIcon = changed.find((l) => /svg/.test(l.type || l.href)) || changed[changed.length - 1];
-  // Right away: background tabs hold back timers. Animated icons: at most four updates a second.
-  if (Date.now() - iconAt >= 250) { iconAt = Date.now(); report(); }
-  else if (!iconTimer) iconTimer = setTimeout(() => { iconTimer = 0; iconAt = Date.now(); report(); }, 250);
+  // Right away (WebKit can hold back timers); only an animated icon (five changes in a second) waits for a timer.
+  const t = Date.now(); iconTimes = iconTimes.filter((x) => t - x < 1000);
+  if (iconTimes.length < 4) { iconTimes.push(t); report(); }
+  else if (!iconTimer) iconTimer = setTimeout(() => { iconTimer = 0; iconTimes = [Date.now()]; report(); }, 250);
 }
 function watchIcons() {
   if (!(cfg.tabs && cfg.tabs.live_icons) || !document.head || watchIcons.on) return;
@@ -1462,7 +1463,7 @@ for (const fn of ["pushState", "replaceState"]) {
   const orig = history[fn];
   history[fn] = function () { const r = orig.apply(this, arguments); setTimeout(report, 0); return r; };
 }
-addEventListener("popstate", report); addEventListener("hashchange", report);
+addEventListener("popstate", report); addEventListener("hashchange", report); document.addEventListener("visibilitychange", report);
 document.addEventListener("play", report, true); document.addEventListener("pause", report, true); document.addEventListener("volumechange", report, true);
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => { report(); watchIcons(); }); else { report(); watchIcons(); }
 addEventListener("load", report);
