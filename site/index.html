@@ -223,7 +223,8 @@ html[data-lay=right] .sidebits { left: auto; right: 0; }
 .spaces { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 14px; }
 .spaces i { position: relative; cursor: pointer; pointer-events: auto; transition: opacity .3s, background-color .3s, scale .3s; } .spaces i::before { content: ""; position: absolute; inset: -9px -7px; } .spaces i.cur { scale: 1.3; }
 .tab.off { opacity: 0 !important; pointer-events: none; }
-.cam { touch-action: pan-y; } .spaces i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .3; } .spaces i.cur { opacity: 1; background: var(--accent); }
+/* the tilted window dips behind .cam's own plane, so .cam must not catch the clicks meant for it */
+.cam { touch-action: pan-y; pointer-events: none; } .win { pointer-events: auto; } .spaces i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .3; } .spaces i.cur { opacity: 1; background: var(--accent); }
 
 .outline { right: 6px; top: 6px; bottom: 6px; width: 222px; border-radius: 12px; padding: 18px 16px; background: color-mix(in srgb, var(--wfg) 8%, transparent); transform: translateX(60px); }
 html[data-lay=bench] .outline { opacity: 1; transform: none; transition-delay: .25s; }
@@ -284,7 +285,7 @@ html[data-lay=agent] .cursor { opacity: 1; animation: point 5s var(--ease) infin
 html[data-fx~=upside] .win { rotate: 180deg; }
 html[data-fx~=tilt] .win { rotate: -14deg; }
 html[data-fx~=tiny] .win { scale: .45; }
-html[data-fx~=round] .win { border-radius: 50% !important; }
+html[data-fx~=round] .win { border-radius: 160px !important; }
 html[data-fx~=square] :is(.win, .page, .tab, .pill, .outline) { border-radius: 0 !important; }
 html[data-fx~=jelly] .win { animation: jelly 1s ease-in-out infinite; }
 html[data-fx~=spin] .win { animation: spin 16s linear infinite; }
@@ -829,6 +830,7 @@ fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) 
   if (r && r.tag_name) $("#ver").textContent = `Version ${r.tag_name.replace(/^v/, "")}. Free and open source.`;
 }).catch(() => {});
 
+showSpace();
 measure();
 if (document.fonts) document.fonts.ready.then(measure);
 </script>
