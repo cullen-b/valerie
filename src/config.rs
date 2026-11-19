@@ -1082,6 +1082,7 @@ pub struct VimConfig {
     pub hold_scroll_max_speed: f64,
     pub hint_characters: String,
     pub hint_labels: String,
+    pub copy_zones: f64,
     pub excluded_hosts: Vec<String>,
     pub pass_at_edge: Vec<String>,
     pub bindings: BTreeMap<String, Option<serde_json::Value>>,

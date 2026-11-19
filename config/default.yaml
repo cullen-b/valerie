@@ -801,6 +801,7 @@ vim:
   hold_scroll_max_speed: 14000     # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
   hint_labels: stable      # stable: a button gets the same letters every time (from its text and link), so "Merge" is the same keys on every visit; reading_order: shortest labels, numbered top to bottom. one of: stable | reading_order
+  copy_zones: 20           # copy mode (c) splits the page into at most this many parts at first; more gives smaller parts
   excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
   pass_at_edge: ["youtube.com"]   # on these sites a scroll key with nowhere left to go goes to the site instead (k at the top pauses YouTube); [] turns it off
   bindings:
@@ -815,6 +816,9 @@ vim:
     "G": bottom
     "f": hints
     "F": hints_new_tab
+    "c": copy_mode           # copy with letters: pick a part of the page, then a line, a word, a part of a word (each letter zooms in, the last copies).
+                             # a copies all of what's picked (c then a: the whole page), Shift + a letter starts a range the next letter ends,
+                             # Backspace goes back up, Esc leaves
     "i": insert
     "/": find
     "yy": copy_url

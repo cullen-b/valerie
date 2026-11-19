@@ -1808,7 +1808,7 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ((S && S.toast_seconds) || 1.8) * 1000);
 }
 // Vim keys that act on tabs and spaces also work here (start page, sidebar focus, a tab still loading).
-const PAGE_ONLY = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find", "back", "forward", "reload"]);
+const PAGE_ONLY = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "copy_mode", "insert", "find", "back", "forward", "reload"]);
 let vimBuf = "", vimTimer = 0;
 addEventListener("keydown", (e) => {
   if (!S || !S.vim || !S.vim.enabled || e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return;
