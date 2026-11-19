@@ -4214,6 +4214,12 @@ impl App {
         // Still with the user: the agent waits on.
         if let Some(h) = self.helping.get_mut(&t) {
             h.reply = Some(reply);
+            // A reminder each time the agent waits on: the first notice is easy to miss away from the computer.
+            if !self.window_focused {
+                let (who, note) = (h.who.clone(), h.note.clone());
+                crate::log::event("mcp", format!("reminded the user that {who} is waiting on tab {t}"));
+                self.notify_valerie(&format!("{who} is still waiting for you"), &note, None);
+            }
             return;
         }
         let note: String = args["note"].as_str().unwrap_or("").trim().chars().take(600).collect();
@@ -4239,6 +4245,7 @@ impl App {
         self.render();
         self.show_help_bar(t);
         if !self.window_focused {
+            crate::log::event("mcp", format!("notified the user that {who} needs them"));
             self.notify_valerie(&format!("{who} needs you"), &note, None);
         }
     }
@@ -10148,6 +10155,11 @@ impl App {
                 }
                 None => Err("no tab (open one first)".into()),
             },
+            "real_click" => match self.target_tab(tab_arg).and_then(|t| self.views.get(&t)) {
+                Some(v) => platform::real_click(v, args["x"].as_f64().unwrap_or(0.0), args["y"].as_f64().unwrap_or(0.0),
+                    args["right"].as_bool() == Some(true), args["clicks"].as_i64().unwrap_or(1) as isize).map(|()| json!(true)),
+                None => Err("tab has no page".into()),
+            },
             "screenshot" => {
                 let Some(t) = self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) else {
                     let _ = reply.send(Err("no tab".into()));
@@ -11092,6 +11104,9 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
             Event::Reopen { .. } => app.show_main(),
             Event::Opened { urls } => {
                 trace("link from another app");
+                for u in &urls {
+                    crate::log::event("links", format!("another app opened a {} link to {}", u.scheme(), u.host_str().unwrap_or("(no host)")));
+                }
                 app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt);
             }
             Event::LoopDestroyed => {

@@ -920,6 +920,9 @@ mcp:
                            # button), or typing into a card field. A script (eval_js) is stopped if it does the same or
                            # sends a matching request; scripts that only read run freely. A safety net, not a guarantee.
                            # Agents need your yes to change this or paying_words. true | false
+  real_clicks: true         # agents' clicks are real mouse clicks inside the page, so sites that ignore script clicks
+                           # (Google's Share and Send buttons) take them; your own cursor doesn't move. macOS only so
+                           # far. true | false (false: clicks made by a script, as on other systems)
   paying_words: [          # words that make a button or request ask (mcp.ask_before_paying); whole words, any capitals.
                            # Setting this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
     # buying

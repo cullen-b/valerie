@@ -295,13 +295,14 @@ fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> 
 
 /// An agent's script, watched while it runs: anything it presses or sends is checked when it happens.
 fn guarded_script(script: &str, words: &[String]) -> String {
-    format!("const __vg = (() => {{ const WORDS = {};\n{PAYING_JS}\n{SCRIPT_GUARD_JS}\n}})();\nreturn __vg.run(function () {{\n{script}\n}});", json!(words))
+    format!("const __vg = (() => {{ const WORDS = {};\n{PAYING_JS}\n{SCRIPT_GUARD_JS}\n}})();\nreturn __vg.run(async function () {{\n{script}\n}});", json!(words))
 }
 
 fn run_script(script: &str, tab: Option<i64>, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
     if !config.mcp.ask_before_paying {
-        return eval(proxy, tab, script);
+        // Async, so `await` works at the top of an agent's script.
+        return eval(proxy, tab, &format!("return (async () => {{\n{script}\n}})();"));
     }
     let out = eval(proxy, tab, &guarded_script(script, &config.mcp.paying_words))?;
     match out.get("__blocked").and_then(|b| b.get(0)) {
@@ -742,7 +743,7 @@ pub fn tools() -> Vec<Value> {
         tool("list_tabs", "List tabs: favorites, pinned and today tabs, with ids, urls, titles, space and state.",
              json!({ "space": { "type": "string", "description": "Only this space" },
                 "query": { "type": "string", "description": "Only tabs whose title or address holds all these words" },
-                "limit": { "type": "integer", "description": "Most tabs to return (default 100)" } }), &[]),
+                "limit": { "type": "integer", "description": "Most tabs to return (default 30)" } }), &[]),
         tool("open_tab", "Open a URL (or search terms) in a new tab.", json!({
             "url": { "type": "string" }, "space": { "type": "string", "description": "Space name; defaults to the active space" },
             "activate": { "type": "boolean", "description": "Switch to the tab (default false: open in background)" },
@@ -773,7 +774,7 @@ pub fn tools() -> Vec<Value> {
             "format": { "type": "string", "enum": ["text", "markdown", "html"], "description": "Default text" } }), &[]),
         tool("snapshot", "List the page's interactive elements with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too. Only what's shown on the page is listed (not what sits in a closed menu or section). Each has its label and, where it applies, href (same-site links as a path), value (a list for a multiple-choice <select>), checked, expanded, options (dropdowns), editor (a rich text or code editor), disabled, readonly, offscreen, and covered (what sits on top of it, e.g. an open dialog). other_site_frames lists embedded frames from another site, which these tools can't reach inside: open that address in its own tab to work in it. truncated: true means there were more than 500. Refs reset on every snapshot.",
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
-        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would: on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new, opened a new tab, or showed an alert, confirm or prompt (answered by dialog). Refuses what a person couldn't click: something covered (a dialog or banner), hidden (in a closed menu or section) or disabled; force: true clicks covered, hidden and aria-disabled ones anyway. double: true double-clicks; button: right right-clicks (opens the page's own context menu).", with_dialog(json!({
+        tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would (on macOS a real mouse click, which sites trust): on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new, opened a new tab, or showed an alert, confirm or prompt (answered by dialog). Refuses what a person couldn't click: something covered (a dialog or banner), hidden (in a closed menu or section) or disabled; force: true clicks covered, hidden and aria-disabled ones anyway. double: true double-clicks; button: right right-clicks (opens the page's own context menu).", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
             "force": { "type": "boolean", "description": "Click even if something covers it or it isn't shown" },
             "double": { "type": "boolean", "description": "Double-click" },
@@ -835,7 +836,7 @@ pub fn tools() -> Vec<Value> {
              you answer; read its output with read_terminal. For quick commands, use your own shell instead.",
              json!({ "command": { "type": "string", "description": "One line, as you'd type it" },
                      "folder": { "type": "string", "description": "Where to run it (default: your project folder)" } }), &["command"]),
-        tool("eval_js", "Run JavaScript in the page as a function body; `return` a JSON-serialisable value. Promises are awaited. \
+        tool("eval_js", "Run JavaScript in the page as an async function body (top-level await works); `return` a JSON-serialisable value. Clicks it makes are script clicks, which some sites ignore: press buttons with the click tool. \
              If it clicks, submits or sends something that looks like paying, Valerie stops it and says what to do instead. If the \
              page shows an alert, confirm or prompt meanwhile, it's answered by dialog and the result comes back as { result, dialogs }.",
              with_dialog(json!({ "tab": tab_prop(), "script": { "type": "string" } })), &["script"]),
@@ -995,6 +996,10 @@ fn unwrap_result(r: Value) -> Result<Value, String> {
     if let Some(e) = r.get("error") {
         return Err(format!("page error: {}", text(e)));
     }
+    // Every wrapped script answers with an object (ok, error or pending): anything else means it never ran.
+    if !r.is_object() {
+        return Err("the script didn't run: it has a syntax error (check brackets and quotes), or the page refused it".into());
+    }
     Ok(r.get("ok").cloned().unwrap_or(Value::Null))
 }
 
@@ -1059,6 +1064,11 @@ fn with_notes(v: Value, notes: Vec<String>) -> Value {
 /// moment, or a page it went to has loaded. Says where it ended up if the address changed, which tabs it opened and
 /// what the page asked in dialogs meanwhile.
 fn act(proxy: &EventLoopProxy<UserEvent>, a: &Value, script: &str) -> Result<Value, String> {
+    act_with(proxy, a, |tab| eval(proxy, tab, script))
+}
+
+/// `act` with the action itself given as a step that can make several calls (a real click: aim, click, check).
+fn act_with(proxy: &EventLoopProxy<UserEvent>, a: &Value, action: impl FnOnce(Option<i64>) -> Result<Value, String>) -> Result<Value, String> {
     let tab = match a.get("tab").and_then(Value::as_i64) {
         Some(t) => Some(t),
         None => call(proxy, "ensure_loaded", json!({ "tab": Value::Null }))?["tab"].as_i64(),
@@ -1066,7 +1076,8 @@ fn act(proxy: &EventLoopProxy<UserEvent>, a: &Value, script: &str) -> Result<Val
     let before = open_tabs(proxy);
     watch_dialogs(proxy, tab, a);
     let _ = eval(proxy, tab, FRAMES_JS);
-    let done = match eval(proxy, tab, &format!("{WATCH_JS}\n{script}")) {
+    let _ = eval(proxy, tab, WATCH_JS);
+    let done = match action(tab) {
         Ok(v) => v,
         Err(e) => {
             let notes = dialogs_seen(proxy, tab, a);
@@ -1434,6 +1445,37 @@ function dragOn(src, dst) {
 }
 "#;
 
+/// Where a real click on `find()` lands, in the tab's own CSS pixels (through same-origin frames), after the same checks a
+/// script click makes; and a watch for the page's trusted mousedown, so the click can be confirmed.
+const REAL_AIM_JS: &str = r#"
+const e = find();
+refuse(e, 'click');
+const a = aim(e);
+if (a.covered && !A.force) throw coveredError(e, a, 'click');
+if (a.covered) return { fallback: 'covered' };
+let x = a.x, y = a.y, w = a.view;
+while (w !== window) {
+  const f = w.frameElement;
+  if (!f) return { fallback: 'frame' };
+  const r = f.getBoundingClientRect(), cs = f.ownerDocument.defaultView.getComputedStyle(f);
+  x += r.left + f.clientLeft + parseFloat(cs.paddingLeft || 0);
+  y += r.top + f.clientTop + parseFloat(cs.paddingTop || 0);
+  w = f.ownerDocument.defaultView;
+}
+if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return { fallback: 'offscreen' };
+const W = a.view, probe = { got: false, other: null };
+const watch = (ev) => { if (!ev.isTrusted) return; if (within(ev.target, e) || within(e, ev.target)) probe.got = true; else if (!probe.got) probe.other = describe(ev.target); };
+const top = (ev) => { if (ev.isTrusted && !probe.got && ev.target !== a.view.frameElement && !within(a.view.frameElement || document, ev.target)) probe.other = probe.other || describe(ev.target); };
+W.addEventListener('mousedown', watch, true);
+if (W !== window) window.addEventListener('mousedown', top, true);
+probe.off = () => { W.removeEventListener('mousedown', watch, true); window.removeEventListener('mousedown', top, true); };
+window.__vgReal = probe;
+return { x, y, name: describe(e) };
+"#;
+
+const REAL_SEEN_JS: &str = "const p = window.__vgReal; return p ? { got: p.got, other: p.other } : {};";
+const REAL_DONE_JS: &str = "const p = window.__vgReal; if (p) { p.off(); window.__vgReal = null; } return true;";
+
 /// Answers the page's alert, confirm and prompt while an agent's action is under way (until 5 seconds after it), as
 /// `A.dialog` says, and notes each one for the result. Otherwise the page gets the real ones. Every window and
 /// same-origin frame, once each.
@@ -1539,13 +1581,22 @@ function selectAllIn(e) {
   const sel = D.defaultView.getSelection();
   sel.removeAllRanges(); sel.addRange(r);
 }
+// The field's own value setter, from its prototype chain: a field made in one frame and shown in another (Google's share
+// dialog) belongs to neither frame's HTMLInputElement alone.
+function valueSetter(e) {
+  for (let p = Object.getPrototypeOf(e); p; p = Object.getPrototypeOf(p)) {
+    const d = Object.getOwnPropertyDescriptor(p, 'value');
+    if (d && d.set) return d.set;
+  }
+  return function (v) { this.value = v; };
+}
 // Without focus the browser's editing commands do nothing: change a field's text at its cursor directly.
 function editField(e, text, back, ahead, inputType) {
   const W = e.ownerDocument.defaultView, a = e.selectionStart, b = e.selectionEnd;
   if (a == null) {
     // Fields with no cursor (email, number) change at the end.
-    const v = e.value, proto = e.tagName === 'TEXTAREA' ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, back < 0 ? v.slice(0, back) : v + text);
+    const v = e.value;
+    valueSetter(e).call(e, back < 0 ? v.slice(0, back) : v + text);
   } else e.setRangeText(text, Math.max(0, a + back), Math.min(e.value.length, b + ahead), 'end');
   e.dispatchEvent(new W.InputEvent('input', { bubbles: true, inputType, data: text || null }));
 }
@@ -1609,7 +1660,7 @@ const name = describe(e);
 let how = 'typed into ', after = '';
 const W = e.ownerDocument.defaultView, D = e.ownerDocument;
 const plain = tag(e) === 'INPUT' || tag(e) === 'TEXTAREA', old = plain ? e.value : null;
-const setValue = (v) => Object.getOwnPropertyDescriptor(tag(e) === 'TEXTAREA' ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype, 'value').set.call(e, v);
+const setValue = (v) => valueSetter(e).call(e, v);
 const changed = () => { e.dispatchEvent(new W.Event('input', { bubbles: true })); e.dispatchEvent(new W.Event('change', { bubbles: true })); };
 // A script's value skips maxlength; a person's typing stops there.
 const fit = (before, add) => e.maxLength >= 0 && (before + add).length > e.maxLength ? before + add.slice(0, Math.max(0, e.maxLength - before.length)) : before + add;
@@ -3102,7 +3153,7 @@ fn list_tabs(proxy: &EventLoopProxy<UserEvent>, a: Value) -> Result<Value, Strin
             words.iter().all(|w| hay.contains(w.as_str()))
         })
         .collect();
-    let limit = a["limit"].as_u64().unwrap_or(100).max(1) as usize;
+    let limit = a["limit"].as_u64().unwrap_or(30).max(1) as usize;
     if hits.len() <= limit {
         return Ok(json!(hits));
     }
@@ -3244,7 +3295,7 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let wait = a["wait_seconds"].as_u64().unwrap_or(300).clamp(5, 600);
             match call_wait(proxy, "ask_user", a, wait) {
                 Err(e) if e.starts_with("timed out") => Ok(json!({ "done": false, "still_with_user": true, "tab": tab,
-                    "next": "The user hasn't pressed Done yet. Call ask_user again with this tab (no note or url) to keep waiting." })),
+                    "waited_seconds": wait, "next": "The user hasn't pressed Done yet. They got a notification on this computer (another comes each time you wait on), but they may be away from it: also tell them through your own channel if you have one (a push notification, a chat message), then call ask_user again with this tab (no note or url) to keep waiting. A sign-in page can expire while it waits; if it does, open it again before asking." })),
                 r => r,
             }
         }
@@ -3292,7 +3343,42 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             let tab = wait_ready(proxy, tab)?;
             eval(proxy, tab, &with_args(&a, &format!("{FINISH_ANIMATIONS_JS}\n{FIND_JS}\n{SNAPSHOT_JS}")))
         }
-        "click" => act(proxy, &a, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"))),
+        "click" => {
+            let script_click = with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\nreturn clickOn(find());"));
+            let config = crate::config::Config::load().unwrap_or_else(|_| crate::config::Config::defaults());
+            if !config.mcp.real_clicks || !cfg!(target_os = "macos") {
+                return act(proxy, &a, &script_click);
+            }
+            act_with(proxy, &a, |tab| {
+                let aim = eval(proxy, tab, &with_args(&a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{POINTER_JS}\n{REAL_AIM_JS}")))?;
+                let clicks = if a["double"].as_bool() == Some(true) { 2 } else { 1 };
+                let sent = aim["x"].is_number()
+                    && call(proxy, "real_click", json!({ "tab": tab, "x": aim["x"], "y": aim["y"], "right": a["button"] == "right", "clicks": clicks })).is_ok();
+                if sent {
+                    // The page has the click once its mousedown has run; give it a moment to arrive.
+                    for _ in 0..10 {
+                        std::thread::sleep(Duration::from_millis(50));
+                        let seen = eval(proxy, tab, REAL_SEEN_JS)?;
+                        if seen["got"] == true || seen["other"].is_string() {
+                            let _ = eval(proxy, tab, REAL_DONE_JS);
+                            let verb = if clicks == 2 { "double-clicked" } else if a["button"] == "right" { "right-clicked" } else { "clicked" };
+                            let name = aim["name"].as_str().unwrap_or("it");
+                            return Ok(json!(match seen["other"].as_str() {
+                                Some(other) if seen["got"] != true => format!("{verb} at the middle of {name}, but the click landed on {other}: something in front of it took it. Snapshot again and deal with what's on top."),
+                                _ => format!("{verb} {name}"),
+                            }));
+                        }
+                    }
+                }
+                let _ = eval(proxy, tab, REAL_DONE_JS);
+                // Out of reach of a real click (a tab no window shows, a cross-site frame): a script's click instead.
+                let done = eval(proxy, tab, &script_click)?;
+                Ok(match done {
+                    Value::String(t) => json!(format!("{t} (a script's click: some sites ignore those; if nothing happened, hand it over with ask_user)")),
+                    v => v,
+                })
+            })
+        }
         "type" => {
             let type_one = |a: &Value| act(proxy, a, &with_args(a, &format!("{END_SCRIPT_GUARDS_JS}\n{FIND_JS}\n{KEYS_JS}\n{TYPE_JS}")));
             let Some(fields) = a["fields"].as_array().filter(|f| !f.is_empty()) else { return type_one(&a) };
