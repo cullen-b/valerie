@@ -85,6 +85,8 @@ html[data-lay=right] .win { --pl: 0px; --pr: 230px; --prad: 0 16px 16px 0; }
 html[data-lay=compact] .win { --pl: 62px; }
 html[data-lay=bottom] .win { --pl: 0px; --pb: 54px; --prad: 0 0 16px 16px; }
 html[data-lay=dock] .win { --pl: 0px; --prad: 0px; }
+html[data-lay=desk] .win { --pl: 40px; --pt: 74px; --pr: 150px; --pb: 34px; --prad: 0 0 12px 12px; }
+html[data-fx~=menubar] .win { --mb: 28px; }
 html[data-lay=notes] .win { --pl: 0px; --pt: 120px; --prad: 16px 16px 0 0; }
 html[data-lay=orbit] .win { --pl: 290px; --pr: 290px; --pt: 150px; --pb: 150px; --prad: 40px; background-color: transparent; box-shadow: none; overflow: visible; }
 html[data-lay=orbit] .page { box-shadow: 0 30px 80px rgba(0,0,0,.5); }
@@ -92,7 +94,7 @@ html[data-lay=none] .win { border-radius: 6px; --pl: 0px; --pt: 0px; --pr: 0px; 
 .win { rotate: 0deg; scale: 1; filter: grayscale(var(--f-g, 0)) invert(var(--f-i, 0)); }
 .win::after { content: ""; position: absolute; inset: 0; z-index: 9; pointer-events: none; opacity: 0; transition: opacity .4s; background: repeating-linear-gradient(rgba(0,0,0,.28) 0 2px, transparent 2px 4px), radial-gradient(transparent 55%, rgba(0,0,0,.45)); }
 
-.page { position: absolute; left: var(--pl); top: var(--pt); right: var(--pr); bottom: var(--pb); border-radius: var(--prad); overflow: hidden; background: #fbfaf8; color: #1d1c21;
+.page { position: absolute; left: var(--pl); top: calc(var(--pt) + var(--mb, 0px)); right: var(--pr); bottom: var(--pb); border-radius: var(--prad); overflow: hidden; background: #fbfaf8; color: #1d1c21;
   filter: sepia(var(--f-s, 0)) blur(var(--f-b, 0px));
   transition: left var(--morph) var(--ease), top var(--morph) var(--ease), right var(--morph) var(--ease), bottom var(--morph) var(--ease), border-radius var(--morph), filter .6s, opacity .6s; }
 html[data-lay=task] .page { box-shadow: inset 1px 1px #808080, inset -1px -1px #fff, inset 2px 2px #0a0a0a; }
@@ -157,7 +159,7 @@ html:is([data-lay=side], [data-lay=bench], [data-lay=agent], [data-lay=right]) .
 html[data-lay=right] .tab { --x: 820px; }
 html:is([data-lay=side], [data-lay=bench], [data-lay=agent], [data-lay=right], [data-lay=compact], [data-lay=bottom]) .tab:hover { background-color: color-mix(in srgb, var(--wfg) 8%, transparent); }
 html:is([data-lay=side], [data-lay=bench], [data-lay=agent], [data-lay=right], [data-lay=compact], [data-lay=bottom]) .tab.cur { background-color: color-mix(in srgb, var(--wfg) 16%, transparent); }
-html[data-lay=strip] .tab { --x: calc(84px + var(--i) * 170px); --y: 8px; --w: 166px; --h: 34px; border-radius: 10px 10px 0 0; }
+html[data-lay=strip] .tab { --x: calc(84px + var(--i) * 170px); --y: calc(8px + var(--mb, 0px)); --w: 166px; --h: 34px; border-radius: 10px 10px 0 0; }
 html[data-lay=strip] .tab:hover { background-color: rgba(255,255,255,.5); }
 html[data-lay=strip] .tab.cur { background-color: #fff; }
 html[data-lay=task] .tab { --x: calc(88px + var(--i) * 150px); --y: 625px; --w: 146px; --h: 29px; border-radius: 0; background-color: #c0c0c0;
@@ -180,6 +182,11 @@ html[data-lay=bottom] .tab { --x: calc(14px + var(--i) * 204px); --y: 613px; --w
 html[data-lay=dock] .tab { --x: calc(360px + var(--i) * 66px); --y: 576px; --w: 56px; --h: 56px; justify-content: center; padding: 0; border-radius: 16px; background-color: color-mix(in srgb, var(--c) 30%, #fff); box-shadow: 0 6px 14px rgba(0,0,0,.25); z-index: 5; }
 html[data-lay=dock] .tab .fav { width: 28px; height: 28px; border-radius: 8px; }
 html[data-lay=dock] .tab:hover { transform: translateY(-12px) scale(1.18); }
+html[data-lay=desk] .tab { --x: 916px; --y: calc(40px + var(--mb, 0px) + var(--i) * 98px); --w: 96px; --h: 86px; flex-direction: column; justify-content: center; gap: 7px; padding: 6px 4px; border-radius: 10px; color: #fff; font-size: 12px; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+html[data-lay=desk] .tab .fav { width: 44px; height: 44px; border-radius: 12px; box-shadow: inset 0 -4px 0 rgba(0,0,0,.15), 0 4px 10px rgba(0,0,0,.25); }
+html[data-lay=desk] .tab .lbl { max-width: 100%; }
+html[data-lay=desk] .tab.cur { background-color: rgba(255,255,255,.22); }
+html[data-lay=desk] .tab:hover { transform: scale(1.06); }
 html[data-lay=dock] .tab.cur::after { opacity: 1; left: 50%; right: auto; bottom: -9px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: #fff; z-index: 1; }
 html[data-lay=notes] .tab { --x: calc(34px + var(--i) * 200px); --y: calc(12px + var(--ny)); --w: 156px; --h: 100px; rotate: var(--nr); align-items: flex-start; padding: 14px; border-radius: 2px 2px 14px 2px; background-color: color-mix(in srgb, var(--c) 30%, #fff6a8); color: #2a2620;
   white-space: normal; font: 16px/1.2 "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive; box-shadow: 0 10px 16px -4px rgba(0,0,0,.35); }
@@ -236,7 +243,7 @@ html[data-lay=bench] .outline { opacity: 1; transform: none; transition-delay: .
 .outline span { display: block; padding: 7px 10px; border-radius: 7px; margin-bottom: 2px; } .outline span.sub { padding-left: 24px; opacity: .75; }
 .outline span.cur { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 
-.titlebar { left: 5px; top: 5px; right: 5px; height: 26px; background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: 700; display: flex; align-items: center; padding: 0 4px 0 8px; gap: 3px; transform: translateY(-30px); }
+.titlebar { left: 5px; top: calc(5px + var(--mb, 0px)); right: 5px; height: 26px; background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: 700; display: flex; align-items: center; padding: 0 4px 0 8px; gap: 3px; transform: translateY(-30px); }
 .titlebar span { flex: 1; }
 .titlebar i { width: 18px; height: 16px; background: #c0c0c0; color: #000; font: 700 11px/14px var(--mono); text-align: center; box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf; }
 .taskbar { left: 0; right: 0; bottom: 0; height: 40px; background: #c0c0c0; box-shadow: inset 0 1px #dfdfdf, inset 0 2px #fff; transform: translateY(40px); }
@@ -245,14 +252,33 @@ html[data-lay=bench] .outline { opacity: 1; transform: none; transition-delay: .
 .taskbar .clock { position: absolute; right: 6px; top: 6px; width: 78px; height: 29px; display: grid; place-items: center; box-shadow: inset 1px 1px #808080, inset -1px -1px #fff; }
 html[data-lay=task] :is(.titlebar, .taskbar) { opacity: 1; transform: none; }
 
-.toolbar { left: 0; right: 0; top: 42px; height: 40px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px; color: #5b5d66; border-bottom: 1px solid rgba(0,0,0,.08); transform: translateY(-20px); }
+.toolbar { left: 0; right: 0; top: calc(42px + var(--mb, 0px)); height: 40px; background: #fff; display: flex; align-items: center; gap: 12px; padding: 0 14px; color: #5b5d66; border-bottom: 1px solid rgba(0,0,0,.08); transform: translateY(-20px); }
 .toolbar i { font-style: normal; font-size: 17px; width: 18px; text-align: center; }
 .toolbar span { flex: 1; height: 28px; border-radius: 14px; background: #eef0f3; display: flex; align-items: center; padding: 0 14px; color: #33343a; }
-.stripbits { left: 16px; top: 15px; transform: translateY(-20px); } .stripbits .lights { position: static; }
+.stripbits { left: 16px; top: calc(15px + var(--mb, 0px)); transform: translateY(-20px); } .stripbits .lights { position: static; }
 html[data-lay=strip] :is(.toolbar, .stripbits) { opacity: 1; transform: none; }
 
 .dockbar { left: 346px; top: 566px; width: 350px; height: 76px; border-radius: 24px; background: rgba(255,255,255,.4); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 0 0 1px rgba(255,255,255,.4), 0 14px 30px rgba(0,0,0,.25); transform: translateY(90px); z-index: 4; }
 html[data-lay=dock] .dockbar { opacity: 1; transform: none; }
+
+/* the computer: a wallpaper and desktop icons, a menu bar with a live clock, a terminal */
+.wallpaper { inset: 0; background: radial-gradient(60% 70% at 18% 12%, color-mix(in srgb, var(--accent) 50%, #fff), transparent 70%), radial-gradient(70% 80% at 90% 100%, color-mix(in srgb, var(--accent) 60%, #000), transparent 70%), linear-gradient(150deg, color-mix(in srgb, var(--accent) 80%, #fff), color-mix(in srgb, var(--accent) 55%, #102)); }
+html[data-lay=desk] .wallpaper { opacity: 1; }
+.deskbar { left: 40px; right: 150px; top: calc(46px + var(--mb, 0px)); height: 28px; border-radius: 12px 12px 0 0; background: #e9e8ee; color: #55545c; display: flex; align-items: center; justify-content: center; font-size: 12px; box-shadow: 0 -1px 0 rgba(255,255,255,.6) inset; transform: translateY(-16px); transition: opacity .5s, transform var(--morph) var(--ease), top var(--morph) var(--ease); }
+.deskbar .lights { left: 12px; top: 8px; gap: 7px; } .deskbar .lights i { width: 11px; height: 11px; }
+html[data-lay=desk] .deskbar { opacity: 1; transform: none; }
+html[data-lay=desk] .page { box-shadow: 0 24px 50px -10px rgba(0,0,0,.45); }
+.menubar { left: 0; right: 0; top: 0; height: 28px; display: flex; align-items: center; gap: 18px; padding: 0 14px; font-size: 12.5px; color: #1d1c21; background: rgba(255,255,255,.62); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 1px 0 rgba(0,0,0,.08); transform: translateY(-28px); z-index: 7; }
+.menubar .r { margin-left: auto; display: flex; align-items: center; gap: 14px; font-variant-numeric: tabular-nums; }
+.menubar .bat { position: relative; width: 22px; height: 11px; padding: 1px; border: 1.5px solid currentColor; border-radius: 3px; } .menubar .bat::before { content: ""; display: block; width: 72%; height: 100%; border-radius: 1px; background: currentColor; }
+.menubar .bat::after { content: ""; position: absolute; right: -4.5px; top: 2px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: currentColor; }
+html[data-fx~=menubar] .menubar { opacity: 1; transform: none; }
+.term { left: 24px; bottom: 24px; width: 300px; border-radius: 10px; overflow: hidden; background: rgba(20,20,26,.92); color: #d7f7d0; font: 12px/1.55 var(--mono); box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 20px 44px rgba(0,0,0,.45); transform: translateY(24px) scale(.96); z-index: 6; }
+.term .bar { position: relative; height: 24px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.08); color: rgba(255,255,255,.55); font-size: 11px; }
+.term .bar .lights { left: 10px; top: 7px; gap: 6px; } .term .bar .lights i { width: 10px; height: 10px; }
+.term pre { margin: 0; padding: 10px 12px 12px; font: inherit; white-space: pre-wrap; } .term pre span { color: #8fb8ff; }
+.term pre b { display: inline-block; width: 7px; height: 13px; vertical-align: -2px; background: currentColor; animation: blink 1s steps(1) infinite; }
+html[data-fx~=term] .term { opacity: 1; transform: none; }
 
 .scrim { inset: 0; background: rgba(0,0,0,.42); z-index: 4; }
 .palette { left: 50%; top: 120px; width: 540px; margin-left: -270px; border-radius: 16px; background: rgba(24,24,34,.94); color: #ededf5; box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.12); padding: 8px; transform: translateY(-16px) scale(.96); z-index: 5; font-size: 15px; }
@@ -279,6 +305,21 @@ html[data-lay=agent] .cursor { opacity: 1; animation: point 5s var(--ease) infin
 @keyframes point { 0%, 12% { translate: 700px 560px; } 45%, 100% { translate: 896px 190px; } }
 @keyframes press { 0%, 48%, 60%, 100% { scale: 1; box-shadow: 0 0 0 0 rgba(76,194,255,.6); } 52% { scale: .92; } 58% { box-shadow: 0 0 0 14px rgba(76,194,255,0); } }
 
+
+/* a little window: a link from another app opens small, then you keep it or throw it away */
+.chatapp { left: 262px; top: 372px; width: 310px; padding: 0 0 12px; border-radius: 16px; background: #f4f3f0; color: #26252b; box-shadow: 0 30px 70px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.15); transform: translateY(40px); z-index: 6; font-size: 13px; overflow: hidden; }
+.chatapp .cb { height: 32px; background: #e4e2dd; display: flex; align-items: center; gap: 6px; padding: 0 12px; font-size: 12px; color: #6e6b76; margin-bottom: 10px; } .chatapp .cb i { width: 10px; height: 10px; border-radius: 50%; background: #c9c6bf; } .chatapp .cb span { margin-left: 6px; }
+.chatapp .m { margin: 0 12px 8px; padding: 9px 12px; border-radius: 14px 14px 14px 4px; background: #fff; line-height: 1.35; } .chatapp .m b { display: block; font-size: 11.5px; color: #8a8790; font-weight: 600; }
+.chatapp .m u { display: block; color: #2f5fee; cursor: pointer; text-underline-offset: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .chatapp .m u:hover { color: #1238b8; } .chatapp .m u.on { color: #8a3ffc; }
+.lil { left: 508px; top: 64px; width: 500px; height: 372px; border-radius: 14px; overflow: hidden; background: #fbfaf8; color: #1d1c21; box-shadow: 0 40px 90px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.25); z-index: 7; }
+.lil .lb { position: relative; z-index: 2; height: 34px; background: #e9e7e3; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; font-size: 12px; color: #55525c; }
+.lil .lb span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .lil .lb b { cursor: pointer; padding: 4px 10px; border-radius: 7px; background: #1d1c21; color: #fff; font-weight: 600; white-space: nowrap; } .lil .lb em { cursor: pointer; font-style: normal; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font-size: 15px; } .lil .lb em:hover { background: rgba(0,0,0,.1); }
+.lil .lbody { position: relative; height: 338px; overflow: hidden; } .lil .lbody .pg { width: 800px; height: 541px; scale: .625; opacity: 1; visibility: visible; transition: none; }
+.lil .line { position: absolute; left: 0; top: 34px; height: 3px; width: 40%; background: var(--accent); z-index: 3; animation: loading 0.7s ease-in-out infinite; }
+@keyframes loading { from { translate: -100% 0; } to { translate: 250% 0; } }
+html[data-lil] .chatapp { opacity: 1; transform: none; transition-delay: .35s; pointer-events: auto; }
+html[data-lil] .lil.open { opacity: 1; pointer-events: auto; }
+html[data-lil] .page { filter: brightness(.8) saturate(.9); }
 
 /* extensions being dreamed up, over the page */
 .exts { left: 286px; top: 56px; width: 700px; padding: 18px; border-radius: 20px; background: rgba(22,18,34,.93); color: #f1ecff; box-shadow: 0 40px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.14); transform: translateY(26px) scale(.95); z-index: 6; font-size: 14px; }
@@ -507,6 +548,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   <div class="world stars"></div>
   <div class="cam" id="cam">
     <div class="win" id="win">
+      <div class="part wallpaper"></div>
       <div class="part scenery"><i></i><i></i><i></i><i></i><i></i><i></i></div>
       <div class="part sidebits"><div class="lights"><i></i><i></i><i></i></div><div class="pill" data-url>northboundjournal.com</div><div class="swipehint" id="swipehint" aria-hidden="true"><b>‹</b>Swipe for more spaces<b>›</b></div><div class="spname" id="spname">Personal</div><div class="spaces" id="dots"><i class="cur"></i><i></i><i></i></div></div>
       <div class="part stripbits"><div class="lights"><i></i><i></i><i></i></div></div>
@@ -549,6 +591,12 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
       </div>
       <div class="part outline"><b>Outline</b><span class="cur">Seven days on the Lofoten coast</span><span class="sub">Getting there</span><span class="sub">Where to stay</span><span class="sub">What to pack</span><span>The route, day by day</span><span>Costs</span></div>
       <div class="part dockbar"></div>
+      <div class="part deskbar"><div class="lights"><i></i><i></i><i></i></div><span data-url>northboundjournal.com</span></div>
+      <div class="part term"><div class="bar"><div class="lights"><i></i><i></i><i></i></div>Terminal</div><pre><span>~ $</span> valerie call list_tabs
+Northbound · Inbox (3) · Sprint 42
+Lisbon weather · Design review
+<span>~ $</span> <b></b></pre></div>
+      <div class="part menubar"><b>Valerie</b><span>File</span><span>Edit</span><span>View</span><span>History</span><span>Window</span><div class="r"><i class="bat"></i><span id="mbclock">Thu 4:20 PM</span></div></div>
       <div class="part taskbar"><div class="start">Start</div><div class="clock">4:20 PM</div></div>
       <button class="tab cur" tabindex="-1"><i class="fav"></i><span class="lbl">Northbound</span><b class="head"></b></button>
       <button class="tab" tabindex="-1"><i class="fav"></i><span class="lbl">Inbox (3)</span><b class="head"></b></button>
@@ -558,6 +606,11 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
       <div class="part scrim"></div>
       <div class="part palette"><div class="in"><span class="typed">sprint 42 </span><span class="caret"></span></div>
         <div class="row cur">Sprint 42 <span>Go to tab</span></div><div class="row">Sprint 42 retro notes <span>History</span></div><div class="row">Search the web for “sprint 42” <span>Web</span></div><div class="row">Ask your AI about “sprint 42” <span>AI</span></div></div>
+      <div class="part chatapp" id="chatapp"><div class="cb"><i></i><i></i><i></i><span>Messages</span></div>
+        <div class="m"><b>Priya</b>This is where we're going<u data-lk="0">northboundjournal.com/lofoten</u></div>
+        <div class="m"><b>Jun</b>Forecast for the trip<u data-lk="3">forecast.app/lisbon</u></div>
+        <div class="m"><b>Marcus</b>Something for the drive<u data-lk="5">play.acme.fm/evening-slowly</u></div></div>
+      <div class="part lil" id="lilwin"><div class="lb"><span id="lilurl"></span><b id="lilkeep">Open in Personal</b><em id="lilx">✕</em></div><div class="lbody" id="lilbody"></div></div>
       <div class="part exts"><div class="xh"><b>Extensions</b><span id="exn"></span></div><div class="xa"><b>!</b><span id="exask"></span><i></i></div><div class="xg" id="exgrid"></div></div>
       <div class="part little"><div class="bar"><i></i><i></i><i></i><span>linear.app</span></div>
         <div class="help"><b>Claude Code needs you</b><span>Sign in to Linear so I can read your issues, then press Done.</span><em>Done</em></div>
@@ -638,6 +691,15 @@ shortcuts_like: chrome</pre>
       <div class="seg" id="seg" role="group" aria-label="Space"><button>Personal</button><button aria-pressed="true">School</button><button>Work</button></div>
       <pre class="set" translate="no" id="spset">spaces:
   - { name: School, profile: School, theme: forest }</pre>
+    </div></div>
+  </section>
+
+  <section class="ch" id="lil" data-look="ember" data-lay="side" data-name="Lil Valerie" style="--wd: 92%; --wg: 850; --fs: 1.1">
+    <div class="ch-in"><div class="txt">
+      <h2><span class="l">Lil Valerie.</span><span class="l">Open it. Read it.</span><span class="l">Throw it away.</span></h2>
+      <p>A link from another app opens in a little window of its own, not in your tabs. Keep it with one click, or close it and it never happened.</p>
+      <div class="ctas"><button class="btn sm primary" id="lilopen">Open a link</button><button class="btn sm" id="liltoss">Throw it away</button><button class="btn sm" id="lilsave">Keep it</button></div>
+      <pre class="set" translate="no">little_window: { enabled: true }</pre>
     </div></div>
   </section>
 
@@ -801,7 +863,7 @@ function onScroll() {
   if (active !== current) {
     current = active; picked = null; press();
     inSpaces = active.id === "spaces"; space = inSpaces ? 1 : 0; showSpace();
-    dreaming(active.id === "exts");
+    dreaming(active.id === "exts"); lilScene(active.id === "lil");
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
@@ -899,6 +961,56 @@ addEventListener("pointerup", (e) => {
 });
 addEventListener("pointercancel", () => (downX = null));
 
+// ---------- little windows: a link opens small; throw it away or keep it as a tab ----------
+const LINKS = [0, 3, 5], lilwin = $("#lilwin"), lilbody = $("#lilbody"), HOME_TABS = [tab("Inbox (3)", "#4c8dff", 1), tab("Sprint 42", "#8f6bff", 2)];
+let lilOpen = null, lilNext = 0, lilTimer = 0, lilKept = [], lilHands = 0, lilFlip = 1;
+const lilAnim = (frames, ms, easing) => (calm ? Promise.resolve() : lilwin.animate(frames, { duration: ms, easing: easing || "cubic-bezier(.22,.9,.24,1)" }).finished.catch(() => {}));
+function lilShow(page) {
+  if (lilOpen !== null) return lilGo(false).then(() => lilShow(page));
+  lilOpen = page; lilNext = (LINKS.indexOf(page) + 1) % LINKS.length;
+  const copy = pages[page].cloneNode(true), line = document.createElement("i");
+  copy.className = copy.className.replace(/\b(cur|used|s\d)\b/g, "").trim();
+  line.className = "line"; lilbody.replaceChildren(copy); lilwin.append(line); setTimeout(() => line.remove(), 700);
+  $("#lilurl").textContent = SITES[page][0];
+  for (const u of $$("#chatapp u")) u.classList.toggle("on", +u.dataset.lk === page);
+  lilwin.classList.add("open");
+  return lilAnim([{ transform: "translate(-190px, 230px) scale(.15)", opacity: 0 }, { transform: "none", opacity: 1 }], 420);
+}
+// keep = it flies into the sidebar and becomes a tab; otherwise it's flung off the screen
+function lilGo(keep) {
+  if (lilOpen === null) return Promise.resolve();
+  const page = lilOpen; lilOpen = null; lilFlip = -lilFlip;
+  const out = keep ? [{ transform: "none", opacity: 1 }, { transform: "translate(-560px, 60px) scale(.08)", opacity: 0 }]
+    : [{ transform: "none", opacity: 1 }, { transform: `translate(${lilFlip * 160}px, -90px) rotate(${lilFlip * 24}deg)`, opacity: 1, offset: 0.25 }, { transform: `translate(${lilFlip * 900}px, -620px) rotate(${lilFlip * 520}deg) scale(.4)`, opacity: 0 }];
+  return lilAnim(out, keep ? 480 : 720, keep ? undefined : "cubic-bezier(.5,0,.9,.5)").then(() => {
+    lilwin.classList.remove("open");
+    for (const u of $$("#chatapp u")) u.classList.remove("on");
+    if (keep && current.id === "lil") {
+      lilKept = [...lilKept.filter((k) => k.page !== page), tab(SITES[page][1], HUES[page % HUES.length], page)].slice(-3);
+      setTabs([...HOME_TABS, ...lilKept]); showTab(HOME_TABS.length + lilKept.length - 1);
+    }
+  });
+}
+// left alone, it shows itself: open, read, throw away, next link
+function lilLoop() {
+  clearTimeout(lilTimer);
+  if (current.id !== "lil" || calm) return;
+  lilTimer = setTimeout(() => {
+    if (Date.now() < lilHands) return lilLoop();
+    (lilOpen === null ? lilShow(LINKS[lilNext]) : lilGo(false)).then(lilLoop);
+  }, lilOpen === null ? 1100 : 2400);
+}
+function lilScene(on) {
+  root.toggleAttribute("data-lil", on); clearTimeout(lilTimer);
+  if (!on) { lilOpen = null; lilwin.classList.remove("open"); return; }
+  lilKept = []; setTabs(HOME_TABS); lilLoop();
+}
+const byHand = (fn) => () => { lilHands = Date.now() + 6000; fn(); lilLoop(); };
+for (const u of $$("#chatapp u")) u.onclick = byHand(() => lilShow(+u.dataset.lk));
+$("#lilopen").onclick = byHand(() => lilShow(LINKS[lilNext]));
+$("#liltoss").onclick = $("#lilx").onclick = byHand(() => lilGo(false));
+$("#lilsave").onclick = $("#lilkeep").onclick = byHand(() => lilGo(true));
+
 // ---------- extensions: the ones you have, then one more every couple of seconds, for as long as you watch ----------
 const WISHES = [["make YouTube always open in theater mode", "YouTube theater"], ["hide the score until I've watched the match", "Spoiler shield"], ["skip the life story, show me the recipe", "Just the recipe"],
   ["show the price history on every product page", "Price history"], ["mute any tab that starts playing by itself", "Autoplay mute"], ["after 10pm, replace the news with otters", "Otter curfew"],
@@ -939,7 +1051,8 @@ const ASKS = [
   ["Tabs are hot air balloons", { look: "dawn", lay: "sky" }], ["Rush hour: tabs are cars", { look: "dusk", lay: "road" }], ["Tabs orbit the page like planets", { look: "black", lay: "orbit" }],
   ["Make it 1998 again", { look: "v98", lay: "task" }],
   ["Pink, please", { look: "rose" }], ["Flip it upside down", { fx: "upside" }], ["Ketchup and mustard", { look: "hotdog" }],
-  ["Tabs are sticky notes", { lay: "notes" }], ["Wobble like jelly", { fx: "jelly" }], ["Enter the Matrix", { look: "matrix" }], ["Give me a dock", { lay: "dock" }],
+  ["Tabs are sticky notes", { lay: "notes" }], ["Wobble like jelly", { fx: "jelly" }], ["Enter the Matrix", { look: "matrix" }], ["Give me a dock", { lay: "dock" }], ["Give me a menu bar", { fx: "menubar" }],
+  ["Tabs are desktop icons", { lay: "desk" }], ["Give me a terminal", { fx: "term" }], ["Make it a whole computer", { lay: "desk", fx: "menubar term" }],
   ["Comic Sans. Everything.", { fx: "comic" }], ["Vaporwave", { look: "vapor" }], ["Tabs on top, like Chrome", { look: "chrome", lay: "strip" }], ["Make it tiny", { fx: "tiny" }],
   ["Game Boy green", { look: "gameboy" }], ["Sidebar on the right", { lay: "right" }], ["Old TV scanlines", { fx: "crt" }], ["Blueprint", { look: "blueprint" }],
   ["Let it snow", { fx: "snow" }], ["Just icons in the sidebar", { lay: "compact" }], ["It's Halloween", { look: "halloween" }], ["Round, like a porthole", { fx: "round" }],
@@ -952,12 +1065,12 @@ const ASKS = [
   ["Campfire", { look: "ember" }], ["Sepia pages", { fx: "sepia" }], ["Beach day", { look: "sand" }], ["Deep ocean", { look: "ocean" }], ["Midnight", { look: "classic" }], ["Pitch black", { look: "black" }],
   ["A classic sidebar", { lay: "side" }], ["Back to normal", { reset: true }],
 ];
-const LOOKS = Object.keys(PAL), LAYS = ["side", "right", "compact", "bottom", "strip", "task", "tank", "field", "stand", "sky", "road", "tank", "field", "stand", "sky", "road", "dock", "orbit", "notes", "bench", "none"], FX = [...new Set(ASKS.map((a) => a[1].fx).filter(Boolean))];
+const LOOKS = Object.keys(PAL), LAYS = ["side", "right", "compact", "bottom", "strip", "task", "tank", "field", "stand", "sky", "road", "tank", "field", "stand", "sky", "road", "dock", "desk", "orbit", "notes", "bench", "none"], FX = [...new Set(ASKS.flatMap((a) => a[1].fx?.split(" ") ?? []))];
 const chipBox = $("#chips"), home = () => ({ look: "rose", lay: "side", fx: new Set() });
 function press() {
   for (const b of chipBox.children) {
-    const a = b.ask;
-    b.setAttribute("aria-pressed", !!picked && (a.fx ? picked.fx.has(a.fx) : !!(a.look || a.lay) && (!a.look || a.look === picked.look) && (!a.lay || a.lay === picked.lay)));
+    const a = b.ask, fx = a.fx?.split(" ") ?? [];
+    b.setAttribute("aria-pressed", !!picked && !!(a.fx || a.look || a.lay) && fx.every((f) => picked.fx.has(f)) && (!a.look || a.look === picked.look) && (!a.lay || a.lay === picked.lay));
   }
 }
 function apply(a) {
@@ -966,8 +1079,11 @@ function apply(a) {
   else if (a.lucky) {
     const any = (list) => list[Math.floor(Math.random() * list.length)];
     picked = { look: any(LOOKS), lay: any(LAYS), fx: new Set([any(FX), any(FX)].slice(0, Math.floor(Math.random() * 3))) };
-  } else if (a.fx) picked.fx.has(a.fx) ? picked.fx.delete(a.fx) : picked.fx.add(a.fx);
-  else { if (a.look) picked.look = a.look; if (a.lay) picked.lay = a.lay; }
+  } else {
+    // a lone effect toggles; one that comes with a look or layout always turns on
+    for (const f of a.fx?.split(" ") ?? []) !(a.look || a.lay) && picked.fx.has(f) ? picked.fx.delete(f) : picked.fx.add(f);
+    if (a.look) picked.look = a.look; if (a.lay) picked.lay = a.lay;
+  }
   wear(picked.look, picked.lay, [...picked.fx].join(" ")); press();
 }
 let typing = 0;
@@ -986,6 +1102,8 @@ function chip(text, ask, cls) {
   };
   chipBox.append(b);
 }
+const mbclock = $("#mbclock"), tick = () => (mbclock.textContent = new Date().toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
+tick(); setInterval(tick, 30000);
 chip("Surprise me", { lucky: true }, "lucky");
 for (const [text, ask] of ASKS) chip(text, ask);
 
