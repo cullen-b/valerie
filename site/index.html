@@ -483,8 +483,9 @@ html[data-fx~=glass] .page { opacity: .7; }
 
 /* ---------- the text: one chapter per look, gliding past slower than the page so the scroll never stops ---------- */
 main { position: relative; z-index: 1; pointer-events: none; }
-.ch { height: 140vh; display: flex; align-items: center; } .ch.hero { height: 100vh; height: 100svh; }
-.ch-in { flex: 1; height: 100vh; height: 100svh; display: flex; align-items: center; padding: 90px clamp(18px, 4vw, 56px) 60px; }
+.ch { height: 140vh; } .ch.hero { height: 100vh; height: 100svh; }
+/* the text sits still on screen and only the script moves it, so the page's own scrolling never fights it */
+.ch-in { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100svh; display: flex; align-items: center; padding: 90px clamp(18px, 4vw, 56px) 60px; }
 .txt { width: min(35vw, 540px); pointer-events: auto; will-change: transform, opacity; }
 .ch h1, .ch h2, .get h2 { margin: 0 0 22px; font-family: var(--display); line-height: .98; letter-spacing: -.01em; font-size: calc(var(--fs, 1) * clamp(34px, 5vw, 76px)); }
 .ch :is(h1, h2) .l { display: block; width: max-content; font-stretch: 50%; font-weight: 250; transition: font-stretch 1s var(--ease), font-weight 1s var(--ease); }
@@ -851,22 +852,31 @@ function measure() {
   scale = wide ? Math.min(vw * 0.55 / 1040, vh * 0.72 / 660) : Math.min(vw * 0.93 / 1040, vh * 0.36 / 660);
   cx = wide ? vw * 0.69 : vw / 2; cy = wide ? vh * 0.5 : 64 + vh * 0.2;
   root.style.setProperty("--cx", cx + "px");
-  fit(); onScroll();
+  fit(); place(); glideFrame();
 }
 const clamp = (n) => Math.max(0, Math.min(1, n));
 // how far each chapter's text lags the page (0 scrolls normally, 1 stays put), and how far from the middle it's fully shown and gone (screens)
 const glide = (ch) => (innerWidth >= 860 ? { k: ch.dataset.steps ? 0.75 : 0.5, full: 0.12, gone: 0.38 } : { k: ch.dataset.steps ? 0.88 : 0.75, full: 0.06, gone: 0.2 });
 // the scroll position that puts a chapter's text `at` screens below the middle
 const centred = (ch, at = 0) => ch.offsetTop + ch.offsetHeight / 2 - innerHeight / 2 - at * innerHeight / (1 - glide(ch).k);
-let lookAt = 0;
-function onScroll() {
-  const vh = innerHeight; let active = chapters[0], near = Infinity;
+let lookAt = 0, scrolling = false;
+// read layout once per resize, not on every scroll, so a scroll frame never waits on layout
+function place() { for (const ch of chapters) { ch.mid = ch.offsetTop + ch.offsetHeight / 2; ch.txt = ch.firstElementChild.firstElementChild; ch.was = {}; } }
+function onScroll() { if (!scrolling) { scrolling = true; requestAnimationFrame(glideFrame); } }
+function glideFrame() {
+  scrolling = false;
+  const vh = innerHeight, y = scrollY; let active = chapters[0], near = Infinity;
   for (const ch of chapters) {
-    const r = ch.getBoundingClientRect(), d = (r.top + r.height / 2 - vh / 2) / vh, g = glide(ch), at = d * (1 - g.k);
+    const d = (ch.mid - y - vh / 2) / vh, g = glide(ch), at = d * (1 - g.k);
     const o = ch === chapters[0] && at > 0 ? 1 : clamp((g.gone - Math.abs(at)) / (g.gone - g.full));
-    const txt = ch.firstElementChild.firstElementChild;
-    txt.style.transform = `translate3d(0, ${-d * g.k * vh}px, 0)`;
-    txt.style.opacity = o; txt.style.visibility = o < 0.02 ? "hidden" : "";
+    // rounded to whole device pixels so glyphs don't shimmer between subpixel positions
+    const ty = Math.round(at * vh * devicePixelRatio) / devicePixelRatio, op = Math.round(o * 1000) / 1000, vis = op < 0.02 ? "hidden" : "";
+    if (op > 0 || ch.was.op > 0) {
+      if (ty !== ch.was.ty) ch.txt.style.transform = `translate3d(0, ${ty}px, 0)`;
+      if (op !== ch.was.op) ch.txt.style.opacity = op;
+    }
+    if (vis !== ch.was.vis) ch.txt.style.visibility = vis;
+    ch.was = { ty, op, vis };
     if (Math.abs(at) < near) { near = Math.abs(at); active = ch; if (ch.dataset.steps) lookAt = at / g.gone; }
   }
   if (active !== current) {
