@@ -441,6 +441,8 @@ pub struct App {
     /// Menus whose items follow what's in Valerie: Recently Closed, recent pages, Bookmarks.
     dyn_menus: DynMenus,
     bar_open: bool,
+    /// The app the command bar was opened from by a global shortcut: closing the bar without picking anything goes back to it.
+    bar_return_to: Option<i32>,
     /// How tall the command bar drew itself (only used where its view is just the bar: `bar_bounds`).
     bar_height: f64,
     remote: Vec<sync::DeviceTabs>,
@@ -1628,6 +1630,7 @@ impl App {
             menu_cmds: HashMap::new(),
             dyn_menus: DynMenus::default(),
             bar_open: false,
+            bar_return_to: None,
             bar_height: 120.0,
             remote: Vec::new(),
             dirty: false,
@@ -4765,6 +4768,7 @@ impl App {
             return;
         }
         self.bar_open = false;
+        self.bar_return_to = None;
         let _ = self.overlay.evaluate_script("palette.hide()");
         let _ = self.overlay.set_visible(false);
         self.repaint_under_bar();
@@ -6972,7 +6976,13 @@ impl App {
                 }
                 self.open_bar(mode)
             }
-            Command::CloseCommandBar => self.close_bar(),
+            Command::CloseCommandBar => {
+                let back = self.bar_return_to.take();
+                self.close_bar();
+                if let Some(pid) = back {
+                    platform::activate_pid(pid);
+                }
+            }
             Command::NewTab { url, space, background } => {
                 if self.main_hidden {
                     self.show_main();
@@ -9452,12 +9462,20 @@ impl App {
             }
             UserEvent::GlobalKey(i) => {
                 if let Some(cmd) = self.global_keys.get(i).cloned() {
-                    // Shortcuts from another app bring Valerie forward first (a little window comes on its own).
-                    platform::activate_app();
-                    if !matches!(cmd, Command::NewLittleWindow | Command::OpenLittleWindow { .. }) {
-                        self.show_main();
+                    // Pressed in another app: bring Valerie forward first (a little window comes on its own). Pressed in
+                    // Valerie, it acts like an ordinary shortcut (in a little window too).
+                    let from = platform::frontmost_app().filter(|&pid| pid != std::process::id() as i32);
+                    if from.is_some() {
+                        platform::activate_app();
+                        if !matches!(cmd, Command::NewLittleWindow | Command::OpenLittleWindow { .. }) {
+                            self.show_main();
+                        }
                     }
+                    let bar = matches!(cmd, Command::OpenCommandBar { .. });
                     self.dispatch(cmd, elwt);
+                    if bar && self.bar_open && self.config.command_bar.back_to_app {
+                        self.bar_return_to = from;
+                    }
                 }
             }
             UserEvent::RestartNow => self.dispatch(Command::Restart, elwt),

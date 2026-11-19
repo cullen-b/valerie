@@ -2128,6 +2128,37 @@ pub fn activate_app() {
     }
 }
 
+/// The process id of the app in front (macOS), so a global shortcut can hand focus back to it afterwards.
+pub fn frontmost_app() -> Option<i32> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::{class, msg_send};
+        let ws: *mut objc2::runtime::AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let app: *mut objc2::runtime::AnyObject = msg_send![ws, frontmostApplication];
+        if app.is_null() {
+            return None;
+        }
+        let pid: i32 = msg_send![app, processIdentifier];
+        Some(pid)
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// Bring another app (by process id) in front again.
+pub fn activate_pid(pid: i32) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::{class, msg_send};
+        let app: *mut objc2::runtime::AnyObject = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
+        if !app.is_null() {
+            let _: bool = msg_send![app, activateWithOptions: 0usize];
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = pid;
+}
+
 /// Pinch to zoom a page in and out (gestures.pinch_to_zoom).
 pub fn allow_magnification(wv: &WebView, on: bool) {
     #[cfg(target_os = "macos")]
