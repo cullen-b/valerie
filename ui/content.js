@@ -851,10 +851,31 @@ function stableLabels(items) {
   }
   return out;
 }
-function startHints(newTab) {
+// vim.hint_mode: stay keeps hints coming back (after each click, on each new page, after scrolling) until Escape.
+let hintStay = null, stayTimer = 0;
+function stayOff() { clearTimeout(stayTimer); if (hintStay) { hintStay = null; post({ t: "hint_stay", on: false }); } }
+function hintsAgain(ms) {
+  clearTimeout(stayTimer);
+  stayTimer = setTimeout(() => {
+    if (!hintStay || mode === "copy" || mode === "insert" || editable(deepActive())) return;
+    if (mode === "hints") { if (hints.typed) return; stopHints(); }
+    startHints(hintStay.newTab, true);
+  }, ms);
+}
+// Valerie says hints were on when the last page in this tab was left.
+function keepHints(newTab) { if (!cfg.vim.enabled || excluded()) return; hintStay = { newTab: !!newTab }; hintsAgain(0); }
+addEventListener("scroll", () => {
+  if (!hintStay) return;
+  if (mode === "hints" && !hints.typed) stopHints();
+  hintsAgain(180);
+}, { capture: true, passive: true });
+if (document.readyState === "loading") addEventListener("DOMContentLoaded", () => post({ t: "hint_stay_ask" }), { once: true });
+else post({ t: "hint_stay_ask" });
+function startHints(newTab, quiet) {
   const t0 = performance.now();
+  if (cfg.vim.hint_mode !== "once" && !hintStay) { hintStay = { newTab: !!newTab }; post({ t: "hint_stay", on: true, new_tab: !!newTab }); }
   let items = collectHintables();
-  if (!items.length) return toast("Nothing to click");
+  if (!items.length) return quiet ? undefined : toast("Nothing to click");
   const stable = cfg.vim.hint_labels !== "reading_order";
   if (stable) {
     // Repeats ("Reply" on every comment) are told apart by their order on the page.
@@ -879,7 +900,7 @@ function startHints(newTab) {
 }
 function stopHints() { if (hints) for (const h of hints.items) h.d.remove(); hints = null; mode = "normal"; }
 function hintKey(k) {
-  if (k === "Escape") return stopHints();
+  if (k === "Escape") { stayOff(); return stopHints(); }
   if (k === "Backspace") hints.typed = hints.typed.slice(0, -1);
   else if (k.length === 1) hints.typed += k.toLowerCase();
   else return;
@@ -900,7 +921,10 @@ function hintKey(k) {
     rememberHint(last);
     const r = anim("keyboard_click") && last.e.getBoundingClientRect();
     activate(last.e, nt); if (r) clickRing(r);
+    // A text box or menu picked means typing comes next, so hints end there.
+    if (hintStay) { const a = deepActive(); if (a && (editable(a) || a.tagName === "SELECT")) stayOff(); else hintsAgain(500); }
   }
+  else if (!left && hintStay) { hints.typed = ""; hintKey("Backspace"); }
   else if (!left) stopHints();
 }
 // The label you just used stays with that button on this site (vim.remember_hints), unless it's pinned already.
@@ -1623,9 +1647,12 @@ window.addEventListener("keydown", (e) => {
   if (e.isTrusted && (e.key === "i" || e.key === "Tab" || e.key === "/")) userActed = true; // deliberate moves into fields
   if (e.isTrusted && e.key === "Enter" && mode === "normal" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing
     && (deepActive() || {}).tagName === "INPUT" && editable(deepActive()) && !excluded()) kbArm(false);
+  // Shortcuts with ⌘/Ctrl/Alt still work while hints show; they end hints.
+  if (mode === "hints" && (e.metaKey || e.ctrlKey || e.altKey)) { if (!/^(Meta|Control|Alt|Shift)$/.test(e.key)) { stayOff(); stopHints(); } return; }
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
   if (mode === "copy" && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopImmediatePropagation(); return copyKey(e); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+  if (e.key === "Escape" && hintStay) { stayOff(); return; }
   if (e.key === "Escape") {
     const a = deepActive();
     if (mode === "insert") { mode = "normal"; toast("-- NORMAL --"); }
@@ -2506,7 +2533,7 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, toast, find: openFind, findStep, hints: startHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, toast, find: openFind, findStep, hints: startHints, keepHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     fill, offerSave, cookieOffer,

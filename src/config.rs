@@ -1085,6 +1085,7 @@ pub struct VimConfig {
     pub hint_characters: String,
     pub hint_labels: String,
     pub remember_hints: bool,
+    pub hint_mode: String,
     pub copy_zones: f64,
     pub excluded_hosts: Vec<String>,
     pub pass_at_edge: Vec<String>,

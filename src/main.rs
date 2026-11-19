@@ -334,6 +334,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     one_of(&mut p, "agents: fallback_note".into(), &c.agents.fallback_note, &["once", "every_launch"]);
     one_of(&mut p, "mcp: network_log".into(), &c.mcp.network_log, &["when_asked", "always", "never"]);
     one_of(&mut p, "vim: hint_labels".into(), &c.vim.hint_labels, &["stable", "reading_order"]);
+    one_of(&mut p, "vim: hint_mode".into(), &c.vim.hint_mode, &["stay", "once"]);
     const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);
