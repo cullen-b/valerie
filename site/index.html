@@ -332,6 +332,10 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .set { display: block; width: fit-content; max-width: 100%; margin: 0; padding: 11px 15px; border-radius: 11px; background: color-mix(in srgb, var(--ink) 11%, transparent); font: 13.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .set i { font-style: normal; opacity: .55; }
 .ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.vs { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; margin-bottom: 12px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.vs .k { grid-row: span 2; align-self: start; font-weight: 600; padding-top: 1px; } .vs i { grid-column: 2; height: 9px; border-radius: 5px; background: var(--accent); width: 0; transition: width 1.1s var(--ease) .35s; }
+.vs i.c { background: color-mix(in srgb, var(--ink) 30%, transparent); margin-bottom: 8px; } .vs span:not(.k) { opacity: .7; margin-bottom: 8px; } .ch.on .vs i { width: var(--v); }
+.fine.small { font-size: 13px; margin-bottom: 14px; }
 .seg { display: inline-flex; gap: 4px; padding: 5px; margin-bottom: 18px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 11%, transparent); }
 .seg button { border: 0; background: transparent; min-height: 38px; padding: 0 16px; border-radius: 10px; font-size: 15px; cursor: pointer; transition: background-color .3s, color .3s; } .seg button[aria-pressed=true] { background: var(--ink); color: var(--bg1); }
 .fine { font-size: 14.5px; opacity: .78; }
@@ -369,6 +373,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   .ch h1, .ch h2, .get h2 { font-size: calc(var(--fs, 1) * clamp(30px, 9.4vw, 54px)); margin-bottom: 14px; }
   .ch p { margin-bottom: 14px; } .hint { margin-top: 14px; } .ctas { margin-bottom: 10px; }
   .btn { min-height: 46px; padding: 0 18px; }
+  .vs { font-size: 13px; } .vs ~ .set, .ch:has(.vs) p:not(.fine) { display: none; }
   .ask { min-height: 44px; margin-bottom: 10px; font-size: 14.5px; }
   .chips { display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); justify-content: start; max-height: none; overflow: auto hidden; margin: 0 -18px; padding: 3px 18px 8px; -webkit-mask-image: none; mask-image: none; scrollbar-width: none; }
   .win, html[data-look] .win { transform: rotateY(-4deg) rotateX(3deg); }
@@ -491,8 +496,14 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
 
   <section class="ch" data-look="chrome" data-lay="strip" data-name="Like Chrome" style="--wd: 100%; --wg: 500">
     <div class="ch-in"><div class="txt">
-      <h2><span class="l">Miss Chrome?</span><span class="l">Keep its shape.</span></h2>
-      <p>Tabs, toolbar and bookmarks where Chrome, Safari, Firefox or Edge keep them, with the shortcuts your hands already know.</p>
+      <h2><span class="l">Chrome's shape.</span><span class="l">A twentieth the size.</span></h2>
+      <p>Tabs, toolbar and shortcuts where Chrome, Safari, Firefox or Edge keep them. Lighter to download, a little quicker to open, a little easier on memory.</p>
+      <div class="vs">
+        <span class="k">Download</span><i style="--v: 5%"></i><b>14 MB</b><i class="c" style="--v: 100%"></i><span>Chrome, 289 MB</span>
+        <span class="k">Launch to a page</span><i style="--v: 90%"></i><b>0.60 s</b><i class="c" style="--v: 100%"></i><span>Chrome, 0.67 s</span>
+        <span class="k">Memory, 10 tabs</span><i style="--v: 91%"></i><b>557 MB</b><i class="c" style="--v: 100%"></i><span>Chrome, 612 MB</span>
+      </div>
+      <p class="fine small">Shorter is better. Medians on an M1 Pro MacBook Pro, Valerie 0.1.508 and Chrome 157, November 2026.</p>
       <pre class="set" translate="no">layout: { arrangement: like-chrome }
 shortcuts_like: chrome</pre>
     </div></div>
