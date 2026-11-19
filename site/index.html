@@ -435,6 +435,8 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .vs .k { grid-row: span 2; align-self: start; font-weight: 600; padding-top: 1px; } .vs i { grid-column: 2; height: 9px; border-radius: 5px; background: var(--accent); width: 0; transition: width 1.1s var(--ease) .35s; }
 .vs i.c { background: color-mix(in srgb, var(--ink) 30%, transparent); margin-bottom: 8px; } .vs span:not(.k) { opacity: .7; margin-bottom: 8px; } .ch.on .vs i { width: var(--v); }
 .fine.small { font-size: 13px; margin-bottom: 14px; }
+.quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 0 0 24px; padding: 14px 0; border-block: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); }
+.quick div { min-width: 0; } .quick dt { font: 800 26px/1.1 var(--display); font-stretch: 110%; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; } .quick dd { margin: 4px 0 0; font-size: 13.5px; line-height: 1.35; opacity: .8; }
 .seg { display: inline-flex; gap: 4px; padding: 5px; margin-bottom: 18px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 11%, transparent); }
 .seg button { border: 0; background: transparent; min-height: 38px; padding: 0 16px; border-radius: 10px; font-size: 15px; cursor: pointer; transition: background-color .3s, color .3s; } .seg button[aria-pressed=true] { background: var(--ink); color: var(--bg1); }
 .fine { font-size: 14.5px; opacity: .78; }
@@ -474,6 +476,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   .ch h1, .ch h2, .get h2 { font-size: calc(var(--fs, 1) * clamp(30px, 9.4vw, 54px)); margin-bottom: 14px; }
   .ch p { margin-bottom: 14px; } .hint { margin-top: 14px; } .ctas { margin-bottom: 10px; }
   .btn { min-height: 46px; padding: 0 18px; }
+  .quick { gap: 10px; margin-bottom: 14px; padding: 10px 0; } .quick dt { font-size: 20px; } .quick dd { font-size: 12px; } .hero .hint { display: none; }
   .vs { font-size: 13px; } .vs ~ .set, .ch:has(.vs) p:not(.fine) { display: none; }
   .ask { min-height: 44px; margin-bottom: 10px; font-size: 14.5px; }
   .chips button.lucky { grid-row: span 2; align-self: stretch; font-size: 18px; padding: 0 22px; }
@@ -573,7 +576,12 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   <section class="ch hero on" data-look="classic" data-lay="side" data-name="Classic" style="--wd: 100%; --wg: 800">
     <div class="ch-in"><div class="txt">
       <h1><span class="l">The world's</span><span class="l">last browser.</span></h1>
-      <p>It turns into anything. Every color, shortcut, menu and layout in Valerie is a setting: change them in one file, or ask your AI to.</p>
+      <p>It turns into anything. Every color, shortcut, menu and layout is a setting you can change yourself, or hand to your AI.</p>
+      <dl class="quick">
+        <div><dt>14 MB</dt><dd>to download. Chrome is 289.</dd></div>
+        <div><dt>0.6 s</dt><dd>from launch to a page on screen.</dd></div>
+        <div><dt>9% less</dt><dd>memory than Chrome with 10 tabs.</dd></div>
+      </dl>
       <div class="ctas"><a class="btn primary" data-dl href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Download for Mac</a><a class="btn" href="#install">Other ways</a></div>
       <p class="fine" id="ver">Free and open source.</p>
       <div class="hint"><i></i>Scroll down and watch it change.</div>
@@ -612,7 +620,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
         <span class="k">Launch to a page</span><i style="--v: 90%"></i><b>0.60 s</b><i class="c" style="--v: 100%"></i><span>Chrome, 0.67 s</span>
         <span class="k">Memory, 10 tabs</span><i style="--v: 91%"></i><b>557 MB</b><i class="c" style="--v: 100%"></i><span>Chrome, 612 MB</span>
       </div>
-      <p class="fine small">Shorter is better. Medians on an M1 Pro MacBook Pro, Valerie 0.1.508 and Chrome 157, November 2026.</p>
+      <p class="fine small" id="measured">Shorter is better. Medians on an M1 Pro MacBook Pro, Valerie 0.1.508 and Chrome 157, November 2026.</p>
       <pre class="set" translate="no">layout: { arrangement: like-chrome }
 shortcuts_like: chrome</pre>
     </div></div>
