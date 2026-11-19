@@ -299,6 +299,8 @@ pub struct App {
     zoom: HashMap<TabId, f64>,
     /// Zoom each view currently has, so it's only set when it changes.
     zoom_applied: HashMap<TabId, f64>,
+    /// Pages whose f hints stay on from page to page until Escape (vim.hint_mode: stay), and whether they open new tabs.
+    hint_stay: HashMap<Target, bool>,
     /// Most recently used tabs first (last_tab).
     recent_tabs: Vec<TabId>,
     /// The last URL each tab finished loading, restored if a navigation turns out to be a download.
@@ -1547,6 +1549,7 @@ impl App {
             views: HashMap::new(),
             zoom: HashMap::new(),
             zoom_applied: HashMap::new(),
+            hint_stay: HashMap::new(),
             recent_tabs: Vec::new(),
             committed_url: HashMap::new(),
             page_request: None,
@@ -1952,6 +1955,10 @@ impl App {
         let space = self.space_name(self.space_of_target(target));
         if !again {
             let _ = view.evaluate_script(&format!("window.__valerie && __valerie.configure({})", self.page_config_for(target, &self.page_config())));
+            // Hints were on when this page was left: they come back once it has loaded (late content included).
+            if let Some(new_tab) = self.hint_stay.get(&target) {
+                let _ = view.evaluate_script(&format!("window.__valerie && __valerie.keepHints({new_tab})"));
+            }
             let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
             for b in self.boosts.iter().filter(|b| !b.js.is_empty() && boost_matches(&b.host, &host)) {
                 let once = format!("(!window.__valerie || __valerie.once({}))", json!(format!("boost:{}", b.host)));
@@ -8958,6 +8965,24 @@ impl App {
                 self.dirty = true;
                 self.refresh_content_config();
                 self.toast(&format!("Valerie will click “{text}” on {site} from now on"));
+            }
+            // f hints that stay on (vim.hint_mode: stay): the page asks on start, and says when they start or stop.
+            (Source::Page(target), "hint_stay") => {
+                if m["on"].as_bool() == Some(true) {
+                    self.hint_stay.insert(target, m["new_tab"].as_bool() == Some(true));
+                    if self.state.tips_shown.insert("hint_stay".into()) {
+                        self.dirty = true;
+                        let stop = if self.config.escape_hints { " until you press Esc" } else { "" };
+                        self.toast(&format!("Link hints now stay on from page to page{stop}. For one click at a time, set vim.hint_mode: once"));
+                    }
+                } else {
+                    self.hint_stay.remove(&target);
+                }
+            }
+            (Source::Page(target), "hint_stay_ask") => {
+                if let (Some(new_tab), Some(view)) = (self.hint_stay.get(&target), self.view_for(target)) {
+                    let _ = view.evaluate_script(&format!("window.__valerie && __valerie.keepHints({new_tab})"));
+                }
             }
             (Source::Page(target), "keyed") => {
                 if m["on"].as_bool() == Some(true) {

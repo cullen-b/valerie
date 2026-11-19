@@ -801,6 +801,7 @@ vim:
   hold_scroll_acceleration: 7000   # how quickly it speeds up, pixels per second, per second
   hold_scroll_max_speed: 14000     # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
+  hint_mode: stay          # stay: after f, hints come back after each click, on each new page and after scrolling, until Escape; once: f is one click, then hints go. one of: stay | once
   remember_hints: true     # a label you click with f stays with that button on that site from then on, and no other button there gets it. true | false
   hint_labels: stable      # stable: a button gets the same letters every time (from its text and link), so "Merge" is the same keys on every visit; reading_order: shortest labels, numbered top to bottom. one of: stable | reading_order
   copy_zones: 20           # copy mode (c) splits the page into at most this many parts at first; more gives smaller parts
@@ -824,8 +825,8 @@ vim:
     "i": insert
     "/": find
     "yy": copy_url
-    "H": prev_space          # H to the space on the left, L to the right (like J/K for tabs). For split-view panes
-    "L": next_space          # instead: "H": { cmd: focus_pane, direction: left } and "L": { cmd: focus_pane, direction: right }
+    "H": prev_space          # H to the space on the left, L to the right (like J/K for tabs)
+    "L": next_space
     "r": reload
     "R": hard_reload
     "x": close_tab
@@ -838,8 +839,9 @@ vim:
     "O": { cmd: open_command_bar, mode: current }
     "t": new_tab
     "s": toggle_sidebar
-    "]s": next_space
-    "[s": prev_space
+    "[": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
+    "]": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
+                             # (spaces were "[s" / "]s"; to have those back, also set "[": null and "]": null)
 
 
 # --------------------------------------------------------------------------------------------------------------
