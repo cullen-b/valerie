@@ -274,6 +274,7 @@ pub struct Layout {
     pub split_unfocused_opacity: f64,
     pub split_border_width: f64,
     pub split_resize: bool,
+    pub split_copies_pinned: bool,
     pub split_grab_width: f64,
     pub split_grab_height: f64,
 }

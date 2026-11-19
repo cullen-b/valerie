@@ -7448,7 +7448,17 @@ impl App {
                     let list = self.state.order(self.state.active_space, true);
                     list.iter().copied().find(|t| *t != a && self.state.split_of(*t).is_none())
                 });
-                let Some(other) = other else { return self.toast("Open another tab to split with") };
+                let Some(mut other) = other else { return self.toast("Open another tab to split with") };
+                // Joining a split moves the tab beside its partner, so a pinned tab is copied instead of leaving its place.
+                if self.config.layout.split_copies_pinned && self.state.is_pinned(other) && self.state.section_of(other) != self.state.section_of(a) {
+                    let (url, title) = self.state.tabs.get(&other).map(|t| (t.url.clone(), t.title.clone())).unwrap_or_default();
+                    let copy = self.state.add_tab(self.state.space_of(a).unwrap_or(self.state.active_space), &url, true);
+                    if let Some(t) = self.state.tabs.get_mut(&copy) {
+                        t.title = title;
+                    }
+                    self.queue_event("tab_opened", Some(copy), None);
+                    other = copy;
+                }
                 let from = self.state.space_of(other);
                 let max = self.config.layout.split_max_panes.max(2);
                 if !self.state.join_split(a, other, max) {
