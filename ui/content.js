@@ -852,8 +852,8 @@ function stableLabels(items) {
   return out;
 }
 // vim.hint_mode: stay keeps hints coming back (after each click, on each new page, after scrolling) until Escape.
-let hintStay = null, stayTimer = 0;
-function stayOff() { clearTimeout(stayTimer); if (hintStay) { hintStay = null; post({ t: "hint_stay", on: false }); } }
+let hintStay = null, stayTimer = 0, idleTimer = 0;
+function stayOff() { clearTimeout(stayTimer); clearTimeout(idleTimer); if (hintStay) { hintStay = null; post({ t: "hint_stay", on: false }); } }
 function hintsAgain(ms) {
   clearTimeout(stayTimer);
   stayTimer = setTimeout(() => {
@@ -862,8 +862,19 @@ function hintsAgain(ms) {
     startHints(hintStay.newTab, true);
   }, ms);
 }
-// Valerie says hints were on when the last page in this tab was left.
-function keepHints(newTab) { if (!cfg.vim.enabled || excluded()) return; hintStay = { newTab: !!newTab }; hintsAgain(0); }
+// vim.hint_timeout: hints that stay on go after this many seconds without a click (idle = ms already gone).
+function stayAwake(idle) {
+  clearTimeout(idleTimer);
+  const ms = (+cfg.vim.hint_timeout || 0) * 1000;
+  if (!hintStay || !ms) return true;
+  if (idle >= ms) { stayOff(); return false; }
+  idleTimer = setTimeout(() => { stayOff(); if (mode === "hints") stopHints(); }, ms - idle);
+  return true;
+}
+// A hint was just used (f or a pick): Valerie notes the time so the next page knows how long hints have sat idle.
+function stayUsed() { if (!hintStay) return; post({ t: "hint_stay", on: true, new_tab: hintStay.newTab }); stayAwake(0); }
+// Valerie says hints were on when the last page in this tab was left, idle ms ago.
+function keepHints(newTab, idle) { if (!cfg.vim.enabled || excluded()) return; hintStay = { newTab: !!newTab }; if (stayAwake(+idle || 0)) hintsAgain(0); }
 addEventListener("scroll", () => {
   if (!hintStay) return;
   if (mode === "hints" && !hints.typed) stopHints();
@@ -873,7 +884,7 @@ if (document.readyState === "loading") addEventListener("DOMContentLoaded", () =
 else post({ t: "hint_stay_ask" });
 function startHints(newTab, quiet) {
   const t0 = performance.now();
-  if (cfg.vim.hint_mode !== "once" && !hintStay) { hintStay = { newTab: !!newTab }; post({ t: "hint_stay", on: true, new_tab: !!newTab }); }
+  if (cfg.vim.hint_mode !== "once" && (!quiet || !hintStay)) { hintStay = { newTab: !!newTab }; stayUsed(); }
   let items = collectHintables();
   if (!items.length) return quiet ? undefined : toast("Nothing to click");
   const stable = cfg.vim.hint_labels !== "reading_order";
@@ -918,7 +929,7 @@ function hintKey(k) {
   }
   if (left === 1 && last.label === typed) {
     const nt = hints.newTab; stopHints();
-    rememberHint(last);
+    rememberHint(last); stayUsed();
     const r = anim("keyboard_click") && last.e.getBoundingClientRect();
     activate(last.e, nt); if (r) clickRing(r);
     // A text box or menu picked means typing comes next, so hints end there.
