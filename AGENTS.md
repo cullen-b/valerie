@@ -103,7 +103,9 @@ the owner reports a failure. When you add code where something can fail without 
   the main one (no focus either). Real mouse and key tests use the Linux container or Windows VM, because on a Mac they
   take over the owner's own cursor and keyboard. On the owner's real Valerie, only read: logs, settings and status. No
   tabs (hidden ones included), clicks, page scripts or restarts unless the owner agrees, for example when a bug only shows
-  with their logins.
+  with their logins. **Debugging is the standing exception (owner, 2026-11-19):** when a bug doesn't reproduce in a test
+  copy, inspect the owner's real tabs without asking (activate, `eval_js`, screenshot, network, navigate the tab involved),
+  touch only the tabs involved and leave them working; still ask before restarts or settings changes.
 - Run test instances with `VALERIE_CONFIG_DIR`/`VALERIE_DATA_DIR` pointing at a temp dir and a non-default
   `mcp.port` (e.g. 7790) so you never touch the owner's real browser. Also give the test config its own profiles
   and spaces (e.g. `profiles: [{ name: Test }]`, `spaces: [{ name: Test, profile: Test }]`): cookies and site

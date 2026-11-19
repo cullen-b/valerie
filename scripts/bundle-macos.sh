@@ -37,6 +37,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Without this, macOS refuses plain http:// pages in the page views and they stay blank. -->
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsInWebContent</key><true/></dict>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSCameraUsageDescription</key><string>Websites you allow can use the camera, for example for video calls.</string>
   <key>NSMicrophoneUsageDescription</key><string>Websites you allow can use the microphone, for example for video calls.</string>
