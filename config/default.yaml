@@ -224,8 +224,9 @@ command_bar:
                            # opens it where you are). false = Shift+Enter does the same as Enter. true | false
   send_to_chats_tip: true  # the first time you ask an agent from the command bar, one message says Shift+Enter sends it
                            # to Chats instead (shown once, ever). true | false
-  back_to_app: true        # opened with a global shortcut from another app (cmd+D), closing the bar with Esc or a click
-                           # outside takes you back to that app. false = stay in Valerie. true | false
+  over_other_apps: true    # a global shortcut (cmd+D) pressed in another app opens just the command bar over that app;
+                           # Esc or a click elsewhere leaves you where you were, picking a tab brings Valerie forward on
+                           # it. false = Valerie's window comes forward with the bar open. macOS. true | false
   calculator: true         # math and unit conversions right in the command bar ("12*7", "5 km in mi", "70 f to c"); Enter copies
   width: 680               # command bar width, pixels
   top: 18                  # how far down the window it opens, percent of the window height

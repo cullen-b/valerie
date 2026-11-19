@@ -1834,6 +1834,52 @@ mod mac {
         }
     }
 
+    pub fn make_floating_panel(window: &tao::window::Window) {
+        use objc2::runtime::{AnyClass, Bool, ClassBuilder, Sel};
+        use objc2::{class, sel};
+        use tao::platform::macos::WindowExtMacOS;
+        static PANEL: std::sync::OnceLock<&'static AnyClass> = std::sync::OnceLock::new();
+        extern "C-unwind" fn yes(_: &AnyObject, _: Sel) -> Bool {
+            Bool::YES
+        }
+        extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
+            Bool::NO
+        }
+        let cls = *PANEL.get_or_init(|| {
+            let mut b = ClassBuilder::new(c"ValerieFloatingPanel", class!(NSPanel)).expect("panel class");
+            // The same field tao's window class adds, so the two are the same size (and tao can still read it).
+            b.add_ivar::<Bool>(c"focusable");
+            unsafe {
+                b.add_method(sel!(canBecomeKeyWindow), yes as extern "C-unwind" fn(_, _) -> _);
+                b.add_method(sel!(canBecomeMainWindow), no as extern "C-unwind" fn(_, _) -> _);
+            }
+            b.register()
+        });
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            // tao made an NSWindow; a non-activating panel is what lets it take keys while another app stays in front.
+            AnyObject::set_class(&*w, cls);
+            let mask: usize = msg_send![w, styleMask];
+            let _: () = msg_send![w, setStyleMask: mask | (1 << 7)];
+            let _: () = msg_send![w, setFloatingPanel: true];
+            let _: () = msg_send![w, setHidesOnDeactivate: false];
+            let _: () = msg_send![w, setLevel: 25isize];
+            // Every Space, and over full-screen apps.
+            let _: () = msg_send![w, setCollectionBehavior: (1usize << 0) | (1 << 8)];
+            let _: () = msg_send![w, setHasShadow: true];
+        }
+    }
+
+    pub fn show_floating_panel(window: &tao::window::Window) {
+        use tao::platform::macos::WindowExtMacOS;
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            let _: () = msg_send![w, orderFrontRegardless];
+            let _: () = msg_send![w, makeKeyWindow];
+            let _: () = msg_send![w, invalidateShadow];
+        }
+    }
+
     pub fn set_window_opacity(window: &tao::window::Window, alpha: f64) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -2145,18 +2191,21 @@ pub fn frontmost_app() -> Option<i32> {
     None
 }
 
-/// Bring another app (by process id) in front again.
-pub fn activate_pid(pid: i32) {
+/// Make a borderless window a panel that floats over every app and takes the keyboard without bringing the rest of
+/// Valerie forward (the command bar opened from another app). macOS only.
+pub fn make_floating_panel(window: &tao::window::Window) {
     #[cfg(target_os = "macos")]
-    unsafe {
-        use objc2::{class, msg_send};
-        let app: *mut objc2::runtime::AnyObject = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
-        if !app.is_null() {
-            let _: bool = msg_send![app, activateWithOptions: 0usize];
-        }
-    }
+    mac::make_floating_panel(window);
     #[cfg(not(target_os = "macos"))]
-    let _ = pid;
+    let _ = window;
+}
+
+/// Show a floating panel in front of every app and give it the keyboard, leaving the app in front as it is.
+pub fn show_floating_panel(window: &tao::window::Window) {
+    #[cfg(target_os = "macos")]
+    mac::show_floating_panel(window);
+    #[cfg(not(target_os = "macos"))]
+    window.set_visible(true);
 }
 
 /// Pinch to zoom a page in and out (gestures.pinch_to_zoom).
