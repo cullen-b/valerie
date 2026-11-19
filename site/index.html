@@ -306,20 +306,6 @@ html[data-lay=agent] .cursor { opacity: 1; animation: point 5s var(--ease) infin
 @keyframes press { 0%, 48%, 60%, 100% { scale: 1; box-shadow: 0 0 0 0 rgba(76,194,255,.6); } 52% { scale: .92; } 58% { box-shadow: 0 0 0 14px rgba(76,194,255,0); } }
 
 
-/* a little window: a link from another app opens small, then you keep it or throw it away */
-.chatapp { left: 262px; top: 372px; width: 310px; padding: 0 0 12px; border-radius: 16px; background: #f4f3f0; color: #26252b; box-shadow: 0 30px 70px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.15); transform: translateY(40px); z-index: 6; font-size: 13px; overflow: hidden; }
-.chatapp .cb { height: 32px; background: #e4e2dd; display: flex; align-items: center; gap: 6px; padding: 0 12px; font-size: 12px; color: #6e6b76; margin-bottom: 10px; } .chatapp .cb i { width: 10px; height: 10px; border-radius: 50%; background: #c9c6bf; } .chatapp .cb span { margin-left: 6px; }
-.chatapp .m { margin: 0 12px 8px; padding: 9px 12px; border-radius: 14px 14px 14px 4px; background: #fff; line-height: 1.35; } .chatapp .m b { display: block; font-size: 11.5px; color: #8a8790; font-weight: 600; }
-.chatapp .m u { display: block; color: #2f5fee; cursor: pointer; text-underline-offset: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .chatapp .m u:hover { color: #1238b8; } .chatapp .m u.on { color: #8a3ffc; }
-.lil { left: 508px; top: 64px; width: 500px; height: 372px; border-radius: 14px; overflow: hidden; background: #fbfaf8; color: #1d1c21; box-shadow: 0 40px 90px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.25); z-index: 7; }
-.lil .lb { position: relative; z-index: 2; height: 34px; background: #e9e7e3; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; font-size: 12px; color: #55525c; }
-.lil .lb span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .lil .lb b { cursor: pointer; padding: 4px 10px; border-radius: 7px; background: #1d1c21; color: #fff; font-weight: 600; white-space: nowrap; } .lil .lb em { cursor: pointer; font-style: normal; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font-size: 15px; } .lil .lb em:hover { background: rgba(0,0,0,.1); }
-.lil .lbody { position: relative; height: 338px; overflow: hidden; } .lil .lbody .pg { width: 800px; height: 541px; scale: .625; opacity: 1; visibility: visible; transition: none; }
-.lil .line { position: absolute; left: 0; top: 34px; height: 3px; width: 40%; background: var(--accent); z-index: 3; animation: loading 0.7s ease-in-out infinite; }
-@keyframes loading { from { translate: -100% 0; } to { translate: 250% 0; } }
-html[data-lil] .chatapp { opacity: 1; transform: none; transition-delay: .35s; pointer-events: auto; }
-html[data-lil] .lil.open { opacity: 1; pointer-events: auto; }
-html[data-lil] .page { filter: brightness(.8) saturate(.9); }
 
 /* extensions being dreamed up, over the page */
 .exts { left: 286px; top: 56px; width: 700px; padding: 18px; border-radius: 20px; background: rgba(22,18,34,.93); color: #f1ecff; box-shadow: 0 40px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.14); transform: translateY(26px) scale(.95); z-index: 6; font-size: 14px; }
@@ -631,11 +617,6 @@ Lisbon weather · Design review
       <div class="part scrim"></div>
       <div class="part palette"><div class="in"><span class="typed">sprint 42 </span><span class="caret"></span></div>
         <div class="row cur">Sprint 42 <span>Go to tab</span></div><div class="row">Sprint 42 retro notes <span>History</span></div><div class="row">Search the web for “sprint 42” <span>Web</span></div><div class="row">Ask your AI about “sprint 42” <span>AI</span></div></div>
-      <div class="part chatapp" id="chatapp"><div class="cb"><i></i><i></i><i></i><span>Messages</span></div>
-        <div class="m"><b>Priya</b>This is where we're going<u data-lk="0">northboundjournal.com/lofoten</u></div>
-        <div class="m"><b>Jun</b>Forecast for the trip<u data-lk="3">forecast.app/lisbon</u></div>
-        <div class="m"><b>Marcus</b>Something for the drive<u data-lk="5">play.acme.fm/evening-slowly</u></div></div>
-      <div class="part lil" id="lilwin"><div class="lb"><span id="lilurl"></span><b id="lilkeep">Open in Personal</b><em id="lilx">✕</em></div><div class="lbody" id="lilbody"></div></div>
       <div class="part exts"><div class="xh"><b>Extensions</b><span id="exn"></span></div><div class="xa"><b>!</b><span id="exask"></span><i></i></div><div class="xg" id="exgrid"></div></div>
       <div class="part little"><div class="bar"><i></i><i></i><i></i><span>linear.app</span></div>
         <div class="help"><b>Claude Code needs you</b><span>Sign in to Linear so I can read your issues, then press Done.</span><em>Done</em></div>
@@ -688,15 +669,6 @@ Lisbon weather · Design review
       <div class="seg" id="seg" role="group" aria-label="Space"><button>Personal</button><button aria-pressed="true">School</button><button>Work</button></div>
       <pre class="set" translate="no" id="spset">spaces:
   - { name: School, profile: School, theme: forest }</pre>
-    </div></div>
-  </section>
-
-  <section class="ch" id="lil" data-look="ember" data-lay="side" data-name="Little Valerie" style="--wd: 92%; --wg: 850; --fs: 1.1">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Little Valerie.</span><span class="l">Open it. Read it.</span><span class="l">Throw it away.</span></h2>
-      <p>A link from another app opens in a little window of its own, not in your tabs. Keep it with one click, or close it and it never happened.</p>
-      <div class="ctas"><button class="btn sm primary" id="lilopen">Open a link</button><button class="btn sm" id="liltoss">Throw it away</button><button class="btn sm" id="lilsave">Keep it</button></div>
-      <pre class="set" translate="no">little_window: { enabled: true }</pre>
     </div></div>
   </section>
 
@@ -868,7 +840,7 @@ function glideFrame() {
   if (active !== current) {
     current = active; picked = null; press();
     inSpaces = active.id === "spaces"; space = inSpaces ? 1 : 0; showSpace();
-    dreaming(active.id === "exts"); lilScene(active.id === "lil");
+    dreaming(active.id === "exts");
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
@@ -984,56 +956,6 @@ addEventListener("pointerup", (e) => {
   if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy)) goSpace(space - Math.sign(dx));
 });
 addEventListener("pointercancel", () => (downX = null));
-
-// ---------- little windows: a link opens small; throw it away or keep it as a tab ----------
-const LINKS = [0, 3, 5], lilwin = $("#lilwin"), lilbody = $("#lilbody"), HOME_TABS = [tab("Inbox (3)", "#4c8dff", 1), tab("Sprint 42", "#8f6bff", 2)];
-let lilOpen = null, lilNext = 0, lilTimer = 0, lilKept = [], lilHands = 0, lilFlip = 1;
-const lilAnim = (frames, ms, easing) => (calm ? Promise.resolve() : lilwin.animate(frames, { duration: ms, easing: easing || "cubic-bezier(.22,.9,.24,1)" }).finished.catch(() => {}));
-function lilShow(page) {
-  if (lilOpen !== null) return lilGo(false).then(() => lilShow(page));
-  lilOpen = page; lilNext = (LINKS.indexOf(page) + 1) % LINKS.length;
-  const copy = pages[page].cloneNode(true), line = document.createElement("i");
-  copy.className = copy.className.replace(/\b(cur|used|s\d)\b/g, "").trim();
-  line.className = "line"; lilbody.replaceChildren(copy); lilwin.append(line); setTimeout(() => line.remove(), 700);
-  $("#lilurl").textContent = SITES[page][0];
-  for (const u of $$("#chatapp u")) u.classList.toggle("on", +u.dataset.lk === page);
-  lilwin.classList.add("open");
-  return lilAnim([{ transform: "translate(-190px, 230px) scale(.15)", opacity: 0 }, { transform: "none", opacity: 1 }], 420);
-}
-// keep = it flies into the sidebar and becomes a tab; otherwise it's flung off the screen
-function lilGo(keep) {
-  if (lilOpen === null) return Promise.resolve();
-  const page = lilOpen; lilOpen = null; lilFlip = -lilFlip;
-  const out = keep ? [{ transform: "none", opacity: 1 }, { transform: "translate(-560px, 60px) scale(.08)", opacity: 0 }]
-    : [{ transform: "none", opacity: 1 }, { transform: `translate(${lilFlip * 160}px, -90px) rotate(${lilFlip * 24}deg)`, opacity: 1, offset: 0.25 }, { transform: `translate(${lilFlip * 900}px, -620px) rotate(${lilFlip * 520}deg) scale(.4)`, opacity: 0 }];
-  return lilAnim(out, keep ? 480 : 720, keep ? undefined : "cubic-bezier(.5,0,.9,.5)").then(() => {
-    lilwin.classList.remove("open");
-    for (const u of $$("#chatapp u")) u.classList.remove("on");
-    if (keep && current.id === "lil") {
-      lilKept = [...lilKept.filter((k) => k.page !== page), tab(SITES[page][1], HUES[page % HUES.length], page)].slice(-3);
-      setTabs([...HOME_TABS, ...lilKept]); showTab(HOME_TABS.length + lilKept.length - 1);
-    }
-  });
-}
-// left alone, it shows itself: open, read, throw away, next link
-function lilLoop() {
-  clearTimeout(lilTimer);
-  if (current.id !== "lil" || calm) return;
-  lilTimer = setTimeout(() => {
-    if (Date.now() < lilHands) return lilLoop();
-    (lilOpen === null ? lilShow(LINKS[lilNext]) : lilGo(false)).then(lilLoop);
-  }, lilOpen === null ? 1100 : 2400);
-}
-function lilScene(on) {
-  root.toggleAttribute("data-lil", on); clearTimeout(lilTimer);
-  if (!on) { lilOpen = null; lilwin.classList.remove("open"); return; }
-  lilKept = []; setTabs(HOME_TABS); lilLoop();
-}
-const byHand = (fn) => () => { lilHands = Date.now() + 6000; fn(); lilLoop(); };
-for (const u of $$("#chatapp u")) u.onclick = byHand(() => lilShow(+u.dataset.lk));
-$("#lilopen").onclick = byHand(() => lilShow(LINKS[lilNext]));
-$("#liltoss").onclick = $("#lilx").onclick = byHand(() => lilGo(false));
-$("#lilsave").onclick = $("#lilkeep").onclick = byHand(() => lilGo(true));
 
 // ---------- extensions: the ones you have, then one more every couple of seconds, for as long as you watch ----------
 const WISHES = [["make YouTube always open in theater mode", "YouTube theater"], ["hide the score until I've watched the match", "Spoiler shield"], ["skip the life story, show me the recipe", "Just the recipe"],
