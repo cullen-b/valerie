@@ -319,6 +319,8 @@ pub struct SidebarConfig {
     pub drop_to_split: bool,
     pub alt_click_to_split: bool,
     pub drag_folders: bool,
+    pub drag_to_edge_switches_space: bool,
+    pub drag_to_edge_ms: f64,
     pub reorder_spaces: bool,
     pub split_rows: bool,
     /// "hover" | "always" | "never" (true and false from older settings files mean always and never).

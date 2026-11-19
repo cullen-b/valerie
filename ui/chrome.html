@@ -27,7 +27,7 @@ body::before { /* soft accent glow */
 /* window.vibrancy: the desktop shows through, frosted, behind a lighter wash of the theme */
 html.vibrant body { background: linear-gradient(160deg, color-mix(in srgb, var(--bg1) 58%, transparent), color-mix(in srgb, var(--bg2) 58%, transparent)); }
 html.vibrant { background: transparent; }
-#sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; transition: opacity .12s; }
+#sidebar { position: fixed; top: 0; bottom: 0; width: var(--sw); display: flex; flex-direction: column; padding: 0 8px 8px; transition: opacity .12s, box-shadow .15s; }
 #sidebar.hidden { opacity: 0; transition: opacity .15s .2s; }
 /* layout.reveal_sidebar_over_page: the peeked sidebar floats over the page in a view of its own width */
 html.floating.vibrant body { background: linear-gradient(160deg, var(--bg1), var(--bg2)); }
@@ -260,6 +260,9 @@ body.size-compact .chat-label, body.size-compact .row.chat .when { display: none
 .ghost { transition: none; }
 .ghost .count { position: absolute; right: -6px; top: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
   display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); opacity: 1; }
+/* a dragged tab held at the sidebar's edge: that side glows until it moves to the next space */
+body.dragging.edge-prev #sidebar { box-shadow: inset 3px 0 0 var(--accent); }
+body.dragging.edge-next #sidebar { box-shadow: inset -3px 0 0 var(--accent); }
 body.dragging, body.dragging *, body.sp-dragging, body.sp-dragging * { cursor: grabbing !important; }
 .sp.sp-moving { position: relative; z-index: 2; color: var(--fg); background: color-mix(in srgb, var(--accent) 26%, transparent); box-shadow: 0 4px 12px rgba(0,0,0,.25); }
 .drop-before::before, .drop-after::after { content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--accent); z-index: 2; }
@@ -492,12 +495,35 @@ function dragMove(x, y) {
     clearTimeout(spaceHover && spaceHover.timer); spaceHover = null;
     if (sp && !sp.classList.contains("active")) spaceHover = { node: sp, timer: setTimeout(() => { sp.click(); drag && (drag.switched = true); }, 550) };
   }
+  edgeHold(x);
   // Over the tab itself, or a gap in the list it's already sliding through: it stays where it is.
   const inGap = t && drag.live && t.cls === "drop-into" && t.node.contains(drag.node);
   if (!t || dragsOwn(drag, t) || inGap) { drag.target = drag.live || null; return; }
   if (!drag.group && liveMove(t)) { drag.live = t; drag.target = t; return; }
   drag.target = t; t.node.classList.add(t.cls);
 }
+// sidebar.drag_to_edge_switches_space: hold a dragged tab at the sidebar's left or right edge to go to the space before
+// or after (wrapping round); keep holding and it goes on to the next one every drag_to_edge_ms.
+let edge = { dir: 0, timer: 0 };
+function edgeHold(x) {
+  const r = $("#sidebar").getBoundingClientRect(), w = Math.min(28, r.width * 0.18);
+  const on = S && S.sidebar.drag_to_edge_switches_space !== false && S.spaces.length > 1;
+  const dir = !on ? 0 : x < r.left + w ? -1 : x > r.right - w ? 1 : 0;
+  if (dir === edge.dir) return;
+  stopEdgeHold(); edge.dir = dir;
+  if (!dir) return;
+  document.body.classList.add(dir < 0 ? "edge-prev" : "edge-next");
+  const ms = Math.max(150, +S.sidebar.drag_to_edge_ms || 700);
+  const step = () => {
+    if (!drag || !S) return stopEdgeHold();
+    const n = S.spaces.length;
+    pendingDir = dir; drag.switched = true;
+    cmd({ cmd: "switch_space", index: (S.active_space + dir + n) % n });
+    edge.timer = setTimeout(step, ms);
+  };
+  edge.timer = setTimeout(step, ms);
+}
+function stopEdgeHold() { clearTimeout(edge.timer); edge = { dir: 0, timer: 0 }; document.body.classList.remove("edge-prev", "edge-next"); }
 // Near the top or bottom of the list, scroll it.
 function autoScroll(y) {
   const sc = $("#scroll"), r = sc.getBoundingClientRect(), edge = 36;
@@ -528,7 +554,7 @@ document.addEventListener("mousemove", (e) => {
 });
 function endDrag(drop) {
   const d = drag; drag = null;
-  cancelAnimationFrame(scrollTimer); clearTimeout(spaceHover && spaceHover.timer); spaceHover = null;
+  cancelAnimationFrame(scrollTimer); clearTimeout(spaceHover && spaceHover.timer); spaceHover = null; stopEdgeHold();
   if (!d || !d.active) return;
   document.body.classList.remove("dragging"); clearIndicators();
   suppressClick = true; setTimeout(() => (suppressClick = false), 0);
@@ -1323,7 +1349,7 @@ function render(state) {
   root.style.setProperty("--tab-font", Math.min(22, Math.max(9.5, th * .342)).toFixed(1) + "px");
   const hadPointer = b.classList.contains("pointer");
   b.className = (hadPointer ? "pointer " : "") + (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
-    (drag && drag.active ? " dragging" : "") + (resizing ? " resizing" : "");
+    (drag && drag.active ? " dragging" : "") + (edge.dir ? (edge.dir < 0 ? " edge-prev" : " edge-next") : "") + (resizing ? " resizing" : "");
   const hidden = !S.layout.sidebar_visible && !S.peek;
   root.classList.toggle("floating", !!S.peek_float);
   $("#sidebar").classList.toggle("hidden", hidden);

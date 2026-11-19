@@ -433,7 +433,8 @@ Closed chats go to a folded "Closed" list at the bottom of the Chats sidebar (`c
 brings one back (a coding chat gets its worktree again).
 Spaces: right-click a space's icon to rename or remove it (`delete_space` archives its tabs and takes a space from
 config.yaml out of the user's `spaces` list). Drag a tab onto a space's icon to move it there, or rest on the icon to
-switch and drop it in place. With `sidebar.favorites` off (the default) there's one Pinned section per space.
+switch and drop it in place; or hold it at the sidebar's left or right edge to step to the space before or after
+(`sidebar.drag_to_edge_switches_space`, `sidebar.drag_to_edge_ms`). With `sidebar.favorites` off (the default) there's one Pinned section per space.
 
 ## Settings
 
