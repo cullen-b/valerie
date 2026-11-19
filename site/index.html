@@ -665,26 +665,12 @@ Lisbon weather · Design review
     </div></div>
   </section>
 
-  <section class="ch" data-look="v98" data-lay="task" data-name="Valerie 98" style="--wd: 135%; --wg: 900">
+  <section class="ch" id="looks" data-look="v98" data-lay="task" data-name="Any look" data-steps="v98 task|pasture field|tank tank|black none" style="--wd: 120%; --wg: 850; height: 420vh">
     <div class="ch-in"><div class="txt">
-      <h2><span class="l">Ask for 1998.</span><span class="l">Get 1998.</span></h2>
-      <p>A layout is one small file that says where everything goes and how it looks. This one trades the sidebar for a title bar and a taskbar.</p>
-      <pre class="set" translate="no">layout: { arrangement: valerie-98 }  <i># config.yaml</i></pre>
-    </div></div>
-  </section>
-
-  <section class="ch" data-look="pasture" data-lay="field" data-name="Pasture" style="--wd: 88%; --wg: 600; --fs: 1.15">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Or make your</span><span class="l">tabs sheep.</span></h2>
-      <p>Click a sheep to go to its tab, or a little window to bring it forward. Plugins can redraw any part of the window: install one, or ask your AI to write it.</p>
-      <pre class="set" translate="no">layout: { arrangement: pasture }</pre>
-    </div></div>
-  </section>
-
-  <section class="ch" data-look="tank" data-lay="tank" data-name="Aquarium" style="--wd: 118%; --wg: 700">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Or keep them</span><span class="l">in a fish tank.</span></h2>
-      <p>Every tab a fish, every page a little window drifting by. Nobody has shipped this one yet: describe it to your AI, then share it in the plugin marketplace for everyone else.</p>
+      <h2><span class="l">Make it look</span><span class="l">like anything.</span></h2>
+      <p>Colors, shortcuts, menus and where every part of the window goes are all settings. Make it 1998, turn your tabs into sheep, keep them in a fish tank, or hide everything. Install a look someone else made, or describe yours to your AI.</p>
+      <div class="seg" id="lookseg" role="group" aria-label="Look"><button aria-pressed="true">1998</button><button>Sheep</button><button>Fish tank</button><button>Bare</button></div>
+      <pre class="set" translate="no" id="lookset">layout: { arrangement: valerie-98 }</pre>
     </div></div>
   </section>
 
@@ -736,14 +722,6 @@ shortcuts_like: chrome</pre>
       <h2><span class="l">Your extensions.</span><span class="l">Plus every one</span><span class="l">you can dream up.</span></h2>
       <p>Valerie runs web extensions, and when the one you want doesn't exist, your AI writes it.</p>
       <div class="ctas"><button class="btn sm" id="dream">Dream up another</button></div>
-    </div></div>
-  </section>
-
-  <section class="ch" data-look="black" data-lay="none" data-name="Bare" style="--wd: 62%; --wg: 300; --fs: 1.7">
-    <div class="ch-in"><div class="txt">
-      <h2><span class="l">Or hide</span><span class="l">all of it.</span></h2>
-      <p>One box finds your tabs, history, the web and your AI. Vim keys move you around. No ads, trackers or cookie banners.</p>
-      <pre class="set" translate="no">layout: { sidebar_visible: false }</pre>
     </div></div>
   </section>
 
@@ -885,8 +863,10 @@ function onScroll() {
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
-  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : wear(spaceLook(), active.dataset.lay);
-  const r = active.getBoundingClientRect(), p = clamp(-r.top / (r.height - vh || 1)) - 0.5;
+  const r = active.getBoundingClientRect(), prog = clamp(-r.top / (r.height - vh || 1)), p = prog - 0.5;
+  const steps = active.dataset.steps?.split("|");
+  if (steps) showLook(Math.min(steps.length - 1, Math.floor(prog * steps.length)));
+  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : steps ? wear(...steps[lookStep].split(" ")) : wear(spaceLook(), active.dataset.lay);
   want.drift = -p * 34; kick();
 }
 function frame() {
@@ -897,6 +877,20 @@ function frame() {
   if (Math.abs(want.drift - drift) + Math.abs(want.tiltX - tiltX) + Math.abs(want.tiltY - tiltY) > 0.02) kick();
 }
 function kick() { if (!ticking) { ticking = true; requestAnimationFrame(frame); } }
+// the "Any look" chapter steps through several looks as you scroll through it
+const LOOKSETS = ["layout: { arrangement: valerie-98 }", "layout: { arrangement: pasture }", "# or ask your AI for a fish tank", "layout: { sidebar_visible: false }"];
+const lookSegs = $$("#lookseg button");
+let lookStep = 0;
+function showLook(n) {
+  if (n === lookStep) return;
+  lookStep = n; picked = null; press();
+  lookSegs.forEach((b, i) => b.setAttribute("aria-pressed", i === n));
+  $("#lookset").textContent = LOOKSETS[n];
+}
+lookSegs.forEach((b, i) => (b.onclick = () => {
+  const ch = $("#looks"), span = ch.offsetHeight - innerHeight;
+  scrollTo({ top: ch.offsetTop + span * (i + 0.5) / lookSegs.length, behavior: calm ? "auto" : "smooth" });
+}));
 addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", measure);
 // the window leans a little toward the mouse
