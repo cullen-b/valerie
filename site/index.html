@@ -513,10 +513,17 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .ask { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 16px; border-radius: 14px; margin-bottom: 14px; background: color-mix(in srgb, var(--ink) 11%, transparent); font-size: 16px; }
 .ask b { color: var(--accent); font: 800 18px var(--display); } .ask span:empty::before { content: "Say it in plain words. Or tap a few, they stack."; opacity: .6; }
 .ask .caret { width: 2px; height: 20px; background: var(--accent); animation: blink 1s steps(1) infinite; margin-left: -8px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: calc(100svh - 370px); overflow-y: auto; padding: 3px 3px 14px; margin: -3px; overscroll-behavior: contain; scrollbar-width: thin; -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); }
+.chips { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+/* each row of requests drifts sideways forever; the track holds two copies so the loop is seamless */
+.chips .row { align-self: stretch; overflow: hidden; padding: 4px 0; -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); }
+.chips .track { display: flex; width: max-content; animation: drift var(--dur, 60s) linear infinite; }
+.chips .row:nth-child(even) .track { animation-direction: reverse; }
+.chips .row:is(:hover, :focus-within) .track { animation-play-state: paused; }
+.chips .track button { margin-right: 6px; }
+@keyframes drift { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .chips .track { animation: none; } .chips .row { overflow-x: auto; scrollbar-width: none; } }
 .chips button { border: 1.5px solid color-mix(in srgb, var(--ink) 35%, transparent); background: color-mix(in srgb, var(--bg1) 60%, transparent); padding: 6px 12px; border-radius: 999px; font-size: 13.5px; cursor: pointer; white-space: nowrap; transition: transform .18s var(--ease), background-color .2s, color .2s, border-color .2s; }
 .chips button:hover { border-color: var(--ink); transform: translateY(-2px); } .chips button:active { transform: scale(.95); }
-.chips { align-items: center; }
 .chips button.lucky { background: var(--accent); border-color: var(--accent); color: var(--onacc); font: 800 19px var(--display); font-stretch: 110%; padding: 13px 26px; margin-right: 4px; box-shadow: 0 8px 24px -8px var(--accent); }
 .chips button.lucky:hover { transform: translateY(-3px) scale(1.04); }
 .chips button[aria-pressed=true] { background: var(--ink); color: var(--bg1); border-color: var(--ink); }
@@ -544,8 +551,8 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   .quick { gap: 10px; margin-bottom: 14px; padding: 10px 0; } .quick dt { font-size: 20px; } .quick dd { font-size: 12px; } .hero .hint { display: none; }
   .vs { font-size: 13px; } .vs ~ .set, .ch:has(.vs) p:not(.fine) { display: none; }
   .ask { min-height: 44px; margin-bottom: 10px; font-size: 14.5px; }
-  .chips button.lucky { grid-row: span 2; align-self: stretch; font-size: 18px; padding: 0 22px; }
-  .chips { display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); justify-content: start; max-height: none; overflow: auto hidden; margin: 0 -18px; padding: 3px 18px 8px; -webkit-mask-image: none; mask-image: none; scrollbar-width: none; }
+  .chips button.lucky { font-size: 18px; padding: 11px 22px; }
+  .chips { gap: 4px; margin: 0 -18px; padding: 0 18px; } .chips .row { margin: 0 -18px; }
   .win, html[data-look] .win { transform: rotateY(-4deg) rotateX(3deg); }
   .get { width: 100%; padding-top: 70px; background: var(--bg2); border-radius: 26px 26px 0 0; box-shadow: 0 -30px 60px rgba(0,0,0,.3); }
 }
@@ -1083,7 +1090,7 @@ const ASKS = [
 const LOOKS = Object.keys(PAL), LAYS = ["side", "right", "compact", "bottom", "strip", "task", "tank", "field", "stand", "sky", "road", "tank", "field", "stand", "sky", "road", "dock", "desk", "orbit", "notes", "bench", "none"], FX = [...new Set(ASKS.flatMap((a) => a[1].fx?.split(" ") ?? []))];
 const chipBox = $("#chips"), home = () => ({ look: "rose", lay: "side", fx: new Set() });
 function press() {
-  for (const b of chipBox.children) {
+  for (const b of $$("button", chipBox)) {
     const a = b.ask, fx = a.fx?.split(" ") ?? [];
     b.setAttribute("aria-pressed", !!picked && !!(a.fx || a.look || a.lay) && fx.every((f) => picked.fx.has(f)) && (!a.look || a.look === picked.look) && (!a.lay || a.lay === picked.lay));
   }
@@ -1102,7 +1109,7 @@ function apply(a) {
   wear(picked.look, picked.lay, [...picked.fx].join(" ")); press();
 }
 let typing = 0;
-function chip(text, ask, cls) {
+function chip(text, ask, cls, into = chipBox) {
   const b = document.createElement("button");
   b.textContent = text; b.ask = ask; if (cls) b.className = cls;
   b.onclick = () => {
@@ -1115,12 +1122,24 @@ function chip(text, ask, cls) {
       n < text.length ? setTimeout(step, 16) : apply(ask);
     })();
   };
-  chipBox.append(b);
+  into.append(b);
+  return b;
 }
 const mbclock = $("#mbclock"), tick = () => (mbclock.textContent = new Date().toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
 tick(); setInterval(tick, 30000);
 chip("Surprise me", { lucky: true }, "lucky");
-for (const [text, ask] of ASKS) chip(text, ask);
+// the requests in drifting rows; the second copy in each row is only there to close the loop
+const ROWS = innerWidth < 860 ? 4 : 6, tracks = [];
+for (let r = 0; r < ROWS; r++) {
+  const row = document.createElement("div"), track = document.createElement("div");
+  row.className = "row"; track.className = "track"; row.append(track); chipBox.append(row); tracks.push(track);
+  const mine = ASKS.filter((_, i) => i % ROWS === r);
+  for (const [text, ask] of mine) chip(text, ask, "", track);
+  if (!calm) for (const [text, ask] of mine) { const b = chip(text, ask, "", track); b.tabIndex = -1; b.setAttribute("aria-hidden", "true"); }
+}
+// every row moves at the same slow pace, whatever its length
+const pace = () => tracks.forEach((t) => t.style.setProperty("--dur", t.scrollWidth / 2 / 14 + "s"));
+document.fonts.ready.then(pace); addEventListener("resize", pace);
 
 for (const b of $$(".cmd button")) b.onclick = () => {
   navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500);
