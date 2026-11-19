@@ -1099,8 +1099,10 @@ app:
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
+# A Safari extension inside an app (a `Name.appex` bundle, or a symlink to one) also loads from that folder.
 extensions:
   enabled: true            # load the extensions in that folder. true | false
   turned_off: []           # extensions that stay off, by folder name, e.g. [youtube-theater]. The switches in
                            # "Plugins" change this list; removing a name turns that extension back on
   folder: ""               # where they live; empty = the extensions folder next to this file
+  chrome_web_store: true   # let `valerie extensions add <Chrome Web Store link or id>` add extensions. true | false

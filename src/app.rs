@@ -13658,7 +13658,7 @@ impl App {
             if self.state.extension_grants.get(&e.name) == Some(&e.print) {
                 self.ext_loading += 1;
                 let (p, name) = (self.proxy.clone(), e.name.clone());
-                crate::extensions::load(e.name.clone(), &e.dir, move |result| send(&p, UserEvent::ExtensionLoaded { name, result, announce }));
+                crate::extensions::load(e.name.clone(), &e.dir, e.appex, move |result| send(&p, UserEvent::ExtensionLoaded { name, result, announce }));
             } else if !self.ext_asking {
                 self.ext_asking = true;
                 let wants = if e.wants.is_empty() { "nothing special".to_string() } else { e.wants.iter().take(12).cloned().collect::<Vec<_>>().join(", ") };

@@ -246,6 +246,8 @@ pub struct ExtensionsConfig {
     pub enabled: bool,
     pub turned_off: Vec<String>,
     pub folder: String,
+    #[serde(default = "yes")]
+    pub chrome_web_store: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

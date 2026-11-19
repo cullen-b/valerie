@@ -19,6 +19,8 @@ pub struct Found {
     /// It has a toolbar button (which may open a popup), and an options page.
     pub button: bool,
     pub options: bool,
+    /// A `.appex` bundle from an installed Mac app (or a symlink to one), not an unpacked folder.
+    pub appex: bool,
 }
 
 pub fn dir(config: &crate::config::ExtensionsConfig) -> PathBuf {
@@ -49,7 +51,9 @@ pub fn find(root: &Path) -> Vec<Found> {
         .flatten()
         .filter_map(|e| {
             let dir = e.path();
-            let text = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
+            let appex = std::fs::canonicalize(&dir).ok().is_some_and(|p| p.extension().is_some_and(|x| x == "appex"));
+            let manifest = if appex { dir.join("Contents/Resources/manifest.json") } else { dir.join("manifest.json") };
+            let text = std::fs::read_to_string(manifest).ok()?;
             let m: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
             let name = e.file_name().to_string_lossy().into_owned();
             let title = m["name"].as_str().filter(|t| !t.starts_with("__MSG_")).unwrap_or(&name).to_string();
@@ -66,7 +70,7 @@ pub fn find(root: &Path) -> Vec<Found> {
             let button = ["action", "browser_action", "page_action"].iter().any(|k| m.get(*k).is_some());
             let options = m.get("options_page").is_some() || m.get("options_ui").is_some();
             let description = m["description"].as_str().filter(|t| !t.starts_with("__MSG_")).unwrap_or("").to_string();
-            Some(Found { name, dir, title, description, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options })
+            Some(Found { name, dir, title, description, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options, appex })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -539,12 +543,22 @@ mod mac {
     }
 
     /// Load an extension folder; `done` gets an error message when it can't be.
-    pub fn load(name: String, dir: &std::path::Path, done: impl FnOnce(Result<(), String>) + 'static) {
+    pub fn load(name: String, dir: &std::path::Path, appex: bool, done: impl FnOnce(Result<(), String>) + 'static) {
         let (Some(ctrl), Some(ext_cls)) = (controller(), AnyClass::get(c"WKWebExtension")) else {
             return done(Err("this macOS can't run browser extensions (it needs macOS 15.4 or later)".into()));
         };
         if LOADED.with(|l| l.borrow().iter().any(|(n, _)| *n == name)) {
             return done(Ok(()));
+        }
+        // An app extension is opened as a bundle, so WebKit can reach the app that contains it (native messaging).
+        let bundle: Option<Retained<AnyObject>> = if appex {
+            let path = NSString::from_str(&std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()).to_string_lossy());
+            unsafe { msg_send![objc2::class!(NSBundle), bundleWithPath: &*path] }
+        } else {
+            None
+        };
+        if appex && bundle.is_none() {
+            return done(Err("couldn't open the extension's app bundle".into()));
         }
         let once = RefCell::new(Some((done, name, ctrl)));
         let block = block2::RcBlock::new(move |ext: *mut AnyObject, err: *mut AnyObject| {
@@ -583,9 +597,13 @@ mod mac {
             }
         });
         unsafe {
-            let path = NSString::from_str(&dir.to_string_lossy());
-            let url: *mut AnyObject = msg_send![objc2::class!(NSURL), fileURLWithPath: &*path, isDirectory: true];
-            let _: () = msg_send![ext_cls, extensionWithResourceBaseURL: url, completionHandler: &*block];
+            if let Some(bundle) = &bundle {
+                let _: () = msg_send![ext_cls, extensionWithAppExtensionBundle: &**bundle, completionHandler: &*block];
+            } else {
+                let path = NSString::from_str(&dir.to_string_lossy());
+                let url: *mut AnyObject = msg_send![objc2::class!(NSURL), fileURLWithPath: &*path, isDirectory: true];
+                let _: () = msg_send![ext_cls, extensionWithResourceBaseURL: url, completionHandler: &*block];
+            }
         }
     }
 
@@ -715,7 +733,7 @@ mod other {
     pub fn loaded() -> Vec<String> {
         vec![]
     }
-    pub fn load(_name: String, _dir: &std::path::Path, done: impl FnOnce(Result<(), String>) + 'static) {
+    pub fn load(_name: String, _dir: &std::path::Path, _appex: bool, done: impl FnOnce(Result<(), String>) + 'static) {
         done(Err("browser extensions work on macOS 15.4 or later".into()))
     }
     pub fn unload(_name: &str) -> Result<(), String> {

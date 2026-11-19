@@ -634,11 +634,11 @@ Examples:
 ## Browser extensions
 
 Unpacked web extensions (a folder with a manifest.json, as for Safari or Chrome "load unpacked") go in `extensions/`
-(macOS 15.4 or later). Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
+(macOS 15.4 or later). A Safari extension inside an installed app (a `Name.appex` bundle, or a symlink to one, whose manifest is `Contents/Resources/manifest.json`) goes there too. Valerie asks the user once before loading each one. "Extensions" in the command bar lists them
 and opens their popups and options pages. To turn one off, never move or delete its folder: use
 `"{exe}" plugins off <name>` (`on` turns it back on), the switch in "Plugins", or `extensions.turned_off: [<folder name>]`.
 It stops right away, and open pages reload without it. `extensions.enabled: false` turns them all off. A new folder is
-picked up without a restart. To change how a site behaves, prefer a plugin with a `script.js`: it works on every platform and
+picked up without a restart. To install one from the Chrome Web Store, run `"{exe}" extensions add <store link or 32-letter id>` (`extensions.chrome_web_store: false` turns that off). To change how a site behaves, prefer a plugin with a `script.js`: it works on every platform and
 can use Valerie's commands and settings. Both can be shared in the marketplace.
 
 ## Limits

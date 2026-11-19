@@ -10,6 +10,7 @@ mod config;
 mod connect;
 mod crypt;
 mod extensions;
+mod chrome_store;
 mod import;
 mod llm_guide;
 mod mcp;
@@ -51,6 +52,7 @@ USAGE:
   valerie import-passwords <csv> [vault]  import a Chrome/Arc/Safari/1Password CSV export into a vault
   valerie default-config  print every config option with its default
   valerie llm-guide       print the guide that lets an AI assistant customise Valerie
+  valerie extensions add <link or id>  add an extension from the Chrome Web Store (asked about before it loads)
   valerie check-config    validate config.yaml and every plugin (prints exact errors)
   valerie strings         print Valerie's words, ready to translate into strings/<language>.yaml
   valerie call <tool> [json]  call a browser tool, e.g. valerie call list_tabs '{}'  
@@ -683,6 +685,23 @@ fn main() -> anyhow::Result<()> {
                     }
                     println!("\nvalerie plugins search <words> | install <name> | on <name> | off <name> | share <name>  (add --extension when a plugin has the same name)");
                 }
+            }
+            return Ok(());
+        }
+        Some("extensions") => {
+            use anyhow::Context;
+            match args.get(1).map(String::as_str) {
+                Some("add") => {
+                    let link = args.get(2).context("usage: valerie extensions add <Chrome Web Store link or extension id>")?;
+                    if !config.extensions.chrome_web_store {
+                        anyhow::bail!("adding from the Chrome Web Store is off (extensions.chrome_web_store: false)");
+                    }
+                    let dir = extensions::dir(&config.extensions);
+                    let name = chrome_store::add(link, &dir)?;
+                    let next = if extensions::supported() { "Valerie asks once before loading it" } else { "browser extensions don't run on this system yet" };
+                    println!("Added {name} to {} ({next}).", dir.join(&name).display());
+                }
+                _ => println!("valerie extensions add <Chrome Web Store link or extension id>"),
             }
             return Ok(());
         }
