@@ -1,7 +1,7 @@
 //! Adding an extension from the Chrome Web Store: download its package, unpack it into the extensions folder, and let
 //! Valerie's usual "Load this extension?" question take it from there.
 use anyhow::{bail, Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Marks a folder that came from the store, so adding the same extension again updates it and nothing else.
 const MARKER: &str = ".chrome-web-store-id";
@@ -34,15 +34,8 @@ pub fn zip_of(crx: &[u8]) -> Result<&[u8]> {
 
 /// A folder name from the manifest's name (looked up in its translations when it's a `__MSG_x__` key).
 fn folder_name(dir: &Path, id: &str) -> String {
-    let read = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')).ok());
-    let manifest = read(dir.join("manifest.json")).unwrap_or_default();
-    let mut name = manifest["name"].as_str().unwrap_or("").to_string();
-    if let Some(key) = name.strip_prefix("__MSG_").and_then(|k| k.strip_suffix("__")).map(str::to_ascii_lowercase) {
-        let locale = manifest["default_locale"].as_str().unwrap_or("en");
-        let messages = read(dir.join("_locales").join(locale).join("messages.json")).unwrap_or_default();
-        let found = messages.as_object().and_then(|m| m.iter().find(|(k, _)| k.to_ascii_lowercase() == key)).and_then(|(_, v)| v["message"].as_str());
-        name = found.unwrap_or("").to_string();
-    }
+    let manifest = std::fs::read_to_string(dir.join("manifest.json")).ok().and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok()).unwrap_or_default();
+    let name = crate::extensions::manifest_text(&manifest, "name", dir);
     let slug = name.to_ascii_lowercase().split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-");
     if slug.is_empty() { id.to_string() } else { slug.chars().take(40).collect::<String>().trim_end_matches('-').to_string() }
 }

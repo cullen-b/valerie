@@ -52,7 +52,8 @@ USAGE:
   valerie import-passwords <csv> [vault]  import a Chrome/Arc/Safari/1Password CSV export into a vault
   valerie default-config  print every config option with its default
   valerie llm-guide       print the guide that lets an AI assistant customise Valerie
-  valerie extensions add <link or id>  add an extension from the Chrome Web Store (asked about before it loads)
+  valerie extensions      list browser extensions, what won't work in each, and Safari extensions in your apps
+  valerie extensions add <app | link | id>  add an app's Safari extension, or one from the Chrome Web Store
   valerie check-config    validate config.yaml and every plugin (prints exact errors)
   valerie strings         print Valerie's words, ready to translate into strings/<language>.yaml
   valerie call <tool> [json]  call a browser tool, e.g. valerie call list_tabs '{}'  
@@ -648,7 +649,7 @@ fn main() -> anyhow::Result<()> {
                         println!("{name} replaces these windows of Valerie's (it asks before it does): {}", e.replaces.join(", "));
                     }
                     let dir = market::install(e, &plugins::plugins_dir(), &ext_dir)?;
-                    let next = if e.is_extension() { "Valerie asks once before loading it; needs macOS 15.4 or later" } else { "Valerie picks it up by itself" };
+                    let next = if e.is_extension() && !extensions::supported() { extensions::unsupported_reason() } else if e.is_extension() { "Valerie asks once before loading it" } else { "Valerie picks it up by itself" };
                     println!("Installed the {} {name} in {} ({next}).", e.noun(), dir.display());
                 }
                 Some(word @ ("on" | "off")) => {
@@ -689,19 +690,54 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("extensions") => {
-            use anyhow::Context;
             match args.get(1).map(String::as_str) {
                 Some("add") => {
-                    let link = args.get(2).context("usage: valerie extensions add <Chrome Web Store link or extension id>")?;
-                    if !config.extensions.chrome_web_store {
-                        anyhow::bail!("adding from the Chrome Web Store is off (extensions.chrome_web_store: false)");
-                    }
+                    let what = args[2..].join(" ");
+                    anyhow::ensure!(!what.trim().is_empty(), "usage: valerie extensions add <app name | Chrome Web Store link or extension id>");
                     let dir = extensions::dir(&config.extensions);
-                    let name = chrome_store::add(link, &dir)?;
-                    let next = if extensions::supported() { "Valerie asks once before loading it" } else { "browser extensions don't run on this system yet" };
-                    println!("Added {name} to {} ({next}).", dir.join(&name).display());
+                    let next = if extensions::supported() { "Valerie asks once before loading it" } else { extensions::unsupported_reason() };
+                    if let Some(app) = extensions::in_apps().into_iter().find(|a| a.app.eq_ignore_ascii_case(what.trim())) {
+                        let name = extensions::add_from_app(&app, &dir)?;
+                        println!("Added {}'s Safari extension as {} ({next}).", app.app, dir.join(&name).display());
+                    } else if chrome_store::extension_id(&what).is_some() {
+                        if !config.extensions.chrome_web_store {
+                            anyhow::bail!("adding from the Chrome Web Store is off (extensions.chrome_web_store: false)");
+                        }
+                        let name = chrome_store::add(&what, &dir)?;
+                        println!("Added {name} to {} ({next}).", dir.join(&name).display());
+                        println!("This is the Chrome version, running on Safari's engine: many work, some don't. If the extension also comes as a Safari extension (often inside its Mac app), that one is the safer choice.");
+                        if let Some(e) = extensions::find(&dir).into_iter().find(|e| e.name == name).filter(|e| !e.limits.is_empty()) {
+                            println!("Won't work here: {}.", e.limits.join(", "));
+                        }
+                    } else {
+                        anyhow::bail!("{what} isn't an installed app with a Safari extension, a Chrome Web Store link, or an extension ID (run `valerie extensions` to see what's here)");
+                    }
                 }
-                _ => println!("valerie extensions add <Chrome Web Store link or extension id>"),
+                _ => {
+                    let dir = extensions::dir(&config.extensions);
+                    let found = extensions::find(&dir);
+                    for e in &found {
+                        let limits = if e.limits.is_empty() { String::new() } else { format!("  [won't work here: {}]", e.limits.join(", ")) };
+                        println!("{:<24} {} {}{}{limits}", e.name, e.title, e.version, if e.appex { "  (Safari extension from an app)" } else { "" });
+                    }
+                    if found.is_empty() {
+                        println!("No extensions in {} yet.", dir.display());
+                    }
+                    if !extensions::supported() {
+                        println!("({})", extensions::unsupported_reason());
+                    }
+                    if config.extensions.offer_from_apps {
+                        let have: Vec<std::path::PathBuf> = found.iter().filter(|e| e.appex).filter_map(|e| std::fs::canonicalize(&e.dir).ok()).collect();
+                        let offers: Vec<_> = extensions::in_apps().into_iter().filter(|a| !have.contains(&std::fs::canonicalize(&a.appex).unwrap_or_default())).collect();
+                        if !offers.is_empty() {
+                            println!("\nSafari extensions in your apps (valerie extensions add <app>):");
+                            for a in offers {
+                                println!("  {}", a.app);
+                            }
+                        }
+                    }
+                    println!("\nvalerie extensions add <app name | Chrome Web Store link or extension id>");
+                }
             }
             return Ok(());
         }

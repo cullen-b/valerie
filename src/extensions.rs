@@ -21,6 +21,124 @@ pub struct Found {
     pub options: bool,
     /// A `.appex` bundle from an installed Mac app (or a symlink to one), not an unpacked folder.
     pub appex: bool,
+    /// What it uses that Valerie can't do (see `limits`).
+    pub limits: Vec<String>,
+}
+
+/// Permissions WebKit's extension engine provides; an extension asking for any other (most are Chrome-only) won't get it.
+const ENGINE_PERMISSIONS: &[&str] = &[
+    "activeTab", "alarms", "clipboardWrite", "contextMenus", "cookies", "declarativeNetRequest", "declarativeNetRequestFeedback",
+    "declarativeNetRequestWithHostAccess", "menus", "nativeMessaging", "scripting", "storage", "tabs", "unlimitedStorage",
+    "webNavigation", "webRequest",
+];
+
+/// What an extension's manifest asks for that won't work in Valerie: permissions the engine lacks, and parts Valerie
+/// doesn't show yet. Empty when everything it declares is covered.
+pub fn limits(m: &Value) -> Vec<String> {
+    let chrome_only: Vec<&str> = m["permissions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|p| !p.contains("://") && *p != "<all_urls>" && !ENGINE_PERMISSIONS.contains(p))
+        .collect();
+    let mut out = Vec::new();
+    if !chrome_only.is_empty() {
+        out.push(format!("Chrome-only features ({})", chrome_only.join(", ")));
+    }
+    let perms = |name: &str| m["permissions"].as_array().is_some_and(|a| a.iter().any(|p| p == name));
+    if perms("contextMenus") || perms("menus") {
+        out.push("right-click menu items".into());
+    }
+    if m["commands"].as_object().is_some_and(|c| !c.is_empty()) {
+        out.push("keyboard shortcuts".into());
+    }
+    if (m.get("side_panel").is_some() || m.get("sidebar_action").is_some()) && !perms("sidePanel") {
+        out.push("a side panel".into());
+    }
+    if m.get("devtools_page").is_some() {
+        out.push("developer tools panels".into());
+    }
+    if m.get("chrome_url_overrides").is_some() {
+        out.push("replacing Chrome pages (new tab, history)".into());
+    }
+    if m["optional_permissions"].as_array().is_some_and(|a| !a.is_empty()) {
+        out.push("permissions it asks for later".into());
+    }
+    out
+}
+
+/// A manifest field that may be a `__MSG_key__` placeholder, looked up in the extension's default-language messages.
+pub fn manifest_text(m: &Value, field: &str, dir: &Path) -> String {
+    let raw = m[field].as_str().unwrap_or("");
+    let Some(key) = raw.strip_prefix("__MSG_").and_then(|k| k.strip_suffix("__")).map(str::to_ascii_lowercase) else { return raw.to_string() };
+    let file = dir.join("_locales").join(m["default_locale"].as_str().unwrap_or("en")).join("messages.json");
+    let messages: Value = std::fs::read_to_string(file).ok().and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok()).unwrap_or_default();
+    let found = messages.as_object().and_then(|o| o.iter().find(|(k, _)| k.to_ascii_lowercase() == key)).and_then(|(_, v)| v["message"].as_str());
+    found.unwrap_or("").to_string()
+}
+
+/// Why extensions can't run here, when they can't (shown in place of their status).
+pub fn unsupported_reason() -> &'static str {
+    if cfg!(target_os = "macos") { "needs macOS 15.4 or later" } else { "browser extensions only run on Mac so far" }
+}
+
+/// A Safari extension inside an installed app.
+#[derive(Debug, Clone)]
+pub struct InApp {
+    /// The app's name, e.g. "Bitwarden".
+    pub app: String,
+    pub appex: PathBuf,
+}
+
+/// Safari extensions inside the apps in /Applications and ~/Applications (Mac only).
+pub fn in_apps() -> Vec<InApp> {
+    if !cfg!(target_os = "macos") {
+        return vec![];
+    }
+    apps_in(&[PathBuf::from("/Applications"), dirs::home_dir().unwrap_or_default().join("Applications")])
+}
+
+fn apps_in(roots: &[PathBuf]) -> Vec<InApp> {
+    let mut out = Vec::new();
+    for app in roots.iter().flat_map(|r| std::fs::read_dir(r).into_iter().flatten().flatten()) {
+        let app = app.path();
+        if app.extension().is_none_or(|x| x != "app") {
+            continue;
+        }
+        for ex in std::fs::read_dir(app.join("Contents/PlugIns")).into_iter().flatten().flatten() {
+            let ex = ex.path();
+            let point = plist::Value::from_file(ex.join("Contents/Info.plist")).ok().and_then(|v| {
+                v.as_dictionary()?.get("NSExtension")?.as_dictionary()?.get("NSExtensionPointIdentifier")?.as_string().map(str::to_string)
+            });
+            if point.as_deref() == Some("com.apple.Safari.web-extension") && ex.join("Contents/Resources/manifest.json").is_file() {
+                let name = app.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                out.push(InApp { app: name, appex: ex });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.app.to_lowercase().cmp(&b.app.to_lowercase()));
+    out
+}
+
+/// Put a link to an app's Safari extension in the extensions folder (`dir/<app name>`); returns the folder name.
+pub fn add_from_app(e: &InApp, dir: &Path) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let name = e.app.to_lowercase().split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-");
+    anyhow::ensure!(!name.is_empty(), "{} has no usable name", e.app);
+    std::fs::create_dir_all(dir).with_context(|| format!("couldn't make {}", dir.display()))?;
+    let link = dir.join(&name);
+    if let Ok(to) = std::fs::read_link(&link) {
+        if to == e.appex {
+            return Ok(name);
+        }
+    }
+    anyhow::ensure!(!link.exists() && link.symlink_metadata().is_err(), "there's already an extension called {name} in {}", dir.display());
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&e.appex, &link).with_context(|| format!("couldn't link {} into {}", e.appex.display(), dir.display()))?;
+    #[cfg(not(unix))]
+    anyhow::bail!("Safari extensions only run on Mac");
+    Ok(name)
 }
 
 pub fn dir(config: &crate::config::ExtensionsConfig) -> PathBuf {
@@ -56,7 +174,8 @@ pub fn find(root: &Path) -> Vec<Found> {
             let text = std::fs::read_to_string(manifest).ok()?;
             let m: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
             let name = e.file_name().to_string_lossy().into_owned();
-            let title = m["name"].as_str().filter(|t| !t.starts_with("__MSG_")).unwrap_or(&name).to_string();
+            let base = if appex { dir.join("Contents/Resources") } else { dir.clone() };
+            let title = Some(manifest_text(&m, "name", &base)).filter(|t| !t.is_empty()).unwrap_or_else(|| name.clone());
             let mut wants: Vec<String> = ["permissions", "host_permissions"]
                 .iter()
                 .flat_map(|k| m[*k].as_array().cloned().unwrap_or_default())
@@ -69,8 +188,9 @@ pub fn find(root: &Path) -> Vec<Found> {
             wants.dedup();
             let button = ["action", "browser_action", "page_action"].iter().any(|k| m.get(*k).is_some());
             let options = m.get("options_page").is_some() || m.get("options_ui").is_some();
-            let description = m["description"].as_str().filter(|t| !t.starts_with("__MSG_")).unwrap_or("").to_string();
-            Some(Found { name, dir, title, description, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options, appex })
+            let description = manifest_text(&m, "description", &base);
+            let limits = limits(&m);
+            Some(Found { name, dir, title, description, version: m["version"].as_str().unwrap_or("").to_string(), wants, print: crate::blocking::hash(&text), button, options, appex, limits })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -756,6 +876,45 @@ pub use other::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limits_name_what_valerie_cant_do() {
+        let m: Value = serde_json::from_str(r#"{"permissions":["tabs","storage","offscreen","sidePanel","contextMenus","https://*/*"],
+            "commands":{"autofill":{}},"optional_permissions":["privacy"]}"#).unwrap();
+        assert_eq!(limits(&m), ["Chrome-only features (offscreen, sidePanel)", "right-click menu items", "keyboard shortcuts", "permissions it asks for later"]);
+        let ok: Value = serde_json::from_str(r#"{"permissions":["tabs","scripting","storage","webRequest"],"host_permissions":["<all_urls>"]}"#).unwrap();
+        assert!(limits(&ok).is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn safari_extensions_in_apps_are_found_and_linked() {
+        let root = std::env::temp_dir().join(format!("valerie-ext-apps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let make = |app: &str, point: &str| {
+            let ex = root.join(format!("Apps/{app}.app/Contents/PlugIns/{app} Extension.appex/Contents"));
+            std::fs::create_dir_all(ex.join("Resources")).unwrap();
+            std::fs::write(ex.join("Resources/manifest.json"), r#"{"name":"X","version":"1","permissions":["storage","offscreen"]}"#).unwrap();
+            let mut ext = plist::Dictionary::new();
+            ext.insert("NSExtensionPointIdentifier".into(), point.into());
+            let mut info = plist::Dictionary::new();
+            info.insert("NSExtension".into(), ext.into());
+            plist::Value::Dictionary(info).to_file_xml(ex.join("Info.plist")).unwrap();
+        };
+        make("Pass Keeper", "com.apple.Safari.web-extension");
+        make("Share Thing", "com.apple.share-services");
+        let found = apps_in(&[root.join("Apps")]);
+        assert_eq!(found.iter().map(|a| a.app.as_str()).collect::<Vec<_>>(), ["Pass Keeper"]);
+        let dir = root.join("extensions");
+        assert_eq!(add_from_app(&found[0], &dir).unwrap(), "pass-keeper");
+        assert_eq!(add_from_app(&found[0], &dir).unwrap(), "pass-keeper");
+        let listed = find(&dir);
+        assert!(listed[0].appex && listed[0].limits == ["Chrome-only features (offscreen)"]);
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        let clash = InApp { app: "Other".into(), appex: found[0].appex.clone() };
+        assert!(add_from_app(&clash, &dir).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn set_on_edits_the_list_and_keeps_the_rest_of_the_file() {

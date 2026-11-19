@@ -8386,6 +8386,19 @@ impl App {
                 self.show_extensions();
             }
             Command::ExtensionAction { name, options } => self.extension_action(&name, options),
+            Command::AddExtension { app } => {
+                self.close_bar();
+                let found = crate::extensions::in_apps().into_iter().find(|a| a.app.eq_ignore_ascii_case(app.trim()));
+                match found.map(|a| crate::extensions::add_from_app(&a, &crate::extensions::dir(&self.config.extensions))) {
+                    Some(Ok(name)) => {
+                        self.toast(&format!("Added {app}'s extension. Valerie asks before loading it"));
+                        crate::log::line("extensions", format!("linked {app}'s Safari extension as {name}"));
+                        self.load_extensions(true);
+                    }
+                    Some(Err(e)) => self.toast(&format!("Couldn't add {app}'s extension: {e:#}")),
+                    None => self.toast(&format!("No app called {app} with a Safari extension")),
+                }
+            }
             Command::TogglePlugin { name, on, extension } => {
                 self.close_bar();
                 self.toggle_plugin(&name, on, extension);
@@ -12338,7 +12351,7 @@ impl App {
         let loaded = crate::extensions::loaded();
         // Then a switch would do nothing.
         let off_because = if !crate::extensions::supported() {
-            Some("needs macOS 15.4 or later")
+            Some(crate::extensions::unsupported_reason())
         } else if !self.config.extensions.enabled {
             Some("all extensions are off in settings")
         } else {
@@ -13663,7 +13676,8 @@ impl App {
                 self.ext_asking = true;
                 let wants = if e.wants.is_empty() { "nothing special".to_string() } else { e.wants.iter().take(12).cloned().collect::<Vec<_>>().join(", ") };
                 let (p, name, print) = (self.proxy.clone(), e.name.clone(), e.print.clone());
-                platform::ask(&self.chrome, &format!("Load the extension “{}”?", e.title), &format!("It was added to your extensions folder. It asks for: {wants}."), "Load", "Not Now", move |ok| {
+                let missing = if e.limits.is_empty() { String::new() } else { format!(" Valerie can't give it: {}, so those parts won't work.", e.limits.join(", ")) };
+                platform::ask(&self.chrome, &format!("Load the extension “{}”?", e.title), &format!("It was added to your extensions folder. It asks for: {wants}.{missing}"), "Load", "Not Now", move |ok| {
                     send(&p, UserEvent::ExtensionGrant { name, print, allowed: ok });
                 });
             }
@@ -13726,8 +13740,15 @@ impl App {
     /// The extensions in the command bar: open a popup or options page, or see why one isn't running.
     fn show_extensions(&mut self) {
         let found = crate::extensions::find(&crate::extensions::dir(&self.config.extensions));
-        if found.is_empty() {
-            return self.toast(&format!("No extensions yet: put an unpacked extension's folder in {}", crate::extensions::dir(&self.config.extensions).display()));
+        // Safari extensions in installed apps that aren't in the folder yet.
+        let have: Vec<std::path::PathBuf> = found.iter().filter(|e| e.appex).filter_map(|e| std::fs::canonicalize(&e.dir).ok()).collect();
+        let offers: Vec<crate::extensions::InApp> = if self.config.extensions.offer_from_apps {
+            crate::extensions::in_apps().into_iter().filter(|a| !have.contains(&std::fs::canonicalize(&a.appex).unwrap_or_default())).collect()
+        } else {
+            vec![]
+        };
+        if found.is_empty() && offers.is_empty() {
+            return self.toast(&format!("No extensions yet: install an app that comes with a Safari extension, or put an unpacked extension's folder in {}", crate::extensions::dir(&self.config.extensions).display()));
         }
         let loaded = crate::extensions::loaded();
         let mut items = Vec::new();
@@ -13735,7 +13756,7 @@ impl App {
             let on = loaded.contains(&e.name);
             let can_switch = crate::extensions::supported() && self.config.extensions.enabled;
             let status = if !crate::extensions::supported() {
-                "needs macOS 15.4 or later"
+                crate::extensions::unsupported_reason()
             } else if !self.config.extensions.enabled {
                 "extensions are off (extensions.enabled)"
             } else if on {
@@ -13747,7 +13768,8 @@ impl App {
             } else {
                 "waiting for you to allow it"
             };
-            let sub = format!("{} {} · {status}", e.title, e.version);
+            let missing = if e.limits.is_empty() { String::new() } else { format!(" · won't work here: {}", e.limits.join(", ")) };
+            let sub = format!("{} {} · {status}{missing}", e.title, e.version);
             let before = items.len();
             if on && e.button {
                 items.push(json!({ "kind": "plugin", "title": format!("{}: button / popup", e.title), "sub": sub, "cmd": { "cmd": "extension_action", "name": e.name } }));
@@ -13763,6 +13785,10 @@ impl App {
             if items.len() == before {
                 items.push(json!({ "kind": "plugin", "title": e.title, "sub": sub, "cmd": { "cmd": "copy_text", "text": e.dir.to_string_lossy() } }));
             }
+        }
+        for a in offers {
+            let sub = format!("Safari extension that came with {} · Valerie asks before loading it", a.app);
+            items.push(json!({ "kind": "plugin", "title": format!("Add {}", a.app), "sub": sub, "cmd": { "cmd": "add_extension", "app": a.app } }));
         }
         self.open_list("Extensions", items);
     }

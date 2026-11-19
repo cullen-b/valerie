@@ -248,6 +248,8 @@ pub struct ExtensionsConfig {
     pub folder: String,
     #[serde(default = "yes")]
     pub chrome_web_store: bool,
+    #[serde(default = "yes")]
+    pub offer_from_apps: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
