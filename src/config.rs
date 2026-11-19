@@ -1072,6 +1072,10 @@ fn hint_mode_stay() -> String {
     "stay".into()
 }
 
+fn hint_timeout_default() -> u64 {
+    30
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VimConfig {
     pub enabled: bool,
@@ -1091,6 +1095,8 @@ pub struct VimConfig {
     pub remember_hints: bool,
     #[serde(default = "hint_mode_stay")]
     pub hint_mode: String,
+    #[serde(default = "hint_timeout_default")]
+    pub hint_timeout: u64,
     pub copy_zones: f64,
     pub excluded_hosts: Vec<String>,
     pub pass_at_edge: Vec<String>,

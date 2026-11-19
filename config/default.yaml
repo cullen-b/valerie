@@ -802,6 +802,7 @@ vim:
   hold_scroll_max_speed: 14000     # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
   hint_mode: stay          # stay: after f, hints come back after each click, on each new page and after scrolling, until Escape; once: f is one click, then hints go. one of: stay | once
+  hint_timeout: 30        # with hint_mode: stay, hints go after this many seconds without a click; 0 keeps them until Escape. seconds
   remember_hints: true     # a label you click with f stays with that button on that site from then on, and no other button there gets it. true | false
   hint_labels: stable      # stable: a button gets the same letters every time (from its text and link), so "Merge" is the same keys on every visit; reading_order: shortest labels, numbered top to bottom. one of: stable | reading_order
   copy_zones: 20           # copy mode (c) splits the page into at most this many parts at first; more gives smaller parts
