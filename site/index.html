@@ -127,7 +127,17 @@ html[data-lay=task] .page { box-shadow: inset 1px 1px #808080, inset -1px -1px #
 .meet .grid4 { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; } .meet .t { border-radius: 14px; background: linear-gradient(140deg, color-mix(in srgb, var(--c) 55%, #17181c), color-mix(in srgb, var(--c) 22%, #17181c)); position: relative; display: grid; place-items: center; }
 .meet .t i { width: 74px; height: 74px; border-radius: 50%; background: var(--c); font: 600 26px/74px var(--body); text-align: center; } .meet .t span { position: absolute; left: 12px; bottom: 10px; font-size: 12.5px; background: rgba(0,0,0,.45); padding: 3px 9px; border-radius: 7px; } .meet .t.talk { outline: 3px solid #5fd39a; outline-offset: -3px; }
 .meet .bar2 { display: flex; justify-content: center; gap: 12px; } .meet .bar2 i { width: 42px; height: 42px; border-radius: 50%; background: #2c2e35; } .meet .bar2 i.end { width: 64px; border-radius: 21px; background: #e5484d; }
-html[data-fx~=darkpage] .pg:not(.meet) { filter: invert(.93) hue-rotate(180deg); }
+.pl { background: #14131a; color: #f1eff7; padding: 28px 32px; }
+.pl .top2 { display: flex; gap: 22px; align-items: flex-end; margin-bottom: 20px; } .pl .cover { width: 150px; height: 150px; border-radius: 10px; flex: none; background: radial-gradient(circle at 30% 30%, #ffd08a, transparent 55%), linear-gradient(140deg, #ff7a59, #7a3cff); }
+.pl .top2 small { opacity: .6; } .pl .top2 b { display: block; font: 700 34px/1.05 var(--body); margin: 6px 0; } .pl .top2 span { opacity: .7; font-size: 13px; }
+.pl .tr { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr) 44px; gap: 12px; align-items: center; height: 40px; border-top: 1px solid rgba(255,255,255,.08); font-size: 13.5px; } .pl .tr span { opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .pl .tr.on b { color: #ff9a7a; }
+.doc { background: #fff; padding: 34px 12%; color: #26252b; }
+.doc small { color: #0b7d59; font-weight: 600; } .doc h3 { font: 700 30px/1.1 var(--body); margin: 6px 0 14px; } .doc h4 { font: 600 16px var(--body); margin: 18px 0 6px; } .doc p, .doc li { font-size: 14px; line-height: 1.6; margin: 0 0 8px; } .doc ul { margin: 0; padding-left: 20px; } .doc mark { background: #fff0a3; padding: 0 2px; }
+.tt { background: #f6f7f4; padding: 22px 26px; display: flex; flex-direction: column; color: #26252b; }
+.tt .hd { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; } .tt .hd b { font-size: 22px; } .tt .hd span { color: #7a7c86; }
+.tt .wk { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; } .tt .day { display: flex; flex-direction: column; gap: 8px; } .tt .day > b { font-size: 12.5px; color: #5d5f69; }
+.tt .cl { border-radius: 9px; padding: 10px; font-size: 12.5px; line-height: 1.3; background: color-mix(in srgb, var(--c) 22%, #fff); border-left: 4px solid var(--c); flex: var(--f, 1); } .tt .cl span { display: block; opacity: .65; font-size: 11.5px; } .tt .gap { flex: var(--f, 1); }
+html[data-fx~=darkpage] .pg:not(.meet, .pl) { filter: invert(.93) hue-rotate(180deg); }
 html[data-fx~=zoom] .pg { zoom: 1.35; }
 
 /* tabs: the same five elements become sidebar rows, top tabs, taskbar buttons or sheep */
@@ -209,7 +219,11 @@ html:is([data-lay=side], [data-lay=bench], [data-lay=agent], [data-lay=right]) .
 html[data-lay=right] .sidebits { left: auto; right: 0; }
 .lights { position: absolute; left: 16px; top: 16px; display: flex; gap: 8px; } .lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
 .pill { position: absolute; left: 10px; top: 44px; width: 210px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--wfg) 10%, transparent); display: flex; align-items: center; padding: 0 12px; opacity: .85; }
-.spaces { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 14px; } .spaces i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .3; } .spaces i.cur { opacity: 1; background: var(--accent); }
+.spname { position: absolute; left: 0; right: 0; bottom: 36px; text-align: center; font-size: 12px; opacity: .65; }
+.spaces { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 14px; }
+.spaces i { position: relative; cursor: pointer; pointer-events: auto; transition: opacity .3s, background-color .3s, scale .3s; } .spaces i::before { content: ""; position: absolute; inset: -9px -7px; } .spaces i.cur { scale: 1.3; }
+.tab.off { opacity: 0 !important; pointer-events: none; }
+.cam { touch-action: pan-y; } .spaces i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .3; } .spaces i.cur { opacity: 1; background: var(--accent); }
 
 .outline { right: 8px; top: 8px; bottom: 8px; width: 222px; border-radius: 12px; padding: 18px 16px; background: color-mix(in srgb, var(--wfg) 8%, transparent); transform: translateX(60px); }
 html[data-lay=bench] .outline { opacity: 1; transform: none; transition-delay: .25s; }
@@ -318,6 +332,8 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .set { display: block; width: fit-content; max-width: 100%; margin: 0; padding: 11px 15px; border-radius: 11px; background: color-mix(in srgb, var(--ink) 11%, transparent); font: 13.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .set i { font-style: normal; opacity: .55; }
 .ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.seg { display: inline-flex; gap: 4px; padding: 5px; margin-bottom: 18px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 11%, transparent); }
+.seg button { border: 0; background: transparent; min-height: 38px; padding: 0 16px; border-radius: 10px; font-size: 15px; cursor: pointer; transition: background-color .3s, color .3s; } .seg button[aria-pressed=true] { background: var(--ink); color: var(--bg1); }
 .fine { font-size: 14.5px; opacity: .78; }
 .hint { display: flex; align-items: center; gap: 10px; margin-top: 30px; font-size: 14.5px; opacity: .78; }
 .hint i { width: 18px; height: 28px; border: 1.5px solid currentColor; border-radius: 10px; position: relative; }
@@ -377,7 +393,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   <div class="cam" id="cam">
     <div class="win" id="win">
       <div class="part meadow"><div class="gate">+</div></div>
-      <div class="part sidebits"><div class="lights"><i></i><i></i><i></i></div><div class="pill" data-url>northboundjournal.com</div><div class="spaces"><i class="cur"></i><i></i><i></i></div></div>
+      <div class="part sidebits"><div class="lights"><i></i><i></i><i></i></div><div class="pill" data-url>northboundjournal.com</div><div class="spname" id="spname">Personal</div><div class="spaces" id="dots"><i class="cur"></i><i></i><i></i></div></div>
       <div class="part stripbits"><div class="lights"><i></i><i></i><i></i></div></div>
       <div class="part toolbar"><i>←</i><i>→</i><i>↻</i><span data-url>northboundjournal.com</span><i>⋮</i></div>
       <div class="part titlebar"><span data-title>Northbound - Valerie 98</span><i>_</i><i>□</i><i>×</i></div>
@@ -403,6 +419,18 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
           <div class="days"><div class="d">Wed<i></i>25° <span>16°</span></div><div class="d">Thu<i></i>24° <span>15°</span></div><div class="d">Fri<i></i>24° <span>16°</span></div><div class="d">Sat<i class="cl"></i>21° <span>15°</span></div><div class="d">Sun<i></i>23° <span>14°</span></div><div class="d">Mon<i></i>25° <span>16°</span></div><div class="d">Tue<i class="cl"></i>22° <span>15°</span></div></div></div>
         <div class="pg meet"><div class="grid4"><div class="t talk" style="--c:#8f6bff"><i>PR</i><span>Priya Raman</span></div><div class="t" style="--c:#24b47e"><i>MO</i><span>Marcus Oyelaran</span></div><div class="t" style="--c:#4c8dff"><i>JL</i><span>Jun Li</span></div><div class="t" style="--c:#ff7a59"><i>You</i><span>You</span></div></div>
           <div class="bar2"><i></i><i></i><i></i><i class="end"></i></div></div>
+        <div class="pg pl"><div class="top2"><div class="cover"></div><div><small>Playlist</small><b>Evening, slowly</b><span>24 songs, 1 hr 31 min</span></div></div>
+          <div class="tr on"><span>1</span><b>Harbour Lights</b><span>Marit Solberg</span><span>3:42</span></div><div class="tr"><span>2</span><b>Paper Boats</b><span>The Quiet Hours</span><span>4:05</span></div><div class="tr"><span>3</span><b>Slow Train North</b><span>Elias Varga</span><span>5:18</span></div>
+          <div class="tr"><span>4</span><b>Linden Street</b><span>Ona Reyes</span><span>3:27</span></div><div class="tr"><span>5</span><b>After the Rain</b><span>Small Rooms</span><span>4:44</span></div><div class="tr"><span>6</span><b>Blue Hour</b><span>Marit Solberg</span><span>3:58</span></div><div class="tr"><span>7</span><b>Kitchen Radio</b><span>The Quiet Hours</span><span>2:51</span></div></div>
+        <div class="pg doc"><small>Bio 201, week 6</small><h3>Cellular respiration</h3><p>Cells release the energy stored in glucose in three stages. <mark>Most of the ATP comes from the last one</mark>, not from glycolysis.</p>
+          <h4>The three stages</h4><ul><li>Glycolysis, in the cytoplasm: glucose is split into two pyruvate.</li><li>The citric acid cycle, in the mitochondrial matrix.</li><li>Oxidative phosphorylation, across the inner membrane.</li></ul>
+          <h4>For Thursday's quiz</h4><p>Know where each stage happens, what goes in and what comes out. Redraw the electron transport chain from memory.</p></div>
+        <div class="pg tt"><div class="hd"><b>This week</b><span>Autumn term, week 6</span></div><div class="wk">
+          <div class="day"><b>Mon</b><div class="cl" style="--c:#24b47e">Bio 201<span>9:00, Hall B</span></div><div class="gap"></div><div class="cl" style="--c:#4c8dff; --f:2">Statistics<span>13:00, Room 14</span></div></div>
+          <div class="day"><b>Tue</b><div class="gap"></div><div class="cl" style="--c:#f2b632; --f:2">Writing seminar<span>11:00, Library 2</span></div><div class="gap"></div></div>
+          <div class="day"><b>Wed</b><div class="cl" style="--c:#24b47e">Bio 201<span>9:00, Hall B</span></div><div class="cl" style="--c:#8f6bff; --f:3">Bio lab<span>11:00, Lab 3</span></div></div>
+          <div class="day"><b>Thu</b><div class="cl" style="--c:#e5484d">Bio quiz<span>9:00, Hall B</span></div><div class="gap" style="--f:2"></div><div class="cl" style="--c:#4c8dff">Statistics<span>15:00, Room 14</span></div></div>
+          <div class="day"><b>Fri</b><div class="gap"></div><div class="cl" style="--c:#f2b632">Essay due<span>12:00</span></div><div class="gap" style="--f:2"></div></div></div></div>
       </div>
       <div class="part outline"><b>Outline</b><span class="cur">Seven days on the Lofoten coast</span><span class="sub">Getting there</span><span class="sub">Where to stay</span><span class="sub">What to pack</span><span>The route, day by day</span><span>Costs</span></div>
       <div class="part water"></div>
@@ -470,13 +498,13 @@ shortcuts_like: chrome</pre>
     </div></div>
   </section>
 
-  <section class="ch" data-look="forest" data-lay="bench" data-name="Workbench" style="--wd: 112%; --wg: 750">
+  <section class="ch" id="spaces" data-look="forest" data-lay="side" data-name="Spaces" style="--wd: 112%; --wg: 750">
     <div class="ch-in"><div class="txt">
       <h2><span class="l">A space for</span><span class="l">each side of you.</span></h2>
-      <p>School, work and home each get their own tabs, colors and logins. Split two tabs side by side, or keep a live outline next to the page.</p>
-      <pre class="set" translate="no">spaces:
-  - { name: School, profile: School, theme: forest }
-layout: { arrangement: workbench }</pre>
+      <p>School, work and home each get their own tabs, colors and logins. Swipe the window sideways to move between them.</p>
+      <div class="seg" id="seg" role="group" aria-label="Space"><button>Personal</button><button aria-pressed="true">School</button><button>Work</button></div>
+      <pre class="set" translate="no" id="spset">spaces:
+  - { name: School, profile: School, theme: forest }</pre>
     </div></div>
   </section>
 
@@ -603,7 +631,7 @@ function fit() {
 }
 
 // ---------- scroll: fade chapters, switch looks, move the camera ----------
-let picked = null;
+let picked = null, inSpaces = false, space = 0;
 let scale = 1, cx = 0, cy = 0, drift = 0, tiltX = 0, tiltY = 0, want = { drift: 0, tiltX: 0, tiltY: 0 }, ticking = false, current = chapters[0];
 function measure() {
   const vw = innerWidth, vh = innerHeight, wide = vw >= 860;
@@ -624,10 +652,11 @@ function onScroll() {
   }
   if (active !== current) {
     current = active; picked = null; press();
+    inSpaces = active.id === "spaces"; space = inSpaces ? 1 : 0; showSpace();
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
-  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : wear(active.dataset.look, active.dataset.lay);
+  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : wear(inSpaces ? SPACES[space].look : active.dataset.look, active.dataset.lay);
   const r = active.getBoundingClientRect(), p = clamp(-r.top / (r.height - vh || 1)) - 0.5;
   want.drift = -p * 34; kick();
 }
@@ -647,13 +676,74 @@ if (!calm && matchMedia("(hover: hover)").matches) addEventListener("pointermove
 });
 
 // ---------- tabs in the window work ----------
-const SITES = [["northboundjournal.com", "Northbound"], ["mail.acme.dev", "Inbox"], ["tracker.acme.dev/sprint-42", "Sprint 42"], ["forecast.app/lisbon", "Lisbon weather"], ["meet.acme.dev/design-review", "Design review"]];
-const tabs = $$(".tab"), pages = $$(".pg");
-tabs.forEach((t, i) => (t.onclick = () => {
-  tabs.forEach((o, n) => { o.classList.toggle("cur", n === i); pages[n].classList.toggle("cur", n === i); });
-  for (const el of $$("[data-url]")) el.textContent = SITES[i][0];
-  $("[data-title]").textContent = `${SITES[i][1]} - Valerie 98`;
-}));
+const SITES = [["northboundjournal.com", "Northbound"], ["mail.acme.dev", "Inbox"], ["tracker.acme.dev/sprint-42", "Sprint 42"], ["forecast.app/lisbon", "Lisbon weather"], ["meet.acme.dev/design-review", "Design review"],
+  ["play.acme.fm/evening-slowly", "Evening, slowly"], ["notes.acme.edu/bio-201", "Bio 201 notes"], ["portal.acme.edu/timetable", "Timetable"]];
+const tab = (label, color, page) => ({ label, color, page });
+const EVERYTHING = [tab("Northbound", "#ff7a59", 0), tab("Inbox (3)", "#4c8dff", 1), tab("Sprint 42", "#8f6bff", 2), tab("Lisbon weather", "#24b47e", 3), tab("Design review", "#f2b632", 4)];
+const SPACES = [
+  { name: "Personal", theme: "midnight", look: "classic", tabs: [tab("Northbound", "#ff7a59", 0), tab("Lisbon weather", "#4c8dff", 3), tab("Evening, slowly", "#f2b632", 5)] },
+  { name: "School", theme: "forest", look: "forest", tabs: [tab("Bio 201 notes", "#24b47e", 6), tab("Timetable", "#8f6bff", 7)] },
+  { name: "Work", theme: "ocean", look: "ocean", tabs: [tab("Sprint 42", "#8f6bff", 2), tab("Inbox (3)", "#4c8dff", 1), tab("Design review", "#f2b632", 4)] },
+];
+const tabs = $$(".tab"), pages = $$(".pg"), dots = $$("#dots i"), segs = $$("#seg button");
+function showTab(i) {
+  const page = tabs[i].page;
+  tabs.forEach((o, n) => o.classList.toggle("cur", n === i));
+  pages.forEach((pg, n) => pg.classList.toggle("cur", n === page));
+  for (const el of $$("[data-url]")) el.textContent = SITES[page][0];
+  $("[data-title]").textContent = `${SITES[page][1]} - Valerie 98`;
+}
+function setTabs(list) {
+  tabs.forEach((t, i) => {
+    const d = list[i];
+    t.classList.toggle("off", !d);
+    if (d) { t.querySelector(".lbl").textContent = d.label; t.style.setProperty("--c", d.color); t.page = d.page; }
+  });
+  showTab(0);
+}
+tabs.forEach((t, i) => (t.onclick = () => showTab(i)));
+
+// ---------- spaces: swipe the window, press an arrow key, or pick one ----------
+function showSpace() {
+  setTabs(inSpaces ? SPACES[space].tabs : EVERYTHING);
+  const sp = SPACES[space];
+  $("#spname").textContent = sp.name;
+  if (inSpaces) $("#spset").textContent = `spaces:\n  - { name: ${sp.name}, profile: ${sp.name}, theme: ${sp.theme} }`;
+  dots.forEach((d, n) => d.classList.toggle("cur", n === space));
+  segs.forEach((b, n) => b.setAttribute("aria-pressed", n === space));
+}
+let sliding = false;
+function goSpace(n) {
+  if (!inSpaces || sliding || n === space || n < 0 || n >= SPACES.length) return;
+  const dir = n > space ? 1 : -1, slide = (from, to, o) => tabs.map((t, i) => t.animate([{ transform: `translateX(${from}px)`, opacity: +!o }, { transform: `translateX(${to}px)`, opacity: +o }],
+    { duration: 190, delay: i * 22, easing: "cubic-bezier(.22,.9,.24,1)", fill: "both" }));
+  const land = () => { space = n; showSpace(); wear(SPACES[n].look, current.dataset.lay); };
+  if (calm) return land();
+  sliding = true;
+  Promise.all(slide(0, -70 * dir, 0).map((a) => a.finished)).then((out) => {
+    land();
+    return Promise.all(slide(70 * dir, 0, 1).map((a) => a.finished)).then((back) => [...out, ...back].forEach((a) => a.cancel()));
+  }).finally(() => (sliding = false));
+}
+segs.forEach((b, n) => (b.onclick = () => goSpace(n)));
+dots.forEach((d, n) => (d.onclick = () => goSpace(n)));
+addEventListener("keydown", (e) => { if (inSpaces && !e.metaKey && !e.ctrlKey && !e.altKey) { if (e.key === "ArrowRight") goSpace(space + 1); if (e.key === "ArrowLeft") goSpace(space - 1); } });
+let swiped = 0, rest = 0;
+addEventListener("wheel", (e) => {
+  if (!inSpaces || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  e.preventDefault();  // a sideways swipe changes space here instead of going back a page
+  if (Date.now() < rest) return;
+  swiped += e.deltaX;
+  if (Math.abs(swiped) > 40) { goSpace(space + Math.sign(swiped)); swiped = 0; rest = Date.now() + 700; }
+}, { passive: false });
+let downX = null, downY = 0;
+cam.addEventListener("pointerdown", (e) => { downX = e.clientX; downY = e.clientY; });
+addEventListener("pointerup", (e) => {
+  if (downX === null) return;
+  const dx = e.clientX - downX, dy = e.clientY - downY; downX = null;
+  if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy)) goSpace(space - Math.sign(dx));
+});
+addEventListener("pointercancel", () => (downX = null));
 
 // ---------- "what should yours look like": a wall of requests. Looks and layouts swap, extras stack ----------
 const ASKS = [
