@@ -653,7 +653,7 @@ Lisbon weather · Design review
     </div></div>
   </section>
 
-  <section class="ch" id="looks" data-look="v98" data-lay="task" data-name="Any look" data-steps="v98 task|pasture field|tank tank|black none|chrome strip" style="--wd: 120%; --wg: 850; height: 270vh">
+  <section class="ch" id="looks" data-look="v98" data-lay="task" data-name="Any look" data-steps="v98 task|pasture field|tank tank|black none|chrome strip" style="--wd: 120%; --wg: 850; height: 380vh">
     <div class="ch-in"><div class="txt">
       <h2><span class="l">Make it look</span><span class="l">like anything.</span></h2>
       <p>Colors, shortcuts, menus and where every part of the window goes are all settings. Make it 1998, turn your tabs into sheep, keep them in a fish tank, or hide everything. Miss Chrome? Keep its shape, and the shortcuts your hands already know. Install a look someone else made, or describe yours to your AI.</p>
@@ -814,7 +814,7 @@ function measure() {
 }
 const clamp = (n) => Math.max(0, Math.min(1, n));
 // how far each chapter's text lags the page (0 scrolls normally, 1 stays put), and how far from the middle it's fully shown and gone (screens)
-const glide = (ch) => (innerWidth >= 860 ? { k: ch.dataset.steps ? 0.75 : 0.5, full: 0.12, gone: 0.38 } : { k: ch.dataset.steps ? 0.88 : 0.75, full: 0.06, gone: 0.2 });
+const glide = (ch) => (innerWidth >= 860 ? { k: ch.dataset.steps ? 0.83 : 0.5, full: 0.12, gone: 0.38 } : { k: ch.dataset.steps ? 0.92 : 0.75, full: 0.06, gone: 0.2 });
 // the scroll position that puts a chapter's text `at` screens below the middle
 const centred = (ch, at = 0) => ch.offsetTop + ch.offsetHeight / 2 - innerHeight / 2 - at * innerHeight / (1 - glide(ch).k);
 let lookAt = 0, scrolling = false;
