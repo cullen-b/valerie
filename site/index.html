@@ -657,7 +657,7 @@ Lisbon weather · Design review
       <dl class="quick">
         <div><dt>14 MB</dt><dd>to download. Chrome is 289.</dd></div>
         <div><dt>0.6 s</dt><dd>from launch to a page on screen.</dd></div>
-        <div><dt>Rust</dt><dd>all the way down, on Safari's engine.</dd></div>
+        <div><dt>Rust</dt><dd>modern and efficient.</dd></div>
       </dl>
       <div class="ctas"><a class="btn primary" data-dl href="https://github.com/cullen-b/valerie/releases/latest/download/Valerie.dmg">Download for Mac</a><a class="btn" href="#install">Other ways</a></div>
       <p class="fine" id="ver">Free and open source.</p>
@@ -886,7 +886,7 @@ function onScroll() {
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
-  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : wear(inSpaces ? SPACES[space].look : active.dataset.look, active.dataset.lay);
+  picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : wear(spaceLook(), active.dataset.lay);
   const r = active.getBoundingClientRect(), p = clamp(-r.top / (r.height - vh || 1)) - 0.5;
   want.drift = -p * 34; kick();
 }
@@ -938,8 +938,11 @@ pages.forEach((pg, n) => (pg.onclick = () => { const i = tabs.findIndex((t) => t
 
 // ---------- spaces: swipe the window, press an arrow key, or pick one ----------
 let switched = false;  // the swipe hint shows until they switch space once
+// spaces switch in the Spaces chapter and on the front page, where Personal shows every tab
+const swipeable = () => inSpaces || current === chapters[0];
+const spaceLook = () => (inSpaces || space ? SPACES[space].look : current.dataset.look);
 function showSpace() {
-  setTabs(inSpaces ? SPACES[space].tabs : EVERYTHING);
+  setTabs(inSpaces || space ? SPACES[space].tabs : EVERYTHING);
   const sp = SPACES[space];
   $("#spname").textContent = sp.name;
   $("#swipehint").classList.toggle("on", inSpaces && !switched);
@@ -949,10 +952,10 @@ function showSpace() {
 }
 let sliding = false;
 function goSpace(n) {
-  if (!inSpaces || sliding || n === space || n < 0 || n >= SPACES.length) return;
+  if (!swipeable() || sliding || n === space || n < 0 || n >= SPACES.length) return;
   const dir = n > space ? 1 : -1, slide = (from, to, o) => tabs.map((t, i) => t.animate([{ transform: `translateX(${from}px)`, opacity: +!o }, { transform: `translateX(${to}px)`, opacity: +o }],
     { duration: 190, delay: i * 22, easing: "cubic-bezier(.22,.9,.24,1)", fill: "both" }));
-  const land = () => { space = n; switched = true; showSpace(); wear(SPACES[n].look, current.dataset.lay); };
+  const land = () => { space = n; switched = true; showSpace(); wear(spaceLook(), current.dataset.lay); };
   if (calm) return land();
   sliding = true;
   Promise.all(slide(0, -70 * dir, 0).map((a) => a.finished)).then((out) => {
@@ -962,10 +965,10 @@ function goSpace(n) {
 }
 segs.forEach((b, n) => (b.onclick = () => goSpace(n)));
 dots.forEach((d, n) => (d.onclick = () => goSpace(n)));
-addEventListener("keydown", (e) => { if (inSpaces && !e.metaKey && !e.ctrlKey && !e.altKey) { if (e.key === "ArrowRight") goSpace(space + 1); if (e.key === "ArrowLeft") goSpace(space - 1); } });
+addEventListener("keydown", (e) => { if (swipeable() && !e.metaKey && !e.ctrlKey && !e.altKey) { if (e.key === "ArrowRight") goSpace(space + 1); if (e.key === "ArrowLeft") goSpace(space - 1); } });
 let swiped = 0, rest = 0;
 addEventListener("wheel", (e) => {
-  if (!inSpaces || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  if (!swipeable() || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
   e.preventDefault();  // a sideways swipe changes space here instead of going back a page
   if (Date.now() < rest) return;
   swiped += e.deltaX;
