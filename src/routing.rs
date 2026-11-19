@@ -99,7 +99,7 @@ pub fn route<'a>(routes: &'a [Route], url: &str) -> Option<&'a str> {
 /// Turn command-bar input into a URL: real URLs pass through, bare domains get https, everything else is a search.
 pub fn resolve_input(input: &str, search_engine: &str) -> String {
     let s = input.trim();
-    let has_scheme = ["http://", "https://", "file://", "about:", "data:", "view-source:"]
+    let has_scheme = ["http://", "https://", "file://", "about:", "data:", "view-source:", "webkit-extension://"]
         .iter()
         .any(|p| s.to_lowercase().starts_with(p));
     if has_scheme {
@@ -149,6 +149,7 @@ mod tests {
         assert_eq!(resolve_input("localhost:3000", se), "http://localhost:3000");
         assert_eq!(resolve_input("rust borrow checker", se), "https://s/?q=rust+borrow+checker");
         assert_eq!(resolve_input("v1.2", se), "https://s/?q=v1.2");
+        assert_eq!(resolve_input("webkit-extension://ABC/popup.html", se), "webkit-extension://ABC/popup.html");
     }
 }
 
