@@ -276,6 +276,19 @@ html[data-lay=agent] .cursor { opacity: 1; animation: point 5s var(--ease) infin
 @keyframes press { 0%, 48%, 60%, 100% { scale: 1; box-shadow: 0 0 0 0 rgba(76,194,255,.6); } 52% { scale: .92; } 58% { box-shadow: 0 0 0 14px rgba(76,194,255,0); } }
 
 
+/* extensions being dreamed up, over the page */
+.exts { left: 286px; top: 56px; width: 700px; padding: 18px; border-radius: 20px; background: rgba(22,18,34,.93); color: #f1ecff; box-shadow: 0 40px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.14); transform: translateY(26px) scale(.95); z-index: 6; font-size: 14px; }
+html[data-exts] .exts { opacity: 1; transform: none; transition-delay: .4s; }
+.exts .xh { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; } .exts .xh b { font-size: 19px; } .exts .xh span { opacity: .6; font-variant-numeric: tabular-nums; }
+.exts .xa { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px; border-radius: 12px; background: rgba(255,255,255,.09); margin-bottom: 14px; font-size: 15px; white-space: nowrap; overflow: hidden; } .exts .xa b { color: #c58bff; font: 800 17px var(--display); }
+.exts .xa i { width: 2px; height: 20px; background: #c58bff; margin-left: -8px; animation: blink 1s steps(1) infinite; }
+.exts .xg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.exts .x { display: flex; align-items: center; gap: 10px; padding: 11px; border-radius: 12px; background: rgba(255,255,255,.07); min-width: 0; animation: pop .5s var(--ease) both; }
+.exts .x i { flex: none; width: 34px; height: 34px; border-radius: 9px; background: var(--c); display: grid; place-items: center; font: 800 16px var(--display); font-style: normal; color: rgba(0,0,0,.55); }
+.exts .x b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .exts .x span { display: block; font-size: 12px; opacity: .6; } .exts .x div { min-width: 0; }
+.exts .x.new { background: rgba(197,139,255,.2); box-shadow: 0 0 0 1.5px rgba(197,139,255,.7); }
+@keyframes pop { from { scale: .5; opacity: 0; } }
+
 /* ---------- worlds: the whole window becomes a scene, tabs roam it, and every page is a small window ---------- */
 html[data-world] .win { border-radius: 26px; --pl: 0px; --pt: 0px; --pr: 0px; --pb: 0px; --prad: 0px; }
 html[data-world] .page { background: transparent; overflow: visible; pointer-events: none; z-index: 2; }
@@ -399,9 +412,9 @@ html[data-fx~=glass] .page { opacity: .7; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--onacc); } .btn.primary:hover { transform: translateY(-2px); } .btn.primary:active { transform: scale(.96); }
 .btn.sm { min-height: 38px; padding: 0 16px; border-radius: 10px; font-size: 15px; }
 
-@media (max-width: 1180px) { .rail { display: none !important; } }
+@media (max-width: 1320px) { .rail { display: none !important; } }
 .rail { position: fixed; z-index: 4; bottom: 22px; left: var(--cx, 69vw); translate: -50% 0; display: flex; gap: 4px; padding: 5px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 9%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.rail button { border: 0; background: transparent; padding: 7px 12px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; opacity: .7; transition: background-color .3s, opacity .3s, color .3s; }
+.rail button { border: 0; background: transparent; padding: 7px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; opacity: .7; transition: background-color .3s, opacity .3s, color .3s; }
 .rail button:hover { opacity: 1; } .rail button[aria-current=true] { background: var(--ink); color: var(--bg1); opacity: 1; }
 
 /* ---------- the text: one pinned chapter per look ---------- */
@@ -534,6 +547,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
       <div class="part scrim"></div>
       <div class="part palette"><div class="in"><span class="typed">sprint 42 </span><span class="caret"></span></div>
         <div class="row cur">Sprint 42 <span>Go to tab</span></div><div class="row">Sprint 42 retro notes <span>History</span></div><div class="row">Search the web for “sprint 42” <span>Web</span></div><div class="row">Ask your AI about “sprint 42” <span>AI</span></div></div>
+      <div class="part exts"><div class="xh"><b>Extensions</b><span id="exn"></span></div><div class="xa"><b>!</b><span id="exask"></span><i></i></div><div class="xg" id="exgrid"></div></div>
       <div class="part little"><div class="bar"><i></i><i></i><i></i><span>linear.app</span></div>
         <div class="help"><b>Claude Code needs you</b><span>Sign in to Linear so I can read your issues, then press Done.</span><em>Done</em></div>
         <div class="body"><b>Sign in to Linear</b><div class="field"></div><div class="field"></div><div class="go">Continue</div></div></div>
@@ -616,6 +630,15 @@ shortcuts_like: chrome</pre>
       <h2><span class="l">Your AI can</span><span class="l">drive it too.</span></h2>
       <p>Claude Code, Codex, Cursor and the rest search, read and click through Valerie with your logins, in tabs you never see. When a step needs you, a little window brings it over.</p>
       <pre class="set" translate="no">valerie connect  <i># in a terminal</i></pre>
+    </div></div>
+  </section>
+
+  <section class="ch" id="exts" data-look="grape" data-lay="side" data-name="Extensions" style="--wd: 104%; --wg: 800">
+    <div class="ch-in"><div class="txt">
+      <h2><span class="l">Your extensions.</span><span class="l">Plus every one</span><span class="l">you can dream up.</span></h2>
+      <p>Valerie runs web extensions, and when the one you want doesn't exist, your AI writes it. One person asked for YouTube to always open in theater mode. Five minutes later it did.</p>
+      <div class="ctas"><button class="btn sm" id="dream">Dream up another</button></div>
+      <pre class="set" translate="no">valerie plugins share youtube-theater  <i># give it to everyone</i></pre>
     </div></div>
   </section>
 
@@ -761,6 +784,7 @@ function onScroll() {
   if (active !== current) {
     current = active; picked = null; press();
     inSpaces = active.id === "spaces"; space = inSpaces ? 1 : 0; showSpace();
+    dreaming(active.id === "exts");
     $("#asked").textContent = "";
   }
   for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
@@ -855,6 +879,40 @@ addEventListener("pointerup", (e) => {
   if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy)) goSpace(space - Math.sign(dx));
 });
 addEventListener("pointercancel", () => (downX = null));
+
+// ---------- extensions: the ones you have, then one more every couple of seconds, for as long as you watch ----------
+const WISHES = [["make YouTube always open in theater mode", "YouTube theater"], ["hide the score until I've watched the match", "Spoiler shield"], ["skip the life story, show me the recipe", "Just the recipe"],
+  ["show the price history on every product page", "Price history"], ["mute any tab that starts playing by itself", "Autoplay mute"], ["after 10pm, replace the news with otters", "Otter curfew"],
+  ["add a word count to every text box", "Word count"], ["warn me when I open my 40th tab", "Tab intervention"], ["make this one site dark, it hurts", "Dark, just here"],
+  ["convert every recipe to metric", "Metric recipes"], ["hide the comments. all of them", "No comments"], ["put a focus timer in the sidebar", "Focus timer"],
+  ["turn every date into my time zone", "My time zone"], ["blur faces in my screenshots", "Face blur"], ["sum the numbers I select on any page", "Quick sum"]];
+const HUES = ["#ff7a59", "#4c8dff", "#c58bff", "#24b47e", "#f2b632", "#ff7ab6", "#4cc2ff"];
+const exgrid = $("#exgrid"), exask = $("#exask");
+let wish = 0, made = 0, dreamTimer = 0, dreamBusy = false;
+function tile(name, note, fresh) {
+  const x = document.createElement("div"), i = document.createElement("i"), d = document.createElement("div"), b = document.createElement("b"), sp = document.createElement("span");
+  x.className = fresh ? "x new" : "x"; x.style.setProperty("--c", HUES[(wish + exgrid.children.length) % HUES.length]);
+  i.textContent = name[0]; b.textContent = name; sp.textContent = note; d.append(b, sp); x.append(i, d);
+  for (const old of $$(".x.new", exgrid)) old.classList.remove("new");
+  exgrid.prepend(x);
+  while (exgrid.children.length > 9) exgrid.removeChild(exgrid.lastChild);
+  $("#exn").textContent = made ? `3 of yours + ${made} made to order` : "3 of yours";
+}
+function dream() {
+  if (dreamBusy) return;
+  const [ask, name] = WISHES[wish++ % WISHES.length], land = () => { made++; tile(name, "Made just now", true); dreamBusy = false; };
+  if (calm) { exask.textContent = ask; return land(); }
+  dreamBusy = true; exask.textContent = ""; let n = 0;
+  (function step() { n += 2; exask.textContent = ask.slice(0, n); n < ask.length ? setTimeout(step, 22) : setTimeout(land, 260); })();
+}
+function dreaming(on) {
+  root.toggleAttribute("data-exts", on); clearInterval(dreamTimer);
+  if (!on) return;
+  if (!exgrid.children.length) for (const n of ["Your grammar checker", "Your ad blocker", "Your password manager"]) tile(n, "Yours");
+  if (!calm) dreamTimer = setInterval(dream, 2600);
+  setTimeout(dream, 900);
+}
+$("#dream").onclick = dream;
 
 // ---------- "what should yours look like": a wall of requests. Looks and layouts swap, extras stack ----------
 const ASKS = [
