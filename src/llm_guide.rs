@@ -127,6 +127,8 @@ changed in plain words. Some translations:
 | "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0` (also stops every small animation under `animations:`), `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
 | "Stop that one animation" (tabs sliding, the logo drawing, the ring after `f`) | its switch under `animations:` (e.g. `animations.tabs: false`); `config/default.yaml` lists them all |
 | "Messages vanish before I read them" | `toast_seconds: 5` |
+| "Give the Merge button the key m" / "same `f` letters every time" | `sites: {{ gitlab.com: {{ hints: {{ Merge: m }} }} }}` (by what the button says, numbers ignored; 1-4 letters or digits, none starting another). Labels used once stay put on their own with `vim.remember_hints: true`; `vim.hint_labels: stable` keeps the rest steady |
+| "Copy text without the mouse" / "copy mode splits too much or too little" | `c` (`vim.bindings`, `copy_mode`): letters pick a part of the page, then a line, a word; `a` copies all of it. `vim.copy_zones` (how many parts at first) |
 | "Make it private" / "stop tracking me" | `content_blocking.enabled: true`, `privacy.strip_tracking: true`, `privacy.cookie_banners: reject` |
 | "Dark mode everywhere" | `pages.dark_mode: always` (or `system` to follow the computer) |
 | "Tabs on top like Chrome" | `layout.tab_bar: top` |
@@ -248,7 +250,7 @@ Each of Valerie's windows reads its own CSS file from `ui/` (live, after Valerie
 - `ui/little.css`: the bar on little windows: `#title`, `.btn`, `#open`, `#pick`.
 - `ui/page.css`: what Valerie draws inside pages: `.hint` (link hints), `.toast`, `.menu` (link menu), `.find`
   (find bar) and `.find input`, `.minimap`, `.pill` (link address on hover), `.save` (save password), `.loadbar`,
-  `.pick` (hide-an-element highlight); reader view: `main`, `.site`, `h1`, `p`.
+  `.pick` (hide-an-element highlight), `.cz` and `.hint.cl` (copy mode's boxes and letters); reader view: `main`, `.site`, `h1`, `p`.
 
 ## Layouts: the whole window as a file
 
@@ -612,6 +614,9 @@ looks like spending money (`mcp.paying_words`), or any of those on a page that t
 a pay button), waits for the user's yes every time, even with full access, and so does typing into a card field. An `eval_js`
 script is stopped if it clicks, submits or sends anything like that, and told to use `click` instead; scripts that only read
 are never stopped. `mcp.ask_before_paying: false` turns all of this off, and an agent changing either setting needs the user's yes too.
+On macOS and Windows `click` is a real mouse click inside the page (sites that ignore script clicks, like Google's Share and Send
+buttons, take it; the user's cursor doesn't move), falling back to a script's click where a real one can't reach;
+`mcp.real_clicks: false` makes every click a script's. `eval_js` scripts can `await` at the top level.
 
 Tools:
 "#,

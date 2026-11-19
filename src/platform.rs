@@ -187,6 +187,53 @@ mod mac {
         !url.is_null()
     }
 
+    /// A real mouse click at (x, y) in the page's CSS pixels, sent straight to the web view: the page sees it as the
+    /// user's own (isTrusted), and the user's own cursor doesn't move. Needs the view to be in a window.
+    pub fn real_click(wv: &WebView, x: f64, y: f64, right: bool, clicks: isize) -> Result<(), String> {
+        use objc2::class;
+        use objc2_foundation::{NSPoint, NSRect};
+        let v = ptr(wv);
+        unsafe {
+            let window: *mut AnyObject = msg_send![v, window];
+            if window.is_null() {
+                return Err("the tab isn't in a window".into());
+            }
+            let zoom: f64 = msg_send![v, pageZoom];
+            let bounds: NSRect = msg_send![v, bounds];
+            let flipped: bool = msg_send![v, isFlipped];
+            let (px, py) = (x * zoom, y * zoom);
+            if px < 0.0 || py < 0.0 || px > bounds.size.width || py > bounds.size.height {
+                return Err("the point is outside the tab's visible area".into());
+            }
+            let local = NSPoint::new(px, if flipped { py } else { bounds.size.height - py });
+            let at: NSPoint = msg_send![v, convertPoint: local, toView: std::ptr::null_mut::<AnyObject>()];
+            let number: isize = msg_send![window, windowNumber];
+            let info: *mut AnyObject = msg_send![class!(NSProcessInfo), processInfo];
+            let now: f64 = msg_send![info, systemUptime];
+            // NSEventType: 1/2 left down/up, 3/4 right down/up, 5 moved.
+            let event = |kind: usize, count: isize| -> *mut AnyObject {
+                msg_send![class!(NSEvent), mouseEventWithType: kind, location: at, modifierFlags: 0usize, timestamp: now,
+                    windowNumber: number, context: std::ptr::null_mut::<AnyObject>(), eventNumber: 0isize, clickCount: count, pressure: 1.0f32]
+            };
+            let moved = event(5, 0);
+            let _: () = msg_send![v, mouseMoved: moved];
+            for n in 1..=clicks.max(1) {
+                let (down, up) = if right { (event(3, n), event(4, n)) } else { (event(1, n), event(2, n)) };
+                if down.is_null() || up.is_null() {
+                    return Err("couldn't make the mouse event".into());
+                }
+                if right {
+                    let _: () = msg_send![v, rightMouseDown: down];
+                    let _: () = msg_send![v, rightMouseUp: up];
+                } else {
+                    let _: () = msg_send![v, mouseDown: down];
+                    let _: () = msg_send![v, mouseUp: up];
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Reaches the page ahead of the close, so sound stops before the site's unload code (which can run for 100s of ms).
     pub fn silence(wv: &WebView) {
         use objc2::sel;
@@ -2405,6 +2452,20 @@ pub fn bench_in_view(wv: &WebView) {
     let _ = wv;
 }
 
+/// A real mouse click in the page at (x, y) CSS pixels, which sites trust like the user's own (macOS and Windows; Linux
+/// says it can't). Calls `done` later on the main thread.
+pub fn real_click(wv: &WebView, x: f64, y: f64, right: bool, clicks: isize, done: impl FnOnce(Result<(), String>) + 'static) {
+    #[cfg(target_os = "macos")]
+    done(mac::real_click(wv, x, y, right, clicks));
+    #[cfg(target_os = "windows")]
+    win::real_click(wv, x, y, right, clicks, Box::new(done));
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (wv, x, y, right, clicks);
+        done(Err("real clicks aren't available on this system".into()));
+    }
+}
+
 pub fn silence(wv: &WebView) {
     #[cfg(target_os = "macos")]
     mac::silence(wv);
@@ -2688,6 +2749,26 @@ mod win {
             json!({ "format": "png", "clip": { "x": v["pageX"].as_f64().unwrap_or(0.0), "y": v["pageY"].as_f64().unwrap_or(0.0),
                 "width": vw, "height": v["clientHeight"].as_f64().unwrap_or(1.0), "scale": (width / vw).clamp(0.1, 4.0) } })
         });
+    }
+
+    /// Moves, presses and lets go through DevTools, which the page gets as the user's own input (isTrusted).
+    pub fn real_click(wv: &WebView, x: f64, y: f64, right: bool, clicks: isize, done: Box<dyn FnOnce(Result<(), String>)>) {
+        let button = if right { "right" } else { "left" };
+        let mut steps = vec![json!({ "type": "mouseMoved", "x": x, "y": y })];
+        for n in 1..=clicks.max(1) {
+            for kind in ["mousePressed", "mouseReleased"] {
+                steps.push(json!({ "type": kind, "x": x, "y": y, "button": button, "buttons": if kind == "mousePressed" { if right { 2 } else { 1 } } else { 0 }, "clickCount": n }));
+            }
+        }
+        fn send(wv: ICoreWebView2, mut steps: std::collections::VecDeque<Value>, done: Box<dyn FnOnce(Result<(), String>)>) {
+            let Some(step) = steps.pop_front() else { return done(Ok(())) };
+            let w = wv.clone();
+            cdp(&wv, "Input.dispatchMouseEvent", step, move |r| match r {
+                Ok(_) => send(w, steps, done),
+                Err(e) => done(Err(format!("the click couldn't be sent: {e}"))),
+            });
+        }
+        send(wv.webview(), steps.into(), done);
     }
 
     /// Drawn at up to 2 pixels a CSS pixel, fewer for very long pages, to stay near 30 million pixels (like macOS).

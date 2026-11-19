@@ -616,7 +616,8 @@ little_window:
 # Each site can set: camera, microphone, location, notifications (ask | allow | deny) · user_agent (text) · zoom (percent) ·
 # autoplay (true | false: video in tabs opened in the background) · dark_mode (off | always) · vim (true | false) ·
 # links ({ cmd_click: new_tab, … } like `links`) · unload (false keeps its tabs in memory) · ad_blocking (true | false)
-# · popups (window | tab) · cookie_banners (reject | hide | off)
+# · popups (window | tab) · cookie_banners (reject | hide | off) · hints (your own f-hint letters for buttons, by what
+# they say, numbers ignored: { Merge: m, Approve: ap }; 1-4 letters or digits, and none may start another)
 sites: {}
 
 # Profiles keep cookies, logins and site data separate. Each space uses one profile.
@@ -800,6 +801,9 @@ vim:
   hold_scroll_acceleration: 7000   # how quickly it speeds up, pixels per second, per second
   hold_scroll_max_speed: 14000     # top speed while holding, pixels per second
   hint_characters: "sadfjklewcmpgh"   # letters used for `f` link hints, most comfortable first
+  remember_hints: true     # a label you click with f stays with that button on that site from then on, and no other button there gets it. true | false
+  hint_labels: stable      # stable: a button gets the same letters every time (from its text and link), so "Merge" is the same keys on every visit; reading_order: shortest labels, numbered top to bottom. one of: stable | reading_order
+  copy_zones: 20           # copy mode (c) splits the page into at most this many parts at first; more gives smaller parts
   excluded_hosts: ["docs.google.com", "mail.google.com", "figma.com"]   # sites with their own keyboard shortcuts
   pass_at_edge: ["youtube.com"]   # on these sites a scroll key with nowhere left to go goes to the site instead (k at the top pauses YouTube); [] turns it off
   bindings:
@@ -814,11 +818,14 @@ vim:
     "G": bottom
     "f": hints
     "F": hints_new_tab
+    "c": copy_mode           # copy with letters: pick a part of the page, then a line, a word, a part of a word (each letter zooms in, the last copies).
+                             # a copies all of what's picked (c then a: the whole page), Shift + a letter starts a range the next letter ends,
+                             # Backspace goes back up, Esc leaves
     "i": insert
     "/": find
     "yy": copy_url
-    "H": { cmd: focus_pane, direction: left }    # split view: pane to the left; otherwise back
-    "L": { cmd: focus_pane, direction: right }   # split view: pane to the right; otherwise forward
+    "H": prev_space          # H to the space on the left, L to the right (like J/K for tabs). For split-view panes
+    "L": next_space          # instead: "H": { cmd: focus_pane, direction: left } and "L": { cmd: focus_pane, direction: right }
     "r": reload
     "R": hard_reload
     "x": close_tab
@@ -919,6 +926,9 @@ mcp:
                            # button), or typing into a card field. A script (eval_js) is stopped if it does the same or
                            # sends a matching request; scripts that only read run freely. A safety net, not a guarantee.
                            # Agents need your yes to change this or paying_words. true | false
+  real_clicks: true         # agents' clicks are real mouse clicks inside the page, so sites that ignore script clicks
+                           # (Google's Share and Send buttons) take them; your own cursor doesn't move. macOS and
+                           # Windows. true | false (false: clicks made by a script, as on Linux)
   paying_words: [          # words that make a button or request ask (mcp.ask_before_paying); whole words, any capitals.
                            # Setting this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
     # buying

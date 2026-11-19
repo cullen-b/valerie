@@ -333,6 +333,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     one_of(&mut p, "updates: channel".into(), &c.updates.channel, &["stable", "edge"]);
     one_of(&mut p, "agents: fallback_note".into(), &c.agents.fallback_note, &["once", "every_launch"]);
     one_of(&mut p, "mcp: network_log".into(), &c.mcp.network_log, &["when_asked", "always", "never"]);
+    one_of(&mut p, "vim: hint_labels".into(), &c.vim.hint_labels, &["stable", "reading_order"]);
     const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);
@@ -416,6 +417,14 @@ fn check_new_settings(c: &Config) -> Vec<String> {
         }
         if s.zoom.is_some_and(|z| !(25.0..=500.0).contains(&z)) {
             p.push(format!("sites.{site}: zoom is a percent from 25 to 500"));
+        }
+        for (name, l) in s.hints.iter().flatten() {
+            let l = l.to_lowercase();
+            if l.is_empty() || l.len() > 4 || !l.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+                p.push(format!("sites.{site}: hints.{name:?} must be 1 to 4 letters or digits"));
+            } else if let Some((other, _)) = s.hints.iter().flatten().find(|(o, ol)| *o != name && l.starts_with(&ol.to_lowercase())) {
+                p.push(format!("sites.{site}: hints.{name:?} ({l}) starts with {other:?}'s letters, so it could never be typed"));
+            }
         }
         for (k, v) in s.links.iter().flatten() {
             one_of(&mut p, format!("sites.{site}: links key"), k, LINK_KEYS);

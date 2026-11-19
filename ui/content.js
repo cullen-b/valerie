@@ -430,7 +430,7 @@ if (CFG.pages && CFG.pages.youtube_sharp_start && /(^|\.)youtube\.com$/.test(loc
 }
 
 const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-const PAGE_ACTIONS = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "insert", "find"]);
+const PAGE_ACTIONS = new Set(["scroll_down", "scroll_up", "scroll_left", "scroll_right", "half_page_down", "half_page_up", "top", "bottom", "hints", "hints_new_tab", "copy_mode", "insert", "find"]);
 let cfg = withSite(CFG), mode = "normal", buffer = "", bufferTimer = 0;
 
 // ---------- `sites:` settings for this site win over the global ones ----------
@@ -446,6 +446,7 @@ function withSite(c) {
   if (s.cookie_banners) out.privacy = { ...c.privacy, cookie_banners: s.cookie_banners };
   if (s.dark_mode) out.site_dark = s.dark_mode;
   if (s.location) out.location_here = s.location;
+  if (s.hints) out.hint_pins = s.hints;
   return out;
 }
 
@@ -501,6 +502,9 @@ function ui() {
     .hint { position: fixed; left: 0; top: 0; will-change: transform; padding: 2px 4px; border-radius: 4px; background: ${cfg.accent || "#9d8cff"}; color: #fff;
             letter-spacing: .5px; box-shadow: 0 2px 6px rgba(0,0,0,.35); text-transform: uppercase; }
     .hint .typed { opacity: .45; }
+    .hint.cl { color: #15151c; }
+    .cz { position: fixed; border-radius: 3px; background: color-mix(in srgb, var(--c) 13%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c) 75%, transparent); }
+    .cz.from { background: color-mix(in srgb, var(--c) 32%, transparent); box-shadow: inset 0 0 0 2.5px var(--c); }
     .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 9px 14px; border-radius: 10px;
              background: rgba(24,24,32,.92); color: #fff; font-size: 12.5px; font-weight: 500; transition: opacity .2s; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
     .menu { position: fixed; min-width: 220px; padding: 5px; border-radius: 10px; background: rgba(24,24,32,.97); pointer-events: auto;
@@ -783,8 +787,8 @@ function collectHintables() {
   }
   return out;
 }
-function labels(n) {
-  const chars = (cfg.vim.hint_characters || "sadfjklewcmpgh").toLowerCase();
+const hintChars = () => [...new Set((cfg.vim.hint_characters || "sadfjklewcmpgh").toLowerCase())].join("");
+function labels(n, chars = hintChars()) {
   let out = [""];
   while (out.length < n || (out.length === 1 && out[0] === "")) {
     const prefix = out.shift();
@@ -792,18 +796,83 @@ function labels(n) {
   }
   return out.slice(0, n);
 }
+// What a control is, not where it sits: its text, link and names.
+function controlKey(el) {
+  const a = (n) => el.getAttribute(n) || "";
+  let href = "";
+  if (typeof el.href === "string" && el.href) {
+    try { const u = new URL(el.href); href = (u.origin === location.origin ? "" : u.host) + u.pathname; } catch (_) {}
+  }
+  const text = (FORM_TAGS.has(el.tagName) ? "" : el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  // Numbers are dropped (counts, ids in links), so "Commits" is the same keys on every merge request.
+  return [el.tagName, a("role"), a("type"), a("name"), /\d/.test(el.id) ? "" : el.id, a("data-testid") || a("data-qa-selector"),
+    href, a("aria-label"), a("title"), a("placeholder"), text].join("|").replace(/\d+/g, "#");
+}
+function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+const hintId = (key) => fnv1a(key).toString(36);
+// What a button says, for matching pins: counts like "Commits 4" or "Approve (2)" left out.
+const said = (t) => (t || "").replace(/[([]?\d+[)\]]?/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+// Labels hashed from each control's key, so a button keeps its letters across visits and pages. Pinned labels
+// (sites.<host>.hints) and ones used before on this site (vim.remember_hints) come first and stay reserved even when
+// their button isn't on the page, so a remembered key never clicks something else.
+function stableLabels(items) {
+  const chars = hintChars(), n = chars.length, out = new Array(items.length);
+  if (n < 2) return labels(items.length);
+  const ok = (l) => l && [...l].every((c) => chars.includes(c));
+  const reserved = new Set(), within = new Set();
+  const free = (l) => { if (reserved.has(l) || within.has(l)) return false; for (let k = 1; k < l.length; k++) if (reserved.has(l.slice(0, k))) return false; return true; };
+  const reserve = (l) => { reserved.add(l); for (let k = 1; k < l.length; k++) within.add(l.slice(0, k)); };
+  const claim = (list, fits) => list.filter(([k, l]) => k && fits(l) && free(l) && (reserve(l), true));
+  // Pins may use any letter or digit; one outside hint_characters can't clash with anything.
+  const pins = claim(Object.entries(cfg.hint_pins || {}).map(([name, l]) => [said(name), String(l).toLowerCase()]), (l) => /^[a-z0-9]{1,4}$/.test(l));
+  const known = claim(Object.entries(cfg.hint_memory || {}), ok);
+  const byId = new Map(known), given = new Set();
+  for (const [name, l] of pins) {
+    const i = items.findIndex((it, j) => !out[j] && [it.el.getAttribute("aria-label"), it.el.getAttribute("title"), it.el.getAttribute("placeholder"), it.el.textContent].some((t) => said(t) === name));
+    if (i >= 0) { out[i] = l; given.add(l); }
+  }
+  items.forEach((it, i) => { const l = byId.get(it.id); if (!out[i] && l && !given.has(l)) { out[i] = l; given.add(l); } });
+  // Everything else: same-length labels from the free ones; a button whose own label is taken moves to the next free one.
+  const rest = items.map((it, i) => ({ i, k: it.key, h: fnv1a(it.key) })).filter((x) => !out[x.i]);
+  let len = 2, slots = [];
+  for (;; len++) {
+    slots = [];
+    for (let s = 0; s < n ** len; s++) { let l = ""; for (let j = 0, v = s; j < len; j++, v = Math.floor(v / n)) l = chars[v % n] + l; slots.push(free(l) ? l : null); }
+    if (slots.filter(Boolean).length * 0.6 >= rest.length || len >= 4) break;
+  }
+  rest.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  const taken = new Set(), losers = [];
+  for (const x of rest) { const s = x.h % slots.length; if (slots[s] && !taken.has(s)) { taken.add(s); out[x.i] = slots[s]; } else losers.push(x); }
+  for (const x of losers) {
+    let s = x.h % slots.length, tries = 0;
+    while ((!slots[s] || taken.has(s)) && tries++ < slots.length) s = (s + 1) % slots.length;
+    if (tries > slots.length) continue;
+    taken.add(s); out[x.i] = slots[s];
+  }
+  return out;
+}
 function startHints(newTab) {
   const t0 = performance.now();
-  const items = collectHintables();
+  let items = collectHintables();
   if (!items.length) return toast("Nothing to click");
+  const stable = cfg.vim.hint_labels !== "reading_order";
+  if (stable) {
+    // Repeats ("Reply" on every comment) are told apart by their order on the page.
+    const seen = new Map();
+    for (const it of items) { const k = controlKey(it.el), c = seen.get(k) || 0; seen.set(k, c + 1); it.key = k + "#" + c; it.id = hintId(it.key); }
+    const ls = stableLabels(items);
+    items.forEach((it, i) => { it.label = ls[i]; });
+    items = items.filter((it) => it.label);
+  }
   // Reading order: top to bottom, then left to right, so nearby things get similar labels.
   items.sort((a, b) => Math.round(a.r.top / 8) - Math.round(b.r.top / 8) || a.r.left - b.r.left);
-  const root = ui(), ls = labels(items.length), frag = document.createDocumentFragment();
-  hints = { newTab, typed: "", items: items.map(({ el, r }, i) => {
+  const ls = stable ? items.map((it) => it.label) : labels(items.length);
+  const root = ui(), frag = document.createDocumentFragment();
+  hints = { newTab, typed: "", items: items.map(({ el, r, id }, i) => {
     const d = document.createElement("div"); d.className = "hint"; d.textContent = ls[i];
     d.style.transform = `translate(${Math.max(r.left - 2, 0)}px, ${Math.max(r.top - 2, 0)}px)`;
     frag.appendChild(d);
-    return { e: el, label: ls[i], d };
+    return { e: el, label: ls[i], d, id };
   }), ms: performance.now() - t0 };
   root.appendChild(frag);
   mode = "hints";
@@ -828,10 +897,20 @@ function hintKey(k) {
   }
   if (left === 1 && last.label === typed) {
     const nt = hints.newTab; stopHints();
+    rememberHint(last);
     const r = anim("keyboard_click") && last.e.getBoundingClientRect();
     activate(last.e, nt); if (r) clickRing(r);
   }
   else if (!left) stopHints();
+}
+// The label you just used stays with that button on this site (vim.remember_hints), unless it's pinned already.
+function rememberHint(h) {
+  if (!h.id || !cfg.vim.remember_hints || Object.values(cfg.hint_pins || {}).some((l) => String(l).toLowerCase() === h.label)) return;
+  const mem = cfg.hint_memory || (cfg.hint_memory = {});
+  if (mem[h.id] === h.label) return;
+  for (const k of Object.keys(mem)) if (mem[k] === h.label) delete mem[k];
+  mem[h.id] = h.label;
+  post({ t: "hint_used", id: h.id, label: h.label });
 }
 // A ring that grows off what a hint clicked and fades; drawn after the click so it never holds it up.
 let ring = null;
@@ -844,6 +923,356 @@ function clickRing(r) {
   el.animate([{ opacity: 0.8, transform: "none" }, { opacity: 0, transform: `scale(${(r.width + 12) / r.width}, ${(r.height + 12) / r.height})` }],
     { duration: 320, easing: EASE, fill: "forwards" }).onfinish = gone;
   setTimeout(gone, 370);
+}
+// ---------- copy mode (c): letters pick what to copy, zooming from parts of the page to lines, words and parts of words ----------
+// a copies all of what's picked, Shift on a letter starts a range that the next letter ends, Backspace goes back up.
+let cp = null;
+const COPY_COLORS = ["#8aa4ff", "#ff9a76", "#5fd6a8", "#ea8be0", "#ffd166", "#6fd3ee"];
+const copyChars = () => hintChars().replace(/a/g, "") || "sdfjkl";
+const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "svg", "IMG", "VIDEO", "AUDIO", "CANVAS", "IFRAME", "VALERIE-UI", "SELECT", "OPTION"]);
+const UNIT_TAGS = /^(TABLE|TBODY|PRE|UL|OL|DL|BLOCKQUOTE|FIGURE)$/;
+// Line-number cells of diff and code views: left out of what's copied.
+const NUMBERED = "[data-line-number],[data-linenumber],[class*='line-num'],[class*='blob-num'],[class*='linenumber'],[class*='lineNumber'],[class*='line-number']";
+const onView = (r) => r.width >= 2 && r.height >= 2 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+const visArea = (r) => Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+const short = (t) => { t = t.replace(/\s+/g, " ").trim(); return t.length > 28 ? t.slice(0, 27) + "…" : t; };
+const copyable = (el) => el.tagName === "TEXTAREA" || el.tagName === "INPUT" && !/^(hidden|password|button|submit|reset|checkbox|radio|file|image|range|color)$/i.test(el.type);
+function hasText(el) {
+  if (FORM_TAGS.has(el.tagName)) return copyable(el) && /\S/.test(el.value);
+  if (el.shadowRoot && /\S/.test(el.shadowRoot.textContent)) return true;
+  // Small things check what shows: an icon button's hidden tooltip isn't text.
+  const t = el.textContent;
+  return /\S/.test(t) && (t.length > 400 || /\S/.test(el.innerText));
+}
+// Text right inside el that shows (screen-reader-only text is clipped to nothing).
+function directText(el) {
+  for (let n = el.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType !== 3 || !/\S/.test(n.data)) continue;
+    const r = document.createRange(); r.selectNodeContents(n);
+    const b = r.getBoundingClientRect(); if (b.width > 2 && b.height > 2) return true;
+  }
+  return false;
+}
+// An inline wrapper around blocks (custom elements are inline unless styled) lays out like a block.
+function holdsBlocks(el) {
+  let n = 0;
+  for (let c = el.firstElementChild; c && n < 30; c = c.nextElementSibling, n++) if (!/^(inline|none|contents|ruby)/.test(getComputedStyle(c).display) || /^inline-(block|flex|grid|table)/.test(getComputedStyle(c).display) && c.getBoundingClientRect().width > innerWidth / 3) return true;
+  return false;
+}
+// What inside el shows text on screen, each with its box.
+function textKids(el) {
+  const out = [];
+  const add = (list) => {
+    for (const c of list) {
+      if (SKIP_TAGS.has(c.tagName)) continue;
+      if (c.tagName === "SLOT") { add(c.assignedElements({ flatten: true })); continue; }
+      const r = c.getBoundingClientRect();
+      if (!r.width && !r.height) { if (getComputedStyle(c).display === "contents") add((c.shadowRoot || c).children); continue; }
+      if (!onView(r) || !hasText(c)) continue;
+      const s = getComputedStyle(c);
+      if (s.visibility === "hidden" || +s.opacity < 0.05) continue;
+      out.push({ el: c, r, inline: /^(inline|ruby)/.test(s.display) && !/^inline-/.test(s.display) && !holdsBlocks(c) });
+    }
+  };
+  add((el.shadowRoot || el).children);
+  // A diff row's narrow line-number and +/- cells aren't stops.
+  if (out.length > 1) { const real = out.filter((k) => k.r.width > 64 || !/^[\s\d+\-]*$/.test(k.el.textContent)); if (real.length) return real; }
+  return out;
+}
+// el's pieces worth a stop, past wrappers that hold only one; { atom } when it's a run of text, for lines and words.
+function split(el) {
+  const chain = [el];
+  for (let i = 0; i < 60; i++) {
+    if (FORM_TAGS.has(el.tagName)) break;
+    const kids = textKids(el), blocks = kids.filter((k) => !k.inline).length;
+    if (!blocks || blocks < 2 && directText(el)) break;
+    if (kids.length > 1) return { kids, chain };
+    el = kids[0].el; chain.push(el);
+  }
+  return { atom: el, chain };
+}
+// Tables, code, lists and runs of alike rows stay whole on the first screen; their letter opens them.
+function isUnit(s) {
+  if (s.chain.some((e) => UNIT_TAGS.test(e.tagName))) return true;
+  const key = (e) => e.tagName + "." + (typeof e.className === "string" ? e.className.trim().split(/\s+/)[0] : "");
+  // The files of a diff, a run of code samples.
+  if (s.kids.every((k) => key(k.el) === key(s.kids[0].el) && k.el.querySelector("table, pre"))) return true;
+  if (s.kids.length < 6) return false;
+  const n = new Map(); let most = 0, top = "";
+  for (const { el } of s.kids) { const v = (n.get(key(el)) || 0) + 1; n.set(key(el), v); if (v > most) { most = v; top = key(el); } }
+  return most >= s.kids.length * 0.75 && !/^(P|H\d)\./.test(top);
+}
+// Splits the biggest piece on screen again and again, up to a count; the first screen only splits big pieces.
+function partition(root, top) {
+  const first = split(root);
+  if (first.atom) return first;
+  const zones = first.kids.map((k) => ({ el: k.el, r: k.r })), done = new Set();
+  const max = top ? Math.max(4, cfg.vim.copy_zones || 20) : 120, least = top ? innerWidth * innerHeight * 0.12 : -1;
+  for (let n = 0; n < 500; n++) {
+    let best = -1, size = least;
+    zones.forEach((z, i) => { const a = visArea(z.r); if (!done.has(z.el) && a > size) { best = i; size = a; } });
+    if (best < 0) break;
+    const z = zones[best]; done.add(z.el);
+    const s = split(z.el);
+    if (s.atom || top && isUnit(s) || zones.length - 1 + s.kids.length > max) continue;
+    zones.splice(best, 1, ...s.kids.map((k) => ({ el: k.el, r: k.r })));
+  }
+  return { zones };
+}
+// The text of a run of inline content, with where each piece came from, so a slice of it becomes a Range.
+function textIndex(el) {
+  const parts = [], keeps = new Map();
+  let s = "";
+  const ws = (p) => { let v = keeps.get(p); if (v === undefined) keeps.set(p, v = getComputedStyle(p).whiteSpace); return v; };
+  const walk = (n) => {
+    for (let c = n.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) {
+        if (!c.data) continue;
+        const d = /^(pre|break)/.test(ws(c.parentElement || el)) ? c.data : c.data.replace(/[\n\r\t]/g, " ");
+        parts.push({ node: c, at: s.length, len: d.length }); s += d;
+      } else if (c.nodeType === 1 && !SKIP_TAGS.has(c.tagName)) {
+        if (c.tagName === "BR") { parts.push({ node: c, at: s.length, len: 1, br: true }); s += "\n"; }
+        else if (c.getClientRects().length || getComputedStyle(c).display === "contents") walk(c.shadowRoot || c);
+      }
+    }
+  };
+  walk(el.shadowRoot || el);
+  return { s, parts, code: ws(el) === "pre" || /mono|courier|consol|menlo/i.test(getComputedStyle(el).fontFamily) };
+}
+function locate(ix, o, end) {
+  const p = ix.parts; let lo = 0, hi = p.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (end ? p[m].at < o : p[m].at <= o) lo = m; else hi = m - 1; }
+  return p[lo];
+}
+function rangeOf(ix, a, b) {
+  const r = document.createRange(), s = locate(ix, a, false), e = locate(ix, b, true);
+  if (s.br) r.setStartAfter(s.node); else r.setStart(s.node, Math.min(a - s.at, s.len));
+  if (e.br) r.setEndBefore(e.node); else r.setEnd(e.node, Math.max(0, Math.min(b - e.at, e.len)));
+  return r;
+}
+const TEXT_KINDS = ["lines", "sentences", "words", "parts"];
+// Spans [a, b) of the text one step finer than `after`: lines, sentences (not in code), words, parts of a word.
+function textSplit(ix, a, b, after) {
+  const t = ix.s.slice(a, b);
+  for (const kind of TEXT_KINDS.slice(TEXT_KINDS.indexOf(after) + 1)) {
+    if (kind === "sentences" && (ix.code || typeof Intl === "undefined" || !Intl.Segmenter)) continue;
+    const out = [];
+    const push = (at, piece) => { const lead = piece.length - piece.trimStart().length, body = piece.trim(); if (body) out.push({ a: a + at + lead, b: a + at + lead + body.length }); };
+    if (kind === "lines") { let at = 0; for (const line of t.split("\n")) { push(at, line); at += line.length + 1; } }
+    else if (kind === "sentences") { for (const x of new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(t)) push(x.index, x.segment); }
+    else if (kind === "words") { for (const m of t.matchAll(/\S+/g)) push(m.index, m[0]); }
+    else for (const m of t.matchAll(/[\p{L}\p{N}_]+(?:['’][\p{L}\p{N}_]+)*/gu)) push(m.index, m[0]);
+    if (out.length > 1) return { kind, spans: out };
+  }
+  return null;
+}
+function textLevel(ix, a, b, after) {
+  if (!ix.parts.length) return null;
+  const t = textSplit(ix, a, b, after);
+  return t && { ix, a, b, kind: t.kind, spans: t.spans, name: short(ix.s.slice(a, b)) };
+}
+// Lines lose the indentation they all share, and blank lines at either end.
+function dedent(t) {
+  const lines = t.split("\n").map((l) => l.trimEnd());
+  while (lines.length && !lines[0]) lines.shift();
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  const indent = Math.min(...lines.filter(Boolean).map((l) => l.length - l.trimStart().length));
+  return lines.map((l) => l.slice(indent)).join("\n");
+}
+// Code keeps its indentation (less what all its lines share); prose has its spaces tidied.
+function spanText(ix, a, b) {
+  const t = ix.s.slice(a, b);
+  if (!ix.code) return t.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
+  return t.includes("\n") ? dedent(ix.s.slice(ix.s.lastIndexOf("\n", a - 1) + 1, b)) : t.trim();
+}
+const trimEdges = (w) => w.replace(/^["'“”‘’()[\]{}<>.,;:!?]+|["'“”‘’()[\]{}<>.,;:!?]+$/g, "") || w;
+// el's text as it shows, like innerText but without screen-reader-only text, line numbers and other bits the site
+// won't let you select; only what's inside `within` when given.
+function visibleText(el, within) {
+  if (FORM_TAGS.has(el.tagName)) return el.value || "";
+  if (!within && el.getElementsByTagName("*").length > 30000) return dedent(el.innerText || "");
+  let out = "";
+  const ends = () => { out = out.replace(/ +$/, ""); if (out && !out.endsWith("\n")) out += "\n"; };
+  const walk = (n, pre) => {
+    for (let c = (n.shadowRoot || n).firstChild; c; c = c.nextSibling) {
+      if (within && !within.intersectsNode(c)) continue;
+      if (c.nodeType === 3) {
+        let d = pre ? c.data : c.data.replace(/\s+/g, " ");
+        if (!pre && (!out || /[\s]$/.test(out))) d = d.replace(/^ /, "");
+        out += d; continue;
+      }
+      if (c.nodeType !== 1 || SKIP_TAGS.has(c.tagName) || FORM_TAGS.has(c.tagName)) continue;
+      if (c.tagName === "BR") { out += "\n"; continue; }
+      const st = getComputedStyle(c), shown = st.display;
+      if (shown === "none" || st.visibility === "hidden" || st.userSelect === "none" || c.matches(NUMBERED)) continue;
+      if (shown !== "contents") { const r = c.getBoundingClientRect(); if ((r.width <= 1 || r.height <= 1) && st.overflow !== "visible") continue; }
+      const cell = shown === "table-cell", block = !cell && !/^(inline|contents|ruby)/.test(shown);
+      if (block) ends();
+      walk(c, /^(pre|break)/.test(st.whiteSpace));
+      if (cell) out += "\t"; else if (block) ends();
+    }
+  };
+  walk(el, /^(pre|break)/.test(getComputedStyle(el).whiteSpace));
+  out = dedent(out.replace(/\t+$/gm, "")).replace(/\n{3,}/g, "\n\n");
+  // Some sites make whole areas unselectable; their text is still what was asked for.
+  return out || within ? out : dedent(el.innerText || "");
+}
+// A level is a part of the page split into pieces: { el } splits into parts of the page, { ix, spans } into pieces of text.
+function elLevel(el) {
+  if (FORM_TAGS.has(el.tagName)) return null;
+  const p = partition(el, false);
+  if (p.zones) return { el, name: short(el.getAttribute("aria-label") || el.innerText.slice(0, 200)) };
+  return textLevel(textIndex(p.atom), 0, Infinity);
+}
+// Boxes for a range's lines: one per line rather than one per highlighted word of code.
+function lineBoxes(rects) {
+  const out = [];
+  for (const r of rects) {
+    if (!onView(r)) continue;
+    const o = out.find((x) => Math.min(x.bottom, r.bottom) - Math.max(x.top, r.top) > Math.min(x.height, r.height) / 2);
+    if (o) { o.left = Math.min(o.left, r.left); o.right = Math.max(o.right, r.right); o.top = Math.min(o.top, r.top); o.bottom = Math.max(o.bottom, r.bottom); o.height = o.bottom - o.top; }
+    else out.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, height: r.height });
+  }
+  return out.slice(0, 12);
+}
+// A box around what's in el rather than el itself: a paragraph beside a floated picture is as wide as the page.
+function tight(el, r) {
+  if (FORM_TAGS.has(el.tagName)) return r;
+  const g = document.createRange(); g.selectNodeContents(el);
+  const t = g.getBoundingClientRect();
+  if (t.width < 2 || t.height < 2) return r;
+  const left = Math.max(r.left, t.left), top = Math.max(r.top, t.top), right = Math.min(r.right, t.right), bottom = Math.min(r.bottom, t.bottom);
+  return right - left >= 2 && bottom - top >= 2 ? { left, top, right, bottom, width: right - left, height: bottom - top } : r;
+}
+function zonesOf(lv) {
+  if (lv.spans) {
+    const out = [];
+    for (const sp of lv.spans) { const rects = lineBoxes(rangeOf(lv.ix, sp.a, sp.b).getClientRects()); if (rects.length) out.push({ a: sp.a, b: sp.b, rects }); }
+    return out;
+  }
+  const p = partition(lv.el, lv.top);
+  return (p.zones || []).map((z) => ({ el: z.el, rects: [tight(z.el, z.r)] }))
+    .sort((x, y) => Math.round(x.rects[0].top / 8) - Math.round(y.rects[0].top / 8) || x.rects[0].left - y.rects[0].left);
+}
+function zoneText(lv, z) {
+  if (z.el) return visibleText(z.el);
+  const t = spanText(lv.ix, z.a, z.b);
+  return lv.kind === "words" ? trimEdges(t) : t;
+}
+function startCopy() {
+  if (!document.body) return toast("Nothing to copy");
+  const p = partition(document.body, true);
+  const lv = p.zones ? { el: document.body, top: true } : textLevel(textIndex(p.atom), 0, Infinity);
+  if (!lv) return toast("Nothing to copy");
+  lv.top = true;
+  cp = { stack: [lv], typed: "", from: null, shift: false, boxes: [], zones: [], pill: null, timer: 0 };
+  mode = "copy";
+  addEventListener("scroll", copyMoved, true); addEventListener("resize", copyMoved);
+  drawCopy();
+}
+function stopCopy() {
+  if (!cp) return;
+  for (const b of cp.boxes) b.remove();
+  if (cp.pill) cp.pill.remove();
+  removeEventListener("scroll", copyMoved, true); removeEventListener("resize", copyMoved);
+  clearTimeout(cp.timer); cp = null; mode = "normal";
+}
+// The page moved under the boxes: hide them, and draw them again where things are once it settles.
+function copyMoved(e) {
+  if (!cp || e && inOurUi(e)) return;
+  for (const b of cp.boxes) b.style.display = "none";
+  clearTimeout(cp.timer); cp.timer = setTimeout(() => { if (cp) { cp.typed = ""; drawCopy(); } }, 120);
+}
+addEventListener("mousedown", (e) => { if (cp && e.isTrusted && !inOurUi(e)) stopCopy(); }, true);
+function drawCopy() {
+  for (const b of cp.boxes) b.remove();
+  cp.boxes = [];
+  const lv = cp.stack[cp.stack.length - 1], zones = zonesOf(lv), ls = labels(zones.length, copyChars()), frag = document.createDocumentFragment();
+  zones.forEach((z, i) => {
+    const c = COPY_COLORS[i % COPY_COLORS.length], f = cp.from, from = f && (f.el ? f.el === z.el : f.a === z.a && f.b === z.b);
+    z.label = ls[i]; z.parts = [];
+    for (const r of z.rects) {
+      const b = document.createElement("div"); b.className = from ? "cz from" : "cz"; b.style.setProperty("--c", c);
+      const l = Math.max(r.left, 0), t = Math.max(r.top, 0);
+      Object.assign(b.style, { left: l - 1 + "px", top: t - 1 + "px", width: Math.min(r.right, innerWidth) - l + 2 + "px", height: Math.min(r.bottom, innerHeight) - t + 2 + "px" });
+      z.parts.push(b);
+    }
+    // Letters stay off the text: text pieces get theirs just above, parts of the page in the margin to their left.
+    const r = z.rects[0], d = document.createElement("div"); d.className = "hint cl"; d.style.background = c; d.textContent = z.label;
+    const above = lv.spans && r.top >= 16, margin = !lv.spans && r.left >= 30;
+    d.style.transform = `translate(${margin ? `calc(${r.left - 3}px - 100%)` : Math.max(lv.spans ? r.left - 2 : r.left + 2, 0) + "px"}, ${Math.max(above ? r.top - 16 : r.top + 2, 0)}px)`;
+    z.d = d; z.parts.push(d);
+    for (const p of z.parts) { frag.appendChild(p); cp.boxes.push(p); }
+  });
+  cp.zones = zones;
+  if (!cp.pill) { cp.pill = document.createElement("div"); cp.pill.className = "pill"; frag.appendChild(cp.pill); }
+  const what = { lines: "lines", sentences: "sentences", words: "words", parts: "pieces" }[lv.kind] || "parts";
+  cp.pill.textContent = (cp.stack.length > 1 ? `Copy · ${what} of “${lv.name}”` : "Copy") + (cp.from ? ` · from “${short(zoneText(lv, cp.from))}”` : "")
+    + (zones.length ? "" : " · nothing here on screen") + (cfg.escape_hints ? " · a: all · Shift+letter: range · Backspace: back · esc: leave" : "");
+  ui().appendChild(frag);
+}
+function copyDone(text, rects) {
+  stopCopy();
+  text = dedent(text || "");
+  if (!text) return toast("Nothing to copy");
+  const one = text.replace(/\s+/g, " "), lines = text.split("\n").length;
+  copyText(text, lines > 1 ? `Copied ${lines} lines` : `Copied “${one.length > 48 ? one.slice(0, 47) + "…" : one}”`);
+  const rs = (rects || []).filter(onView);
+  if (rs.length && anim("keyboard_click")) {
+    const l = Math.max(0, Math.min(...rs.map((r) => r.left))), t = Math.max(0, Math.min(...rs.map((r) => r.top)));
+    const w = Math.min(innerWidth, Math.max(...rs.map((r) => r.right))) - l, h = Math.min(innerHeight, Math.max(...rs.map((r) => r.bottom))) - t;
+    if (w > 0 && h > 0) clickRing({ left: l, top: t, width: w, height: h });
+  }
+}
+function copyAll() {
+  const lv = cp.stack[cp.stack.length - 1];
+  if (lv.spans) return copyDone(spanText(lv.ix, lv.a, Math.min(lv.b, lv.ix.s.length)));
+  copyDone(visibleText(lv.el), lv.el === document.body ? [] : [lv.el.getBoundingClientRect()]);
+}
+function copyRange(lv, f, z) {
+  const rects = [...f.rects, ...z.rects];
+  if (!f.el) return copyDone(spanText(lv.ix, Math.min(f.a, z.a), Math.max(f.b, z.b)), rects);
+  const [x, y] = f.el.compareDocumentPosition(z.el) & Node.DOCUMENT_POSITION_PRECEDING ? [z.el, f.el] : [f.el, z.el];
+  let t = "";
+  try {
+    const r = document.createRange(); r.setStartBefore(x); r.setEndAfter(y);
+    const c = r.commonAncestorContainer;
+    if (!r.collapsed) t = visibleText(c.nodeType === 1 ? c : c.parentElement, r);
+  } catch (_) {}
+  copyDone(t || (x === y ? visibleText(x) : visibleText(x) + "\n" + visibleText(y)), rects);
+}
+function copyPick(z, shift) {
+  const lv = cp.stack[cp.stack.length - 1];
+  if (cp.from) return copyRange(lv, cp.from, z);
+  if (shift) { cp.from = z; return drawCopy(); }
+  const next = z.el ? elLevel(z.el) : textLevel(lv.ix, z.a, z.b, lv.kind);
+  if (!next) return copyDone(zoneText(lv, z), z.rects);
+  cp.stack.push(next); cp.from = null; drawCopy();
+}
+function copyKey(e) {
+  const k = e.key;
+  if (k === "Escape") return stopCopy();
+  if (k === "Backspace") {
+    if (cp.typed) cp.typed = cp.typed.slice(0, -1);
+    else if (cp.from) cp.from = null;
+    else if (cp.stack.length > 1) cp.stack.pop();
+    else return stopCopy();
+    return drawCopy();
+  }
+  if (e.repeat) return;
+  if (k === "Enter" || !cp.typed && (k === "a" || k === "A")) return copyAll();
+  if (k.length !== 1) return;
+  if (!cp.typed) cp.shift = e.shiftKey;
+  cp.typed += k.toLowerCase();
+  const hits = cp.zones.filter((z) => z.label.startsWith(cp.typed));
+  if (!hits.length) cp.typed = "";
+  else if (hits.length === 1 && hits[0].label === cp.typed) { cp.typed = ""; return copyPick(hits[0], cp.shift); }
+  for (const z of cp.zones) {
+    const on = z.label.startsWith(cp.typed);
+    for (const p of z.parts) p.style.display = on ? "" : "none";
+    const t = document.createElement("span"); t.className = "typed"; t.textContent = cp.typed;
+    if (on) z.d.replaceChildren(t, z.label.slice(cp.typed.length));
+  }
 }
 // A real-looking click: frameworks (React, YouTube's Polymer, menus) often act on pointer/mouse down, not click.
 function activate(e, newTab) {
@@ -1177,6 +1606,7 @@ function run(action) {
       case "bottom": return scrollToEdge(false);
       case "hints": return startHints(false);
       case "hints_new_tab": return startHints(true);
+      case "copy_mode": return startCopy();
       case "insert": mode = "insert"; return toast(cfg.escape_hints ? "-- INSERT -- (esc to leave)" : "-- INSERT --");
       case "find": return openFind();
     }
@@ -1187,13 +1617,14 @@ function run(action) {
 
 window.addEventListener("keydown", (e) => {
   // Only real keys: a page's (or an agent's) made-up "x" mustn't close the tab.
-  if (!e.isTrusted || !cfg.vim.enabled || e.defaultPrevented && mode !== "hints") return;
+  if (!e.isTrusted || !cfg.vim.enabled || e.defaultPrevented && mode !== "hints" && mode !== "copy") return;
   // Typing in Valerie's own UI (find box, prompts) lives in a closed shadow root the page can't see into.
-  if (mode !== "hints" && inOurUi(e)) return;
+  if (mode !== "hints" && mode !== "copy" && inOurUi(e)) return;
   if (e.isTrusted && (e.key === "i" || e.key === "Tab" || e.key === "/")) userActed = true; // deliberate moves into fields
   if (e.isTrusted && e.key === "Enter" && mode === "normal" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing
     && (deepActive() || {}).tagName === "INPUT" && editable(deepActive()) && !excluded()) kbArm(false);
   if (mode === "hints") { e.preventDefault(); e.stopImmediatePropagation(); return hintKey(e.key); }
+  if (mode === "copy" && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopImmediatePropagation(); return copyKey(e); }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.key === "Escape") {
     const a = deepActive();
@@ -1294,8 +1725,8 @@ document.addEventListener("mousedown", (e) => { if (e.isTrusted && e.button === 
 
 let linkMenu = null;
 function hideLinkMenu() { if (linkMenu) { linkMenu.remove(); linkMenu = null; } }
-function copyText(text) {
-  const done = () => toast("Copied link");
+function copyText(text, msg = "Copied link") {
+  const done = () => toast(msg);
   if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(done, () => legacyCopy(text, done));
   legacyCopy(text, done);
 }

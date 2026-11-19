@@ -214,6 +214,8 @@ pub struct SiteSettings {
     pub ad_blocking: Option<bool>,
     pub popups: Option<String>,
     pub cookie_banners: Option<String>,
+    /// f-hint letters for buttons on this site, by what the button says ("Merge": "m").
+    pub hints: Option<BTreeMap<String, String>>,
 }
 
 impl SiteSettings {
@@ -222,7 +224,7 @@ impl SiteSettings {
         macro_rules! take {
             ($($f:ident),*) => { $( if more.$f.is_some() { self.$f = more.$f.clone(); } )* };
         }
-        take!(camera, microphone, location, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners);
+        take!(camera, microphone, location, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners, hints);
     }
 }
 
@@ -1081,6 +1083,9 @@ pub struct VimConfig {
     pub hold_scroll_acceleration: f64,
     pub hold_scroll_max_speed: f64,
     pub hint_characters: String,
+    pub hint_labels: String,
+    pub remember_hints: bool,
+    pub copy_zones: f64,
     pub excluded_hosts: Vec<String>,
     pub pass_at_edge: Vec<String>,
     pub bindings: BTreeMap<String, Option<serde_json::Value>>,
@@ -1101,6 +1106,8 @@ pub struct McpConfig {
     #[serde(deserialize_with = "network_log_mode")]
     pub network_log: String,
     pub ask_before_paying: bool,
+    /// Agents' clicks as real mouse clicks inside the page (macOS, Windows), which sites trust; false sends script clicks.
+    pub real_clicks: bool,
     pub paying_words: Vec<String>,
     pub answer_in_background: bool,
     pub start_when_needed: bool,

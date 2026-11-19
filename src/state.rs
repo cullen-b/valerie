@@ -260,11 +260,26 @@ pub struct State {
     /// Browser tools each plugin's page script was allowed to use (plugin → its `permissions` when approved).
     #[serde(default)]
     pub plugin_grants: BTreeMap<String, Vec<String>>,
+    /// f-hint labels the user clicked, per site, so each stays with its button (vim.remember_hints).
+    #[serde(default)]
+    pub hint_memory: BTreeMap<String, HintMemory>,
     /// Browser extensions the user allowed (folder name → fingerprint of the manifest they allowed).
     #[serde(default)]
     pub extension_grants: BTreeMap<String, String>,
 }
 
+
+/// One site's remembered f-hint labels: (button fingerprint, label), oldest first.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HintMemory {
+    pub used: u64,
+    pub labels: Vec<(String, String)>,
+}
+
+impl HintMemory {
+    pub const MAX_LABELS: usize = 48;
+    pub const MAX_SITES: usize = 300;
+}
 
 /// How many history pages, archived tabs and closed tabs to keep.
 #[derive(Debug, Clone, Copy)]

@@ -1819,6 +1819,12 @@ impl App {
         c["space"] = json!(self.space_name(space));
         // Its own space's accent, so switching spaces doesn't have to tell every page.
         c["accent"] = json!(self.theme_for(space).accent);
+        // This site's remembered f-hint labels only, so no page learns about other sites.
+        if self.config.vim.remember_hints {
+            if let Some(mem) = self.view_for(target).and_then(platform::page_url).and_then(|u| site_of(&u)).and_then(|s| self.state.hint_memory.get(&s)) {
+                c["hint_memory"] = json!(mem.labels.iter().map(|(i, l)| (i.clone(), json!(l))).collect::<serde_json::Map<String, Value>>());
+            }
+        }
         // A tab no one sees (an agent's, or one fetch_page reads): pages there still draw (content.js timerFrames).
         if let Target::Tab(id) = target {
             c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
@@ -4214,6 +4220,12 @@ impl App {
         // Still with the user: the agent waits on.
         if let Some(h) = self.helping.get_mut(&t) {
             h.reply = Some(reply);
+            // A reminder each time the agent waits on: the first notice is easy to miss away from the computer.
+            if !self.window_focused {
+                let (who, note) = (h.who.clone(), h.note.clone());
+                crate::log::event("mcp", format!("reminded the user that {who} is waiting on tab {t}"));
+                self.notify_valerie(&format!("{who} is still waiting for you"), &note, None);
+            }
             return;
         }
         let note: String = args["note"].as_str().unwrap_or("").trim().chars().take(600).collect();
@@ -4239,6 +4251,7 @@ impl App {
         self.render();
         self.show_help_bar(t);
         if !self.window_focused {
+            crate::log::event("mcp", format!("notified the user that {who} needs them"));
             self.notify_valerie(&format!("{who} needs you"), &note, None);
         }
     }
@@ -8896,6 +8909,27 @@ impl App {
                     crate::log::line("video", format!("YouTube page started with a bad stall number, capped it: stall {:.2e}, longest recent gap {:.0} ms, speed {:.0} Mbps, saved {age}s ago", n("stall"), n("gap_ms"), n("byterate") / 125_000.0));
                 }
             }
+            // An f-hint label was used: it stays with that button on this site (vim.remember_hints).
+            (Source::Page(target), "hint_used") => {
+                let Some(site) = self.view_for(target).and_then(platform::page_url).and_then(|u| site_of(&u)) else { return };
+                let (Some(id), Some(label)) = (m["id"].as_str(), m["label"].as_str()) else { return };
+                let fine = |s: &str, max: usize| !s.is_empty() && s.len() <= max && s.chars().all(|c| c.is_ascii_alphanumeric());
+                if !self.config.vim.remember_hints || !fine(id, 13) || !fine(label, 4) {
+                    return;
+                }
+                let mem = self.state.hint_memory.entry(site).or_default();
+                mem.labels.retain(|(i, l)| i != id && l != label);
+                mem.labels.push((id.to_string(), label.to_lowercase()));
+                let extra = mem.labels.len().saturating_sub(crate::state::HintMemory::MAX_LABELS);
+                mem.labels.drain(..extra);
+                mem.used = now();
+                if self.state.hint_memory.len() > crate::state::HintMemory::MAX_SITES {
+                    if let Some(oldest) = self.state.hint_memory.iter().min_by_key(|(_, m)| m.used).map(|(s, _)| s.clone()) {
+                        self.state.hint_memory.remove(&oldest);
+                    }
+                }
+                self.dirty = true;
+            }
             // The user answered a cookie pop-up Valerie didn't (privacy.offer_cookie_help): offer, once per site, to do it for them.
             (Source::Page(target), "cookie_click") => {
                 let Some(site) = self.view_for(target).and_then(platform::page_url).and_then(|u| site_of(&u)) else { return };
@@ -10148,6 +10182,16 @@ impl App {
                 }
                 None => Err("no tab (open one first)".into()),
             },
+            "real_click" => {
+                let Some(v) = self.target_tab(tab_arg).and_then(|t| self.views.get(&t)) else {
+                    let _ = reply.send(Err("tab has no page".into()));
+                    return;
+                };
+                platform::real_click(v, args["x"].as_f64().unwrap_or(0.0), args["y"].as_f64().unwrap_or(0.0),
+                    args["right"].as_bool() == Some(true), args["clicks"].as_i64().unwrap_or(1) as isize,
+                    move |r| { let _ = reply.send(r.map(|()| json!(true))); });
+                return;
+            }
             "screenshot" => {
                 let Some(t) = self.target_tab(tab_arg).filter(|t| self.state.tabs.contains_key(t)) else {
                     let _ = reply.send(Err("no tab".into()));
@@ -11092,6 +11136,9 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
             Event::Reopen { .. } => app.show_main(),
             Event::Opened { urls } => {
                 trace("link from another app");
+                for u in &urls {
+                    crate::log::event("links", format!("another app opened a {} link to {}", u.scheme(), u.host_str().unwrap_or("(no host)")));
+                }
                 app.open_external(urls.into_iter().map(|u| u.to_string()).collect(), elwt);
             }
             Event::LoopDestroyed => {
