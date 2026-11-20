@@ -1068,8 +1068,8 @@ impl Binding {
     }
 }
 
-fn hint_mode_stay() -> String {
-    "stay".into()
+fn hint_mode_once() -> String {
+    "once".into()
 }
 
 fn hint_timeout_default() -> u64 {
@@ -1093,7 +1093,7 @@ pub struct VimConfig {
     pub hint_characters: String,
     pub hint_labels: String,
     pub remember_hints: bool,
-    #[serde(default = "hint_mode_stay")]
+    #[serde(default = "hint_mode_once")]
     pub hint_mode: String,
     #[serde(default = "hint_timeout_default")]
     pub hint_timeout: u64,

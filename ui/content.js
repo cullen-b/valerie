@@ -884,7 +884,7 @@ if (document.readyState === "loading") addEventListener("DOMContentLoaded", () =
 else post({ t: "hint_stay_ask" });
 function startHints(newTab, quiet) {
   const t0 = performance.now();
-  if (cfg.vim.hint_mode !== "once" && (!quiet || !hintStay)) { hintStay = { newTab: !!newTab }; stayUsed(); }
+  if (cfg.vim.hint_mode === "stay" && (!quiet || !hintStay)) { hintStay = { newTab: !!newTab }; stayUsed(); }
   let items = collectHintables();
   if (!items.length) return quiet ? undefined : toast("Nothing to click");
   const stable = cfg.vim.hint_labels !== "reading_order";
