@@ -380,6 +380,8 @@ pub struct CommandBarConfig {
     pub ask_agent_words: usize,
     pub ask_agent_starts: Vec<String>,
     pub customize_row: bool,
+    #[serde(default = "yes")]
+    pub exact_command_first: bool,
     pub shift_enter_to_chats: bool,
     pub send_to_chats_tip: bool,
     #[serde(default = "yes")]

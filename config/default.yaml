@@ -218,6 +218,8 @@ command_bar:
                            # word follows ("can you fix…", "summarize this page"); "ok", "so", "hey" in front don't
                            # count. Typing about the browser itself ("…my tabs", "…this space", "valerie") does the
                            # same from three words. [] = only by length
+  exact_command_first: true  # typing a command's whole name ("new folder") puts that command at the top, so Enter
+                           # runs it instead of searching. false = what you typed stays first. true | false
   customize_row: false     # a "Customize Valerie: …" row under "Ask agent" while you type; "!" then a request still
                            # customizes Valerie either way. true | false
   shift_enter_to_chats: true  # Shift+Enter on "Ask agent" sends the chat to the Chats space and you keep browsing (Enter
