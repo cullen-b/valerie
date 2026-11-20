@@ -26,8 +26,9 @@
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
 
 /* ---------- looks: each one recolors the page and rearranges the window ---------- */
-html { --bg1: #171a2b; --bg2: #2a1f3d; --ink: #ecebf5; --accent: #9d8cff; --onacc: #14122a; --wbg: #20233a; --wfg: #ecebf5; --wline: rgba(255,255,255,.1);
-  transition: --bg1 var(--morph), --bg2 var(--morph), --ink var(--morph), --accent var(--morph), --onacc var(--morph); }
+html { --bg1: #171a2b; --bg2: #2a1f3d; --ink: #ecebf5; --accent: #9d8cff; --onacc: #14122a; --wbg: #20233a; --wfg: #ecebf5; --wline: rgba(255,255,255,.1); }
+/* colors morph only where you can see them: easing them on html restyles and repaints the whole page every frame, which made scrolling stutter */
+:is(.top, .rail, .ch.on .txt, .get) { color: var(--ink); transition: --bg1 var(--morph), --bg2 var(--morph), --ink var(--morph), --accent var(--morph), --onacc var(--morph); }
 
 * { box-sizing: border-box; }
 html { background: var(--bg1); scroll-behavior: smooth; color-scheme: dark; }
@@ -42,7 +43,8 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 .stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; perspective: 1700px;
   background: linear-gradient(160deg, var(--bg1), var(--bg2)); }
 .glow { position: absolute; inset: 0; background: radial-gradient(60vw 50vh at 8% 100%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 70%); transition: opacity var(--morph); }
-html:is([data-look=v98], [data-look=pasture], [data-look=chrome], [data-look=black], [data-look=vapor], [data-look=blueprint], [data-look=gameboy], [data-look=highlighter], [data-look=hotdog]) .glow { opacity: 0; }
+/* the backdrop the last look left, faded out on the GPU so the new one shows through */
+.was { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .world { position: absolute; inset: 0; opacity: 0; transition: opacity var(--morph); pointer-events: none; }
 html[data-look=pasture] .world.meadowland, html[data-look=chrome] .world.grid, html:is([data-look=black], [data-look=matrix]) .world.stars, html[data-look=blueprint] .world.lines, html[data-look=vapor] .world.vaporland { opacity: 1; }
 .meadowland .sun { position: absolute; right: 9vw; top: 11vh; width: 9vw; aspect-ratio: 1; border-radius: 50%; background: #fff3a8; box-shadow: 0 0 0 2.2vw rgba(255,243,168,.35), 0 0 0 5vw rgba(255,243,168,.16); }
@@ -506,7 +508,7 @@ main { position: relative; z-index: 1; pointer-events: none; }
 .chips .track button { margin-right: 6px; }
 @keyframes drift { to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { .chips .track { animation: none; } .chips .row { overflow-x: auto; scrollbar-width: none; } }
-.chips button { border: 1.5px solid color-mix(in srgb, var(--ink) 35%, transparent); background: color-mix(in srgb, var(--bg1) 60%, transparent); padding: 6px 12px; border-radius: 999px; font-size: 13.5px; cursor: pointer; white-space: nowrap; transition: transform .18s var(--ease), background-color .2s, color .2s, border-color .2s; }
+.chips button { border: 1.5px solid color-mix(in srgb, var(--ink) 35%, transparent); background: color-mix(in srgb, var(--bg1) 60%, transparent); padding: 6px 12px; border-radius: 999px; font-size: 13.5px; cursor: pointer; white-space: nowrap; transition: transform .18s var(--ease); /* colors snap: a color transition on every chip restarts each frame while the look morphs */ }
 .chips button:hover { border-color: var(--ink); transform: translateY(-2px); } .chips button:active { transform: scale(.95); }
 .chips button.lucky { background: var(--accent); border-color: var(--accent); color: var(--onacc); font: 800 19px var(--display); font-stretch: 110%; padding: 13px 26px; margin-right: 4px; box-shadow: 0 8px 24px -8px var(--accent); }
 .chips button.lucky:hover { transform: translateY(-3px) scale(1.04); }
@@ -552,6 +554,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
 
 <div class="stage" aria-hidden="true">
   <div class="glow"></div>
+  <div class="was"></div>
   <div class="world meadowland"><div class="sun"></div><div class="cloud c1"></div><div class="cloud c2"></div><div class="cloud c3"></div><div class="hill a"></div><div class="hill b"></div></div>
   <div class="world grid"></div>
   <div class="world lines"></div>
@@ -766,12 +769,22 @@ const WORLDS = new Set(["tank", "field", "stand", "sky", "road"]);
 const VARS = ["--bg1", "--bg2", "--ink", "--accent", "--onacc", "--wbg", "--wfg"];
 
 // ---------- which look is showing: colors, where the tabs go, and any extras stacked on top ----------
-let shown = "", settle = 0;
+let shown = "", settle = 0, worn = null;
+const glow = $(".glow"), was = $(".was");
+// looks whose backdrop has no accent glow in the corner
+const DIM = new Set(["v98", "pasture", "chrome", "black", "vapor", "blueprint", "gameboy", "highlighter", "hotdog"]);
 function wear(look, lay, fx = "") {
   const key = `${look}|${lay}|${fx}`;
   if (key === shown) return;
   shown = key;
   const pal = PAL[look];
+  if (worn && worn !== pal && !calm) {
+    // paint the old backdrop once on top, then fade it out; nothing repaints while it fades
+    const halo = DIM.has(root.dataset.look) ? "" : `radial-gradient(60vw 50vh at 8% 100%, color-mix(in srgb, ${worn[3]} 26%, transparent), transparent 70%), `;
+    was.style.background = `${halo}linear-gradient(160deg, ${worn[0]}, ${worn[1]})`;
+    was.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 950, easing: "cubic-bezier(.4,0,.2,1)" });
+  }
+  worn = pal; glow.style.opacity = DIM.has(look) ? 0 : "";
   VARS.forEach((v, i) => root.style.setProperty(v, pal[i]));
   root.style.setProperty("--wline", lay === "task" ? "transparent" : pal[7] ? "rgba(0,0,0,.16)" : "rgba(255,255,255,.12)");
   root.style.colorScheme = pal[7] ? "light" : "dark";
@@ -817,7 +830,7 @@ const clamp = (n) => Math.max(0, Math.min(1, n));
 const glide = (ch) => (innerWidth >= 860 ? { k: ch.dataset.steps ? 0.83 : 0.5, full: 0.12, gone: 0.38 } : { k: ch.dataset.steps ? 0.92 : 0.75, full: 0.06, gone: 0.2 });
 // the scroll position that puts a chapter's text `at` screens below the middle
 const centred = (ch, at = 0) => ch.offsetTop + ch.offsetHeight / 2 - innerHeight / 2 - at * innerHeight / (1 - glide(ch).k);
-let lookAt = 0, scrolling = false;
+let lookAt = 0, scrolling = false, lit = null;
 // the looks chapter steps through its looks while its text is within this share of its fade distance of the middle, so each look shows while the text is readable
 const STEPS = 0.55;
 // read layout once per resize, not on every scroll, so a scroll frame never waits on layout
@@ -845,7 +858,7 @@ function glideFrame() {
     dreaming(active.id === "exts");
     $("#asked").textContent = "";
   }
-  for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); }
+  if (active !== lit) { lit = active; for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); } }
   const steps = active.dataset.steps?.split("|");
   if (steps) showLook(Math.min(steps.length - 1, Math.floor(clamp((STEPS - lookAt) / (2 * STEPS)) * steps.length)));
   picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : steps ? wear(...steps[lookStep].split(" ")) : wear(spaceLook(), active.dataset.lay);
