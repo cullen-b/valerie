@@ -260,6 +260,12 @@ function compute() {
     if (wantsAgent(raw)) results.unshift(ask); else results.push(ask);
     if ((D.options || {}).customize_row) results.push({ kind: "customize", title: "Customize Valerie: " + raw, sub: D.agent, icon: "✎", cmd: { cmd: "customize", request: raw } });
   }
+  // Typing a command's whole name ("new folder") puts that command first, so Enter runs it.
+  if (raw && (D.options || {}).exact_command_first !== false) {
+    const norm = (t) => t.toLowerCase().replace(/[…\s]+/g, " ").trim(), want = norm(raw);
+    const i = results.findIndex((r) => r.kind === "command" && norm(r.title || "") === want);
+    if (i > 0) results.unshift(...results.splice(i, 1));
+  }
   // Results plugins sent for this text go just under what you typed (they arrive a moment after typing).
   const fromPlugins = Object.values(extra).filter((m) => m.query === raw).flatMap((m) => m.items.slice(0, 8));
   if (fromPlugins.length) results.splice(results.findIndex((r) => r.kind === "go") + 1, 0, ...fromPlugins);
