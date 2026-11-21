@@ -623,9 +623,12 @@ mod mac {
                 if window.is_null() {
                     return;
                 }
-                // Only a pop-up fills its window; a tab asking to close must not close Valerie's.
+                // Only a pop-up's window closes (a floating one holds the page inset on a pane, not as its content); a tab
+                // asking to close must not close Valerie's.
                 let content: *mut AnyObject = msg_send![window, contentView];
-                if content == wv {
+                let id: *mut objc2_foundation::NSString = msg_send![window, identifier];
+                let popup = !id.is_null() && (*id).to_string() == POPUP_ID;
+                if content == wv || popup {
                     crate::log::line("page", "a pop-up window closed itself");
                     // Later: closing frees this webview, which WebKit is still calling.
                     let _: () = msg_send![window, performSelector: sel!(close), withObject: std::ptr::null_mut::<AnyObject>(), afterDelay: 0.0f64];
@@ -798,6 +801,9 @@ mod mac {
         ptr(wv) as usize == id
     }
 
+    /// Marks the windows `popup_window` makes, so `window.close()` from their page closes them.
+    const POPUP_ID: &str = "valerie.popup";
+
     /// A site's pop-up at the size it asked for ("Sign in with Google"). Wry's own pop-ups have no UI delegate, so
     /// `window.close()` did nothing and they stayed open after signing in; this one shares its opener's delegate.
     /// `floating` gives it Valerie's look: no title bar, the page inset on a frosted pane, and the window buttons in a
@@ -847,6 +853,7 @@ mod mac {
             let _: () = msg_send![webview, setUIDelegate: delegate];
             // The window frees itself, and with it the webview, when it closes.
             let _: () = msg_send![window, setReleasedWhenClosed: true];
+            let _: () = msg_send![window, setIdentifier: &*objc2_foundation::NSString::from_str(POPUP_ID)];
             if floating {
                 float_popup(window, webview, size);
             } else {
