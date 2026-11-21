@@ -956,7 +956,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("switch_settings", "Switch to the Next Saved Settings"),
     ("saved_settings", "Saved Settings (save, switch between and delete sets of settings)"),
     ("play_blackjack", "Play Blackjack"),
-    ("play_poker", "Play Poker (video poker: Jacks or Better)"),
+    ("play_poker", "Play Poker (Texas hold'em against bots)"),
     ("play_baccarat", "Play Baccarat"),
     ("play_roulette", "Play Roulette"),
     ("play_slots", "Play Slots"),

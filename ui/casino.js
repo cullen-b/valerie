@@ -13,7 +13,7 @@
     Y:"101101010010010",Z:"111001010100111",0:"111101101101111",1:"010110010010111",2:"110001010100111",3:"110001010001110",
     4:"101101111001001",5:"111100110001110",6:"011100111101111",7:"111001010010010",8:"111101111101111",9:"111101111001110",
     "!":"010010010000010","?":"110001010000010",".":"000000000000010",",":"000000000010100","-":"000000111000000",
-    "+":"000010111010000",":":"000010000010000","=":"000111000111000"," ":"000000000000000",
+    "+":"000010111010000",":":"000010000010000","=":"000111000111000","'":"010010000000000"," ":"000000000000000",
   };
   const SUIT = {
     "♠":["0001000","0011100","0111110","1111111","1101011","0001000","0011100"],
@@ -30,9 +30,9 @@
   const still = matchMedia("(prefers-reduced-motion: reduce)");
   // Only Valerie's own page keeps your chips: the offline page belongs to the site that didn't load.
   const OWN = location.protocol === "valerie:";
-  let oy = 0, S = 2, ink = "#535353", dim = "#cfcfcf", chips = 100, best = 100, ended = -Infinity, backOnline = false, said = "";
-  try { const s = OWN && JSON.parse(localStorage.getItem("casino") || "{}"); if (s && s.chips > 0) { chips = s.chips; best = s.best || chips; } } catch {}
-  const save = () => { best = Math.max(best, chips); if (OWN) try { localStorage.setItem("casino", JSON.stringify({ chips, best, game: game.name })); } catch {} };
+  let oy = 0, S = 2, ink = "#535353", dim = "#cfcfcf", chips = 100, best = 100, ended = -Infinity, backOnline = false, said = "", bots = 3;
+  try { const s = OWN && JSON.parse(localStorage.getItem("casino") || "{}"); if (s && s.chips > 0) { chips = s.chips; best = s.best || chips; } if (s && s.bots >= 1 && s.bots <= 5) bots = s.bots; } catch {}
+  const save = () => { best = Math.max(best, chips); if (OWN) try { localStorage.setItem("casino", JSON.stringify({ chips, best, bots, game: game.name })); } catch {} };
 
   // Drawing, in the 210×124 grid of big pixels.
   const px = (x, y, w = 1, h = 1, c = ink) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x) * S, (Math.round(y) + oy) * S, w * S, h * S); };
@@ -60,6 +60,14 @@
     // In the corner under the rank, so it still shows when the next card covers the rest.
     sprite(SUIT[c.s], x + 2, y + 9);
     if (top) sprite(SUIT[c.s], x + 12, y + 19);
+  };
+  const MINI = { "♠": ["00100", "01110", "11111", "00100", "01110"], "♥": ["01010", "11111", "11111", "01110", "00100"], "♦": ["00100", "01110", "11111", "01110", "00100"], "♣": ["01110", "01110", "11111", "00100", "01110"] };
+  const mini = (x, y, c, down) => {
+    ctx.clearRect(x * S, (y + oy) * S, 13 * S, 15 * S);
+    box(x, y, 13, 15);
+    if (down) { for (let j = 2; j < 13; j++) for (let i = 2; i < 11; i++) if ((i + j) % 4 === 0) px(x + i, y + j); return; }
+    text(c.r, x + 2, y + 2);
+    sprite(MINI[c.s], x + 2, y + 8);
   };
   const hand = (cards, y, hideSecond) => { const x = Math.round((W - 22 - (cards.length - 1) * 14) / 2); cards.forEach((c, i) => card(x + i * 14, y, c, hideSecond && i === 1, i === cards.length - 1)); };
   const dashes = y => { for (let x = 0; x < W; x += 4) px(x, y, 2); };
@@ -129,60 +137,178 @@
     return g;
   })();
 
+  // Texas hold'em against bots, fixed limit: blinds 5/10, bets of 10 before the turn and 20 after, four bets a round at most.
   const poker = (() => {
-    const PAY = [["ROYAL FLUSH", 250], ["STRAIGHT FLUSH", 50], ["4 OF A KIND", 25], ["FULL HOUSE", 9], ["FLUSH", 6], ["STRAIGHT", 4], ["3 OF A KIND", 3], ["TWO PAIR", 2], ["JACKS OR BETTER", 1]];
-    let cards = [], held = [], pack = [], win = -1;
+    const NAMES = ["HIGH CARD", "PAIR", "TWO PAIR", "THREE OF A KIND", "STRAIGHT", "FLUSH", "FULL HOUSE", "FOUR OF A KIND", "STRAIGHT FLUSH"];
     const value = r => ({ A: 14, K: 13, Q: 12, J: 11 })[r] || +r;
-    const rank = h => {
+    const eval5 = h => {
       const v = h.map(c => value(c.r)).sort((a, b) => b - a), n = {};
       v.forEach(x => (n[x] = (n[x] || 0) + 1));
-      const counts = Object.values(n).sort((a, b) => b - a).join("");
-      const flush = h.every(c => c.s === h[0].s);
-      const straight = counts === "11111" && (v[0] - v[4] === 4 || v.join() === "14,5,4,3,2");
-      if (straight && flush) return v[4] === 10 ? 0 : 1;
-      if (counts === "41") return 2;
-      if (counts === "32") return 3;
-      if (flush) return 4;
-      if (straight) return 5;
-      if (counts === "311") return 6;
-      if (counts === "221") return 7;
-      if (counts === "2111" && +Object.keys(n).find(k => n[k] === 2) >= 11) return 8;
-      return -1;
+      const groups = Object.keys(n).map(Number).sort((a, b) => n[b] - n[a] || b - a), shape = groups.map(x => n[x]).join("");
+      const flush = h.every(c => c.s === h[0].s), five = groups.length === 5;
+      const top = five && v[0] - v[4] === 4 ? v[0] : five && v.join() === "14,5,4,3,2" ? 5 : 0;
+      if (top && flush) return [8, top];
+      if (shape === "41") return [7, ...groups];
+      if (shape === "32") return [6, ...groups];
+      if (flush) return [5, ...v];
+      if (top) return [4, top];
+      if (shape === "311") return [3, ...groups];
+      if (shape === "221") return [2, ...groups];
+      if (shape === "2111") return [1, ...groups];
+      return [0, ...v];
     };
-    const g = { name: "POKER", live: false, busy: false, msg: "JACKS OR BETTER. PRESS SPACE TO DEAL" };
-    const deal = () => {
-      const note = take(10); pack = deck(); cards = pack.splice(0, 5); held = [false, false, false, false, false]; win = -1; g.live = true;
-      g.msg = note + "PICK CARDS TO KEEP, THEN DRAW";
-    };
-    const swap = () => {
-      g.busy = true;
-      const swapped = [0, 1, 2, 3, 4].filter(i => !held[i]);
-      swapped.forEach(i => (cards[i] = null));
-      seq(swapped.map(i => () => (cards[i] = pack.pop())), 140, () => {
-        win = rank(cards); g.live = g.busy = false;
-        const back = win < 0 ? 0 : PAY[win][1] * 10;
-        chips += back;
-        g.msg = (win < 0 ? "NO WIN" : PAY[win][0]) + won(back, 10);
-        over();
-      });
-    };
-    const hold = i => { if (g.live && !g.busy) held[i] = !held[i]; };
-    g.buttons = () => [{ label: g.live ? "DRAW" : "DEAL", key: "enter", act: g.live ? swap : deal, on: !g.busy, lit: true }];
-    g.key = k => { const i = "12345".indexOf(k); if (i < 0 || !k) return false; hold(i); return true; };
-    g.click = (x, y) => { if (y < 22 || y > 52 || x % 25 > 22 || x >= 125) return false; hold(Math.floor(x / 25)); return g.live; };
-    g.render = () => {
-      middle("BET 10", 10);
-      for (let i = 0; i < 5; i++) {
-        const c = cards[i];
-        c ? card(i * 25, 22, c, false, true) : card(i * 25, 22, null, true);
-        if (g.live) held[i] ? text("KEEP", i * 25 + 4, 56) : text(i + 1, i * 25 + 10, 56, dim);
+    const cmp = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) return d; } return 0; };
+    // The best five of up to seven cards.
+    const bestOf = cards => {
+      let top = null;
+      const k = cards.length;
+      for (let a = 0; a < k; a++) for (let b = a + 1; b < k; b++) for (let c = b + 1; c < k; c++) for (let d = c + 1; d < k; d++) for (let e = d + 1; e < k; e++) {
+        const r = eval5([cards[a], cards[b], cards[c], cards[d], cards[e]]);
+        if (!top || cmp(r, top) > 0) top = r;
       }
-      PAY.forEach(([name, n], i) => {
-        const y = 22 + i * 7, lit = i === win && !g.live;
-        if (lit) px(130, y - 1, 80, 7);
-        text(name, 131, y, lit ? null : ink);
-        right(n * 10, 209, y, lit ? null : dim);
-      });
+      return top;
+    };
+    let n = 0, dealer = 0, holes = [], board = [], pack = [], put = [], paid = [], folded = [], acted = [], says = [];
+    let bet = 0, raises = 0, street = 0, turn = 0, allIn = false, showdown = false, fast = false, yourTurn = false;
+    const g = { name: "POKER", live: false, busy: false, msg: "TEXAS HOLD 'EM. PRESS SPACE TO DEAL" };
+    const size = () => (street < 2 ? 10 : 20);
+    const active = () => [...Array(n).keys()].filter(i => !folded[i]);
+    const pot = () => paid.reduce((a, b) => a + b, 0);
+    // You play with your own chips (short, you're all in); the bots never run out.
+    const pay = (i, amount) => {
+      if (i === 0) { amount = Math.min(amount, chips); chips -= amount; if (!chips) allIn = true; }
+      put[i] += amount; paid[i] += amount;
+    };
+    const needs = i => !folded[i] && !(i === 0 && allIn) && (put[i] < bet || !acted[i]);
+    const nextFrom = i => { for (let k = 1; k <= n; k++) { const j = (i + k) % n; if (needs(j)) return j; } return -1; };
+    const act = (i, kind) => {
+      const owe = bet - put[i];
+      if (kind === "fold" && owe > 0) { folded[i] = true; says[i] = "FOLD"; }
+      else if (kind === "raise" && raises < 4 && !(i === 0 && chips <= owe)) {
+        bet += size(); raises++; pay(i, bet - put[i]);
+        acted = acted.map(() => false);
+        says[i] = owe ? "RAISE" : "BET " + size();
+      } else { pay(i, owe); says[i] = owe ? "CALL " + owe : "CHECK"; }
+      acted[i] = true;
+    };
+    const think = p => {
+      const h = holes[p], owe = bet - put[p];
+      let s;
+      if (!board.length) {
+        const [a, b] = h.map(c => value(c.r)).sort((x, y) => y - x);
+        s = a === b ? 0.5 + a / 30 : (a + b) / 40 + (h[0].s === h[1].s ? 0.06 : 0) + (a - b === 1 ? 0.04 : 0);
+      } else {
+        const mine = bestOf([...h, ...board]), table = board.length === 5 ? bestOf(board) : null;
+        s = [0.2, 0.45, 0.62, 0.74, 0.8, 0.85, 0.92, 0.97, 1][mine[0]] + (mine[0] === 0 ? mine[1] / 100 : 0);
+        if (table && cmp(mine, table) === 0) s = 0.2;
+        else if (mine[0] === 1 && !h.some(c => value(c.r) === mine[1])) s = 0.25;
+      }
+      s += (Math.random() - 0.5) * 0.2;
+      if (Math.random() < 0.05) return "raise";
+      if (s > 0.72) return Math.random() < 0.7 ? "raise" : "call";
+      if (s > 0.42) return Math.random() < 0.15 ? "raise" : "call";
+      if (!owe) return "call";
+      return s > 0.3 && Math.random() < 0.5 ? "call" : "fold";
+    };
+    const finish = () => {
+      const left = active();
+      let winners, why = "";
+      if (left.length === 1) winners = left;
+      else {
+        showdown = true;
+        const ranks = left.map(i => bestOf([...holes[i], ...board]));
+        const top = ranks.reduce((t, r) => (cmp(r, t) > 0 ? r : t));
+        winners = left.filter((_, k) => cmp(ranks[k], top) === 0);
+        why = " WITH " + NAMES[top[0]];
+      }
+      let mine = 0;
+      if (winners.includes(0)) {
+        // All in, you can only win what you put in from each player.
+        const reach = allIn ? paid.reduce((t, x) => t + Math.min(x, paid[0]), 0) : pot();
+        mine = Math.floor(reach / winners.length);
+        chips += mine;
+      }
+      g.live = g.busy = yourTurn = false;
+      g.msg = (winners.length > 1 ? (winners.includes(0) ? "YOU SPLIT " + mine : "SPLIT POT") : winners[0] === 0 ? "YOU WIN " + mine : "BOT " + winners[0] + " WINS " + pot()) + why;
+      over();
+    };
+    const wait = () => later(step, fast ? 120 : 520);
+    const nextStreet = () => {
+      if (street === 3) return finish();
+      street++;
+      board.push(...pack.splice(0, street === 1 ? 3 : 1));
+      bet = 0; raises = 0; turn = dealer;
+      put = put.map(() => 0); acted = acted.map(() => false); says = says.map((s, i) => (folded[i] ? "FOLD" : ""));
+      draw(); wait();
+    };
+    function step() {
+      if (active().length === 1) return finish();
+      const p = nextFrom(turn);
+      if (p < 0) return nextStreet();
+      turn = p;
+      if (p === 0) {
+        yourTurn = true; g.busy = false;
+        const owe = Math.min(bet - put[0], chips);
+        g.msg = owe ? "YOUR TURN. " + owe + " TO CALL" : "YOUR TURN";
+        return draw();
+      }
+      g.busy = true; act(p, think(p)); draw(); wait();
+    }
+    const deal = () => {
+      n = bots + 1;
+      const note = chips < 10 ? ((chips = 100), "THE HOUSE GIVES YOU 100. ") : "";
+      dealer = (dealer + 1) % n; pack = deck(); board = [];
+      holes = [...Array(n)].map(() => pack.splice(0, 2));
+      put = Array(n).fill(0); paid = Array(n).fill(0); folded = Array(n).fill(false); acted = Array(n).fill(false); says = Array(n).fill("");
+      bet = 10; raises = 1; street = 0; allIn = showdown = fast = yourTurn = false; g.live = g.busy = true;
+      const sb = n === 2 ? dealer : (dealer + 1) % n, bb = (sb + 1) % n;
+      pay(sb, 5); pay(bb, 10); says[sb] = "SMALL 5"; says[bb] = "BIG 10";
+      turn = bb; g.msg = note + "BLINDS 5 AND 10";
+      draw(); wait();
+    };
+    const you = kind => () => {
+      if (!yourTurn) return;
+      yourTurn = false; g.busy = true;
+      act(0, kind);
+      if (folded[0]) fast = true;
+      g.msg = folded[0] ? "YOU FOLDED" : "";
+      draw(); wait();
+    };
+    const setBots = d => { bots = Math.min(5, Math.max(1, bots + d)); g.msg = bots + (bots === 1 ? " BOT" : " BOTS") + ". PRESS SPACE TO DEAL"; save(); };
+    g.buttons = () => {
+      if (!g.live) return [
+        { label: "DEAL", key: "enter", act: deal, on: true, lit: true },
+        { label: "- BOT", key: "-", act: () => setBots(-1), on: bots > 1 },
+        { label: "+ BOT", key: "+", act: () => setBots(1), on: bots < 5 },
+      ];
+      const owe = bet - put[0];
+      return [
+        { label: "FOLD", key: "f", act: you("fold"), on: yourTurn && owe > 0 },
+        { label: owe ? "CALL " + Math.min(owe, chips) : "CHECK", key: "c", act: you("call"), on: yourTurn, lit: true },
+        { label: owe ? "RAISE" : "BET", key: owe ? "r" : "b", act: you("raise"), on: yourTurn && raises < 4 && chips > owe },
+      ];
+    };
+    g.key = k => { if (k !== "=" || g.live) return false; setBots(1); return true; };
+    g.render = () => {
+      const seats = n - 1 === bots ? n - 1 : bots, playing = n - 1 === bots, w = 40;
+      const x0 = Math.round((W - (seats * w + (seats - 1) * 2)) / 2);
+      for (let k = 1; k <= seats; k++) {
+        const x = x0 + (k - 1) * (w + 2), out = playing && folded[k], name = "BOT " + k + (playing && dealer === k ? " D" : "");
+        if (g.live && g.busy && turn === k) { px(x, 10, w, 8); text(name, x + 2, 11, null); }
+        else text(name, x + 2, 11, out ? dim : ink);
+        if (!playing) continue;
+        text(says[k] || "", x + 2, 20, dim);
+        if (!out && holes[k]) holes[k].forEach((c, j) => mini(x + 2 + j * 15, 27, c, !showdown));
+      }
+      const bx = 14, by = 54;
+      text("POT " + (playing ? pot() : 0), bx, 46);
+      for (let i = 0; i < 5; i++) board[i] && playing ? card(bx + i * 25, by, board[i], false, true) : box(bx + i * 25, by, 22, 30, dim);
+      const label = "YOU" + (playing && dealer === 0 ? " D" : "");
+      if (yourTurn) { px(149, 45, wide(label) + 2, 7); text(label, 150, 46, null); }
+      else text(label, 150, 46, playing && folded[0] ? dim : ink);
+      if (playing) text(says[0] || "", 150 + wide(label) + 5, 46, dim);
+      if (playing && holes[0]) holes[0].forEach((c, j) => card(150 + j * 24, by, c, false, true));
+      else { box(150, by, 22, 30, dim); box(174, by, 22, 30, dim); }
     };
     return g;
   })();
@@ -364,7 +490,7 @@
       if (solid) { px(x, y, w, 11, c); text(b.label, x + 3, y + 2, null); }
       else { box(x, y, w, 11, c); text(b.label, x + 3, y + 2, c); }
       // The key that presses it, underlined (its first letter).
-      if (b.key && b.key.length === 1 && b.label[0].toLowerCase() === b.key) solid ? ctx.clearRect((x + 3) * S, (y + 8) * S, 3 * S, S) : px(x + 3, y + 8, 3, 1, c);
+      if (/^[a-z]$/.test(b.key || "") && b.label[0].toLowerCase() === b.key) solid ? ctx.clearRect((x + 3) * S, (y + 8) * S, 3 * S, S) : px(x + 3, y + 8, 3, 1, c);
       buttons.push({ ...b, x, w });
       x += w + 4;
     }
