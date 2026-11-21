@@ -522,8 +522,8 @@ pages:
   error_page: true         # Mac: when a site doesn't load (offline, a mistyped address, a site that's down), a page says
                            # why, with Try Again; it loads by itself when you're back online. false = the tab stays as it was.
                            # (Windows and Linux show their system's own error page either way.) true | false
-  offline_game: true       # Mac: the "You're offline" page has a hand of blackjack to play while you wait (keys: Enter deals,
-                           # H hit, S stand, D double). false = just the message. true | false
+  offline_game: true       # Mac: the "You're offline" page has a hand of blackjack to play while you wait, drawn as
+                           # pixel art (keys: Space deals and hits, S stands, D doubles). false = just the message. true | false
   http_sign_in: true       # Mac: the name and password box for sites that ask the old way (HTTP sign-in: routers, staging
                            # sites, intranets). false = such sites only show their "401" page. true | false
   youtube_sharp_start: true # YouTube videos start at full quality even if a past hiccup left YouTube expecting a bad connection.
