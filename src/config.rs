@@ -1129,6 +1129,15 @@ pub struct McpConfig {
     pub answer_in_background: bool,
     pub start_when_needed: bool,
     pub quit_when_unused_minutes: f64,
+    /// "outline" | "json": what agents get from snapshot.
+    #[serde(default = "outline")]
+    pub snapshot_format: String,
+    #[serde(default = "yes")]
+    pub stable_refs: bool,
+    #[serde(default = "yes")]
+    pub report_changes: bool,
+    #[serde(default = "yes")]
+    pub scripts: bool,
 }
 
 fn title_scroll_mode<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
@@ -1288,6 +1297,10 @@ fn room() -> String {
 
 fn cmd_n() -> String {
     "CmdOrCtrl+N".into()
+}
+
+fn outline() -> String {
+    "outline".into()
 }
 
 fn yes() -> bool {

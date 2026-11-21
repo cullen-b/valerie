@@ -231,10 +231,14 @@ or choose between options (choices gives them buttons). Pass url to open the pag
 open. Never ask them to type a password or key into the note box: they put it into the page. fetch_page and \
 web_search return blocked with a tab when a page wants a person.\n\
 Working in the user's tabs: list_tabs gives tab ids; page tools default to the active tab. read_page reads a tab \
-(format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref (snapshot again \
-after the page changes); drag moves one onto another. wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
+(format: markdown), snapshot lists clickable elements with refs, then click / type / press_key by ref, or by their \
+words (click text, type field); each says what changed on the page, so you rarely snapshot again. drag moves one onto another. \
+For many steps, run_script runs JavaScript that calls these tools and returns only what you ask for. wait_for waits for text or a selector, screenshot shows the page (save_to writes a file), \
 eval_js runs JavaScript. Open tabs with activate: false unless the user wants to watch. run_command does anything a \
 keyboard shortcut can. When something fails, read_logs says why.";
+
+/// Tools that find controls by ref, so they share snapshot's way of naming them.
+const REF_TOOLS: &[&str] = &["snapshot", "click", "type", "hover", "drag", "scroll", "upload_file", "press_key", "screenshot"];
 
 /// Who's calling: the access level of the chat whose agent this is ("read" | "ask" | "full") and its id.
 struct Caller {
@@ -271,8 +275,8 @@ fn risky_action(name: &str, args: &Value, proxy: &EventLoopProxy<UserEvent>) -> 
         return Ok(guarded.then(|| format!("change the {key} setting to {}", args["value"])));
     }
     let target = match name {
-        "click" => json!({ "ref": args["ref"], "selector": args["selector"] }),
-        "type" => json!({ "ref": args["ref"], "selector": args["selector"], "submits": submit }),
+        "click" => json!({ "ref": args["ref"], "selector": args["selector"], "find_text": args["text"], "within": args["within"], "_numbered": args["_numbered"] }),
+        "type" => json!({ "ref": args["ref"], "selector": args["selector"], "field": args["field"], "within": args["within"], "_numbered": args["_numbered"], "submits": submit }),
         _ => json!({ "submits": true }),
     };
     let found = eval(proxy, args.get("tab").and_then(Value::as_i64), &with_args(&target, &format!("{FIND_JS}\n{PAYING_JS}\nreturn pressTarget(find(), A.submits);")))?;
@@ -373,7 +377,8 @@ fn confirm_report(args: &Value, chat: &str, proxy: &EventLoopProxy<UserEvent>) -
 
 /// Check a tool call against the chat's access level, asking the user for "ask" chats.
 fn allowed(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<(), String> {
-    if LOOKING.contains(&name) || name == "approve" {
+    // run_script isn't asked about itself: each call it makes is checked on its own.
+    if LOOKING.contains(&name) || name == "approve" || name == "run_script" {
         return Ok(());
     }
     if who.access == "read" {
@@ -431,30 +436,8 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
             let args = loosen(name, params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or(json!({})));
             let started = Instant::now();
             let _running = CallRunning::begin();
-            let result = allowed(name, &args, who, proxy).and_then(|()| match name {
-                // Claude Code's permission questions (--permission-prompt-tool): the user answers in Valerie.
-                "approve" => {
-                    let ok = call_wait(proxy, "confirm", json!({ "chat": who.chat, "tool": args["tool_name"], "args": args["input"] }), 600)?["allowed"].as_bool() == Some(true);
-                    Ok(json!(if ok {
-                        json!({ "behavior": "allow", "updatedInput": args["input"] }).to_string()
-                    } else {
-                        json!({ "behavior": "deny", "message": "The user said no." }).to_string()
-                    }))
-                }
-                // Valerie's own chats are named in the note the user sees.
-                "ask_user" => {
-                    let mut a = args.clone();
-                    a["chat"] = json!(who.chat);
-                    call_tool(name, a, proxy)
-                }
-                // The terminal tools default to the calling chat's own shell.
-                "read_terminal" | "run_in_terminal" => {
-                    let mut a = args.clone();
-                    a["_chat"] = json!(who.chat);
-                    call(proxy, name, a)
-                }
-                _ => call_tool(name, args.clone(), proxy),
-            });
+            let json_out = params["_meta"]["valerie/json"] == true;
+            let result = dispatch(name, &args, who, proxy, json_out);
             log_call(name, &args, who, started.elapsed(), &result);
             Ok(match result {
                 Ok(v) if v.get("__content").is_some() => json!({ "content": v["__content"], "isError": false }),
@@ -475,6 +458,116 @@ fn rpc(msg: Value, proxy: &EventLoopProxy<UserEvent>, who: &Caller) -> Option<Va
         Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
         Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": e }),
     })
+}
+
+/// One tool call from an agent (or from its run_script): checked against the chat's access, then run. `json_out` is for
+/// `valerie call` and scripts, which get JSON where agents get text.
+fn dispatch(name: &str, args: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>, json_out: bool) -> Result<Value, String> {
+    allowed(name, args, who, proxy)?;
+    match name {
+        // Claude Code's permission questions (--permission-prompt-tool): the user answers in Valerie.
+        "approve" => {
+            let ok = call_wait(proxy, "confirm", json!({ "chat": who.chat, "tool": args["tool_name"], "args": args["input"] }), 600)?["allowed"].as_bool() == Some(true);
+            Ok(json!(if ok {
+                json!({ "behavior": "allow", "updatedInput": args["input"] }).to_string()
+            } else {
+                json!({ "behavior": "deny", "message": "The user said no." }).to_string()
+            }))
+        }
+        // Valerie's own chats are named in the note the user sees.
+        "ask_user" => {
+            let mut a = args.clone();
+            a["chat"] = json!(who.chat);
+            call_tool(name, a, proxy)
+        }
+        // The terminal tools default to the calling chat's own shell.
+        "read_terminal" | "run_in_terminal" => {
+            let mut a = args.clone();
+            a["_chat"] = json!(who.chat);
+            call(proxy, name, a)
+        }
+        "run_script" => code_mode(args, who, proxy),
+        // mcp.snapshot_format: agents get the controls as an outline of lines; JSON for scripts and `valerie call`.
+        "snapshot" if !json_out && crate::config::Config::load().map(|c| c.mcp.snapshot_format != "json").unwrap_or(true) => {
+            let mut a = args.clone();
+            a["_outline"] = json!(true);
+            call_tool(name, a, proxy)
+        }
+        _ => call_tool(name, args.clone(), proxy),
+    }
+}
+
+/// run_script: the agent's JavaScript runs in a blank hidden tab and calls tools through `tools.<name>(…)`; each call is
+/// checked and run here as if the agent had made it, and only what the script returns (and logs) goes back.
+fn code_mode(a: &Value, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
+    if !crate::config::Config::load().map(|c| c.mcp.scripts).unwrap_or(true) {
+        return Err("run_script is off (the mcp.scripts setting). Call the tools one at a time instead.".into());
+    }
+    let script = a["script"].as_str().filter(|s| !s.trim().is_empty()).ok_or("give script: the body of an async function that calls tools.<name>({…}) and returns what you want back")?;
+    let secs = a["timeout_seconds"].as_u64().unwrap_or(120).clamp(1, 600);
+    // A fresh, unguessable blank page each time (the scripts run with the agent's access).
+    let page = std::env::temp_dir().join(format!("valerie-script-{}.html", &random_hex()[..16]));
+    std::fs::write(&page, "<!doctype html><meta charset=utf-8><title>Agent script</title>").map_err(|e| format!("couldn't make the script's page: {e}"))?;
+    let opened = url::Url::from_file_path(&page)
+        .map_err(|_| "couldn't make the script's page".to_string())
+        .and_then(|url| call(proxy, "open_tab", json!({ "url": url.as_str(), "hidden": true, "activate": false })));
+    let runner = opened.and_then(|o| o["tab"].as_i64().ok_or_else(|| "couldn't open a tab to run the script in".to_string()));
+    let out = runner.and_then(|tab| {
+        let out = drive_script(tab, script, Duration::from_secs(secs), who, proxy);
+        let _ = call(proxy, "close_tab", json!({ "tab": tab }));
+        out
+    });
+    let _ = std::fs::remove_file(&page);
+    out
+}
+
+fn drive_script(runner: i64, script: &str, limit: Duration, who: &Caller, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
+    let tab = wait_ready(proxy, Some(runner))?;
+    eval(proxy, tab, &format!("{RUNNER_JS}\nreturn __vgStart(async function (valerie, tools, console, sleep) {{\n{script}\n}});"))?;
+    let (start, mut logs, mut calls) = (Instant::now(), Vec::<String>::new(), 0usize);
+    let finish = |logs: &[String], calls: usize, v: Result<Value, String>| -> Result<Value, String> {
+        let said = if logs.is_empty() { String::new() } else { format!("Logged:\n{}\n\n", logs.join("\n")) };
+        match v {
+            Ok(v) if v.get("__image_png").is_some() || v.get("__content").is_some() => Ok(v),
+            Ok(v) => Ok(json!(format!("{said}{}", match &v { Value::String(t) => t.clone(), Value::Null => format!("Done ({calls} tool calls)."), v => serde_json::to_string_pretty(v).unwrap_or_default() }))),
+            Err(e) => Err(format!("{said}The script stopped: {e} (after {calls} tool calls)")),
+        }
+    };
+    loop {
+        let v = eval(proxy, tab, "return window.__vgRun ? window.__vgRun.take() : { done: { ok: false, error: 'the script page went away' } };")?;
+        for l in v["logs"].as_array().into_iter().flatten() {
+            if logs.len() < 200 {
+                logs.push(l.as_str().map(str::to_string).unwrap_or_else(|| l.to_string()).chars().take(2000).collect());
+            }
+        }
+        for c in v["calls"].as_array().into_iter().flatten() {
+            let name = c["tool"].as_str().unwrap_or("");
+            let args = loosen(name, c["args"].clone());
+            calls += 1;
+            let started = Instant::now();
+            let r = match name {
+                "run_script" | "approve" => Err(format!("{name} can't be called from inside a script")),
+                _ if !tools().iter().any(|t| t["name"] == name) => Err(format!("there's no tool called {name}")),
+                _ => dispatch(name, &args, who, proxy, true),
+            };
+            log_call(name, &args, who, started.elapsed(), &r);
+            let (ok, payload) = match r {
+                Ok(v) => (true, v),
+                Err(e) => (false, json!(e)),
+            };
+            eval(proxy, tab, &format!("return __vgRun.answer({}, {ok}, {payload});", c["id"]))?;
+        }
+        if let Some(done) = v["done"].as_object() {
+            let r = if done.get("ok") == Some(&json!(true)) { Ok(done.get("value").cloned().unwrap_or(Value::Null)) } else { Err(done.get("error").and_then(Value::as_str).unwrap_or("it failed").to_string()) };
+            return finish(&logs, calls, r);
+        }
+        if start.elapsed() > limit {
+            return finish(&logs, calls, Err(format!("it ran longer than {}s (timeout_seconds)", limit.as_secs())));
+        }
+        if v["calls"].as_array().is_none_or(|c| c.is_empty()) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 /// One log line per tool call: who, which tool, how long it took and any error (never what was typed or the script).
@@ -772,18 +865,22 @@ pub fn tools() -> Vec<Value> {
         tool("read_page", "Read an open tab's URL, title and content: visible text (default), clean Markdown or HTML.", json!({
             "tab": tab_prop(), "max_chars": { "type": "integer", "default": 20000 },
             "format": { "type": "string", "enum": ["text", "markdown", "html"], "description": "Default text" } }), &[]),
-        tool("snapshot", "List the page's interactive elements with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too. Only what's shown on the page is listed (not what sits in a closed menu or section). Each has its label and, where it applies, href (same-site links as a path), value (a list for a multiple-choice <select>), checked, expanded, options (dropdowns), editor (a rich text or code editor), disabled, readonly, offscreen, and covered (what sits on top of it, e.g. an open dialog). other_site_frames lists embedded frames from another site, which these tools can't reach inside: open that address in its own tab to work in it. truncated: true means there were more than 500. Refs reset on every snapshot.",
+        tool("snapshot", "List the page's controls with refs for click/type: buttons, links, fields, editors and anything clickable, inside shadow DOM and same-origin frames too, one line each, grouped under the part of the page they're in (an open dialog first, then nav, form, main…). Only what's shown is listed (not what sits in a closed menu or section). A line has the ref, kind, label, = value, options, → link and flags such as checked, expanded, disabled, offscreen or covered by (what sits on top: deal with that first). Refs are short letters that stay the same for a control while it's on the page, so you can keep using them after the page changes. Frames from other sites can't be reached: open their address in its own tab. click, type and press_key say what changed afterwards, so you rarely need to snapshot again.",
              json!({ "tab": tab_prop(), "only_in_view": { "type": "boolean" } }), &[]),
         tool("click", "Click an element by snapshot ref or CSS selector (shadow DOM and same-origin frames included), the way a person would (on macOS and Windows a real mouse click, which sites trust): on whatever is on top at its middle, then waits for the page to react and says if it went somewhere new, opened a new tab, or showed an alert, confirm or prompt (answered by dialog). Refuses what a person couldn't click: something covered (a dialog or banner), hidden (in a closed menu or section) or disabled; force: true clicks covered, hidden and aria-disabled ones anyway. double: true double-clicks; button: right right-clicks (opens the page's own context menu).", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
+            "text": { "type": "string", "description": "Instead of a ref: the words on the control, e.g. \"Sign in\" (if several match, the error lists them)" },
+            "within": { "type": "string", "description": "With text: only in this part of the page, e.g. dialog, nav or form \"Login\"" },
             "force": { "type": "boolean", "description": "Click even if something covers it or it isn't shown" },
             "double": { "type": "boolean", "description": "Double-click" },
             "button": { "type": "string", "enum": ["left", "right"], "description": "Default left" } })), &[]),
         tool("type", "Type text into an input, textarea, rich text box or code editor (CodeMirror, Monaco, online document editors) by ref or selector, or into whatever has the cursor. A ref on an editor's frame finds the editor inside it. Editors get the text pasted in as one edit, so whole documents with newlines work; clear: true replaces everything in the editor. Date, time, color, number and slider fields always get the whole value replaced (dates as 2026-11-15, times as 14:30). Says what the field holds afterwards if that isn't what was typed (a length limit or a format the page applies). keys: true sends the text key by key, for fields that only react to key presses (formatted phone or card fields). On a dropdown (<select>), text picks the option with that label or value; on a multiple-choice one it adds that option to the selection.", with_dialog(json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" },
+            "field": { "type": "string", "description": "Instead of a ref: the field's label or placeholder, e.g. \"Email\"" },
+            "within": { "type": "string", "description": "With field: only in this part of the page, e.g. dialog or form" },
             "clear": { "type": "boolean", "description": "Replace existing value" }, "submit": { "type": "boolean", "description": "Submit the form / press Enter afterwards" },
             "keys": { "type": "boolean", "description": "Press each character as a key (keydown, keypress, input, keyup) instead of setting the text" },
-            "fields": { "type": "array", "items": { "type": "object" }, "description": "A whole form in one call (instead of ref and text): [{ ref or selector, text, clear, keys }, …], filled in order" } })), &[]),
+            "fields": { "type": "array", "items": { "type": "object" }, "description": "A whole form in one call (instead of ref and text): [{ ref, selector or field, text, clear, keys }, …], filled in order" } })), &[]),
         tool("hover", "Move the mouse onto an element by ref or selector, for menus and tooltips that open from scripts. A page's CSS :hover styles don't change (use check_page or eval_js to look at those), so a menu that only opens on :hover stays closed: click its items with force: true.", json!({
             "tab": tab_prop(), "ref": { "type": "string" }, "selector": { "type": "string" },
             "force": { "type": "boolean", "description": "Hover even if something covers it or it isn't shown" } }), &[]),
@@ -817,6 +914,7 @@ pub fn tools() -> Vec<Value> {
                      "wait_for": { "type": "string", "description": "With url: a CSS selector or text to wait for first" },
                      "width": { "type": "integer", "description": "Image width in points (default 1024; not used with full_page)" },
                      "full_page": { "type": "boolean", "description": "The whole page, not just what's on screen (it's scrolled through once first, so lazy images load)" },
+                     "marks": { "type": "boolean", "description": "Draw each control's ref on it (as snapshot names them), to click by ref what you can only make out in the picture" },
                      "save_to": { "type": "string", "description": "Save the PNG to this file (or folder) and return its path instead of the image" } }), &[]),
         tool("read_network", "List the page's requests since it loaded, oldest first: API calls (fetch, XHR) with method and \
              status, and scripts, styles and images with timing. failed_only shows what broke (status 400+ or no answer). \
@@ -846,6 +944,15 @@ pub fn tools() -> Vec<Value> {
              If it clicks, submits or sends something that looks like paying, Valerie stops it and says what to do instead. If the \
              page shows an alert, confirm or prompt meanwhile, it's answered by dialog and the result comes back as { result, dialogs }.",
              with_dialog(json!({ "tab": tab_prop(), "script": { "type": "string" } })), &["script"]),
+        tool("run_script", "Code mode: run a JavaScript async function body that calls these tools and returns only what you `return`, so a \
+             task of many steps (open a page, click through, read, loop over results, pick out a few facts) takes one call and the \
+             in-between results never fill your context. `await tools.<name>({…})` calls a tool and gives its JSON (snapshot: \
+             { elements: [{ ref, label, … }] }; read_page: { content }; click and type: a sentence saying what changed); a failed \
+             call throws, so wrap it in try/catch to carry on. console.log lines come back too, and sleep(ms) waits. It runs in a \
+             blank hidden tab, not in a page: page tools act on the active tab unless given tab (use eval_js for code inside a \
+             page). Each call is checked as if you made it yourself.", json!({
+            "script": { "type": "string", "description": "e.g. const t = await tools.open_tab({ url: \"https://example.com\", hidden: true }); const p = await tools.read_page({ tab: t.tab }); await tools.close_tab({ tab: t.tab }); return p.content.slice(0, 500);" },
+            "timeout_seconds": { "type": "integer", "description": "Longest it may run (default 120, up to 600)" } }), &["script"]),
         tool("run_command", &format!(
             "Run any browser command, exactly like a keybinding would. Pass {{\"cmd\": name, ...options}}. No-option commands: {}. \
              With options: {}.",
@@ -910,7 +1017,8 @@ pub fn tools() -> Vec<Value> {
              (the names to use in ui/*.css).", json!({ "part": { "type": "string", "description": "sidebar (default), command_bar, chats, welcome, plugins, answer (the answer to a question asked in find), little_bar (the front little window's top bar) or panel:<block id> for a layout's panel" } }), &[]),
     ];
     let ask = ASK_USER.load(std::sync::atomic::Ordering::Relaxed);
-    all.into_iter().filter(|t| (web || !WEB.contains(&t["name"].as_str().unwrap_or(""))) && (ask || t["name"] != "ask_user")).collect()
+    let scripts = crate::config::Config::load().map(|c| c.mcp.scripts).unwrap_or(true);
+    all.into_iter().filter(|t| (web || !WEB.contains(&t["name"].as_str().unwrap_or(""))) && (ask || t["name"] != "ask_user") && (scripts || t["name"] != "run_script")).collect()
 }
 
 /// Every tool's name (what plugin `permissions` can list).
@@ -1083,6 +1191,10 @@ fn act_with(proxy: &EventLoopProxy<UserEvent>, a: &Value, action: impl FnOnce(Op
     watch_dialogs(proxy, tab, a);
     let _ = eval(proxy, tab, FRAMES_JS);
     let _ = eval(proxy, tab, WATCH_JS);
+    // mcp.report_changes: the page's controls now, so the answer can say what the action changed.
+    let changes = a["changes"].as_bool() != Some(false)
+        && crate::config::Config::load().map(|c| c.mcp.report_changes).unwrap_or(true)
+        && eval(proxy, tab, &with_args(a, &format!("{FIND_JS}\n{CHANGES_BEFORE_JS}"))).is_ok();
     let done = match action(tab) {
         Ok(v) => v,
         Err(e) => {
@@ -1112,6 +1224,11 @@ fn act_with(proxy: &EventLoopProxy<UserEvent>, a: &Value, action: impl FnOnce(Op
     }
     let mut notes = dialogs_seen(proxy, tab, a);
     notes.extend(new_tabs(proxy, tab, &before));
+    if changes {
+        if let Ok(Value::String(said)) = eval(proxy, tab, &with_args(a, &format!("{FIND_JS}\n{CHANGES_AFTER_JS}"))) {
+            notes.extend((!said.is_empty()).then_some(said));
+        }
+    }
     let moved = last["quiet"].is_null() || (last["was"].is_string() && last["was"] != last["url"]);
     let done = match (done, moved && last["url"].is_string()) {
         (Value::String(text), true) => {
@@ -1227,9 +1344,36 @@ function realActive() {
   }
 }
 function find() {
-  const e = A.ref ? deepQuery('[data-valerie-ref="' + CSS.escape(String(A.ref)) + '"]') : A.selector ? deepQuery(A.selector) : deepActive();
-  if (!e) throw new Error(A.ref ? "no element with ref " + A.ref + " (take a new snapshot)" : "no element matches " + A.selector);
+  // By its words: click's text (passed on as find_text) or type's field.
+  if (A.find_text || A.field) return byText(A.find_text || A.field, A.within);
+  if (A.ref) return byRef(String(A.ref));
+  const e = A.selector ? deepQuery(A.selector) : deepActive();
+  if (!e) throw new Error("no element matches " + A.selector);
   return e;
+}
+// A ref whose element the page has since redrawn (or a ref from a page left behind) is found again by what it is.
+function byRef(ref) {
+  const sel = '[data-valerie-ref="' + CSS.escape(ref) + '"]';
+  let e = deepQuery(sel);
+  if (e) return e;
+  const was = window.__vgSnap && window.__vgSnap.keyOf[ref];
+  const it = labelled(scan({ noCover: true }), true).find((x) => x.ref === ref);
+  if (it && (!was || was === it.key)) return it.e;
+  throw new Error("no element with ref " + ref + " (the page changed: take a new snapshot)");
+}
+// The one control whose words are `text` (exact, then starting with, then containing), optionally inside a region.
+function byText(text, area) {
+  const items = labelled(scan({}), true), want = clean(text).toLowerCase(), where = area && clean(area).toLowerCase();
+  const pool = items.filter((it) => !where || (it.region && regionName(it.region).toLowerCase().replace(/[“”]/g, '').includes(where.replace(/[“”"]/g, ''))));
+  const said = (it) => (it.o.label || '').toLowerCase();
+  let hits = pool.filter((it) => said(it) === want);
+  if (!hits.length) hits = pool.filter((it) => said(it).startsWith(want));
+  if (!hits.length) hits = pool.filter((it) => said(it).includes(want));
+  if (hits.length > 1) { const open = hits.filter((it) => !it.o.covered && !it.o.offscreen && !it.o.disabled); if (open.length === 1) hits = open; }
+  if (hits.length === 1) return hits[0].e;
+  if (!hits.length) throw new Error('nothing clickable says “' + text + '”' + (area ? ' in ' + area : '') + ' (snapshot lists what there is)');
+  throw new Error(hits.length + ' things say “' + text + '”: ' + hits.slice(0, 8).map((it) => lineOf(it.o) + (it.region ? ' (in ' + regionName(it.region) + ')' : '')).join('; ')
+    + '. Use a ref, or within: a region such as dialog or nav');
 }
 function describe(e) {
   // A field by its name, not its options or what's typed in it.
@@ -1305,6 +1449,182 @@ function aim(e) {
   let c = coverAt(e);
   if (c.cover && edgeBar(c.cover)) { e.scrollIntoView({ block: 'center', inline: 'center' }); c = coverAt(e); }
   return { view, x: c.x || 0, y: c.y || 0, hit: c.hit, target: c.hit && within(c.hit, e) ? c.hit : e, covered: c.cover };
+}
+// ---------- the page's controls: for snapshot, clicking by text and saying what an action changed ----------
+const CLICKY = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=treeitem],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[onclick],[tabindex]:not([tabindex="-1"])';
+const clean = (t) => String(t || '').trim().replace(/\s+/g, ' ');
+function nameOf(e) {
+  const root = e.getRootNode(), byId = (id) => (root.getElementById ? root.getElementById(id) : e.ownerDocument.getElementById(id));
+  let n = e.getAttribute('aria-label');
+  if (!n && e.getAttribute('aria-labelledby')) n = e.getAttribute('aria-labelledby').split(/\s+/).map((id) => { const l = byId(id); return l ? l.innerText || l.textContent : ''; }).join(' ');
+  if (!n && e.labels && e.labels.length) n = [...e.labels].map((l) => l.innerText || l.textContent).join(' ');
+  const field = /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
+  if (!n && field) n = e.placeholder || e.title || (/^(submit|button|reset)$/.test(e.type) ? e.value : '') || e.getAttribute('aria-placeholder') || e.name;
+  if (!n && !field) n = (e.isContentEditable ? '' : e.innerText) || e.title || e.getAttribute('aria-placeholder') || [...e.querySelectorAll('img[alt],[title]')].map((i) => i.getAttribute('alt') || i.getAttribute('title')).join(' ');
+  return clean(n).slice(0, 100);
+}
+// What a control is, not where it sits (numbers dropped, like f hints), so its ref stays put while the page changes.
+function controlKey(e, label) {
+  const a = (n) => e.getAttribute(n) || '';
+  let href = '';
+  if (typeof e.href === 'string' && e.href) { try { const u = new URL(e.href); href = (u.origin === location.origin ? '' : u.host) + u.pathname; } catch (err) {} }
+  return [e.tagName, a('role'), e.type || '', a('name'), /\d/.test(e.id) ? '' : e.id, a('data-testid'), href, label].join('|').replace(/\d+/g, '#');
+}
+function fnv1a(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+// The part of the page a control is in: an open dialog or menu, the navigation, a form, the header…
+const REGIONS = [['dialog', 'dialog,[role=dialog],[role=alertdialog],[aria-modal=true]'], ['menu', '[role=menu],[role=menubar],[role=listbox]'],
+  ['tabs', '[role=tablist]'], ['nav', 'nav,[role=navigation]'], ['search', '[role=search]'], ['form', 'form'], ['header', 'header,[role=banner]'],
+  ['footer', 'footer,[role=contentinfo]'], ['aside', 'aside,[role=complementary]'], ['main', 'main,[role=main]']];
+const upFrom = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || (n.parentNode && n.parentNode.nodeType === 9 && n.parentNode.defaultView && n.parentNode.defaultView.frameElement) || null;
+function regionOf(e, memo) {
+  let inner = null, dialog = null;
+  for (let n = upFrom(e); n; n = upFrom(n)) {
+    let r = memo.get(n);
+    if (r === undefined) {
+      r = null;
+      for (const [kind, sel] of REGIONS) if (n.matches(sel)) { r = { kind, el: n, name: '' }; break; }
+      if (r) {
+        const by = n.getAttribute('aria-labelledby'), root = n.getRootNode(), l = by && root.getElementById && root.getElementById(by.split(' ')[0]);
+        const h = r.kind === 'main' ? null : n.querySelector('h1,h2,h3,[role=heading],legend');
+        r.name = clean(n.getAttribute('aria-label') || (l && l.innerText) || (h && h.innerText)).slice(0, 50);
+      }
+      memo.set(n, r);
+    }
+    if (r && !inner) inner = r;
+    if (r && r.kind === 'dialog') { dialog = r; break; }
+  }
+  return dialog || inner;
+}
+const regionName = (r) => r.kind + (r.name ? ' “' + r.name + '”' : '');
+// Every control a person could use, depth first in page order, into shadow roots and same-origin frames.
+// opts: inView (only what's on screen), noCover (skip working out what covers each: slower).
+function scan(opts) {
+  const items = [], closedFrames = [], memo = new Map();
+  let scanned = 0, capped = false;
+  function visit(parent, ox, oy, inFrame) {
+    for (const e of parent.children) {
+      if (capped) return;
+      if (++scanned > 40000) { capped = true; return; }
+      const s = getComputedStyle(e);
+      if (s.display === 'none') continue;
+      const editor = e.isContentEditable && !(e.parentElement && e.parentElement.isContentEditable);
+      const pointer = s.cursor === 'pointer' && !(e.parentElement && getComputedStyle(e.parentElement).cursor === 'pointer');
+      const clicky = e.matches(CLICKY) || editor;
+      if ((clicky || pointer) && s.visibility !== 'hidden') add(e, ox, oy, inFrame, editor, clicky);
+      if (e.isContentEditable && !editor) continue;
+      if (e.shadowRoot) visit(e.shadowRoot, ox, oy, inFrame);
+      if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
+        let d = null; try { d = e.contentDocument; } catch (err) {}
+        const fr = e.getBoundingClientRect();
+        if (d && d.body) visit(d.body, ox + fr.left + e.clientLeft, oy + fr.top + e.clientTop, true);
+        else if (fr.width > 60 && fr.height > 40 && e.src && /^https?:/.test(e.src)) closedFrames.push(e.src);
+      }
+      visit(e, ox, oy, inFrame);
+    }
+  }
+  function add(e, ox, oy, inFrame, editor, clicky) {
+    const r = e.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
+    // Not drawn at all, e.g. inside a closed <details>.
+    if (e.checkVisibility && !e.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true })) return;
+    // A page's own 1px helper fields, hidden from everyone; real checkboxes hidden behind a styled label stay.
+    if (r.width <= 1 && r.height <= 1 && !/^(checkbox|radio)$/.test(e.type) && (e.getAttribute('aria-hidden') === 'true' || e.tabIndex < 0)) return;
+    // A pointer cursor alone counts only for something with words or a picture; else it's decoration.
+    if (!clicky && !(e.innerText || '').trim() && !e.querySelector('svg,img') && !e.getAttribute('aria-label')) return;
+    const box = { x: ox + r.left, y: oy + r.top, w: r.width, h: r.height };
+    const inView = box.y + box.h > 0 && box.y < innerHeight && box.x + box.w > 0 && box.x < innerWidth;
+    if (opts.inView && !inView) return;
+    if (items.length >= 500) { capped = true; return; }
+    const o = { tag: e.tagName.toLowerCase(), label: nameOf(e) };
+    const role = e.getAttribute('role');
+    if (role) o.role = role;
+    if (e.type && e.tagName !== 'BUTTON' && e.tagName !== 'SELECT') o.type = e.type;
+    if (editor) o.editor = true;
+    if (e.tagName === 'SELECT') { o.value = e.multiple ? [...e.selectedOptions].map((x) => clean(x.text)) : clean(e.selectedOptions[0] && e.selectedOptions[0].text); o.options = [...e.options].slice(0, 30).map((x) => clean(x.text)); }
+    else if (/^(checkbox|radio)$/.test(e.type)) o.checked = e.checked;
+    // A one-time-code box is shown like a password box: a code Valerie filled stays out of agents' reads.
+    else if (e.type === 'password' || /\bone-time-code\b/i.test(e.getAttribute('autocomplete') || '')) { if (e.value) o.value = '(filled)'; }
+    else if (/^(INPUT|TEXTAREA)$/.test(e.tagName)) { if (e.value) o.value = e.value.slice(0, 100); }
+    else if (editor) o.value = clean(e.innerText).slice(0, 100);
+    for (const [k, attr] of [['checked', 'aria-checked'], ['expanded', 'aria-expanded'], ['selected', 'aria-selected'], ['pressed', 'aria-pressed']]) {
+      const v = e.getAttribute(attr);
+      if (v === 'true' || v === 'false') o[k] = v === 'true';
+    }
+    // Short: same-site links as a path, and no 2,000-character ad redirects (click by ref; read_page links has them whole).
+    if (e.href) {
+      let h = String(e.href);
+      try { const u = new URL(h); if (u.origin === location.origin) h = u.pathname + u.search + u.hash; } catch (err) {}
+      o.href = h.length > 150 ? h.slice(0, 150) + '…' : h;
+    }
+    if (e.disabled || e.getAttribute('aria-disabled') === 'true') o.disabled = true;
+    if (e.readOnly === true && /^(INPUT|TEXTAREA)$/.test(e.tagName)) o.readonly = true;
+    if (inFrame) o.in_frame = true;
+    if (!inView) o.offscreen = true;
+    else if (!opts.noCover) {
+      const c = coverAt(e).cover;
+      if (c && !edgeBar(c)) o.covered = coverName(c);
+    }
+    const region = regionOf(e, memo);
+    if (region) o.region = regionName(region);
+    items.push({ e, o, box, region, key: controlKey(e, o.label) });
+  }
+  visit(document.body || document.documentElement, 0, 0, false);
+  items.capped = capped;
+  items.closedFrames = closedFrames;
+  return items;
+}
+// Gives each control its ref. Stable refs are two letters hashed from what the control is (three on pages with over 400),
+// and a control keeps its ref on this page for as long as it's there; A._numbered gives 1, 2, 3… afresh each time.
+// apply: mark the elements, so click and type find them by ref.
+function labelled(items, apply) {
+  const seen = new Map();
+  for (const it of items) { const c = seen.get(it.key) || 0; seen.set(it.key, c + 1); if (c) it.key += '#' + c; }
+  const prev = window.__vgSnap && !A._numbered ? window.__vgSnap.byKey : {};
+  if (A._numbered) items.forEach((it, i) => { it.ref = String(i + 1); });
+  else {
+    const ABC = 'abcdefghijklmnopqrstuvwxyz', len = items.length <= 400 ? 2 : 3, size = 26 ** len, taken = new Set();
+    const name = (s) => { let l = ''; for (let j = 0, v = s; j < len; j++, v = Math.floor(v / 26)) l = ABC[v % 26] + l; return l; };
+    for (const it of items) { const r = prev[it.key]; if (r && r.length === len && !taken.has(r)) { taken.add(r); it.ref = r; } }
+    const rest = items.map((it, i) => ({ it, i, h: fnv1a(it.key) })).filter((x) => !x.it.ref).sort((a, b) => a.h - b.h || a.i - b.i);
+    for (const x of rest) { let s = x.h % size; while (taken.has(name(s))) s = (s + 1) % size; x.it.ref = name(s); taken.add(x.it.ref); }
+  }
+  for (const it of items) it.o.ref = it.ref;
+  if (apply) {
+    for (const r of roots()) r.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
+    const byKey = {}, keyOf = {};
+    for (const it of items) { it.e.setAttribute('data-valerie-ref', it.ref); byKey[it.key] = it.ref; keyOf[it.ref] = it.key; }
+    // Kept from earlier snapshots on this page too, so a ref that went away and came back is the same ref.
+    window.__vgSnap = { byKey: Object.assign({}, A._numbered ? {} : prev, byKey), keyOf };
+  }
+  return items;
+}
+// One line per control, e.g. `jk button “Save” [disabled]`. bare leaves out where it sits (offscreen, covered).
+function lineOf(o, bare) {
+  const t = o.type, kind = o.editor ? 'editor' : o.role || (o.tag === 'a' ? 'link' : o.tag === 'textarea' || (o.tag === 'input' && (!t || /^(text|email|search|url|tel|password|number)$/.test(t))) ? (t && t !== 'text' ? t + ' field' : 'textbox') : o.tag === 'input' ? t : o.tag);
+  let s = o.ref + ' ' + kind;
+  if (o.label) s += ' “' + o.label + '”';
+  if (o.value !== undefined && o.value !== '') s += ' = ' + (Array.isArray(o.value) ? o.value.join(', ') : o.value);
+  if (o.options) s += ' (options: ' + o.options.join(' | ') + ')';
+  if (o.href) s += ' → ' + o.href;
+  const f = [];
+  if (o.checked !== undefined) f.push(o.checked ? 'checked' : 'unchecked');
+  if (o.expanded !== undefined) f.push(o.expanded ? 'expanded' : 'collapsed');
+  if (o.selected) f.push('selected');
+  if (o.pressed) f.push('pressed');
+  if (o.disabled) f.push('disabled');
+  if (o.readonly) f.push('read-only');
+  if (o.in_frame) f.push('in a frame');
+  if (!bare && o.offscreen) f.push('offscreen');
+  if (!bare && o.covered) f.push('covered by ' + o.covered);
+  return f.length ? s + ' [' + f.join(', ') + ']' : s;
+}
+// Controls grouped under the part of the page they're in, open dialogs first.
+function outline(items) {
+  const groups = new Map();
+  for (const it of items) { const k = it.region ? it.region.el : null; if (!groups.has(k)) groups.set(k, { region: it.region, lines: [] }); groups.get(k).lines.push(lineOf(it.o)); }
+  const list = [...groups.values()].sort((a, b) => (b.region && b.region.kind === 'dialog') - (a.region && a.region.kind === 'dialog'));
+  if (list.length === 1 && !list[0].region) return list[0].lines.join('\n');
+  return list.map((g) => (g.region ? regionName(g.region) : 'page') + '\n' + g.lines.map((l) => '  ' + l).join('\n')).join('\n');
 }
 "#;
 
@@ -1928,99 +2248,97 @@ return (async () => {
 "#;
 
 const SNAPSHOT_JS: &str = r#"
-const CLICKY = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=treeitem],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[onclick],[tabindex]:not([tabindex="-1"])';
-const clean = (t) => String(t || '').trim().replace(/\s+/g, ' ');
-function nameOf(e) {
-  const root = e.getRootNode(), byId = (id) => (root.getElementById ? root.getElementById(id) : e.ownerDocument.getElementById(id));
-  let n = e.getAttribute('aria-label');
-  if (!n && e.getAttribute('aria-labelledby')) n = e.getAttribute('aria-labelledby').split(/\s+/).map((id) => { const l = byId(id); return l ? l.innerText || l.textContent : ''; }).join(' ');
-  if (!n && e.labels && e.labels.length) n = [...e.labels].map((l) => l.innerText || l.textContent).join(' ');
-  const field = /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
-  if (!n && field) n = e.placeholder || e.title || (/^(submit|button|reset)$/.test(e.type) ? e.value : '') || e.getAttribute('aria-placeholder') || e.name;
-  if (!n && !field) n = (e.isContentEditable ? '' : e.innerText) || e.title || e.getAttribute('aria-placeholder') || [...e.querySelectorAll('img[alt],[title]')].map((i) => i.getAttribute('alt') || i.getAttribute('title')).join(' ');
-  return clean(n).slice(0, 100);
-}
-document.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
-for (const r of roots()) if (r !== document) r.querySelectorAll('[data-valerie-ref]').forEach((e) => e.removeAttribute('data-valerie-ref'));
-let n = 0, scanned = 0, capped = false;
-const out = [], closedFrames = [];
-// Depth first in page order, into shadow roots and same-origin frames (ox, oy: where that frame sits on screen).
-function visit(parent, ox, oy, inFrame) {
-  for (const e of parent.children) {
-    if (capped) return;
-    if (++scanned > 40000) { capped = true; return; }
-    const s = getComputedStyle(e);
-    if (s.display === 'none') continue;
-    const editor = e.isContentEditable && !(e.parentElement && e.parentElement.isContentEditable);
-    const pointer = s.cursor === 'pointer' && !(e.parentElement && getComputedStyle(e.parentElement).cursor === 'pointer');
-    const clicky = e.matches(CLICKY) || editor;
-    if ((clicky || pointer) && s.visibility !== 'hidden') add(e, s, ox, oy, inFrame, editor, clicky);
-    if (e.isContentEditable && !editor) continue;
-    if (e.shadowRoot) visit(e.shadowRoot, ox, oy, inFrame);
-    if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
-      let d = null; try { d = e.contentDocument; } catch (err) {}
-      const fr = e.getBoundingClientRect();
-      if (d && d.body) visit(d.body, ox + fr.left + e.clientLeft, oy + fr.top + e.clientTop, true);
-      else if (fr.width > 60 && fr.height > 40 && e.src && /^https?:/.test(e.src)) closedFrames.push(e.src);
-    }
-    visit(e, ox, oy, inFrame);
-  }
-}
-function add(e, s, ox, oy, inFrame, editor, clicky) {
-  const r = e.getBoundingClientRect();
-  if (r.width < 1 || r.height < 1) return;
-  // Not drawn at all, e.g. inside a closed <details>.
-  if (e.checkVisibility && !e.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true })) return;
-  // A page's own 1px helper fields, hidden from everyone; real checkboxes hidden behind a styled label stay.
-  if (r.width <= 1 && r.height <= 1 && !/^(checkbox|radio)$/.test(e.type) && (e.getAttribute('aria-hidden') === 'true' || e.tabIndex < 0)) return;
-  // A pointer cursor alone counts only for something with words or a picture; else it's decoration.
-  if (!clicky && !(e.innerText || '').trim() && !e.querySelector('svg,img') && !e.getAttribute('aria-label')) return;
-  const top = { x: ox + r.left, y: oy + r.top };
-  const inView = top.y + r.height > 0 && top.y < innerHeight && top.x + r.width > 0 && top.x < innerWidth;
-  if (A.only_in_view && !inView) return;
-  if (n >= 500) { capped = true; return; }
-  const ref = String(++n);
-  e.setAttribute('data-valerie-ref', ref);
-  const o = { ref, tag: e.tagName.toLowerCase(), label: nameOf(e) };
-  const role = e.getAttribute('role');
-  if (role) o.role = role;
-  if (e.type && e.tagName !== 'BUTTON' && e.tagName !== 'SELECT') o.type = e.type;
-  if (editor) o.editor = true;
-  if (e.tagName === 'SELECT') { o.value = e.multiple ? [...e.selectedOptions].map((x) => clean(x.text)) : clean(e.selectedOptions[0] && e.selectedOptions[0].text); o.options = [...e.options].slice(0, 30).map((x) => clean(x.text)); }
-  else if (/^(checkbox|radio)$/.test(e.type)) o.checked = e.checked;
-  else if (e.type === 'password') { if (e.value) o.value = '(filled)'; }
-  else if (/^(INPUT|TEXTAREA)$/.test(e.tagName)) { if (e.value) o.value = e.value.slice(0, 100); }
-  else if (editor) o.value = clean(e.innerText).slice(0, 100);
-  for (const [k, attr] of [['checked', 'aria-checked'], ['expanded', 'aria-expanded'], ['selected', 'aria-selected'], ['pressed', 'aria-pressed']]) {
-    const v = e.getAttribute(attr);
-    if (v === 'true' || v === 'false') o[k] = v === 'true';
-  }
-  // Short: same-site links as a path, and no 2,000-character ad redirects (click by ref; read_page links has them whole).
-  if (e.href) {
-    let h = String(e.href);
-    try { const u = new URL(h); if (u.origin === location.origin) h = u.pathname + u.search + u.hash; } catch (err) {}
-    o.href = h.length > 150 ? h.slice(0, 150) + '…' : h;
-  }
-  if (e.disabled || e.getAttribute('aria-disabled') === 'true') o.disabled = true;
-  if (e.readOnly === true && /^(INPUT|TEXTAREA)$/.test(e.tagName)) o.readonly = true;
-  if (inFrame) o.in_frame = true;
-  if (!inView) o.offscreen = true;
-  else {
-    const c = coverAt(e).cover;
-    if (c && !edgeBar(c)) o.covered = coverName(c);
-  }
-  out.push(o);
-}
-visit(document.body || document.documentElement, 0, 0, false);
+const items = labelled(scan({ inView: A.only_in_view }), true);
+const out = items.map((it) => it.o);
 const result = { url: location.href, title: document.title, elements: out };
 if (out.some((o) => o.covered)) result.note = 'covered says what sits on top of an element (a dialog, menu, banner or another link): deal with that first';
 // Another site's frame (an embedded editor, a payment form, a video) can't be reached from here: open its address instead.
-if (closedFrames.length) result.other_site_frames = [...new Set(closedFrames)].slice(0, 10);
-if (capped) {
+if (items.closedFrames.length) result.other_site_frames = [...new Set(items.closedFrames)].slice(0, 10);
+if (items.capped) {
   result.truncated = true;
   result.note = (result.note ? result.note + '. ' : '') + 'There are more elements than this list holds: snapshot with only_in_view: true for what\'s on screen, or scroll and snapshot again';
 }
+if (A._outline) {
+  const head = '“' + document.title + '” ' + location.href;
+  const tail = [result.note, result.other_site_frames && 'Frames from other sites (open their address to work in them): ' + result.other_site_frames.join(', ')].filter(Boolean);
+  return [head, out.length ? outline(items) : '(nothing to click or type in)', ...tail].join('\n');
+}
 return result;
+"#;
+
+/// Before an action: the page's controls, kept in the page so the after-check can say what changed.
+const CHANGES_BEFORE_JS: &str = r#"
+const items = labelled(scan({ noCover: true }), true);
+window.__vgBefore = Object.fromEntries(items.map((it) => [it.ref, lineOf(it.o, true)]));
+return items.length;
+"#;
+
+/// After an action has settled: what appeared, went away or changed since `CHANGES_BEFORE_JS` (a new page says so).
+const CHANGES_AFTER_JS: &str = r#"
+const items = labelled(scan({ noCover: true }), true), before = window.__vgBefore;
+delete window.__vgBefore;
+if (!before) return items.length ? 'It\'s a new page: ' + items.length + ' things to click or type in (snapshot lists them).' : '';
+const added = items.filter((it) => !(it.ref in before)), now = new Set(items.map((it) => it.ref));
+const gone = Object.keys(before).filter((r) => !now.has(r)), changed = items.filter((it) => it.ref in before && before[it.ref] !== lineOf(it.o, true));
+const total = added.length + gone.length + changed.length;
+if (!total) return 'Nothing to click or type in changed on the page.';
+if (total > 40) {
+  const where = new Map();
+  for (const it of added) { const k = it.region ? regionName(it.region) : 'page'; where.set(k, (where.get(k) || 0) + 1); }
+  const parts = [...where].map(([k, n]) => n + ' in ' + k).join(', ');
+  return 'The page changed a lot: ' + added.length + ' new (' + (parts || 'none') + '), ' + gone.length + ' gone, ' + changed.length + ' changed. snapshot lists them.';
+}
+const out = ['What changed on the page:'];
+const groups = new Map();
+for (const it of added) { const k = it.region ? regionName(it.region) : ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(lineOf(it.o, true)); }
+for (const [k, lines] of groups) {
+  if (k) { out.push('+ in ' + k + ':'); for (const l of lines) out.push('    ' + l); }
+  else for (const l of lines) out.push('+ ' + l);
+}
+for (const it of changed) out.push('~ ' + lineOf(it.o, true));
+for (const r of gone) out.push('- ' + before[r]);
+return out.join('\n');
+"#;
+
+/// Ref labels drawn over each control on screen, for a screenshot (`MARKS_OFF_JS` takes them away).
+const MARKS_ON_JS: &str = r#"
+const items = labelled(scan({ inView: true }), true);
+document.querySelectorAll('valerie-marks').forEach((e) => e.remove());
+const host = document.createElement('valerie-marks');
+host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;display:block';
+const root = host.attachShadow({ mode: 'closed' });
+for (const it of items) {
+  if (it.o.covered) continue;
+  const b = it.box, ring = document.createElement('div'), tag = document.createElement('div');
+  ring.style.cssText = `position:fixed;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;outline:1.5px solid rgba(230,0,120,.85);box-sizing:border-box`;
+  tag.style.cssText = `position:fixed;left:${Math.max(b.x - 1, 0)}px;top:${Math.max(b.y - 13, 0)}px;font:bold 11px/13px ui-monospace,Menlo,monospace;background:#ffe14d;color:#000;padding:0 2px;border:1px solid #000;border-radius:2px`;
+  tag.textContent = it.ref;
+  root.append(ring, tag);
+}
+document.documentElement.appendChild(host);
+return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(items.length))));
+"#;
+const MARKS_OFF_JS: &str = "document.querySelectorAll('valerie-marks').forEach((e) => e.remove()); return true;";
+
+/// run_script's runtime, in a blank hidden tab: the agent's function gets `tools.<name>(args)` and `valerie.call`, whose
+/// calls wait in `__vgRun.calls` until Valerie runs them and answers.
+const RUNNER_JS: &str = r#"
+window.__vgRun = { n: 0, calls: [], waits: {}, logs: [], done: null,
+  take() { return { calls: this.calls.splice(0), logs: this.logs.splice(0), done: this.done }; },
+  answer(id, ok, v) { const w = this.waits[id]; delete this.waits[id]; if (w) { if (ok) w.res(v); else w.rej(new Error(v)); } return true; } };
+function __vgStart(fn) {
+  const R = window.__vgRun;
+  const call = (tool, args) => new Promise((res, rej) => { const id = ++R.n; R.waits[id] = { res, rej }; R.calls.push({ id, tool: String(tool), args: args || {} }); });
+  const tools = new Proxy({}, { get: (_, name) => typeof name === 'string' && name !== 'then' ? (args) => call(name, args) : undefined });
+  const show = (x) => { if (typeof x === 'string') return x; try { return JSON.stringify(x); } catch (e) { return String(x); } };
+  const log = (...a) => { R.logs.push(a.map(show).join(' ')); };
+  const console = { log, info: log, warn: log, error: log, debug: log };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  Promise.resolve().then(() => fn({ call, log }, tools, console, sleep)).then(
+    (v) => { R.done = { ok: true, value: v === undefined ? null : v }; },
+    (e) => { R.done = { ok: false, error: String((e && e.message) || e) }; });
+  return true;
+}
 "#;
 
 /// The page (or its main content with `A.main_only`) as Markdown, text or HTML; `A.links` adds every link on the page.
@@ -3173,8 +3491,15 @@ fn list_tabs(proxy: &EventLoopProxy<UserEvent>, a: Value) -> Result<Value, Strin
     Ok(json!(out))
 }
 
-fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
+fn call_tool(name: &str, mut a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<Value, String> {
     let tab = a.get("tab").and_then(|t| t.as_i64());
+    // mcp.stable_refs: false numbers the controls 1, 2, 3… afresh on each snapshot.
+    if REF_TOOLS.contains(&name) && crate::config::Config::load().is_ok_and(|c| !c.mcp.stable_refs) {
+        a["_numbered"] = json!(true);
+    }
+    if matches!(name, "click" | "hover" | "scroll" | "drag" | "upload_file") && a["text"].is_string() {
+        a["find_text"] = a["text"].clone();
+    }
     match name {
         "list_tabs" => list_tabs(proxy, a),
         "wait_for_tab" => {
@@ -3420,11 +3745,12 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
             // A whole form in one call: each field as its own type, in order.
             let mut done = Vec::new();
             for (i, f) in fields.iter().enumerate() {
-                let mut one = json!({ "tab": a["tab"], "dialog": a["dialog"], "dialog_text": a["dialog_text"] });
+                // Only the last field says what changed on the page: the others would repeat it.
+                let mut one = json!({ "tab": a["tab"], "dialog": a["dialog"], "dialog_text": a["dialog_text"], "_numbered": a["_numbered"], "changes": i + 1 == fields.len() });
                 for (k, v) in f.as_object().into_iter().flatten().filter(|(k, _)| k.as_str() != "submit") {
                     one[k.as_str()] = v.clone();
                 }
-                let name = f["ref"].as_str().or(f["selector"].as_str()).unwrap_or("?").to_string();
+                let name = f["ref"].as_str().or(f["field"].as_str()).or(f["selector"].as_str()).unwrap_or("?").to_string();
                 let failed = |e: String| format!("field {} ({name}): {e}. {} before it were filled.", i + 1, done.len());
                 if let Some(what) = risky_action("type", &one, proxy).map_err(&failed)? {
                     return Err(failed(format!("this would {what}, which the user approves: type it on its own, without fields")));
@@ -3494,7 +3820,13 @@ fn call_tool(name: &str, a: Value, proxy: &EventLoopProxy<UserEvent>) -> Result<
                 if a["full_page"].as_bool() == Some(true) {
                     full_page(proxy, tab).map(|png| json!({ "__image_png": base64(&png) }))
                 } else {
-                    call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width").filter(|w| !w.is_null()).cloned().or(shot_width.get().map(Value::from)) }))
+                    // marks: each control's ref drawn on it, so the picture says what to click.
+                    let marks = a["marks"].as_bool() == Some(true) && eval(proxy, tab, &with_args(&a, &format!("{FIND_JS}\n{MARKS_ON_JS}"))).is_ok();
+                    let shot = call(proxy, "screenshot", json!({ "tab": tab, "width": a.get("width").filter(|w| !w.is_null()).cloned().or(shot_width.get().map(Value::from)) }));
+                    if marks {
+                        let _ = eval(proxy, tab, MARKS_OFF_JS);
+                    }
+                    shot
                 }
             };
             let shot = match a["url"].as_str().map(as_address).filter(|u| !u.is_empty()) {
