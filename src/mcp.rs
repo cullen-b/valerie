@@ -1351,16 +1351,19 @@ function find() {
   if (!e) throw new Error("no element matches " + A.selector);
   return e;
 }
-// A ref whose element the page has since redrawn (or a ref from a page left behind) is found again by what it is.
+// Only a ref the agent was shown on this page counts, and it means the control it named then: found by what that
+// control is, even if the page has since redrawn it. A ref from another page never clicks whatever has it here.
 function byRef(ref) {
-  const sel = '[data-valerie-ref="' + CSS.escape(ref) + '"]';
-  let e = deepQuery(sel);
-  if (e) return e;
-  const was = window.__vgSnap && window.__vgSnap.keyOf[ref];
-  const it = labelled(scan({ noCover: true }), true).find((x) => x.ref === ref);
-  if (it && (!was || was === it.key)) return it.e;
-  throw new Error("no element with ref " + ref + " (the page changed: take a new snapshot)");
+  const snap = window.__vgSnap, want = snap && snap.seen && snap.seen[ref];
+  if (!want) throw new Error("ref " + ref + " wasn't given for this page (refs don't carry over to a new page): take a snapshot");
+  const e = deepQuery('[data-valerie-ref="' + CSS.escape(ref) + '"]');
+  if (e && snap.keyOf[ref] === want) return e;
+  const it = labelled(scan({ noCover: true }), true).find((x) => x.key === want);
+  if (it) return it.e;
+  throw new Error("the control that was " + ref + " isn't on the page any more: take a new snapshot");
 }
+// Refs the agent has now been given (in a snapshot, a list of matches or a report of changes), so it may use them.
+function shown(items) { const s = window.__vgSnap; if (s) for (const it of items) s.seen[it.ref] = it.key; }
 // The one control whose words are `text` (exact, then starting with, then containing), optionally inside a region.
 function byText(text, area) {
   const items = labelled(scan({}), true), want = clean(text).toLowerCase(), where = area && clean(area).toLowerCase();
@@ -1371,6 +1374,7 @@ function byText(text, area) {
   if (!hits.length) hits = pool.filter((it) => said(it).includes(want));
   if (hits.length > 1) { const open = hits.filter((it) => !it.o.covered && !it.o.offscreen && !it.o.disabled); if (open.length === 1) hits = open; }
   if (hits.length === 1) return hits[0].e;
+  shown(hits.slice(0, 8));
   if (!hits.length) throw new Error('nothing clickable says “' + text + '”' + (area ? ' in ' + area : '') + ' (snapshot lists what there is)');
   throw new Error(hits.length + ' things say “' + text + '”: ' + hits.slice(0, 8).map((it) => lineOf(it.o) + (it.region ? ' (in ' + regionName(it.region) + ')' : '')).join('; ')
     + '. Use a ref, or within: a region such as dialog or nav');
@@ -1577,6 +1581,15 @@ function scan(opts) {
 // and a control keeps its ref on this page for as long as it's there; A._numbered gives 1, 2, 3… afresh each time.
 // apply: mark the elements, so click and type find them by ref.
 function labelled(items, apply) {
+  // Repeats ("Reply" on every comment) are told apart by the row, comment or card they're in, then by order.
+  const count = new Map();
+  for (const it of items) count.set(it.key, (count.get(it.key) || 0) + 1);
+  for (const it of items) {
+    if (count.get(it.key) < 2) continue;
+    const box = it.e.closest('li,tr,article,section,[role=row],[role=listitem],[role=article],[role=gridcell]');
+    const near = box ? clean(clean(box.innerText).replace(it.o.label, '')) : '';
+    if (near) { it.key += '@' + fnv1a(near.replace(/\d+/g, '#').slice(0, 80)).toString(36); it.o.near = near.slice(0, 50); }
+  }
   const seen = new Map();
   for (const it of items) { const c = seen.get(it.key) || 0; seen.set(it.key, c + 1); if (c) it.key += '#' + c; }
   const prev = window.__vgSnap && !A._numbered ? window.__vgSnap.byKey : {};
@@ -1594,7 +1607,9 @@ function labelled(items, apply) {
     const byKey = {}, keyOf = {};
     for (const it of items) { it.e.setAttribute('data-valerie-ref', it.ref); byKey[it.key] = it.ref; keyOf[it.ref] = it.key; }
     // Kept from earlier snapshots on this page too, so a ref that went away and came back is the same ref.
-    window.__vgSnap = { byKey: Object.assign({}, A._numbered ? {} : prev, byKey), keyOf };
+    // Numbered refs start afresh on every snapshot, so what was shown before no longer holds.
+    const keep = window.__vgSnap && !(A._numbered && A._fresh) ? window.__vgSnap.seen : {};
+    window.__vgSnap = { byKey: Object.assign({}, A._numbered ? {} : prev, byKey), keyOf, seen: keep };
   }
   return items;
 }
@@ -1606,6 +1621,7 @@ function lineOf(o, bare) {
   if (o.value !== undefined && o.value !== '') s += ' = ' + (Array.isArray(o.value) ? o.value.join(', ') : o.value);
   if (o.options) s += ' (options: ' + o.options.join(' | ') + ')';
   if (o.href) s += ' → ' + o.href;
+  if (o.near) s += ' near “' + o.near + '”';
   const f = [];
   if (o.checked !== undefined) f.push(o.checked ? 'checked' : 'unchecked');
   if (o.expanded !== undefined) f.push(o.expanded ? 'expanded' : 'collapsed');
@@ -2248,7 +2264,9 @@ return (async () => {
 "#;
 
 const SNAPSHOT_JS: &str = r#"
+A._fresh = true;
 const items = labelled(scan({ inView: A.only_in_view }), true);
+shown(items);
 const out = items.map((it) => it.o);
 const result = { url: location.href, title: document.title, elements: out };
 if (out.some((o) => o.covered)) result.note = 'covered says what sits on top of an element (a dialog, menu, banner or another link): deal with that first';
@@ -2269,7 +2287,7 @@ return result;
 /// Before an action: the page's controls, kept in the page so the after-check can say what changed.
 const CHANGES_BEFORE_JS: &str = r#"
 const items = labelled(scan({ noCover: true }), true);
-window.__vgBefore = Object.fromEntries(items.map((it) => [it.ref, lineOf(it.o, true)]));
+window.__vgBefore = Object.fromEntries(items.map((it) => [it.key, [it.ref, lineOf(it.o, true).slice(it.ref.length)]]));
 return items.length;
 "#;
 
@@ -2278,8 +2296,12 @@ const CHANGES_AFTER_JS: &str = r#"
 const items = labelled(scan({ noCover: true }), true), before = window.__vgBefore;
 delete window.__vgBefore;
 if (!before) return items.length ? 'It\'s a new page: ' + items.length + ' things to click or type in (snapshot lists them).' : '';
-const added = items.filter((it) => !(it.ref in before)), now = new Set(items.map((it) => it.ref));
-const gone = Object.keys(before).filter((r) => !now.has(r)), changed = items.filter((it) => it.ref in before && before[it.ref] !== lineOf(it.o, true));
+const rest = (it) => lineOf(it.o, true).slice(it.ref.length);
+const added = items.filter((it) => !(it.key in before)), now = new Set(items.map((it) => it.key));
+const gone = Object.keys(before).filter((k) => !now.has(k)), changed = items.filter((it) => it.key in before && before[it.key][1] !== rest(it));
+// A ref that's gone can't be used any more; new and changed ones can.
+for (const k of gone) delete window.__vgSnap.seen[before[k][0]];
+shown(added.concat(changed));
 const total = added.length + gone.length + changed.length;
 if (!total) return 'Nothing to click or type in changed on the page.';
 if (total > 40) {
@@ -2296,13 +2318,14 @@ for (const [k, lines] of groups) {
   else for (const l of lines) out.push('+ ' + l);
 }
 for (const it of changed) out.push('~ ' + lineOf(it.o, true));
-for (const r of gone) out.push('- ' + before[r]);
+for (const k of gone) out.push('- ' + before[k][0] + before[k][1]);
 return out.join('\n');
 "#;
 
 /// Ref labels drawn over each control on screen, for a screenshot (`MARKS_OFF_JS` takes them away).
 const MARKS_ON_JS: &str = r#"
 const items = labelled(scan({ inView: true }), true);
+shown(items.filter((it) => !it.o.covered));
 document.querySelectorAll('valerie-marks').forEach((e) => e.remove());
 const host = document.createElement('valerie-marks');
 host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;display:block';
