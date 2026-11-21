@@ -961,6 +961,8 @@ pub struct PagesConfig {
     pub youtube_sharp_start: bool,
     pub youtube_downloads: bool,
     pub quick_full_screen: bool,
+    pub error_page: bool,
+    pub http_sign_in: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

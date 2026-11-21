@@ -1101,7 +1101,7 @@ function chatRow(c) {
   const ic = el("div", "chat-ic" + (c.running ? " running" : ""), c.running ? "" : "✦");
   r.append(ic, el("div", "title", c.title));
   if (c.asking) { const a = el("div", "when asking", "needs you"); r.append(a); }
-  else if (c.running && c.started) { const t = el("div", "when elapsed", elapsed(c.started)); t.dataset.started = c.started; r.append(t); }
+  else if (c.running && c.started) { const t = el("div", "when elapsed", elapsed(c.started)); t.dataset.started = c.started; r.append(t); elapsedTimer ||= setInterval(tickElapsed, 1000); }
   else if (c.unread) r.append(el("div", "dot"));
   else r.append(el("div", "when", ago(c.updated)));
   const x = el("div", "x", "×"); x.title = "Close chat";
@@ -1177,7 +1177,12 @@ function renderChatList(sc) {
   }
 }
 // Running chats' timers tick every second.
-setInterval(() => document.querySelectorAll(".elapsed").forEach((e) => (e.textContent = elapsed(+e.dataset.started))), 1000);
+// Running chats' clocks: the timer only exists while one is on screen, so an idle sidebar never wakes.
+const elapsedEls = document.getElementsByClassName("elapsed"); var elapsedTimer;
+function tickElapsed() {
+  if (!elapsedEls.length) { clearInterval(elapsedTimer); elapsedTimer = 0; return; }
+  for (const e of elapsedEls) e.textContent = elapsed(+e.dataset.started);
+}
 
 // ---------- render ----------
 function applyTheme(th) {

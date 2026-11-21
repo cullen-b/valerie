@@ -638,6 +638,152 @@ mod mac {
         });
     }
 
+    /// Two things WebKit leaves to the browser, added to wry's navigation delegate class once: a page that says why a
+    /// site didn't load (WebKit shows nothing: the tab stays blank, or on the page before), and the name and password
+    /// box for sites that sign in over HTTP (without one they only ever answer "401 Unauthorized").
+    pub fn install_load_failures(wv: &WebView) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::{class, sel};
+        use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+        use std::sync::atomic::Ordering::Relaxed;
+        type Done = block2::Block<dyn Fn(isize, *mut AnyObject)>;
+        unsafe fn text(s: *mut NSString) -> String {
+            if s.is_null() { String::new() } else { (*s).to_string() }
+        }
+        unsafe extern "C-unwind" fn failed(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, _nav: *mut AnyObject, error: *mut AnyObject) {
+            if error.is_null() || !super::ERROR_PAGE.load(Relaxed) {
+                return;
+            }
+            let code: isize = msg_send![error, code];
+            let domain = text(msg_send![error, domain]);
+            let info: *mut AnyObject = msg_send![error, userInfo];
+            let url: *mut AnyObject = if info.is_null() { std::ptr::null_mut() } else { msg_send![info, objectForKey: &*NSString::from_str("NSErrorFailingURLKey")] };
+            let address = if url.is_null() { String::new() } else { text(msg_send![url, absoluteString]) };
+            // Stopped on purpose (another page asked for, a download, a link another app opens): nothing went wrong.
+            if domain != "NSURLErrorDomain" || code == -999 || code == -1002 || !(address.starts_with("http://") || address.starts_with("https://")) {
+                return;
+            }
+            let why = text(msg_send![error, localizedDescription]);
+            crate::log::line("page", format!("{} didn't load ({code}): {why}", super::host_of(&address)));
+            let load = sel!(_loadAlternateHTMLString:baseURL:forUnreachableURL:);
+            let can: bool = msg_send![wv, respondsToSelector: load];
+            if can {
+                // The address stays the one that failed, so reload tries it again and Back goes where it should.
+                let html = super::error_page_html(&address, code, &why);
+                let _: () = msg_send![wv, _loadAlternateHTMLString: &*NSString::from_str(&html), baseURL: url, forUnreachableURL: url];
+            }
+        }
+        unsafe extern "C-unwind" fn challenge(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, ch: *mut AnyObject, done: &Done) {
+            let null = std::ptr::null_mut::<AnyObject>();
+            let space: *mut AnyObject = msg_send![ch, protectionSpace];
+            let method = if space.is_null() { String::new() } else { text(msg_send![space, authenticationMethod]) };
+            let password = matches!(method.as_str(), "NSURLAuthenticationMethodDefault" | "NSURLAuthenticationMethodHTTPBasic" | "NSURLAuthenticationMethodHTTPDigest" | "NSURLAuthenticationMethodNTLM");
+            // 1 = what WebKit does by itself (certificates, a name and password the system already holds).
+            if !password || !super::HTTP_SIGN_IN.load(Relaxed) {
+                return done.call((1, null));
+            }
+            let failures: isize = msg_send![ch, previousFailureCount];
+            let proposed: *mut AnyObject = msg_send![ch, proposedCredential];
+            let saved = failures == 0 && !proposed.is_null() && {
+                let has: bool = msg_send![proposed, hasPassword];
+                has
+            };
+            if saved {
+                return done.call((1, null));
+            }
+            let host = text(msg_send![space, host]);
+            let secure: bool = msg_send![space, receivesCredentialSecurely];
+            let done = done.copy();
+            let hidden: bool = msg_send![wv, isHiddenOrHasHiddenAncestor];
+            if !hidden {
+                return ask(wv, host, secure, failures, done);
+            }
+            // A new page stays hidden until it first draws (pages.wait_for_first_draw), and this one can't draw until
+            // it's answered: look once more after Valerie has shown it anyway. Still hidden then (an agent's tab, a
+            // background tab): nobody can type into it, so it goes on signed out.
+            let _: *mut AnyObject = msg_send![wv, retain];
+            let held = std::cell::RefCell::new(Some((host, done)));
+            let later = block2::RcBlock::new(move |_timer: *mut AnyObject| {
+                let Some((host, done)) = held.borrow_mut().take() else { return };
+                let hidden: bool = msg_send![wv, isHiddenOrHasHiddenAncestor];
+                if hidden {
+                    crate::log::line("page", format!("{host} asked for a name and password in a tab out of sight: left signed out"));
+                    done.call((0, std::ptr::null_mut()));
+                } else {
+                    ask(wv, host, secure, failures, done);
+                }
+                let _: () = msg_send![wv, release];
+            });
+            let _: *mut AnyObject = msg_send![class!(NSTimer), scheduledTimerWithTimeInterval: 1.3f64, repeats: false, block: &*later];
+        }
+        unsafe fn ask(wv: *mut AnyObject, host: String, secure: bool, failures: isize, done: block2::RcBlock<dyn Fn(isize, *mut AnyObject)>) {
+            crate::log::line("page", format!("{host} asked for a name and password (HTTP sign-in)"));
+            let alert: *mut AnyObject = msg_send![class!(NSAlert), new];
+            let _: () = msg_send![alert, setMessageText: &*NSString::from_str(&format!("Sign in to {}", host.trim_start_matches("www.")))];
+            let mut note = Vec::new();
+            if failures > 0 {
+                note.push("That name or password wasn't accepted.");
+            }
+            if !secure {
+                note.push("This connection isn't private: your password is sent without encryption.");
+            }
+            let _: () = msg_send![alert, setInformativeText: &*NSString::from_str(&note.join(" "))];
+            for b in ["Sign In", "Cancel"] {
+                let _: *mut AnyObject = msg_send![alert, addButtonWithTitle: &*NSString::from_str(b)];
+            }
+            let field = |cls: &AnyClass, y: f64, hint: &str| -> *mut AnyObject {
+                let f: *mut AnyObject = msg_send![cls, alloc];
+                let f: *mut AnyObject = msg_send![f, initWithFrame: NSRect::new(NSPoint::new(0.0, y), NSSize::new(280.0, 24.0))];
+                let _: () = msg_send![f, setPlaceholderString: &*NSString::from_str(hint)];
+                f
+            };
+            let (name, pass) = (field(class!(NSTextField), 30.0, "Name"), field(class!(NSSecureTextField), 0.0, "Password"));
+            let boxed: *mut AnyObject = msg_send![class!(NSView), alloc];
+            let boxed: *mut AnyObject = msg_send![boxed, initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 54.0))];
+            let _: () = msg_send![boxed, addSubview: name];
+            let _: () = msg_send![boxed, addSubview: pass];
+            let _: () = msg_send![name, setNextKeyView: pass];
+            let _: () = msg_send![alert, setAccessoryView: boxed];
+            let sheet: *mut AnyObject = msg_send![alert, window];
+            let _: () = msg_send![sheet, setInitialFirstResponder: name];
+            let finish = move |code: isize| {
+                if code == 1000 {
+                    let (n, p): (*mut NSString, *mut NSString) = (msg_send![name, stringValue], msg_send![pass, stringValue]);
+                    // 1 = kept until Valerie quits, never written to disk.
+                    let cred: *mut AnyObject = msg_send![class!(NSURLCredential), credentialWithUser: n, password: p, persistence: 1usize];
+                    done.call((0, cred));
+                } else {
+                    // 0 with nothing = go on without signing in: the site's own "401" page shows.
+                    done.call((0, std::ptr::null_mut()));
+                }
+                for v in [name, pass, boxed, alert] {
+                    let _: () = msg_send![v, release];
+                }
+            };
+            let window: *mut AnyObject = msg_send![wv, window];
+            if window.is_null() {
+                let code: isize = msg_send![alert, runModal];
+                finish(code);
+            } else {
+                let block = block2::RcBlock::new(move |code: isize| finish(code));
+                let _: () = msg_send![alert, beginSheetModalForWindow: window, completionHandler: &*block];
+            }
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| unsafe {
+            let delegate: *mut AnyObject = msg_send![ptr(wv), navigationDelegate];
+            if delegate.is_null() {
+                return;
+            }
+            let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
+            let a = objc2::ffi::class_addMethod(cls, sel!(webView:didFailProvisionalNavigation:withError:), std::mem::transmute::<*const (), Imp>(failed as *const ()), c"v@:@@@".as_ptr());
+            let b = objc2::ffi::class_addMethod(cls, sel!(webView:didReceiveAuthenticationChallenge:completionHandler:), std::mem::transmute::<*const (), Imp>(challenge as *const ()), c"v@:@@@?".as_ptr());
+            if !a.as_bool() || !b.as_bool() {
+                crate::log::line("page", "couldn't add the error page or the sign-in box to the page delegate");
+            }
+        });
+    }
+
     /// Only the webview the mouse is actually over sets the cursor. AppKit sends mouse moves to every view whose area
     /// holds the mouse, covered or not, so the sidebar's full-window view under a page kept setting the arrow while
     /// the page set the text cursor, and the cursor flickered between them. A covered view gets one more move (so
@@ -3049,6 +3195,7 @@ pub fn install_page_dialogs(wv: &WebView) {
     {
         mac::install_page_dialogs(wv);
         mac::cursor_from_top_view_only(wv);
+        mac::install_load_failures(wv);
     }
     #[cfg(not(target_os = "macos"))]
     let _ = wv;
@@ -3072,6 +3219,56 @@ pub struct Note<'a> {
 }
 
 /// Whether a page's full screen is Valerie's quick kind (setting pages.quick_full_screen).
+/// `pages.error_page` and `pages.http_sign_in`, for the native code that has no way to the settings.
+pub static ERROR_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+pub static HTTP_SIGN_IN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// "example.com" from "https://example.com:8080/a?b" (never the path or query: they can hold tokens).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn host_of(address: &str) -> String {
+    let rest = address.split_once("://").map_or(address, |(_, r)| r);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    host.split(':').next().unwrap_or("").trim_start_matches("www.").to_string()
+}
+
+/// The page shown in place of a site that didn't load. `code` is the system's (NSURLError…), `why` its own words.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn error_page_html(address: &str, code: isize, why: &str) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let host = esc(&host_of(address));
+    let (title, body) = match code {
+        -1009 => ("You're offline".to_string(), "Connect to the internet and this page loads by itself."),
+        -1003 | -1006 => (format!("Can't find {host}"), "Check the address for a typo. If it's right, the site may be down, or your connection may be blocking it."),
+        -1004 => (format!("{host} refused to connect"), "The site may be down, or nothing is answering at this address."),
+        -1001 => (format!("{host} took too long to answer"), "The site may be busy, or your connection slow."),
+        -1005 => ("The connection was lost".to_string(), "It dropped while the page was loading."),
+        -1007 => (format!("{host} redirected too many times"), "Clearing this site's cookies often fixes it."),
+        -1206..=-1200 => (format!("The connection to {host} isn't private"), "The site's security certificate couldn't be checked, so someone could be reading what you send. It wasn't opened."),
+        _ => ("This page didn't load".to_string(), ""),
+    };
+    // Only when the secure port is shut: a site that still answers on plain http.
+    let plain = match address.strip_prefix("https://") {
+        Some(rest) if code == -1004 => format!(r#"<a href="http://{}">Try without https</a>"#, esc(rest)),
+        _ => String::new(),
+    };
+    format!(
+        r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light dark"><title>{host}</title><style>
+html{{height:100%}}body{{margin:0;min-height:100%;display:grid;place-items:center;font:15px/1.5 -apple-system,system-ui,sans-serif;background:Canvas;color:CanvasText;-webkit-font-smoothing:antialiased}}
+main{{max-width:420px;padding:32px;margin-top:-8vh}}
+h1{{font-size:22px;line-height:1.25;font-weight:600;letter-spacing:-.01em;margin:0 0 8px;text-wrap:balance;overflow-wrap:anywhere}}
+p{{margin:0 0 22px;opacity:.7;text-wrap:pretty}}
+button{{font:inherit;font-weight:500;padding:7px 16px;border-radius:8px;border:0;background:CanvasText;color:Canvas;cursor:pointer;transition:transform .12s ease-out}}
+button:active{{transform:scale(.97)}}button:focus-visible,a:focus-visible{{outline:2px solid Highlight;outline-offset:2px}}
+a{{color:inherit;opacity:.7;margin-left:16px}}
+small{{display:block;margin-top:26px;font:12px/1.4 ui-monospace,monospace;opacity:.45;overflow-wrap:anywhere}}
+@media (prefers-reduced-motion:reduce){{button{{transition:none}}}}
+</style></head><body><main><h1>{title}</h1><p>{body}</p><button autofocus onclick="location.reload()">Try Again</button>{plain}<small>{why} ({code})</small></main>
+<script>addEventListener("online",()=>location.reload())</script></body></html>"#,
+        why = esc(why),
+    )
+}
+
 pub static QUICK_FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[cfg(not(target_os = "macos"))]
@@ -3581,5 +3778,26 @@ mod cookie_tests {
         sites.dedup();
         println!("{} cookies from {} sites, e.g. {:?}", got.len(), sites.len(), &sites[..sites.len().min(8)]);
         assert!(!got.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod error_page_tests {
+    use super::{error_page_html, host_of};
+
+    #[test]
+    fn host_never_includes_path_or_login() {
+        assert_eq!(host_of("https://user:pw@www.example.com:8443/a?token=1"), "example.com");
+        assert_eq!(host_of("http://localhost:3000"), "localhost");
+    }
+
+    #[test]
+    fn error_page_escapes_and_offers_http_only_when_refused() {
+        let refused = error_page_html("https://exa<b>mple.com/x?a=\"1\"", -1004, "Could not <connect>");
+        assert!(refused.contains("exa&lt;b&gt;mple.com refused to connect") && !refused.contains("<b>mple"));
+        assert!(refused.contains(r#"href="http://exa&lt;b&gt;mple.com/x?a=&quot;1&quot;""#) && refused.contains("Could not &lt;connect&gt; (-1004)"));
+        let cert = error_page_html("https://example.com/", -1202, "untrusted");
+        assert!(cert.contains("isn't private") && !cert.contains("Try without https"));
+        assert!(error_page_html("https://example.com/", -1009, "offline").contains("You're offline"));
     }
 }
