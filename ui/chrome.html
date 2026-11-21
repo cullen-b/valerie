@@ -446,6 +446,12 @@ function locate(x, y) {
   // A folder's row: its top quarter puts things before the folder, its bottom quarter after it (or first inside it
   // when it's open), the middle into it.
   if (z.kind === "folder") {
+    // With pinned icons a tab can't sit between pinned folders (it'd become an icon), so their edges take it into the
+    // folder, except below the last one, which is the top of the list that follows.
+    if (z.iconsAround && drag && drag.folder == null && (across < 0.25 || across > 0.75) && !(across > 0.75 && z.open)) {
+      if (across > 0.75 && z.next) return { node, at: z.at, cls: "drop-after", after: true, kind: "row", payload: { section: z.next }, list: z.next, index: 0 };
+      return { node, cls: "drop-into", payload: z.into, list: null };
+    }
     if (across < 0.25) return { node, at: z.at, cls: "drop-before", after: false, kind: "row", payload: { ...z.payload }, list: z.list, index: z.index };
     if (across > 0.75 && !z.open) return { node, at: z.at, cls: "drop-after", after: true, kind: "row", payload: { ...z.payload }, list: z.list, index: z.index + 1 };
     if (across > 0.75) return { node, cls: "drop-after", payload: { ...z.into }, list: z.into.list, index: 0 };
@@ -907,7 +913,9 @@ function folderEl(n, section = "pinned", list = section, index = 0, around = { s
   });
   r.classList.add("folder-row");
   const inner = "folder:" + n.id, inside = { section, folder: n.id };
-  zone(r, { kind: "folder", list, index, open: n.open, at: f, payload: around, into: { ...inside, list: inner } });
+  const iconsAround = list === "pinned" && S.layout.pinned_style !== "list";
+  const next = iconsAround && S.pinned.slice(index + 1).every((x) => x.type !== "folder") ? afterPinned : null;
+  zone(r, { kind: "folder", list, index, open: n.open, at: f, payload: around, into: { ...inside, list: inner }, iconsAround, next });
   const kids = el("div", "kids");
   eachRun(n.children, (r) => kids.append(r.folder ? folderEl(r.folder, section, inner, r.i, inside) : runRow(r, inner, inside)));
   f.append(r, kids);
@@ -1412,6 +1420,9 @@ function render(state) {
   }
 
   const icons = S.layout.pinned_style !== "list";
+  // The list right below the pinned folders, where a tab dropped under the last one goes.
+  afterPinned = order.slice(order.indexOf("pinned") + 1).find((p) => SCROLLING.includes(p) && (p !== "kept" || O.kept_section !== false));
+  if ((afterPinned !== "kept" && afterPinned !== "today") || (S.layout.sidebar_size === "compact" && O.compact_pinned !== "icons")) afterPinned = null;
   const pinnedTabs = icons ? S.pinned.map((n, i) => [n, i]).filter(([n]) => n.type !== "folder") : [];
   const strayFavs = showFavRow ? [] : S.favorites;
   const pins = el("div");
@@ -1535,6 +1546,7 @@ new ResizeObserver(() => fitBottom()).observe($("#bottom"));
 // Parts of the sidebar, in their default order (sidebar.order rearranges them).
 const SIDEBAR_PARTS = ["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
 const SCROLLING = ["space_name", "pinned", "kept", "today"];
+let afterPinned = null;
 const FIXED = { url: "#url", favorites: "#favorites", widgets: "#widgets", now_playing: "#nowplaying", spaces: "#bottom" };
 
 // Buttons and live text from plugins (their `sidebar` entries).
