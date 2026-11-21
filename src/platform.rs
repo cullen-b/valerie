@@ -3234,6 +3234,14 @@ pub fn host_of(address: &str) -> String {
     host.split(':').next().unwrap_or("").trim_start_matches("www.").to_string()
 }
 
+/// The casino games under "You're offline" (pages.offline_game); the same games as valerie://page/casino.
+const OFFLINE_CASINO: &str = concat!(
+    r#"<section style="margin-top:36px"><style>#casino{display:block;width:100%;max-width:420px;aspect-ratio:210/132;image-rendering:pixelated;cursor:pointer;touch-action:manipulation}#casino:focus-visible{outline:2px solid Highlight;outline-offset:4px}#casino-msg{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}</style>"#,
+    r#"<canvas id="casino" tabindex="0" role="img" aria-label="Casino games: blackjack, poker, baccarat, roulette and slots. Left and right arrows switch games; Space plays."></canvas><p id="casino-msg" role="status"></p><script>"#,
+    include_str!("../ui/casino.js"),
+    "</script></section>"
+);
+
 /// The page shown in place of a site that didn't load. `code` is the system's (NSURLError…), `why` its own words.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn error_page_html(address: &str, code: isize, why: &str, game: bool) -> String {
@@ -3254,7 +3262,7 @@ pub fn error_page_html(address: &str, code: isize, why: &str, game: bool) -> Str
         Some(rest) if code == -1004 => format!(r#"<a href="http://{}">Try without https</a>"#, esc(rest)),
         _ => String::new(),
     };
-    let game = if game && code == -1009 { include_str!("../ui/offline-blackjack.html") } else { "" };
+    let game = if game && code == -1009 { OFFLINE_CASINO } else { "" };
     // Not focused when there's a game: Space deals a hand instead of reloading.
     let focus = if game.is_empty() { " autofocus" } else { "" };
     format!(
@@ -3269,7 +3277,7 @@ a{{color:inherit;opacity:.7;margin-left:16px}}
 small{{display:block;margin-top:26px;font:12px/1.4 ui-monospace,monospace;opacity:.45;overflow-wrap:anywhere}}
 @media (prefers-reduced-motion:reduce){{button{{transition:none}}}}
 </style></head><body><main><h1>{title}</h1><p>{body}</p><button{focus} onclick="location.reload()">Try Again</button>{plain}<small>{why} ({code})</small>{game}</main>
-<script>addEventListener("online",()=>window.bjOnline?bjOnline():location.reload())</script></body></html>"#,
+<script>addEventListener("online",()=>window.casinoOnline?casinoOnline():location.reload())</script></body></html>"#,
         why = esc(why),
     )
 }
@@ -3808,8 +3816,8 @@ mod error_page_tests {
 
     #[test]
     fn blackjack_only_when_offline_and_switched_on() {
-        assert!(error_page_html("https://example.com/", -1009, "offline", true).contains("id=\"bj\""));
-        assert!(!error_page_html("https://example.com/", -1009, "offline", false).contains("id=\"bj\""));
-        assert!(!error_page_html("https://example.com/", -1004, "refused", true).contains("id=\"bj\""));
+        assert!(error_page_html("https://example.com/", -1009, "offline", true).contains("id=\"casino\""));
+        assert!(!error_page_html("https://example.com/", -1009, "offline", false).contains("id=\"casino\""));
+        assert!(!error_page_html("https://example.com/", -1004, "refused", true).contains("id=\"casino\""));
     }
 }

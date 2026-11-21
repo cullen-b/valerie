@@ -710,6 +710,12 @@ pub enum Command {
     },
     /// The Saved Settings page: save, switch and delete sets of settings (valerie://page/saved-settings).
     SavedSettings,
+    /// Casino games drawn as pixel art (valerie://page/casino; also on the "You're offline" page), one per command.
+    PlayBlackjack,
+    PlayPoker,
+    PlayBaccarat,
+    PlayRoulette,
+    PlaySlots,
     /// A chat where the user's AI helps find out what went wrong (the triage playbook).
     ReportProblem,
     /// The browser extensions Valerie loaded (and their buttons).
@@ -949,6 +955,11 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("save_settings", "Save Settings As… (keep these settings under a name to switch back to)"),
     ("switch_settings", "Switch to the Next Saved Settings"),
     ("saved_settings", "Saved Settings (save, switch between and delete sets of settings)"),
+    ("play_blackjack", "Play Blackjack"),
+    ("play_poker", "Play Poker (video poker: Jacks or Better)"),
+    ("play_baccarat", "Play Baccarat"),
+    ("play_roulette", "Play Roulette"),
+    ("play_slots", "Play Slots"),
     ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),
 ];
