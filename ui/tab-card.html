@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- The card beside a tab the pointer rests on (sidebar.tab_preview): the page's full title, its site and a small
+     picture of it. Its own see-through view so it can reach past the sidebar over the page; it never takes focus. -->
+<style>
+:root {
+  --bg1: #171a2b; --bg2: #2a1f3d; --fg: #ecebf5; --fg-dim: rgba(236,235,245,.6); --edge: oklch(1 0 0 / .1);
+  --shadow: 0 0 0 1px rgba(255,255,255,.08), 0 2px 4px rgba(0,0,0,.18), 0 12px 28px rgba(0,0,0,.32);
+}
+:root.light {
+  --fg: #23201c; --fg-dim: rgba(35,32,28,.58); --edge: oklch(0 0 0 / .1);
+  --shadow: 0 0 0 1px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.08), 0 12px 28px rgba(0,0,0,.16);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: transparent; overflow: hidden; cursor: default; -webkit-user-select: none; user-select: none; }
+body { font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; color: var(--fg); -webkit-font-smoothing: antialiased; padding: 10px; }
+#card { width: 260px; border-radius: 12px; padding: 6px; background: linear-gradient(160deg, var(--bg1), var(--bg2)); box-shadow: var(--shadow); opacity: 0; }
+#card.on { opacity: 1; }
+#shot { display: none; width: 100%; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; background: rgba(127,127,127,.12); outline: 1px solid var(--edge); outline-offset: -1px; margin-bottom: 7px; }
+#shot.on { display: block; }
+#shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; opacity: 0; }
+#shot img.on { opacity: 1; }
+#text { padding: 0 4px 3px; }
+#title { font-weight: 600; text-wrap: pretty; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+#site { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#site img { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+#site span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:root { color-scheme: dark; } :root.light { color-scheme: light; }
+/* animations.tab_preview: the card rises in and the picture fades in; it leaves at once */
+html.anim-tab-preview #card.on { animation: card-in .14s cubic-bezier(.2,.8,.2,1); }
+html.anim-tab-preview #card.on.below { animation-name: card-in-below; }
+html.anim-tab-preview #shot img.on { transition: opacity .16s ease-out; }
+@keyframes card-in { from { opacity: 0; transform: translateX(-4px); } }
+@keyframes card-in-below { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { #card.on { animation: none !important; } #shot img.on { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="card" role="tooltip"><div id="shot"><img alt=""></div><div id="text"><div id="title"></div><div id="site"><img alt="" width="14" height="14" hidden><span></span></div></div></div>
+<script>
+const send = (o) => { try { window.ipc.postMessage(JSON.stringify(o)); } catch (_) {} };
+const $ = (s) => document.querySelector(s);
+const card = $("#card"), shot = $("#shot"), pic = $("#shot img"), icon = $("#site img");
+let shownFor = null;
+// Tell Valerie how tall the card is, so its view is just that big.
+function size() { send({ t: "size", h: Math.ceil(card.getBoundingClientRect().height) + 20 }); }
+function theme(t) {
+  if (!t) return;
+  const r = document.documentElement.style, bg = t.background || [];
+  if (bg[0]) r.setProperty("--bg1", bg[0]);
+  r.setProperty("--bg2", bg[1] || bg[0] || "");
+  if (t.foreground) r.setProperty("--fg", t.foreground); else r.removeProperty("--fg");
+  document.documentElement.classList.toggle("light", t.mode === "light");
+}
+window.tabCard = {
+  // { tab, title, host, favicon?, picture?: data URL, waiting?: a picture is on its way, theme, below? }
+  show(d) {
+    theme(d.theme);
+    shownFor = d.tab;
+    $("#title").textContent = d.title || d.host || "New Tab";
+    $("#site span").textContent = d.host || "";
+    icon.hidden = !d.favicon; if (d.favicon) icon.src = d.favicon; else icon.removeAttribute("src");
+    shot.classList.toggle("on", !!(d.picture || d.waiting));
+    pic.classList.remove("on");
+    if (d.picture) { pic.onload = () => pic.classList.add("on"); pic.src = d.picture; } else pic.removeAttribute("src");
+    card.classList.toggle("below", !!d.below);
+    card.classList.remove("on"); void card.offsetWidth; card.classList.add("on");
+    size();
+  },
+  // The picture taken for tab `tab` (null: there won't be one).
+  picture(tab, url) {
+    if (tab !== shownFor) return;
+    if (!url) { shot.classList.remove("on"); return size(); }
+    pic.onload = () => pic.classList.add("on"); pic.src = url;
+  },
+  hide() { shownFor = null; card.classList.remove("on"); },
+};
+// The pointer reached the card: it was leaving the tab, so the card goes.
+addEventListener("mousemove", () => { if (shownFor != null) send({ t: "away" }); }, { passive: true });
+addEventListener("mousedown", () => send({ t: "away" }));
+icon.onerror = () => { icon.hidden = true; };
+send({ t: "ready" });
+</script>
+</body>
+</html>

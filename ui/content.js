@@ -1546,6 +1546,7 @@ function openFind(initial) {
     enter(fnd.bar, "find_bar", [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }], 140);
     fnd.input.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return; // an input method's own Enter or Esc
       if (e.key === "Enter") {
         e.preventDefault(); clearTimeout(fnd.timer);
         if (!e.shiftKey && isQuestion(fnd.input.value)) askPage(fnd.input.value.trim());
@@ -1778,9 +1779,12 @@ document.addEventListener("contextmenu", (e) => {
   const a = linkAt(e), img = e.target.closest && e.target.closest("img"), sel = String(getSelection() || "").trim();
   const here = [a && "link", img && img.src && "image", sel && "selection", "page"].filter(Boolean);
   const plug = cfg.plugin_contexts || [];
-  if (here.some((k) => plug.includes(k)) && (here.some((k) => k !== "page" && plug.includes(k)) || !editable(e.target))) {
+  // A picture inside a link: Valerie's own menu too, so the picture's entries (Copy Image…) sit beside the link's.
+  // (Only in tabs, the pages that menu is for: `unseen_tab` is set just for them.)
+  const linkedPicture = a && img && img.src && (cfg.links || {}).context_menu && cfg.unseen_tab != null;
+  if (linkedPicture || (here.some((k) => plug.includes(k)) && (here.some((k) => k !== "page" && plug.includes(k)) || !editable(e.target)))) {
     e.preventDefault(); e.stopImmediatePropagation(); hideLinkMenu();
-    return post({ t: "context_menu", x: e.clientX, y: e.clientY, link: a ? a.href : null, image: img ? img.src : null, selection: sel.slice(0, 5000) || null, page: location.href });
+    return post({ t: "context_menu", x: e.clientX, y: e.clientY, link: a ? a.href : null, image: img ? img.currentSrc || img.src : null, selection: sel.slice(0, 5000) || null, page: location.href });
   }
   if (!(cfg.links || {}).context_menu || !a) return;
   e.preventDefault(); e.stopImmediatePropagation();
@@ -1884,9 +1888,13 @@ document.addEventListener("visibilitychange", () => {
 const ICON_LINKS = "link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']";
 let liveIcon = null; // the icon link the page changed last (build status, unread count): it wins over the others
 let blobIcon = ["", ""]; // a blob: icon read into a data: address, which Valerie's sidebar can show
+// An icon for the other colour scheme (media="(prefers-color-scheme: dark)") gives way to one that fits now.
+const iconFits = (l) => !l.media || matchMedia(l.media).matches;
+// Undefined while it isn't known yet (the page's head still loading), so Valerie keeps the last icon until then.
 function favicon() {
-  if (liveIcon && liveIcon.isConnected && liveIcon.matches(ICON_LINKS) && liveIcon.href) return iconHref(liveIcon.href);
-  const links = [...document.querySelectorAll(ICON_LINKS)];
+  if (liveIcon && liveIcon.isConnected && liveIcon.matches(ICON_LINKS) && liveIcon.href && iconFits(liveIcon)) return iconHref(liveIcon.href);
+  const all = [...document.querySelectorAll(ICON_LINKS)], fitting = all.filter(iconFits), links = fitting.length ? fitting : all;
+  if (!links.length && document.readyState === "loading") return undefined;
   const svg = links.find((l) => /svg/.test(l.type || l.href));
   const best = svg || links.sort((a, b) => (parseInt(b.sizes?.value) || 16) - (parseInt(a.sizes?.value) || 16)).find((l) => (parseInt(l.sizes?.value) || 16) <= 64) || links[0];
   return best ? iconHref(best.href) : null;
@@ -1897,7 +1905,7 @@ function iconHref(h) {
     blobIcon = [h, ""];
     fetch(h).then((r) => r.blob()).then((b) => { const f = new FileReader(); f.onload = () => { if (blobIcon[0] === h) { blobIcon[1] = String(f.result); report(); } }; f.readAsDataURL(b); }).catch(() => {});
   }
-  return blobIcon[1] || null;
+  return blobIcon[1] || undefined;
 }
 // Sites change their icon to show state (GitLab and GitHub build status, Slack and Gmail unread, X's dot): follow it.
 let iconTimer = 0, iconTimes = [];
@@ -1933,6 +1941,7 @@ for (const fn of ["pushState", "replaceState"]) {
   history[fn] = function () { const r = orig.apply(this, arguments); setTimeout(report, 0); return r; };
 }
 addEventListener("popstate", report); addEventListener("hashchange", report); document.addEventListener("visibilitychange", report);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", report);
 document.addEventListener("play", report, true); document.addEventListener("pause", report, true); document.addEventListener("volumechange", report, true);
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => { report(); watchIcons(); }); else { report(); watchIcons(); }
 addEventListener("load", report);
@@ -2147,6 +2156,23 @@ function cookieOffer(text, site, nonce) {
   promptIn(box);
   setTimeout(() => promptOut(box), 15000);
 }
+// A pop-up this page opened without a click was blocked (links.block_popups).
+function popupOffer(site, nonce) {
+  if (!document.documentElement) return document.addEventListener("DOMContentLoaded", () => popupOffer(site, nonce), { once: true });
+  const box = document.createElement("div"); box.className = "save";
+  const p = document.createElement("p"); p.textContent = site ? tr(`Blocked a pop-up from ${site}`) : tr("Blocked a pop-up from this page");
+  box.append(p);
+  const button = (label, cls, msg) => {
+    const b = document.createElement("button"); b.textContent = tr(label); if (cls) b.className = cls;
+    b.addEventListener("click", (e) => { if (!e.isTrusted) return; promptOut(box); if (msg) post(msg); });
+    box.append(b);
+  };
+  button("Open it", "primary", { t: "popup_open", nonce });
+  if (site) button("Always allow", "", { t: "popup_allow", nonce });
+  button("Close", "", null);
+  promptIn(box);
+  setTimeout(() => promptOut(box), 20000);
+}
 // Banners load late, so keep looking for a few seconds after load, then stop watching.
 {
   let tries = 0, timer = 0, finished = false;
@@ -2336,13 +2362,17 @@ const strongLogin = (f) => f.type === "password" || f.type === "email" || /usern
 const loginField = (f) => f instanceof HTMLInputElement && (strongLogin(f) || f === userFieldFor(pwFields()[0])
   || (/^(text|tel|)$/i.test(f.type) && /user|email|login|account|identifier/i.test(f.name + " " + f.id)));
 function showAccounts(field) {
+  if (!accounts.length) return hideMenu();
+  showMenu(field, accounts.map((a, i) => ({ text: a.username || "(no username)", sub: "Valerie · " + a.vault, msg: { t: "fill", index: i, nonce: fillNonce } })));
+}
+// A list under the field; picking a row (a real click) sends its message to Valerie.
+function showMenu(field, rows) {
   hideMenu();
-  if (!accounts.length) return;
   menu = document.createElement("div"); menu.className = "menu"; menuFor = field;
-  accounts.forEach((a, i) => {
-    const d = document.createElement("div"); d.textContent = a.username || "(no username)";
-    const sm = document.createElement("small"); sm.textContent = "Valerie · " + a.vault; d.append(sm);
-    d.addEventListener("mousedown", (e) => { if (!e.isTrusted) return; e.preventDefault(); hideMenu(); post({ t: "fill", index: i, nonce: fillNonce }); });
+  rows.forEach((r) => {
+    const d = document.createElement("div"); d.textContent = r.text;
+    const sm = document.createElement("small"); sm.textContent = r.sub; d.append(sm);
+    d.addEventListener("mousedown", (e) => { if (!e.isTrusted) return; e.preventDefault(); hideMenu(); post(r.msg); });
     menu.append(d);
   });
   ui().appendChild(menu);
@@ -2368,9 +2398,51 @@ document.addEventListener("focusin", (e) => {
   lastField = f;
   if (f.getRootNode() !== document) shadowLogin = true;
   if (!e.isTrusted) return;
+  // A one-time-code box: Valerie answers only when this site's saved login has a code key.
+  if (codeField(f)) { if (!askedCodes) { askedCodes = true; post({ t: "otp_field" }); } else if (codeLogins.length) showCodes(f); return; }
   // A login the page-wide check can't see (inside a web component): ask for its accounts now.
   if (!reportedForm && strongLogin(f)) { reportedForm = true; loginWatch.disconnect(); post({ t: "login_form" }); }
   if (accounts.length && loginField(f)) showAccounts(f);
+}, true);
+// ---------- one-time codes: offer a saved login's code in the site's code box; only the digits ever arrive ----------
+let codeLogins = [], codeNonce = null, askedCodes = false;
+const CODE_NAME = /one.?time|\b(otp|totp|2fa|mfa|pin|passcode)\b|two.?factor|verif|auth\w*.?code|security.?code|(^|[\s_-])code($|[\s_-])|^code/i;
+const NOT_CODE = /promo|coupon|discount|gift|voucher|zip|postal|post.?code|referr|invite|captcha|country|area|phone|currency|lang/i;
+const numericHint = (f) => /^(tel|number)$/i.test(f.type) || f.inputMode === "numeric" || /\\d|0-9/.test(f.pattern || "");
+// Single-digit boxes in a row (one per digit): the ones next to `f`, first to last.
+function digitBoxes(f) {
+  let box = f.parentElement;
+  for (let up = 0; box && up < 4; up++, box = box.parentElement) {
+    const all = [...box.querySelectorAll("input")].filter((i) => i.maxLength === 1 && visible(i));
+    if (all.length >= 6) return all.length <= 8 ? all : [];
+  }
+  return [];
+}
+function codeField(f) {
+  if (!(f instanceof HTMLInputElement) || f.readOnly || f.disabled) return false;
+  const ac = (f.getAttribute("autocomplete") || "").toLowerCase();
+  if (/\bone-time-code\b/.test(ac)) return true;
+  if (!/^(text|tel|number|)$/i.test(f.type) || /username|email|cc-|postal|street|address/.test(ac)) return false;
+  if (f.maxLength === 1) return numericHint(f) && digitBoxes(f).length >= 6;
+  const words = [f.name, f.id, f.placeholder, f.getAttribute("aria-label"), f.labels && f.labels[0] && f.labels[0].textContent].filter(Boolean).join(" ").slice(0, 300);
+  const short = f.maxLength === -1 || (f.maxLength >= 6 && f.maxLength <= 10);
+  return short && CODE_NAME.test(words) && !NOT_CODE.test(words);
+}
+function showCodes(field) {
+  if (!codeLogins.length) return hideMenu();
+  showMenu(field, codeLogins.map((a, i) => ({ text: tr("One-time code") + " · " + (a.username || "(no username)"), sub: "Valerie · " + a.vault, msg: { t: "fill_code", index: i, nonce: codeNonce } })));
+}
+function fillCode(code) {
+  code = String(code);
+  const f = lastField;
+  if (!/^\d{6,8}$/.test(code) || !f || !f.isConnected || !codeField(f)) return;
+  const boxes = f.maxLength === 1 ? digitBoxes(f) : [];
+  if (boxes.length >= code.length) return boxes.slice(0, code.length).forEach((b, i) => setVal(b, code[i]));
+  setVal(f, code);
+}
+document.addEventListener("mousedown", (e) => {
+  const f = deepTarget(e);
+  if (e.isTrusted && codeLogins.length && !menu && f === deepActive() && codeField(f)) showCodes(f);
 }, true);
 // Only hide if focus really left: a step change blurs the old field and focuses the new one within this delay.
 document.addEventListener("focusout", () => setTimeout(() => { if (deepActive() !== menuFor) hideMenu(); }, 150), true);
@@ -2547,7 +2619,9 @@ Object.defineProperty(window, "__valerie", {
     configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, toast, find: openFind, findStep, hints: startHints, keepHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
-    fill, offerSave, cookieOffer,
+    codes: (list, nonce) => { codeLogins = list; codeNonce = nonce; const f = deepActive(); if (codeField(f)) showCodes(f); },
+    fillCode,
+    fill, offerSave, cookieOffer, popupOffer,
     consoleLines: () => consoleKept.slice(),
     timerFrames,
     network: (o) => {

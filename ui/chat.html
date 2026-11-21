@@ -149,7 +149,7 @@ select { appearance: none; background: var(--faint); color: var(--fg); border: 1
 select.ctl { padding-right: 24px; background-repeat: no-repeat; background-position: calc(100% - 9px) 52%; background-size: 10px 10px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%23ecebf5' stroke-opacity='.45' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.75 5 6.25l2.5-2.5'/%3E%3C/svg%3E"); }
 :root.light select.ctl { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%2323201c' stroke-opacity='.45' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.75 5 6.25l2.5-2.5'/%3E%3C/svg%3E"); }
-select.ctl:disabled { background-image: none; padding-right: 10px; opacity: 1; }
+select.ctl:disabled, :root.light select.ctl:disabled { background-image: none; padding-right: 10px; opacity: 1; }
 select.ctl:disabled:hover { background-color: transparent; color: var(--dim); }
 #agent { color: var(--fg); font-weight: 500; text-transform: capitalize; }
 #model, #effort { padding-left: 6px; margin-left: -4px; }
@@ -200,6 +200,9 @@ html.leaving body { animation: shrinkOut 160ms ease both; }
 /* it grows down out of the command bar's box */
 @keyframes growIn { from { height: 64px; min-height: 0; opacity: .4; } 60% { opacity: 1; } }
 @keyframes shrinkOut { to { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.97); } }
+/* less motion: the floating chat only fades in and out */
+@keyframes fadeOut { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { html.float body { animation: fade .16s ease both; } html.leaving body { animation: fadeOut .16s ease both; } }
 #toChats, #floatHint { display: none; }
 html.float #toChats { display: grid; }
 html.float.hints #floatHint { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; }
@@ -927,7 +930,7 @@ function grow() { const t = $("#input"); t.style.height = "auto"; t.style.height
 
 $("#input").addEventListener("input", grow);
 $("#input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submit(); }
 });
 $("#send").onclick = () => (D.running && !$("#input").value.trim() ? cmd({ cmd: "stop_chat", chat: D.chat && D.chat.id }) : submit());
 // The composer's selects open a menu drawn in the page (the system popup can't be styled); the select keeps the value.

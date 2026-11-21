@@ -121,6 +121,9 @@ pub struct Archived {
 pub struct Closed {
     pub tab: Tab,
     pub space: usize,
+    /// Where it was in its space's Today list, so it comes back there.
+    #[serde(default)]
+    pub place: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -603,9 +606,10 @@ impl State {
         let order: Vec<TabId> = self.order(space, true).into_iter().filter(|t| *t == tab || usable(self, *t)).collect();
         let pos = order.iter().position(|t| *t == tab);
         let was_active = self.spaces[space].active == Some(tab);
+        let place = self.spaces[space].today.iter().position(|t| *t == tab);
         self.detach(tab);
         if let Some(t) = self.tabs.remove(&tab) {
-            self.closed.push(Closed { tab: t, space });
+            self.closed.push(Closed { tab: t, space, place });
             if self.closed.len() > self.limits.closed {
                 self.closed.remove(0);
             }
@@ -1232,6 +1236,7 @@ mod tests {
         assert_eq!(s.close_tab(b, |_| false), Some(c));
         assert_eq!(s.close_tab(c, |_| false), Some(a));
         assert_eq!(s.closed.len(), 2);
+        assert_eq!((s.closed[0].place, s.closed[1].place), (Some(1), Some(1)));
     }
 
     #[test]

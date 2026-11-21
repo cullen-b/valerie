@@ -207,6 +207,11 @@ define_class!(
               webview: webview.into(),
               target_configuration: configuration.into(),
             },
+            // Private but long-standing (Safari's pop-up blocker uses it); assume a click if it's ever gone.
+            user_initiated: {
+              let can: bool = objc2::msg_send![action, respondsToSelector: objc2::sel!(_isUserInitiated)];
+              !can || objc2::msg_send![action, _isUserInitiated]
+            },
           },
         ) {
           NewWindowResponse::Allow => {

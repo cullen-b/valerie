@@ -119,10 +119,13 @@ animations:
   keyboard_click: true     # a ring ripples where a link hint (f) clicked, so you see what was pressed
   plugins_window: true     # the Plugins window: cards arrive in turn, and install turns into a tick
   built_in_pages: true     # Downloads and History: new rows slide in, removed ones fold away
+  tab_preview: true        # the card beside a tab you rest the pointer on rises in, and its picture fades in
 
 # Each piece of text or chrome in the sidebar. Set to false to hide it.
 sidebar:
   nav_buttons: true        # back / forward / reload buttons at the top
+  history_menu: true       # right-click (or press and hold) back or forward for a menu of the tab's earlier or later
+                           # pages; pick one to jump there. true | false
   url_bar: true            # the address pill (click it to edit the URL)
   url_path: false          # show the page's path after the domain (clicking the pill always shows the full URL)
   url_lock_icon: false     # a 🔒 before secure sites (insecure http:// sites are always marked)
@@ -168,6 +171,12 @@ sidebar:
   preload_on_hover: true   # start loading a tab when the pointer rests on it in the sidebar, so clicking it is instant
   preload_delay_ms: 90     # how long the pointer rests before that, milliseconds
   preload_at_most: 3       # tabs kept loaded ahead like that at once; the oldest is let go when another starts
+  tab_preview: true        # resting the pointer on a tab (sidebar or top tab bar) shows a small card beside it with the
+                           # page's full title, its site and a small picture of the page. true | false
+  tab_preview_delay_ms: 600 # how long the pointer rests on a tab before that card shows, milliseconds (moving on to the
+                           # next tab while one shows swaps it almost at once)
+  tab_preview_picture: true # the card shows a small picture of the page (taken when the card shows; a tab that's
+                           # asleep shows the last one taken, if any). false = title and site only. true | false
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false
@@ -189,7 +198,7 @@ sidebar:
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank | plugin:<name> (that plugin's
                            # start.html, which can open sites and run the plugin's commands)
-escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode). Valerie never shows a
+escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode, the command bar's footer). Valerie never shows a
                            # "press Esc to exit full screen" banner, whatever this is set to.
 welcome: true              # the welcome guide (AI, sync, describe your browser, a tour) the first time Valerie opens;
                            # "Welcome Tour" in the command bar shows it again. true | false
@@ -522,8 +531,20 @@ pages:
   error_page: true         # Mac: when a site doesn't load (offline, a mistyped address, a site that's down), a page says
                            # why, with Try Again; it loads by itself when you're back online. false = the tab stays as it was.
                            # (Windows and Linux show their system's own error page either way.) true | false
+  offline_game: true       # Mac: the "You're offline" page has pixel-art casino games to play while you wait: blackjack,
+                           # video poker, baccarat, roulette and slots (left and right arrows switch games, Space plays). The
+                           # same games are always at valerie://page/casino (commands play_blackjack, play_poker, play_baccarat,
+                           # play_roulette, play_slots; hide them with command_bar.hide_commands). false = just the message. true | false
   http_sign_in: true       # Mac: the name and password box for sites that ask the old way (HTTP sign-in: routers, staging
                            # sites, intranets). false = such sites only show their "401" page. true | false
+  visit_anyway: true       # Mac: the error page for a site whose security certificate can't be checked has "Visit anyway"
+                           # under Advanced; you confirm in a dialog, and that site's certificate is trusted until Valerie
+                           # quits (never saved). false = no way past that error page. true | false
+  crash_reloads_per_minute: 3 # a page whose web process crashed reloads by itself (a hidden tab when you next show it),
+                           # up to this many times a minute; a page that crashes more often is left for you to reload.
+                           # A number (0 = never reload a crashed page by itself)
+  site_print: true         # Mac: a site's own Print button (tickets, receipts, labels) opens the print dialog; on its own,
+                           # WebKit ignores it there. false = such buttons do nothing. true | false
   youtube_sharp_start: true # YouTube videos start at full quality even if a past hiccup left YouTube expecting a bad connection.
                            # Your real connection speed still counts. false = leave YouTube's saved estimate alone
   youtube_downloads: true  # YouTube is told Valerie is Chrome, so YouTube Premium's Download button shows (YouTube only
@@ -572,6 +593,13 @@ links:
   popup_look: floating     # how those pop-up windows look (Mac and Windows; Linux opens them as tabs). one of: floating
                            # (no title bar, the page on a pane; the window buttons slide in when the pointer is at its top
                            # edge, and dragging there moves it) | classic (a plain window)
+  block_popups: true       # pop-ups a page opens without a click or key press are blocked, with a quiet note on the page
+                           # to open it once or always allow that site (sites: { example.com: { block_popups: false } }).
+                           # Pop-ups from a click (sign-ins included) always open. true | false (false = let every pop-up open)
+  app_schemes: [webcal, ms-word, ms-excel, ms-powerpoint, ms-outlook, onenote, tg, whatsapp, skype, webex]
+                           # links to other apps (calendar subscriptions, Office "Open in Desktop App", Telegram …) that
+                           # open in the app on your computer, besides Valerie's own list (mailto, tel, zoommtg, slack …).
+                           # Other kinds are blocked. A list of link kinds, the part before the colon
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
@@ -623,7 +651,7 @@ little_window:
 # Each site can set: camera, microphone, location, notifications (ask | allow | deny) · user_agent (text) · zoom (percent) ·
 # autoplay (true | false: video in tabs opened in the background) · dark_mode (off | always) · vim (true | false) ·
 # links ({ cmd_click: new_tab, … } like `links`) · unload (false keeps its tabs in memory) · ad_blocking (true | false)
-# · popups (window | tab) · cookie_banners (reject | hide | off) · hints (your own f-hint letters for buttons, by what
+# · popups (window | tab) · block_popups (true | false: false lets the site open pop-ups without a click) · cookie_banners (reject | hide | off) · hints (your own f-hint letters for buttons, by what
 # they say, numbers ignored: { Merge: m, Approve: ap }; 1-4 letters or digits, and none may start another)
 sites: {}
 
@@ -874,6 +902,9 @@ passwords:
   fewer_keychain_prompts: true  # on Mac, after an update the system asks again before Valerie reads each saved
                            # password. With sync on, use this Mac's own encrypted synced copy instead of asking
                            # (false: every password comes straight from the Keychain, which asks). true | false
+  one_time_codes: false    # one-time codes (the 6 to 8 digits sites ask for after the password): add a site's key to a
+                           # saved login ("Add One-Time Code…"), see and copy the code in the command bar, and have it
+                           # offered in the site's code box. true turns it on; false turns all of it off. true | false
   shared: []               # vaults several profiles can use, e.g.:
   # shared:
   #   - name: Shared
@@ -942,6 +973,16 @@ mcp:
   real_clicks: true         # agents' clicks are real mouse clicks inside the page, so sites that ignore script clicks
                            # (Google's Share and Send buttons) take them; your own cursor doesn't move. macOS and
                            # Windows. true | false (false: clicks made by a script, as on Linux)
+  snapshot_format: outline # what agents get when they list a page's controls (snapshot). One of: outline (one short
+                           # line per control, grouped by the part of the page it's in; easy on their context) | json
+                           # (the full details of each, as before). Scripts and `valerie call` always get json
+  stable_refs: true        # the names agents use for a page's controls are short letters that stay the same while the
+                           # control is on the page, so they can keep using them as the page changes. false = numbered
+                           # 1, 2, 3… afresh on every snapshot. true | false
+  report_changes: true     # after an agent clicks, types or presses a key, tell it what appeared, went away or changed on
+                           # the page, so it needn't list the page again. true | false
+  scripts: true            # let agents run a script that calls Valerie's tools (run_script, "code mode"): many steps in
+                           # one go, and only the answer goes back to them. Each step is checked as if made by hand. true | false
   paying_words: [          # words that make a button or request ask (mcp.ask_before_paying); whole words, any capitals.
                            # Setting this replaces the whole list. Generous on purpose: an extra question beats a surprise bill.
     # buying
@@ -1081,6 +1122,14 @@ saved_settings:
                            # Change History)
   in_command_bar: true     # list each saved set in the command bar ("Switch to Settings: Demo"). true | false
 
+# Task Manager ("Task Manager" in the command bar, Window menu): each open tab's memory and CPU, and Valerie's own
+# processes, with buttons to go to, reload or close a tab. It only measures while the page is on screen.
+task_manager:
+  refresh_seconds: 2       # how often the figures update while the page is showing, in seconds (1-60)
+  sort_by: memory          # the column the list is sorted by when the page opens. one of: memory | cpu
+  end_process: true        # Mac: an "End Process" button for tabs, which stops the tab's web process (every tab in that
+                           # process stops too, and reloads when you go back to it). true | false
+
 # Valerie's log: what went wrong and what happened (sync, updates, plugins, commands, agents' tool calls, …), one file
 # a day in the `logs` folder inside Valerie's data folder (`valerie paths` shows where). Read it, or ask your AI to
 # (agents read it with the read_logs tool), when something fails. Passwords, tokens and keys are never written to it.
@@ -1130,6 +1179,10 @@ app:
                            # put unused tabs to sleep when they run high. true | false (false = never step in)
   graphics_buffers_budget: 8000   # buffers in use before that sleeping starts; restarts follow at 1.5 times this if
                            # nothing is playing and 1.875 times it regardless. macOS's own limit is 16384. A number
+  linux_nvidia_fix: auto   # Linux: pages are drawn without WebKit's DMA-BUF renderer, which shows blank or white pages
+                           # with NVIDIA's own driver (it costs some drawing speed). Takes effect at the next start; a
+                           # WEBKIT_DISABLE_DMABUF_RENDERER you set yourself always wins. one of: auto (only when
+                           # NVIDIA's driver is loaded) | on (always) | off (never)
 
 # Browser extensions: Safari-style web extensions (unpacked folders with a manifest.json), macOS 15.4 or later. Put
 # each extension's folder in the `extensions` folder next to this file; "Extensions" in the command bar lists them.
