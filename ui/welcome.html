@@ -106,7 +106,7 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 .mac { position: absolute; width: 150px; height: 96px; border-radius: 12px; border: 1px solid var(--line); background: var(--card2); overflow: hidden; }
 .mac i { position: absolute; left: 0; top: 0; bottom: 0; width: 30%; background: color-mix(in srgb, var(--accent) 25%, transparent); }
 .mac:nth-child(1) { left: 0; top: 10px; } .mac:nth-child(2) { right: 0; bottom: 10px; }
-.wire { position: absolute; left: 60px; right: 60px; top: 50%; height: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 8px, transparent 8px 16px); animation: flow 1.2s linear infinite; opacity: .7; }
+.macs .wire { position: absolute; left: 60px; right: 60px; top: 50%; height: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 8px, transparent 8px 16px); animation: flow 1.2s linear infinite; opacity: .7; }
 @keyframes flow { to { background-position: 16px 0; } }
 .code { font: 700 34px ui-monospace, Menlo, monospace; letter-spacing: 4px; padding: 14px 20px; border-radius: 14px; background: var(--card2); display: inline-block; margin: 6px 0 10px; user-select: text; }
 .noacct { margin-top: 22px; padding: 14px 16px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
@@ -153,6 +153,12 @@ kbd { font: 600 11.5px ui-monospace, Menlo, monospace; padding: 3px 7px; border-
 .dialog p { color: var(--dim); margin: 0 0 10px; font-size: 14.5px; }
 .dialog ul { color: var(--dim); font-size: 14px; margin: 0 0 18px; padding-left: 18px; } .dialog li { margin: 3px 0; }
 .dialog .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+/* less motion: steps and the dialog only fade; the drifting glow, floating mark and flowing sync line hold still */
+@media (prefers-reduced-motion: reduce) {
+  #glow, .mark, .mark::after, .macs .wire { animation: none; }
+  .step, .step.back, .dialog { animation-name: fade; }
+  .feat:hover { transform: none; } button:active { transform: none; }
+}
 </style>
 </head>
 <body>

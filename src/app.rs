@@ -50,16 +50,21 @@ pub enum Source {
     LittleBar(WindowId),
     Page(Target),
     SplitHandle(usize),
+    /// The card beside a tab the pointer rests on (sidebar.tab_preview).
+    TabCard,
 }
 
 pub enum UserEvent {
     Ipc { from: Source, msg: String },
     PageLoad { target: Target, url: String, finished: bool },
     /// The system ended a page's process (often to free memory while it was hidden); it's blank until reloaded.
-    PageCrashed { target: Target },
+    /// `rebuild`: the whole engine went with it (WebView2's browser process), so the view must be built again.
+    PageCrashed { target: Target, rebuild: bool },
     GraphicsBuffers { pid: i32, count: u64 },
     Title { target: Target, title: String },
     NewWindow { target: Target, url: String },
+    /// A pop-up the page opened without a click, blocked (links.block_popups).
+    PopupBlocked { target: Target, url: String },
     ExternalScheme(String),
     /// The floating video's return button was pressed, in this webview (see `platform::is_webview`).
     VideoReturn(usize),
@@ -74,6 +79,11 @@ pub enum UserEvent {
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
+    /// SIGTERM, SIGINT or SIGHUP (this number) arrived: save and quit.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    StopSignal(i32),
+    /// Stop was pressed: the address of the page the tab or little window kept showing.
+    Stopped { target: Target, url: String },
     /// A Markdown file a page shows changed on disk.
     MarkdownChanged(Target),
     /// The built-in Markdown editor's text, to write to the file the page shows.
@@ -81,6 +91,10 @@ pub enum UserEvent {
     ConfigChanged,
     /// A saved password was read for a page to fill.
     PasswordToFill { target: Target, origin: String, username: String, read: Result<Option<String>, String> },
+    /// A saved login's one-time code was made for a page to fill (only the digits, never the key).
+    CodeToFill { target: Target, origin: String, read: Result<Option<String>, String> },
+    /// The one-time codes the command bar shows (passwords.one_time_codes), keyed "vault\norigin\nusername".
+    OneTimeCodes(Value),
     /// A submitted login was compared with the saved ones.
     CredentialChecked { target: Target, origin: String, username: String, password: String, known: bool },
     /// The system's password store has been slow to answer, so it's probably asking the user something.
@@ -101,6 +115,12 @@ pub enum UserEvent {
     /// One held plugin or program was answered; ask about the rest.
     AskHeld(Vec<String>, Vec<String>, bool),
     Downloaded { ok: bool, path: Option<PathBuf>, url: String, open: bool },
+    /// A small picture of a tab for its preview card (None: it couldn't be taken).
+    TabPicture { tab: TabId, png: Option<Vec<u8>> },
+    /// A tab's pages one way through its history, for the menu on back or forward: (title, address), shown at (x, y).
+    HistoryList { tab: TabId, forward: bool, items: Vec<(String, String)>, x: f64, y: f64 },
+    /// A picture fetched for Copy Image.
+    PictureToCopy(Result<Vec<u8>, String>),
     Captured(Result<Vec<u8>, String>),
     DownloadStarted { target: Target, name: String, path: PathBuf, url: String },
     SyncSetup(crate::github::Step),
@@ -348,6 +368,9 @@ pub struct App {
     known_plugins: std::collections::HashSet<String>,
     /// The offer to answer a site's cookie pop-up for the user: (page, nonce it must echo back, site, the button they clicked).
     cookie_offer: Option<(Target, String, String, crate::state::CookieButton)>,
+    /// The last pop-up blocked in each page (links.block_popups): (address of the page then, pop-up's address, site,
+    /// nonce the note must echo back). One note per page, however many pop-ups it tries.
+    blocked_popups: HashMap<Target, (String, String, String, String)>,
     /// Chats whose agent is answering right now.
     chat_running: std::collections::HashSet<String>,
     /// When each running chat's agent started (for the Working section's timers).
@@ -406,6 +429,14 @@ pub struct App {
     preload_seq: u64,
     /// Tabs whose page process ended while out of sight: they reload when they're shown again.
     crashed: std::collections::HashSet<TabId>,
+    /// When each page's process last ended, for stopping reloads of a page that keeps crashing.
+    page_crashes: HashMap<Target, Vec<std::time::Instant>>,
+    /// Tabs whose process the user ended in the Task Manager, and when: they sleep instead of reloading.
+    ended_by_user: HashMap<TabId, std::time::Instant>,
+    /// The settings files as Valerie last read them, so only someone else's change says "Config reloaded".
+    settings_seen: String,
+    /// The next reload_config says so (someone else changed the settings, or the user asked for it).
+    announce_reload: bool,
     /// Whether Valerie's window is the one in front (notifications for things you'd otherwise miss).
     window_focused: bool,
     /// Windows and Linux: a page is filling the window, and whether the window was full screen before it did.
@@ -495,8 +526,21 @@ pub struct App {
     split_drag_from: Option<(usize, f64)>,
     /// One see-through strip over each split-view gap that draws the grab pill (layout.split_grab_height).
     split_handles: Vec<WebView>,
+    /// The card beside a tab the pointer rests on (sidebar.tab_preview), made the first time; what it shows now
+    /// ({ tab, … }, sent again once its page is ready) and where it hangs: (x, y, below a top-bar tab).
+    tab_card: Option<WebView>,
+    tab_card_shown: Option<Value>,
+    tab_card_at: (f64, f64, bool),
+    /// Small pictures of tabs for that card as data: URLs, oldest first (at most TAB_PICTURES).
+    tab_pictures: Vec<(TabId, String)>,
     /// Saved logins offered to a page, keyed by the nonce the page must echo back to fill one.
     fill_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
+    /// Logins with a one-time-code key offered to a page's code box, like `fill_offers`.
+    code_offers: HashMap<Target, (String, Vec<passwords::Entry>)>,
+    /// The login the command bar is asking a one-time-code key for, and the nonce its box must send back.
+    adding_code_key: Option<(String, passwords::Entry)>,
+    /// The command bar is showing one-time codes: agents can't read or capture it meanwhile.
+    codes_on_screen: bool,
     /// When each page last clicked or submitted by keyboard: the page it leads to puts the cursor in its text box.
     keyed: HashMap<Target, u64>,
     pending_save: Option<PendingSave>,
@@ -706,10 +750,13 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
 }
 
 /// Built-in pages: what Valerie shows at valerie://page/<name> unless the config folder's pages/ has one by that name.
-const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes", "saved-settings"];
+const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes", "saved-settings", "task-manager", "casino"];
 
 /// Tools only built-in pages (and pages that list them) can use: they act on files Valerie downloaded.
-const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change", "list_saved_settings", "save_settings", "switch_settings", "delete_saved_settings"];
+const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change", "list_saved_settings", "save_settings", "switch_settings", "delete_saved_settings", "list_tasks", "end_tab_process"];
+
+#[path = "task_manager.rs"]
+mod task_manager;
 
 fn pages_dir() -> PathBuf {
     config::config_dir().join("pages")
@@ -1112,6 +1159,63 @@ fn free_name(folder: &std::path::Path, name: &str) -> PathBuf {
     dest
 }
 
+/// The tab preview card's view: the 260-point card plus 10 each side for its shadow.
+const TAB_CARD_W: f64 = 280.0;
+/// Its pictures of tabs: how wide they're taken (points), how many are kept, and the most bytes one may be.
+const TAB_PICTURE_W: f64 = 240.0;
+const TAB_PICTURES: usize = 10;
+const TAB_PICTURE_BYTES: usize = 500_000;
+
+/// A picture's bytes and its type ("image/png"): a data: address decoded, anything else fetched with curl (30 s and
+/// 50 MB at most) with Valerie's user agent and the page's site as the referrer, as the page itself would.
+fn picture_bytes(url: &str, page: &str, agent: &str) -> Result<(Vec<u8>, String), String> {
+    if let Some(rest) = url.strip_prefix("data:") {
+        let (head, body) = rest.split_once(',').ok_or("a broken data: address")?;
+        if !head.ends_with(";base64") {
+            return Err("only base64 data: pictures can be copied or saved".into());
+        }
+        let kind = head.split(';').next().unwrap_or("").to_string();
+        return crate::mcp::unbase64(body).map(|b| (b, kind)).ok_or_else(|| "a broken data: picture".into());
+    }
+    let tmp = std::env::temp_dir().join(format!("valerie-picture-{}", crate::mcp::random_hex()));
+    let mut c = platform::command("curl");
+    c.args(["-fsSL", "--max-time", "30", "--max-filesize", "52428800", "--proto", "=http,https", "--proto-redir", "=http,https", "-w", "%{content_type}", "-A", agent, "-o"]).arg(&tmp);
+    if let Some(origin) = url::Url::parse(page).ok().filter(|u| matches!(u.scheme(), "http" | "https")).map(|u| u.origin().ascii_serialization()) {
+        c.args(["-e", &format!("{origin}/")]);
+    }
+    let out = c.arg(url).output().map_err(|e| format!("couldn't run curl: {e}"));
+    let bytes = std::fs::read(&tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let out = out?;
+    if !out.status.success() {
+        return Err(format!("curl: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let kind = String::from_utf8_lossy(&out.stdout).split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    bytes.map(|b| (b, kind)).map_err(|e| e.to_string())
+}
+
+/// A file name for a saved picture: the address's last part (made safe), with an extension from its type when it has none.
+fn picture_name(url: &str, kind: &str) -> String {
+    let last = if url.starts_with("data:") { None } else { url::Url::parse(url).ok().and_then(|u| u.path_segments().and_then(|mut s| s.next_back().map(str::to_string))) };
+    let safe: String = last.unwrap_or_default().chars().map(|c| if c.is_alphanumeric() || "-_. ".contains(c) { c } else { '-' }).collect();
+    let safe: String = safe.trim_matches(['.', ' ', '-']).chars().take(100).collect();
+    let base = if safe.is_empty() { "image".to_string() } else { safe };
+    let ext = match kind {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/avif" => "avif",
+        "image/bmp" => "bmp",
+        "image/heic" => "heic",
+        "image/x-icon" | "image/vnd.microsoft.icon" => "ico",
+        _ => "",
+    };
+    let has_ext = base.rsplit_once('.').is_some_and(|(s, e)| !s.is_empty() && (1..=5).contains(&e.len()) && e.chars().all(|c| c.is_ascii_alphanumeric()));
+    if ext.is_empty() || has_ext { base } else { format!("{base}.{ext}") }
+}
+
 /// The first downloads.rules entry for this file (by its name, the address it came from or the page it was on).
 fn download_rule(d: &config::DownloadsConfig, name: &str, url: &str, page: &str) -> Option<config::DownloadRule> {
     let name_ok = |pat: &str| {
@@ -1127,6 +1231,9 @@ fn download_rule(d: &config::DownloadsConfig, name: &str, url: &str, page: &str)
     let site_ok = |site: &str| site.trim().is_empty() || [url, page].iter().any(|u| plugins::matches(&[site.trim().to_string()], u));
     d.rules.iter().find(|r| name_ok(&r.pattern) && site_ok(&r.site)).cloned()
 }
+
+/// `links.block_popups`, for pages already open when it changes.
+static BLOCK_POPUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A URL's host without "www.", which is how boosts and per-site settings are keyed.
 fn site_of(url: &str) -> Option<String> {
@@ -1253,7 +1360,11 @@ fn cannot_write(dir: &Path) -> Option<std::io::Error> {
 /// UI files are compiled in; set VALERIE_UI_DIR to load them from disk while iterating on the design.
 pub fn ui(name: &str) -> String {
     if let Ok(dir) = std::env::var("VALERIE_UI_DIR") {
-        if let Ok(s) = std::fs::read_to_string(PathBuf::from(dir).join(name)) {
+        if let Ok(s) = std::fs::read_to_string(PathBuf::from(&dir).join(name)) {
+            // The casino page's games live in their own file, shared with the offline page.
+            if name == "pages/casino.html" {
+                return s + "<script>" + &std::fs::read_to_string(PathBuf::from(&dir).join("casino.js")).unwrap_or_default() + "</script>";
+            }
             return s;
         }
     }
@@ -1268,6 +1379,7 @@ pub fn ui(name: &str) -> String {
         "vendor/addon-fit.js" => include_str!("../ui/vendor/addon-fit.js"),
         "answer.html" => include_str!("../ui/answer.html"),
         "split-handle.html" => include_str!("../ui/split-handle.html"),
+        "tab-card.html" => include_str!("../ui/tab-card.html"),
         "welcome.html" => include_str!("../ui/welcome.html"),
         "plugins.html" => include_str!("../ui/plugins.html"),
         "brief.html" => include_str!("../ui/brief.html"),
@@ -1283,6 +1395,8 @@ pub fn ui(name: &str) -> String {
         "pages/history.html" => include_str!("../ui/pages/history.html"),
         "pages/changes.html" => include_str!("../ui/pages/changes.html"),
         "pages/saved-settings.html" => include_str!("../ui/pages/saved-settings.html"),
+        "pages/task-manager.html" => include_str!("../ui/pages/task-manager.html"),
+        "pages/casino.html" => concat!(include_str!("../ui/pages/casino.html"), "<script>", include_str!("../ui/casino.js"), "</script>"),
         _ => "",
     }
     .to_string()
@@ -1331,6 +1445,18 @@ fn animations_on(config: &Config) -> Value {
         }
     }
     on
+}
+
+/// A navigation handler for Valerie's own windows: they only ever show their own page. Without it a link or file dropped
+/// on one (WebKit loads what's dropped where the page doesn't take it) would replace the interface with that address.
+fn own_page_only(window: &'static str) -> impl Fn(String) -> bool + 'static {
+    move |url| {
+        let ours = url.starts_with("about:") || url.starts_with("data:");
+        if !ours {
+            crate::log::line("ui", format!("kept the {window} on its own page instead of going to {}", url.split(['?', '#']).next().unwrap_or("")));
+        }
+        ours
+    }
 }
 
 /// A UI page with the user's own CSS and words built in.
@@ -1506,6 +1632,7 @@ impl App {
             .with_accept_first_mouse(true)
             .with_devtools(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Chrome, msg: r.into_body() }))
+            .with_navigation_handler(own_page_only("sidebar"))
             .child_of(&window)?;
         trace("  sidebar view");
         let p = proxy.clone();
@@ -1515,6 +1642,7 @@ impl App {
             .with_transparent(true)
             .with_visible(false)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::Overlay, msg: r.into_body() }))
+            .with_navigation_handler(own_page_only("command bar"))
             .child_of(&window)?;
         #[cfg(target_os = "linux")]
         {
@@ -1581,6 +1709,7 @@ impl App {
             market_index: Vec::new(),
             known_plugins: Default::default(),
             cookie_offer: None,
+            blocked_popups: Default::default(),
             chat_running: Default::default(),
             chat_started: HashMap::new(),
             chat_asks: HashMap::new(),
@@ -1615,6 +1744,10 @@ impl App {
             update_told: Default::default(),
             preload_seq: 0,
             crashed: Default::default(),
+            page_crashes: HashMap::new(),
+            ended_by_user: HashMap::new(),
+            settings_seen: settings_text(),
+            announce_reload: false,
             window_focused: true,
             page_filling_window: None,
             notify_asked: Default::default(),
@@ -1670,7 +1803,14 @@ impl App {
             split_grab: None,
             split_drag_from: None,
             split_handles: Vec::new(),
+            tab_card: None,
+            tab_card_shown: None,
+            tab_card_at: (0.0, 0.0, false),
+            tab_pictures: Vec::new(),
             fill_offers: HashMap::new(),
+            code_offers: HashMap::new(),
+            adding_code_key: None,
+            codes_on_screen: false,
             keyed: HashMap::new(),
             pending_save: None,
             keychain_prompt_explained: false,
@@ -2030,13 +2170,36 @@ impl App {
         let base = {
             use wry::WebViewBuilderExtDarwin;
             let pc = p.clone();
-            base.with_on_web_content_process_terminate_handler(move || send(&pc, UserEvent::PageCrashed { target }))
+            base.with_on_web_content_process_terminate_handler(move || send(&pc, UserEvent::PageCrashed { target, rebuild: false }))
+        };
+        // WebView2 recovers from its other processes (GPU, utility) by itself; a hung page is left for the person to reload.
+        #[cfg(target_os = "windows")]
+        let base = {
+            use webview2_com::Microsoft::Web::WebView2::Win32::*;
+            use wry::WebViewBuilderExtWindows;
+            let pc = p.clone();
+            base.with_process_failed_handler(move |kind| match kind {
+                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => send(&pc, UserEvent::PageCrashed { target, rebuild: false }),
+                COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => send(&pc, UserEvent::PageCrashed { target, rebuild: true }),
+                other => crate::log::line("page", format!("WebView2 process failed (kind {}) for {target:?}; left to WebView2", other.0)),
+            })
+        };
+        #[cfg(target_os = "linux")]
+        let base = {
+            use wry::WebViewBuilderExtUnix;
+            let pc = p.clone();
+            base.with_web_process_terminated_handler(move |reason| match reason {
+                // Valerie ended it on purpose.
+                webkit2gtk::WebProcessTerminationReason::TerminatedByApi => {}
+                _ => send(&pc, UserEvent::PageCrashed { target, rebuild: false }),
+            })
         };
         let (p1, p2, p3, p4, p5) = (p.clone(), p.clone(), p.clone(), p.clone(), p.clone());
         let downloads = self.config.downloads.clone();
         // Where each download is being saved (and whether to open it after); the completed handler doesn't get the
         // path on every platform.
-        let saving = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, (PathBuf, bool)>::new()));
+        // Keyed by address, with a list each: the same address can be downloading twice at once.
+        let saving = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, Vec<(PathBuf, bool)>>::new()));
         let saved = saving.clone();
         let p6 = p.clone();
         let briefs_proxy = std::sync::Mutex::new(self.proxy.clone());
@@ -2044,6 +2207,7 @@ impl App {
         let (page_key, page_theme) = (self.page_key.clone(), self.page_theme.clone());
         let popup_windows = self.config.links.popups == "window";
         let popup_floating = self.config.links.popup_look == "floating";
+        let blocked_proxy = self.proxy.clone();
         let (camera, microphone) = (self.config.permissions.camera.clone(), self.config.permissions.microphone.clone());
         let location = self.config.permissions.location.clone();
         // The page's address right now, for `sites:` settings decided as the page asks (camera, pop-ups).
@@ -2083,7 +2247,12 @@ impl App {
             .with_new_window_req_handler(move |url, features| {
                 // Sign-in popups ("Sign in with Google") ask for a size and need to stay linked to the page that
                 // opened them, so they get a real small window; everything else opens as a tab.
-                let windows = match site_of_page(&current2, &sites).popups.as_deref() {
+                let site = site_of_page(&current2, &sites);
+                if !features.user_initiated && site.block_popups.unwrap_or_else(|| BLOCK_POPUPS.load(std::sync::atomic::Ordering::Relaxed)) {
+                    send(&blocked_proxy, UserEvent::PopupBlocked { target, url });
+                    return NewWindowResponse::Deny;
+                }
+                let windows = match site.popups.as_deref() {
                     Some("tab") => false,
                     Some("window") => true,
                     _ => popup_windows,
@@ -2175,14 +2344,25 @@ impl App {
                 } else {
                     free_name(&folder, &name)
                 };
-                saving.lock().unwrap().insert(url.clone(), (dest.clone(), open));
+                saving.lock().unwrap().entry(url.clone()).or_default().push((dest.clone(), open));
                 let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name);
                 send(&p6, UserEvent::DownloadStarted { target, name, path: dest.clone(), url });
                 *path = dest;
                 true
             })
             .with_download_completed_handler(move |url, path, ok| {
-                let (path, open) = match saved.lock().unwrap().remove(&url) {
+                // The one at this path (Windows and Linux say), else the oldest (macOS doesn't).
+                let mine = {
+                    let mut all = saved.lock().unwrap();
+                    let list = all.entry(url.clone()).or_default();
+                    let i = path.as_ref().and_then(|p| list.iter().position(|(d, _)| d == p)).unwrap_or(0);
+                    let mine = (i < list.len()).then(|| list.remove(i));
+                    if list.is_empty() {
+                        all.remove(&url);
+                    }
+                    mine
+                };
+                let (path, open) = match mine {
                     Some((p, open)) => (Some(p), open),
                     None => (path, false),
                 };
@@ -3952,6 +4132,7 @@ impl App {
         if !self.state.tabs.contains_key(&tab) {
             return;
         }
+        self.hide_tab_preview();
         self.chats_open = false;
         // A tab preloaded on hover becomes a normal one now (and its visit counts from here).
         let was_preloaded = self.preloaded.remove(&tab).is_some();
@@ -4317,7 +4498,7 @@ impl App {
     }
 
     fn move_tab(&mut self, tab: TabId, space: Option<String>, folder: Option<TabId>, section: Option<String>, index: Option<usize>) {
-        if !self.state.tabs.contains_key(&tab) {
+        if !self.state.tabs.contains_key(&tab) || self.no_space_called(space.as_deref()) {
             return;
         }
         if self.state.split_of(tab).is_some() {
@@ -4371,6 +4552,9 @@ impl App {
 
     /// Tabs and folders moved together (see State::move_items); like move_tab for the active tab and loaded pages.
     fn move_items(&mut self, ids: &[TabId], space: Option<String>, folder: Option<TabId>, section: Option<String>, favorite: bool, index: Option<usize>) {
+        if self.no_space_called(space.as_deref()) {
+            return;
+        }
         let dest = space.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
         let actives: Vec<Option<TabId>> = self.state.spaces.iter().map(|s| s.active).collect();
         // A split-view group moves as one: each tab brings the rest of its group along, left to right.
@@ -4434,7 +4618,12 @@ impl App {
             rank += 1;
         }
         let hide = &self.config.command_bar.hide_commands;
-        for (name, title) in CATALOG.iter().filter(|(name, _)| on_this_system(name)).filter(|(name, title)| !hide.iter().any(|h| h == name || h == title)) {
+        let codes_on = self.config.passwords.enabled && self.config.passwords.one_time_codes;
+        for (name, title) in CATALOG
+            .iter()
+            .filter(|(name, _)| on_this_system(name) && (codes_on || *name != "add_one_time_code"))
+            .filter(|(name, title)| !hide.iter().any(|h| h == name || h == title))
+        {
             items.push(json!({ "kind": "command", "title": self.translate(title), "cmd": { "cmd": name } }));
         }
         if !hide.iter().any(|h| h == "duplicate_window") {
@@ -4484,6 +4673,20 @@ impl App {
                 let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
                 let cmd = json!({ "cmd": "copy_password", "vault": e.vault, "origin": e.origin, "username": e.username });
                 items.push(json!({ "kind": "password", "title": format!("Password: {host} — {}", e.username), "sub": e.vault, "cmd": cmd }));
+            }
+            // The codes themselves come once a row is on screen (send_bar_codes), and only while the bar is open.
+            if self.config.passwords.one_time_codes {
+                for e in passwords::with_code_keys(&self.config.vaults_for(&self.profile_for(self.state.active_space))) {
+                    let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                    let key = format!("{}\n{}\n{}", e.vault, e.origin, e.username);
+                    let login = json!({ "vault": e.vault, "origin": e.origin, "username": e.username });
+                    let mut copy = login.clone();
+                    copy["cmd"] = json!("copy_one_time_code");
+                    let mut remove = login;
+                    remove["cmd"] = json!("remove_one_time_code");
+                    items.push(json!({ "kind": "otp", "title": format!("One-Time Code: {host} — {}", e.username), "sub": e.vault, "key": key, "cmd": copy }));
+                    items.push(json!({ "kind": "command", "title": format!("Remove One-Time Code: {host} — {}", e.username), "sub": e.vault, "cmd": remove }));
+                }
             }
         }
         for b in &self.state.bookmarks {
@@ -4546,7 +4749,7 @@ impl App {
         } else {
             vec![]
         };
-        let data = json!({ "mode": mode, "query": query, "engine": engine, "plugin_search": plugin_search, "agent": self.config.agent_for("chat").0, "options": self.config.command_bar, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items, "floating": self.bar_floating });
+        let data = json!({ "mode": mode, "query": query, "engine": engine, "plugin_search": plugin_search, "agent": self.config.agent_for("chat").0, "options": self.config.command_bar, "escape_hints": self.config.escape_hints, "font": self.config.layout.font, "sites": sites, "theme": self.theme_for(self.state.active_space), "items": items, "floating": self.bar_floating });
         if self.bar_floating {
             let script = format!("palette.open({data})");
             self.bar_open = true;
@@ -4590,6 +4793,7 @@ impl App {
                         .with_transparent(true)
                         .with_accept_first_mouse(true)
                         .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::FloatBar, msg: r.into_body() }))
+                        .with_navigation_handler(own_page_only("command bar"))
                         .child_of(&w)
                         .map_err(|e| e.to_string())?;
                     platform::follow_window(&v, platform::Follow::Fill);
@@ -4631,7 +4835,7 @@ impl App {
     /// One line of text in the command bar overlay (shown above everything, whatever the sidebar's size).
     fn open_prompt(&mut self, label: &str, value: &str, then: Value, field: &str) {
         let data = json!({ "mode": "prompt", "prompt": { "label": label, "value": value, "then": then, "field": field },
-                           "theme": self.theme_for(self.state.active_space), "items": [], "options": self.config.command_bar, "font": self.config.layout.font });
+                           "theme": self.theme_for(self.state.active_space), "items": [], "options": self.config.command_bar, "escape_hints": self.config.escape_hints, "font": self.config.layout.font });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -4677,6 +4881,160 @@ impl App {
             use tao::platform::unix::WindowExtUnix;
             menu.show_context_menu_for_gtk_window(self.window.gtk_window().as_ref(), pos);
         }
+    }
+
+    /// The pages one way through `tab`'s history as a menu at (x, y): the nearest first, then the History page.
+    fn history_menu(&mut self, tab: TabId, forward: bool, items: Vec<(String, String)>, x: f64, y: f64) {
+        if items.is_empty() || self.state.active_tab() != Some(tab) {
+            return;
+        }
+        let mut e: Vec<Option<(String, Value)>> = Vec::new();
+        for (i, (title, url)) in items.into_iter().enumerate() {
+            let n = i as i64 + 1;
+            let name = Some(title.trim()).filter(|t| !t.is_empty()).map(str::to_string).or_else(|| site_of(&url)).unwrap_or(url);
+            let name = if name.chars().count() > 70 { name.chars().take(69).collect::<String>() + "…" } else { name };
+            e.push(Some((name, json!({ "cmd": "go_history", "steps": if forward { n } else { -n }, "tab": tab }))));
+        }
+        e.push(None);
+        e.push(Some(("Show Full History".into(), json!({ "cmd": "history" }))));
+        self.popup(e, x, y);
+    }
+
+    // ---------------------------------------------------------------- tab preview card
+
+    /// The card beside tab `tab`, whose place `rect` the sidebar gave in its own points (`top`: a top-bar tab).
+    fn show_tab_preview(&mut self, tab: TabId, rect: &Value, top: bool) {
+        let Some(t) = self.state.tabs.get(&tab).filter(|_| self.config.sidebar.tab_preview) else { return };
+        let (title, url, favicon) = (t.display_title().to_string(), t.url.clone(), t.favicon.clone());
+        let k = self.window.scale_factor();
+        let origin = self.chrome.bounds().ok().map(|b| b.position.to_logical::<f64>(k)).map(|p| (p.x, p.y)).unwrap_or((0.0, 0.0));
+        let n = |key: &str| rect[key].as_f64().unwrap_or(0.0);
+        let (rx, ry, rw, rh) = (origin.0 + n("x"), origin.1 + n("y"), n("w"), n("h"));
+        // The view has 10 points around the card for its shadow; the card itself keeps 4 points clear of the tab.
+        self.tab_card_at = if top {
+            (rx + rw / 2.0 - TAB_CARD_W / 2.0, ry + rh - 6.0, true)
+        } else if self.config.layout.sidebar_position == SidebarPosition::Right {
+            (rx - TAB_CARD_W + 6.0, ry - 10.0, false)
+        } else {
+            (rx + rw - 6.0, ry - 10.0, false)
+        };
+        let picture = self.config.sidebar.tab_preview_picture;
+        let kept = picture.then(|| self.tab_pictures.iter().find(|(id, _)| *id == tab).map(|(_, p)| p.clone())).flatten();
+        // A fresh picture of a tab that has a page (on screen or not); a sleeping tab shows the last one taken.
+        let live = self.views.get(&tab).filter(|v| picture && platform::page_url(v).is_some_and(|u| u.starts_with("http") || u.starts_with("file:")));
+        let waiting = live.is_some();
+        if let Some(v) = live {
+            let p = self.proxy.clone();
+            platform::snapshot(v, TAB_PICTURE_W, move |r| send(&p, UserEvent::TabPicture { tab, png: r.ok() }));
+        }
+        let host = url::Url::parse(&url).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())).unwrap_or_default();
+        let data = json!({ "tab": tab, "title": title, "host": host, "favicon": favicon, "picture": kept, "waiting": waiting,
+                           "theme": self.theme_for(self.state.active_space), "below": top });
+        self.ensure_tab_card();
+        let Some(card) = &self.tab_card else { return };
+        let _ = card.evaluate_script(&format!("window.tabCard && tabCard.show({data})"));
+        self.tab_card_shown = Some(data);
+        self.place_tab_card(if picture { 290.0 } else { 100.0 });
+    }
+
+    /// Put the card's view where it hangs, `h` points tall, inside the window.
+    fn place_tab_card(&self, h: f64) {
+        let Some(card) = self.tab_card.as_ref().filter(|_| self.tab_card_shown.is_some()) else { return };
+        let z = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+        let (x, y, _) = self.tab_card_at;
+        let x = x.clamp(0.0, (z.width - TAB_CARD_W).max(0.0));
+        let y = y.clamp(0.0, (z.height - h).max(0.0));
+        let _ = card.set_bounds(rect(x, y, TAB_CARD_W, h));
+        let _ = card.set_visible(true);
+        platform::bring_to_front(card);
+    }
+
+    fn hide_tab_preview(&mut self) {
+        if self.tab_card_shown.take().is_none() {
+            return;
+        }
+        if let Some(v) = &self.tab_card {
+            let _ = v.evaluate_script("window.tabCard && tabCard.hide()");
+            let _ = v.set_visible(false);
+        }
+    }
+
+    /// The card's own see-through view (it never takes the keyboard), made the first time it's needed.
+    fn ensure_tab_card(&mut self) {
+        if self.tab_card.is_some() {
+            return;
+        }
+        let p = self.proxy.clone();
+        let built = platform::ui_builder(&self.chrome)
+            .with_html(ui_page("tab-card.html", &self.config))
+            .with_visible(false)
+            .with_transparent(true)
+            .with_focused(false)
+            .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::TabCard, msg: r.into_body() }))
+            .with_navigation_handler(|url| url.starts_with("about:") || url.starts_with("data:"))
+            .child_of(&self.window);
+        match built {
+            Ok(v) => self.tab_card = Some(v),
+            Err(e) => crate::log::line("layout", format!("tab preview card: {e}")),
+        }
+    }
+
+    /// A tab's picture came back: keep it (a few, small) and show it if that tab's card is up.
+    fn tab_picture(&mut self, tab: TabId, png: Option<Vec<u8>>) {
+        let url = png.filter(|p| p.len() <= TAB_PICTURE_BYTES).map(|p| format!("data:image/png;base64,{}", crate::mcp::base64(&p)));
+        if let Some(u) = &url {
+            let tabs = &self.state.tabs;
+            self.tab_pictures.retain(|(t, _)| *t != tab && tabs.contains_key(t));
+            self.tab_pictures.push((tab, u.clone()));
+            let extra = self.tab_pictures.len().saturating_sub(TAB_PICTURES);
+            self.tab_pictures.drain(..extra);
+        }
+        if self.tab_card_shown.as_ref().and_then(|d| d["tab"].as_u64()) != Some(tab) || !self.config.sidebar.tab_preview_picture {
+            return;
+        }
+        let shown = url.or_else(|| self.tab_pictures.iter().find(|(t, _)| *t == tab).map(|(_, p)| p.clone()));
+        if let Some(d) = self.tab_card_shown.as_mut() {
+            d["picture"] = json!(shown);
+            d["waiting"] = json!(false);
+        }
+        if let Some(v) = &self.tab_card {
+            let _ = v.evaluate_script(&format!("window.tabCard && tabCard.picture({tab}, {})", json!(shown)));
+        }
+    }
+
+    /// Copy Image / Save Image: the picture's bytes come off the main thread (data: addresses decoded, anything else
+    /// fetched the way the page would), then go on the clipboard or into the downloads folder like a download.
+    fn fetch_picture(&self, url: String, save: bool) {
+        if !matches!(scheme_of(&url).as_str(), "http" | "https" | "data") {
+            return self.toast("Valerie can only copy or save pictures from the web");
+        }
+        let page = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).map(|t| t.url.clone()).unwrap_or_default();
+        let (agent, downloads, p) = (self.user_agent.clone(), self.config.downloads.clone(), self.proxy.clone());
+        std::thread::spawn(move || {
+            let got = picture_bytes(&url, &page, &agent);
+            if !save {
+                return send(&p, UserEvent::PictureToCopy(got.map(|(b, _)| b)));
+            }
+            let (bytes, kind) = match got {
+                Ok(g) => g,
+                Err(e) => {
+                    crate::log::line("downloads", format!("Save Image: {e}"));
+                    return send(&p, UserEvent::Toast("Couldn't save that image".into()));
+                }
+            };
+            let name = picture_name(&url, &kind);
+            let rule = download_rule(&downloads, &name, &url, &page);
+            let folder = rule.as_ref().map(|r| r.folder.trim()).filter(|f| !f.is_empty()).map(expand_home).unwrap_or_else(|| downloads.dir());
+            let open = rule.as_ref().and_then(|r| r.open).unwrap_or(downloads.open_when_done);
+            let path = free_name(&folder, &name);
+            if let Err(e) = std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&path, &bytes)) {
+                crate::log::line("downloads", format!("Save Image: couldn't write {}: {e}", path.display()));
+                return send(&p, UserEvent::Toast(format!("Couldn't save that image: {e}")));
+            }
+            // The downloads list keeps the page's address for a data: picture, not the picture itself.
+            let from = if url.starts_with("data:") { page } else { url };
+            send(&p, UserEvent::Downloaded { ok: true, path: Some(path), url: from, open });
+        });
     }
 
     /// Right-click on a space's icon.
@@ -4790,7 +5148,8 @@ impl App {
         out
     }
 
-    /// A right-click on a page that some plugin has entries for: Valerie's own menu, with the link entries too.
+    /// A right-click on a page that some plugin has entries for, or on a picture inside a link: Valerie's own menu,
+    /// with the link's and the picture's entries too.
     fn page_menu(&mut self, target: Target, m: &Value) {
         let Target::Tab(id) = target else { return };
         if self.page_menu_at.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400)) {
@@ -4827,6 +5186,18 @@ impl App {
         if let Some(sel) = ctx.get("selection").cloned() {
             e.push(Some(("Copy".into(), json!({ "cmd": "copy_text", "text": sel }))));
             e.push(Some(("Search for Selection".into(), json!({ "cmd": "go", "input": sel.chars().take(300).collect::<String>(), "new_tab": true }))));
+        }
+        // A picture: copy it (Mac), save it, or copy its address. Very big data: pictures are left out.
+        let picture = m["image"].as_str().filter(|u| matches!(scheme_of(u).as_str(), "http" | "https") || (u.starts_with("data:image/") && u.len() < 8_000_000));
+        if let Some(img) = picture.map(str::to_string) {
+            e.push(None);
+            if on_this_system("copy_image") {
+                e.push(Some(("Copy Image".into(), json!({ "cmd": "copy_image", "url": img }))));
+            }
+            e.push(Some(("Save Image".into(), json!({ "cmd": "save_image", "url": img }))));
+            if !img.starts_with("data:") {
+                e.push(Some(("Copy Image Address".into(), json!({ "cmd": "copy_text", "text": img }))));
+            }
         }
         e.extend(self.plugin_menu_items(&kinds, &ctx));
         // What the system's page menu would have had (shift-right-click still shows that one).
@@ -4880,6 +5251,8 @@ impl App {
             return;
         }
         self.bar_open = false;
+        self.adding_code_key = None;
+        self.codes_on_screen = false;
         if std::mem::take(&mut self.bar_floating) {
             self.float_pending = None;
             if let Some((w, v)) = &self.float_bar {
@@ -4985,6 +5358,7 @@ impl App {
             .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
+            .with_navigation_handler(own_page_only("little window's bar"))
             .child_of(&window);
         let (bar, view) = match (bar, view) {
             (Ok(bar), Ok(view)) => (bar, view),
@@ -5157,6 +5531,9 @@ impl App {
         if self.littles.get(&id).is_some_and(|l| l.private) {
             return self.toast("A private window's page can't move into your tabs: copy its link instead");
         }
+        if self.no_space_called(space.as_deref()) {
+            return;
+        }
         if let Some(mut l) = self.littles.remove(&id) {
             let url = l.url.clone();
             let target = space.and_then(|s| self.state.space_index(&s)).unwrap_or(l.space);
@@ -5233,12 +5610,14 @@ impl App {
         match ev {
             UserEvent::Ipc { from: Source::Page(target), msg } => UserEvent::Ipc { from: Source::Page(t(target)), msg },
             UserEvent::PageLoad { target, url, finished } => UserEvent::PageLoad { target: t(target), url, finished },
-            UserEvent::PageCrashed { target } => UserEvent::PageCrashed { target: t(target) },
+            UserEvent::PageCrashed { target, rebuild } => UserEvent::PageCrashed { target: t(target), rebuild },
             UserEvent::Title { target, title } => UserEvent::Title { target: t(target), title },
             UserEvent::NewWindow { target, url } => UserEvent::NewWindow { target: t(target), url },
+            UserEvent::PopupBlocked { target, url } => UserEvent::PopupBlocked { target: t(target), url },
             UserEvent::MarkdownChanged(target) => UserEvent::MarkdownChanged(t(target)),
             UserEvent::MarkdownSave { target, file, text } => UserEvent::MarkdownSave { target: t(target), file, text },
             UserEvent::PasswordToFill { target, origin, username, read } => UserEvent::PasswordToFill { target: t(target), origin, username, read },
+            UserEvent::CodeToFill { target, origin, read } => UserEvent::CodeToFill { target: t(target), origin, read },
             UserEvent::CredentialChecked { target, origin, username, password, known } => UserEvent::CredentialChecked { target: t(target), origin, username, password, known },
             UserEvent::DownloadStarted { target, name, path, url } => UserEvent::DownloadStarted { target: t(target), name, path, url },
             UserEvent::PluginReply { target, id, result } => UserEvent::PluginReply { target: t(target), id, result },
@@ -5440,12 +5819,18 @@ impl App {
                 self.refresh_content_config();
                 self.layout();
                 self.render();
-                match config::unknown_keys(&std::fs::read_to_string(config::config_path()).unwrap_or_default()).first() {
-                    Some(problem) => self.toast(&format!("Config reloaded, but {problem}")),
-                    None => self.toast("Config reloaded"),
+                self.settings_seen = settings_text();
+                if std::mem::take(&mut self.announce_reload) {
+                    match config::unknown_keys(&std::fs::read_to_string(config::config_path()).unwrap_or_default()).first() {
+                        Some(problem) => self.toast(&format!("Config reloaded, but {problem}")),
+                        None => self.toast("Config reloaded"),
+                    }
                 }
             }
-            Err(e) => self.toast(&format!("Config error: {e:#}")),
+            Err(e) => {
+                self.announce_reload = false;
+                self.toast(&format!("Config error: {e:#}"));
+            }
         }
     }
 
@@ -5811,8 +6196,69 @@ impl App {
         let id = c.tab.id;
         self.state.tabs.insert(id, c.tab);
         let today = &mut self.state.spaces[space].today;
-        if self.config.tabs.new_tab_position == "bottom" { today.push(id) } else { today.insert(0, id) }
+        // Back where it was; one closed from a pinned or kept list (or before this was remembered) goes where new tabs go.
+        match c.place {
+            Some(i) => today.insert(i.min(today.len()), id),
+            None if self.config.tabs.new_tab_position == "bottom" => today.push(id),
+            None => today.insert(0, id),
+        }
         self.activate(id);
+    }
+
+    /// A space name that matches no space says so (true), so the command does nothing instead of using the space you're in.
+    fn no_space_called(&mut self, name: Option<&str>) -> bool {
+        match name {
+            Some(n) if self.state.space_index(n).is_none() => {
+                self.toast(&format!("There's no space called “{n}”"));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Stop a page loading; the page that stays on screen then says its address (see `stopped`).
+    fn stop_loading(&mut self, target: Target) {
+        let Some(v) = self.view_for(target) else { return };
+        platform::stop_loading(v);
+        let p = self.proxy.clone();
+        let asked = v.evaluate_script_with_callback("window.stop(); location.href", move |r| {
+            if let Ok(url) = serde_json::from_str::<String>(&r) {
+                send(&p, UserEvent::Stopped { target, url });
+            }
+        });
+        if let Err(e) = asked {
+            crate::log::line("page", format!("stop: couldn't read the page's address: {e}"));
+        }
+    }
+
+    /// The tab or little window shows the page it had before the stopped one, so its address and loading state follow.
+    fn stopped(&mut self, target: Target, url: String) {
+        if url.is_empty() || url == "about:blank" {
+            return;
+        }
+        match target {
+            Target::Tab(id) => {
+                let Some(t) = self.state.tabs.get_mut(&id) else { return };
+                if t.url != url || t.loading {
+                    t.url = url.clone();
+                    t.loading = false;
+                    self.committed_url.insert(id, url);
+                    self.dirty = true;
+                    self.render();
+                }
+            }
+            Target::Little(id, n) => {
+                let Some(l) = self.littles.get_mut(&id) else { return };
+                if n == l.page {
+                    l.loading = false;
+                }
+                if let Some((u, _)) = l.page_mut(n) {
+                    *u = url;
+                }
+                self.render_little(id);
+            }
+            Target::Peek | Target::Panel(_) => {}
+        }
     }
 
     /// Recently Closed, the recent pages in History and the Bookmarks menu, each rebuilt only when what it shows changed.
@@ -5994,6 +6440,9 @@ impl App {
         platform::ERROR_PAGE.store(self.config.pages.error_page, std::sync::atomic::Ordering::Relaxed);
         platform::HTTP_SIGN_IN.store(self.config.pages.http_sign_in, std::sync::atomic::Ordering::Relaxed);
         platform::OFFLINE_GAME.store(self.config.pages.offline_game, std::sync::atomic::Ordering::Relaxed);
+        platform::SITE_PRINT.store(self.config.pages.site_print, std::sync::atomic::Ordering::Relaxed);
+        platform::VISIT_ANYWAY.store(self.config.pages.visit_anyway, std::sync::atomic::Ordering::Relaxed);
+        BLOCK_POPUPS.store(self.config.links.block_popups, std::sync::atomic::Ordering::Relaxed);
         crate::mcp::set_web_tools(self.config.mcp.web_tools);
         crate::mcp::set_ask_user(self.config.mcp.ask_user);
         let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();
@@ -6111,6 +6560,38 @@ impl App {
                     send(&proxy, UserEvent::PasswordToFill { target, origin: e.origin, username: e.username, read });
                 });
             }
+            // A one-time-code box: offer the codes of this site's saved logins (same origin rule as passwords).
+            "otp_field" if self.config.passwords.one_time_codes => {
+                let entries: Vec<passwords::Entry> =
+                    passwords::with_code_keys(&self.vaults_for_target(target)).into_iter().filter(|e| e.origin == origin).collect();
+                if entries.is_empty() {
+                    return;
+                }
+                let nonce = crate::mcp::random_hex();
+                let list = json!(entries.iter().map(|e| json!({ "username": e.username, "vault": e.vault })).collect::<Vec<_>>());
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.codes({list}, {})", json!(nonce)));
+                }
+                self.code_offers.insert(target, (nonce, entries));
+            }
+            "fill_code" if self.config.passwords.one_time_codes => {
+                let Some((nonce, entries)) = self.code_offers.get(&target) else {
+                    return crate::log::line("passwords", "not filling a code: none was offered on this page");
+                };
+                if m["nonce"].as_str() != Some(nonce.as_str()) {
+                    return crate::log::line("passwords", "not filling a code: the request didn't match the codes offered");
+                }
+                let Some(e) = m["index"].as_u64().and_then(|i| entries.get(i as usize)).filter(|e| e.origin == origin) else {
+                    return crate::log::line("passwords", "not filling a code: that login isn't for this site");
+                };
+                let e = e.clone();
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    // Only the digits leave this thread; the key stays in the store and this launch's memory.
+                    let read = watching_password_store(&proxy, || passwords::code_key(&e)).map(|k| k.map(|k| k.code_now().0)).map_err(|err| err.to_string());
+                    send(&proxy, UserEvent::CodeToFill { target, origin: e.origin, read });
+                });
+            }
             "credential" => {
                 let (Some(username), Some(password)) = (m["username"].as_str(), m["password"].as_str()) else { return };
                 if password.is_empty() || password.len() > 1024 || self.state.password_never.contains(&origin) {
@@ -6183,6 +6664,67 @@ impl App {
             Ok(None) => self.toast("That password is no longer saved"),
             Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
         }
+    }
+
+    fn fill_code(&mut self, target: Target, origin: &str, read: Result<Option<String>, String>) {
+        if self.origin_of_target(target).as_deref() != Some(origin) {
+            return crate::log::line("passwords", "not filling a code: the page changed while it was being made");
+        }
+        match read {
+            Ok(Some(code)) if code.len() <= 8 && code.bytes().all(|b| b.is_ascii_digit()) => {
+                if let Some(v) = self.view_for(target) {
+                    let _ = v.evaluate_script(&format!("window.__valerie && __valerie.fillCode({})", json!(code)));
+                }
+            }
+            Ok(_) => self.toast("That login's one-time code key is no longer saved"),
+            Err(err) => self.toast(&format!("Couldn't use saved passwords: {err}")),
+        }
+    }
+
+    /// The command bar's list of this profile's one-time codes, made off the main thread (reading the store can be slow).
+    /// Quiet reads only: a key the system would ask about shows no code until it's copied once.
+    fn send_bar_codes(&mut self) {
+        if !self.bar_open || !self.config.passwords.enabled || !self.config.passwords.one_time_codes {
+            return;
+        }
+        let entries = passwords::with_code_keys(&self.config.vaults_for(&self.profile_for(self.state.active_space)));
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let mut codes = serde_json::Map::new();
+            for e in entries {
+                if let Some(key) = passwords::code_key_quiet(&e) {
+                    let (code, left) = key.code_now();
+                    codes.insert(format!("{}\n{}\n{}", e.vault, e.origin, e.username), json!({ "code": code, "left": left }));
+                }
+            }
+            send(&proxy, UserEvent::OneTimeCodes(Value::Object(codes)));
+        });
+    }
+
+    /// The key typed into the command bar's box for `adding_code_key`: refused with a plain reason, or saved.
+    fn take_code_key(&mut self, m: &Value) {
+        let Some((nonce, e)) = self.adding_code_key.clone() else { return };
+        if m["nonce"].as_str() != Some(nonce.as_str()) {
+            return;
+        }
+        let key = match crate::otp::Secret::parse(m["key"].as_str().unwrap_or_default()) {
+            Ok(k) => k,
+            Err(why) => {
+                let _ = self.overlay.evaluate_script(&format!("palette.promptError({})", json!(self.translate(&why))));
+                return;
+            }
+        };
+        self.adding_code_key = None;
+        self.close_bar();
+        let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let said = match watching_password_store(&proxy, || passwords::save_code_key(&e, &key)) {
+                Ok(()) => format!("One-time code added for {host} ({})", e.username),
+                Err(err) => format!("Could not save the one-time code key: {err}"),
+            };
+            send(&proxy, UserEvent::Toast(said));
+        });
     }
 
     /// Once a run: every update makes the Mac ask again, one password at a time, which looks alarming if nobody says why.
@@ -6393,7 +6935,7 @@ impl App {
     /// The command bar showing only these items (a plugin's `list` output), filtered as you type.
     fn open_list(&mut self, title: &str, items: Vec<Value>) {
         let data = json!({ "mode": "list", "placeholder": title, "theme": self.theme_for(self.state.active_space), "items": items,
-                           "options": self.config.command_bar, "font": self.config.layout.font });
+                           "options": self.config.command_bar, "escape_hints": self.config.escape_hints, "font": self.config.layout.font });
         let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
         let _ = self.overlay.set_visible(true);
         platform::bring_to_front(&self.overlay);
@@ -7006,6 +7548,7 @@ impl App {
                     let n = if *last { l.order.last() } else { l.order.get(*index) }.copied().unwrap_or(l.page);
                     return self.little_show_tab(id, n);
                 }
+                Command::MoveToMainWindow { space: Some(s) } if self.state.space_index(s).is_none() => return self.toast(&format!("There's no space called “{s}”")),
                 // With other tabs and `little_window.open_all_tabs` off, only this one moves (it loads again there).
                 Command::MoveToMainWindow { space } if more && !l.private && !self.config.little_window.open_all_tabs => {
                     let (url, to) = (l.url.clone(), space.as_ref().and_then(|s| self.state.space_index(s)).unwrap_or(l.space));
@@ -7035,7 +7578,7 @@ impl App {
                 Command::Reload { tab: None } => return drop(l.view.reload()),
                 Command::HardReload { tab: None } => return platform::hard_reload(&l.view),
                 Command::DevTools => return l.view.open_devtools(),
-                Command::Stop => return drop(l.view.evaluate_script("window.stop()")),
+                Command::Stop => return self.stop_loading(Target::Little(id, l.page)),
                 Command::ToggleMute { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"mute\")")),
                 Command::ToggleMedia { tab: None } => return drop(l.view.evaluate_script("window.__valerie && __valerie.media(\"toggle\")")),
                 Command::SkipMedia { tab: None, seconds } => return drop(l.view.evaluate_script(&format!("window.__valerie && __valerie.media(\"skip\", {seconds})"))),
@@ -7101,6 +7644,9 @@ impl App {
             }
             Command::CloseCommandBar => self.close_bar(),
             Command::NewTab { url, space, background } => {
+                if self.no_space_called(space.as_deref()) {
+                    return;
+                }
                 if self.main_hidden {
                     self.show_main();
                 }
@@ -7374,8 +7920,8 @@ impl App {
                 }
             }
             Command::Stop => {
-                if let Some(v) = self.state.active_tab().and_then(|t| self.views.get(&t)) {
-                    let _ = v.evaluate_script("window.stop()");
+                if let Some(t) = self.state.active_tab() {
+                    self.stop_loading(Target::Tab(t));
                 }
             }
             Command::FindNext | Command::FindPrevious => {
@@ -7445,6 +7991,9 @@ impl App {
             }
             Command::SwitchSpace { index, name } => {
                 self.close_bar();
+                if index.is_none() && self.no_space_called(name.as_deref()) {
+                    return;
+                }
                 if let Some(i) = index.or_else(|| name.and_then(|n| self.state.space_index(&n))) {
                     self.switch_space(i);
                 }
@@ -7459,7 +8008,13 @@ impl App {
             }
             Command::RenameSpace { name, space } => {
                 let name = name.trim().to_string();
-                let i = space.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+                let i = match space {
+                    Some(n) => match self.state.space_index(&n) {
+                        Some(i) => i,
+                        None => return self.toast(&format!("There's no space called “{n}”")),
+                    },
+                    None => self.state.active_space,
+                };
                 if name.is_empty() || self.state.space_index(&name).is_some() {
                     return;
                 }
@@ -7480,6 +8035,9 @@ impl App {
                 self.render();
             }
             Command::MoveSpace { to, name } => {
+                if self.no_space_called(name.as_deref()) {
+                    return;
+                }
                 let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
                 let to = to.min(self.state.spaces.len() - 1);
                 if i == to {
@@ -7515,7 +8073,14 @@ impl App {
                 self.render();
             }
             Command::DeleteSpace { name, confirm } => {
-                let i = name.and_then(|n| self.state.space_index(&n)).unwrap_or(self.state.active_space);
+                // A name that matches no space removes nothing (not the space you're in).
+                let i = match name {
+                    Some(n) => match self.state.space_index(&n) {
+                        Some(i) => i,
+                        None => return self.toast(&format!("There's no space called “{n}”")),
+                    },
+                    None => self.state.active_space,
+                };
                 if self.state.spaces.len() < 2 {
                     return self.toast("Valerie needs at least one space");
                 }
@@ -7710,18 +8275,29 @@ impl App {
                     None => self.toast("That file is no longer there"),
                 }
             }
-            Command::Downloads | Command::History | Command::ChangeHistory | Command::SavedSettings | Command::OpenPage { .. } => {
+            Command::Downloads | Command::History | Command::ChangeHistory | Command::SavedSettings | Command::TaskManager | Command::OpenPage { .. } => {
                 let name = match &cmd {
                     Command::Downloads => "downloads".to_string(),
                     Command::History => "history".to_string(),
                     Command::ChangeHistory => "changes".to_string(),
                     Command::SavedSettings => "saved-settings".to_string(),
+                    Command::TaskManager => "task-manager".to_string(),
                     Command::OpenPage { name } => name.trim().to_string(),
                     _ => unreachable!(),
                 };
                 if let Err(e) = self.open_page(&name, true) {
                     self.toast(&e);
                 }
+            }
+            Command::PlayBlackjack | Command::PlayPoker | Command::PlayBaccarat | Command::PlayRoulette | Command::PlaySlots => {
+                let game = match cmd {
+                    Command::PlayPoker => "poker",
+                    Command::PlayBaccarat => "baccarat",
+                    Command::PlayRoulette => "roulette",
+                    Command::PlaySlots => "slots",
+                    _ => "blackjack",
+                };
+                self.open_casino(game);
             }
             Command::ShowDownloads => {
                 platform::open_external(&self.config.downloads.dir().to_string_lossy());
@@ -8239,6 +8815,28 @@ impl App {
                 let short: String = text.chars().take(40).collect();
                 self.copy(&text, &format!("Copied {short}"));
             }
+            Command::HistoryMenu { forward, x, y } => {
+                let Some(tab) = self.state.active_tab() else { return };
+                let (x, y) = match (x, y) {
+                    (Some(x), Some(y)) => (x, y),
+                    // From a key: near the page's top left corner.
+                    _ => {
+                        let z = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
+                        let (ax, ay, _, _) = self.content_area(z.width, z.height);
+                        (ax + 12.0, ay + 12.0)
+                    }
+                };
+                let Some(v) = self.views.get(&tab) else { return };
+                let p = self.proxy.clone();
+                platform::history_items(v, forward, 15, move |items| send(&p, UserEvent::HistoryList { tab, forward, items, x, y }));
+            }
+            Command::GoHistory { steps, tab } => {
+                if let Some(v) = self.target_tab(tab).and_then(|t| self.views.get(&t)) {
+                    platform::go_history(v, steps as isize);
+                }
+            }
+            Command::CopyImage { url } => self.fetch_picture(url, false),
+            Command::SaveImage { url } => self.fetch_picture(url, true),
             Command::PasteAndGo => {
                 let text = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
                 let text = text.trim();
@@ -8327,7 +8925,10 @@ impl App {
                     }
                 });
             }
-            Command::ReloadConfig => self.reload_config(),
+            Command::ReloadConfig => {
+                self.announce_reload = true;
+                self.reload_config();
+            }
             Command::Sync => {
                 self.close_bar();
                 self.sync_problem_told = None;
@@ -8410,6 +9011,80 @@ impl App {
                 self.close_bar();
                 match passwords::delete(&passwords::Entry { vault, origin, username }) {
                     Ok(()) => self.toast("Password deleted"),
+                    Err(e) => self.toast(&format!("Couldn't use saved passwords: {e}")),
+                }
+            }
+            Command::AddOneTimeCode { .. } | Command::CopyOneTimeCode { .. } | Command::RemoveOneTimeCode { .. }
+                if !(self.config.passwords.enabled && self.config.passwords.one_time_codes) =>
+            {
+                self.close_bar();
+                self.toast("One-time codes are turned off (passwords.one_time_codes)");
+            }
+            Command::AddOneTimeCode { vault: Some(vault), origin: Some(origin), username: Some(username) } => {
+                self.close_bar();
+                let e = passwords::Entry { vault, origin, username };
+                let vaults = self.config.vaults_for(&self.profile_for(self.state.active_space));
+                if !vaults.contains(&e.vault) || !passwords::list(std::slice::from_ref(&e.vault)).contains(&e) {
+                    return self.toast("That login isn't saved here");
+                }
+                let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                let label = format!("{} {host} ({}): {}", self.translate("Key for"), e.username, self.translate("paste the site's key or its otpauth:// address"));
+                let nonce = crate::mcp::random_hex();
+                self.adding_code_key = Some((nonce.clone(), e));
+                // Like open_prompt, but the box hides what's typed and answers with "one_time_key", never a command.
+                let data = json!({ "mode": "prompt", "prompt": { "label": label, "value": "", "then": {}, "field": "key", "secret": true, "nonce": nonce },
+                                   "theme": self.theme_for(self.state.active_space), "items": [], "options": self.config.command_bar, "escape_hints": self.config.escape_hints, "font": self.config.layout.font });
+                let _ = self.overlay.evaluate_script(&format!("palette.open({data})"));
+                let _ = self.overlay.set_visible(true);
+                platform::bring_to_front(&self.overlay);
+                let _ = focus_view(&self.overlay);
+                self.repaint_under_bar();
+                self.bar_open = true;
+            }
+            Command::AddOneTimeCode { .. } => {
+                self.close_bar();
+                let items: Vec<Value> = passwords::list(&self.config.vaults_for(&self.profile_for(self.state.active_space)))
+                    .into_iter()
+                    .map(|e| {
+                        let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                        json!({ "kind": "login", "title": format!("{host} — {}", e.username), "sub": e.vault,
+                                "cmd": { "cmd": "add_one_time_code", "vault": e.vault, "origin": e.origin, "username": e.username } })
+                    })
+                    .collect();
+                if items.is_empty() {
+                    return self.toast("Save the site's password first: a one-time code goes with a saved login");
+                }
+                let title = self.translate("Which login is the one-time code for?");
+                self.open_list(&title, items);
+            }
+            Command::CopyOneTimeCode { vault, origin, username } => {
+                self.close_bar();
+                let e = passwords::Entry { vault, origin, username };
+                if !self.config.vaults_for(&self.profile_for(self.state.active_space)).contains(&e.vault) {
+                    return self.toast("That login isn't saved here");
+                }
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || match watching_password_store(&proxy, || passwords::code_key(&e)) {
+                    Ok(Some(key)) => {
+                        let (code, _) = key.code_now();
+                        if arboard::Clipboard::new().and_then(|mut c| c.set_text(code.clone())).is_ok() {
+                            send(&proxy, UserEvent::Toast("Code copied: clears in 45 seconds".into()));
+                            std::thread::sleep(std::time::Duration::from_secs(45));
+                            if let Ok(mut c) = arboard::Clipboard::new() {
+                                if c.get_text().ok().as_deref() == Some(code.as_str()) {
+                                    let _ = c.set_text(String::new());
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => send(&proxy, UserEvent::Toast("No one-time code key is saved for that login".into())),
+                    Err(err) => send(&proxy, UserEvent::Toast(format!("Couldn't use saved passwords: {err}"))),
+                });
+            }
+            Command::RemoveOneTimeCode { vault, origin, username } => {
+                self.close_bar();
+                match passwords::delete_code_key(&passwords::Entry { vault, origin, username }) {
+                    Ok(()) => self.toast("One-time code removed"),
                     Err(e) => self.toast(&format!("Couldn't use saved passwords: {e}")),
                 }
             }
@@ -8665,6 +9340,9 @@ impl App {
                 let _ = self.overlay.set_bounds(self.bar_bounds(size.width, size.height));
                 self.repaint_under_bar();
             }
+            (Source::Overlay, "otp_codes") => self.send_bar_codes(),
+            (Source::Overlay, "otp_codes_hidden") => self.codes_on_screen = false,
+            (Source::Overlay, "one_time_key") => self.take_code_key(&m),
             (Source::Overlay, "swipe") => {
                 let _ = self.chrome.evaluate_script(&format!("swipeWheel({m})"));
             }
@@ -8717,6 +9395,7 @@ impl App {
             }
             (Source::Page(Target::Tab(_)), "pointer") => {
                 // The pointer moved onto a page: the sidebar can't tell on its own, so clear its hover states.
+                self.hide_tab_preview();
                 let _ = self.chrome.evaluate_script("window.valerie && valerie.pointerOut && valerie.pointerOut()");
             }
             (Source::Chrome, "resize") => {
@@ -8796,12 +9475,12 @@ impl App {
                         }
                     }
                     Source::Chrome | Source::Chat | Source::Terminal | Source::Answer | Source::Welcome | Source::Market | Source::Panel(_) => self.focused_little = None,
-                    Source::SplitHandle(_) => return,
+                    Source::SplitHandle(_) | Source::TabCard => return,
                     Source::Overlay | Source::FloatBar => {
                         if !matches!(cmd, Command::CloseCommandBar) {
                             self.close_bar();
                             // Picked from the bar over another app: Valerie comes forward for it (a copy needn't).
-                            if floating_pick && !matches!(cmd, Command::CopyText { .. } | Command::CopyPassword { .. }) {
+                            if floating_pick && !matches!(cmd, Command::CopyText { .. } | Command::CopyPassword { .. } | Command::CopyOneTimeCode { .. }) {
                                 platform::activate_app();
                                 self.show_main();
                             }
@@ -8843,6 +9522,10 @@ impl App {
                             t.favicon = Some(f.to_string());
                             self.dirty = true;
                         }
+                    } else if m.get("favicon").is_some_and(Value::is_null) && t.favicon.is_some() {
+                        // The page has no icon of its own: the sidebar tries the site's /favicon.ico (a missing key means not known yet).
+                        t.favicon = None;
+                        self.dirty = true;
                     }
                     t.playing = m["playing"].as_bool().unwrap_or(false);
                     t.muted = m["muted"].as_bool().unwrap_or(false);
@@ -8858,7 +9541,7 @@ impl App {
                     self.after_load(target, &u, true);
                 }
             }
-            (Source::Page(target), k @ ("page_ready" | "login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password")) => {
+            (Source::Page(target), k @ ("page_ready" | "login_form" | "fill" | "credential" | "save_password" | "never_password" | "dismiss_password" | "otp_field" | "fill_code")) => {
                 let k = k.to_string();
                 self.handle_password_ipc(target, &k, &m);
             }
@@ -8997,6 +9680,34 @@ impl App {
                 self.refresh_content_config();
                 self.toast(&format!("Valerie will click “{text}” on {site} from now on"));
             }
+            // A certificate error page's "Visit anyway": it only asks; the platform checks it and the user confirms.
+            (Source::Page(target), "cert_visit") => {
+                if let Some(v) = self.view_for(target) {
+                    platform::visit_anyway(v);
+                }
+            }
+            // The note about a blocked pop-up: open it this once, or always allow the site (and open it).
+            (Source::Page(target), "popup_open" | "popup_allow") => {
+                let Some((_, url, site, nonce)) = self.blocked_popups.get_mut(&target) else { return };
+                if nonce.is_empty() || m["nonce"].as_str() != Some(nonce.as_str()) {
+                    return;
+                }
+                nonce.clear();
+                let (url, site) = (url.clone(), site.clone());
+                if kind == "popup_allow" && !site.is_empty() {
+                    match config::change_setting(&["sites", &site, "block_popups"], "false", false) {
+                        Ok(()) => {
+                            crate::log::line("page", format!("pop-ups allowed on {site}"));
+                            self.toast(&format!("{site} can open pop-ups from now on"));
+                        }
+                        Err(e) => {
+                            crate::log::line("page", format!("couldn't allow pop-ups on {site}: {e}"));
+                            self.toast(&format!("Couldn't allow pop-ups on {site}: {e}"));
+                        }
+                    }
+                }
+                send(&self.proxy, UserEvent::NewWindow { target, url });
+            }
             // f hints that stay on (vim.hint_mode: stay): the page asks on start, and says when they start or stop.
             (Source::Page(target), "hint_stay") => {
                 if m["on"].as_bool() == Some(true) {
@@ -9094,6 +9805,27 @@ impl App {
                     self.layout_anim(secs);
                     self.refresh_pane_config();
                 }
+            }
+            (Source::Chrome, "tab_preview") => {
+                if let Some(tab) = m["tab"].as_u64() {
+                    self.show_tab_preview(tab, &m["rect"], m["top"].as_bool().unwrap_or(false));
+                }
+            }
+            (Source::Chrome, "tab_preview_hide") => self.hide_tab_preview(),
+            (Source::TabCard, "ready") => {
+                if let (Some(v), Some(d)) = (&self.tab_card, &self.tab_card_shown) {
+                    let _ = v.evaluate_script(&format!("window.tabCard && tabCard.show({d})"));
+                }
+            }
+            (Source::TabCard, "size") => {
+                if let Some(h) = m["h"].as_f64().filter(|h| *h > 0.0) {
+                    self.place_tab_card(h);
+                }
+            }
+            // The pointer reached the card itself: it has left the tab.
+            (Source::TabCard, "away") => {
+                self.hide_tab_preview();
+                let _ = self.chrome.evaluate_script("window.valerie && valerie.pointerOut && valerie.pointerOut()");
             }
             (Source::SplitHandle(_), "split_pill") => {
                 // While the pill shows, the chrome and pages report the mouse, in case the strip misses it leaving.
@@ -9279,6 +10011,7 @@ impl App {
                     // A new page drops the old one's offer; not on finish, since the login form often reports before then.
                     if !finished {
                         self.fill_offers.remove(&Target::Tab(id));
+                        self.code_offers.remove(&Target::Tab(id));
                     }
                     self.dirty = true;
                     self.render();
@@ -9338,6 +10071,7 @@ impl App {
                     }
                 }
             }
+            UserEvent::PopupBlocked { target, url } => self.popup_blocked(target, url),
             UserEvent::NewWindow { target, url } if self.is_private(target) => self.dispatch(Command::NewPrivateWindow { url: Some(url) }, elwt),
             UserEvent::NewWindow { target, url } => {
                 let url = self.clean(&url);
@@ -9372,7 +10106,7 @@ impl App {
             }
             UserEvent::ExternalScheme(url) => {
                 let scheme = scheme_of(&url);
-                if EXTERNAL_SCHEMES.contains(&scheme.as_str()) {
+                if EXTERNAL_SCHEMES.contains(&scheme.as_str()) || self.config.links.app_schemes.iter().any(|s| s.trim().trim_end_matches(':').eq_ignore_ascii_case(&scheme)) {
                     platform::open_external(&url);
                     self.toast(&format!("Opened {scheme}: link in another app"));
                 } else {
@@ -9390,6 +10124,11 @@ impl App {
             }
             UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
             UserEvent::Tick => self.tick(),
+            UserEvent::StopSignal(sig) => {
+                crate::log::line("app", format!("signal {sig} asked Valerie to stop: saving and quitting"));
+                self.quit = true;
+            }
+            UserEvent::Stopped { target, url } => self.stopped(target, url),
             UserEvent::MarkdownSave { target, file, text } => {
                 if self.markdown_file(target).as_ref() != Some(&file) {
                     return;
@@ -9423,6 +10162,8 @@ impl App {
                 // The ready little window was made with the old settings (scripts, theme, plugins).
                 self.ready_little = None;
                 self.prepare_little_later();
+                // Changes Valerie made itself were read when it made them; a plugin or boost file alone says nothing.
+                self.announce_reload = settings_text() != self.settings_seen;
                 self.reload_config();
                 crate::history::configure(self.config.change_history.enabled, self.config.change_history.keep);
                 record_changes_soon();
@@ -9729,15 +10470,57 @@ impl App {
             UserEvent::SafariSignIn { tab } => self.sign_in_with_safari(tab),
             UserEvent::Toast(msg) => self.toast(&msg),
             UserEvent::PasswordToFill { target, origin, username, read } => self.fill_password(target, &origin, &username, read),
+            UserEvent::CodeToFill { target, origin, read } => self.fill_code(target, &origin, read),
+            UserEvent::OneTimeCodes(codes) => {
+                // The bar may have closed while they were made.
+                if self.bar_open {
+                    self.codes_on_screen = codes.as_object().is_some_and(|m| !m.is_empty());
+                    let _ = self.bar_view().evaluate_script(&format!("palette.codes({codes})"));
+                }
+            }
             UserEvent::CredentialChecked { target, origin, username, password, known } => self.credential_checked(target, origin, username, password, known),
             UserEvent::PasswordStoreWaiting => self.explain_keychain_prompt(),
             UserEvent::GraphicsBuffers { pid, count } => self.tend_graphics_buffers(pid, count),
-            UserEvent::PageCrashed { target } => {
+            // Ended on purpose (Task Manager): the tab sleeps, on screen or not, until it's shown or reloaded, and it
+            // doesn't count as a crash; reloading at once would start a runaway page again.
+            UserEvent::PageCrashed { target: Target::Tab(id), .. } if self.ended_by_user.remove(&id).is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(30)) => {
+                crate::log::line("page", format!("tab {id} sleeps until it's shown or reloaded: its process was ended in the Task Manager"));
+                self.unload(id);
+                self.layout();
+                self.render();
+            }
+            UserEvent::PageCrashed { target, rebuild } => {
                 trace(&format!("page process ended: {target:?}"));
                 let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
-                crate::log::line("page", format!("the page's web process ended (crashed or ran out of memory): {target:?} {}", site_of(&url).unwrap_or_default()));
+                let what = if rebuild { "the browser engine's process ended" } else { "the page's web process ended (crashed or ran out of memory)" };
+                crate::log::line("page", format!("{what}: {target:?} {}", site_of(&url).unwrap_or_default()));
+                let hidden = matches!(target, Target::Tab(id) if !self.panes().contains(&id));
+                // A page that crashes as soon as it loads would otherwise reload forever.
+                let times = self.page_crashes.entry(target).or_default();
+                times.retain(|t| t.elapsed() < std::time::Duration::from_secs(60));
+                times.push(std::time::Instant::now());
+                let (count, limit) = (times.len(), self.config.pages.crash_reloads_per_minute as usize);
+                let too_often = count > limit;
+                if too_often {
+                    crate::log::line("page", format!("not reloading {target:?}: it crashed {count} times in a minute (pages.crash_reloads_per_minute: {limit})"));
+                    if count == limit + 1 && limit > 0 && !hidden {
+                        self.toast("This page keeps crashing, so Valerie stopped reloading it. Reload it to try again");
+                    }
+                }
                 match target {
-                    Target::Tab(id) if !self.panes().contains(&id) => {
+                    // A dead engine's view can't even reload by hand: it sleeps, and loads again when asked.
+                    Target::Tab(id) if rebuild && too_often => self.unload(id),
+                    _ if too_often => {}
+                    // WebView2's browser process is gone: the view can't reload, so it's put to sleep and built again.
+                    Target::Tab(id) if rebuild => {
+                        self.unload(id);
+                        if !hidden {
+                            self.ensure_view(id);
+                            self.layout();
+                        }
+                    }
+                    _ if rebuild => self.toast("This window's page stopped working: close the window and open it again"),
+                    Target::Tab(id) if hidden => {
                         self.crashed.insert(id);
                     }
                     _ => {
@@ -9830,7 +10613,7 @@ impl App {
                     }
                 }
             }
-            UserEvent::Downloaded { ok, path, url, open } => match path.filter(|_| ok) {
+            UserEvent::Downloaded { ok, path, url, open } => match path.clone().filter(|_| ok) {
                 Some(path) => {
                     if open {
                         platform::open_external(&path.to_string_lossy());
@@ -9838,25 +10621,32 @@ impl App {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     self.toast(&format!("Downloaded {name}"));
                     self.queue_event("download_finished", self.state.active_tab(), Some(path.to_string_lossy().into_owned()));
-                    self.state.downloads.retain(|d| d.path != path.to_string_lossy() && !(d.url == url && d.state == "downloading"));
+                    // This file's row is replaced; another download of the same address keeps its own.
+                    let file = path.to_string_lossy();
+                    let known = self.state.downloads.iter().any(|d| d.path == file);
+                    self.state.downloads.retain(|d| d.path != file && (known || !(d.url == url && d.state == "downloading")));
                     self.state.downloads.insert(0, crate::state::Download { name, path: path.to_string_lossy().into_owned(), url, at: now(), state: String::new() });
                     self.state.downloads.truncate(self.config.downloads.keep_in_list);
                     self.dirty = true;
                     self.pages_changed("downloads");
                 }
                 None => {
+                    // This download's row: by its file when that's known (the same address can be downloading twice).
+                    let file = path.as_ref().map(|p| p.to_string_lossy().into_owned());
+                    let row = self.state.downloads.iter().position(|d| d.state == "downloading" && file.as_deref() == Some(d.path.as_str()))
+                        .or_else(|| self.state.downloads.iter().position(|d| d.url == url && d.state == "downloading"));
                     // WebKit doesn't say why a download failed; the usual reason is a folder Valerie may not write to.
                     let unwritable = (!ok)
-                        .then(|| self.state.downloads.iter().find(|d| d.url == url && d.state == "downloading"))
+                        .then(|| row.and_then(|i| self.state.downloads.get(i)))
                         .flatten()
                         .and_then(|d| Path::new(&d.path).parent().map(Path::to_path_buf))
                         .and_then(|dir| cannot_write(&dir).map(|e| (dir, e)));
                     if !ok {
                         let why = unwritable.as_ref().map(|(dir, e)| format!(" ({} isn't writable: {e})", dir.display())).unwrap_or_default();
-                        let what = self.state.downloads.iter().find(|d| d.url == url && d.state == "downloading").map(|d| format!(" {} after {}s", d.name, now().saturating_sub(d.at))).unwrap_or_default();
+                        let what = row.and_then(|i| self.state.downloads.get(i)).map(|d| format!(" {} after {}s", d.name, now().saturating_sub(d.at))).unwrap_or_default();
                         crate::log::line("downloads", format!("failed: {}{what}{why}", site_of(&url).unwrap_or_default()));
                     }
-                    if let Some(d) = self.state.downloads.iter_mut().find(|d| d.url == url && d.state == "downloading") {
+                    if let Some(d) = row.and_then(|i| self.state.downloads.get_mut(i)) {
                         d.state = if ok { String::new() } else { "failed".into() };
                         d.at = now();
                         self.dirty = true;
@@ -10045,6 +10835,19 @@ impl App {
                     }
                 }
             }
+            UserEvent::TabPicture { tab, png } => self.tab_picture(tab, png),
+            UserEvent::HistoryList { tab, forward, items, x, y } => self.history_menu(tab, forward, items, x, y),
+            UserEvent::PictureToCopy(r) => match r {
+                Ok(bytes) if platform::copy_image(&bytes) => self.toast("Copied image"),
+                Ok(_) => {
+                    crate::log::line("page", "Copy Image: the system couldn't read that picture's format");
+                    self.toast("Couldn't copy that image");
+                }
+                Err(e) => {
+                    crate::log::line("page", format!("Copy Image: {e}"));
+                    self.toast("Couldn't copy that image");
+                }
+            },
             UserEvent::DownloadStarted { target, name, path, url } => {
                 let path = path.to_string_lossy().into_owned();
                 self.state.downloads.retain(|d| d.path != path);
@@ -10139,9 +10942,13 @@ impl App {
             }
             "open_tab" => {
                 let url = routing::resolve_input(args["url"].as_str().unwrap_or(""), &self.config.search_engine);
-                let space = args.get("space").and_then(|s| s.as_str()).and_then(|s| self.state.space_index(s));
-                let id = self.open_tab(&url, space, args["activate"].as_bool().unwrap_or(false));
-                Ok(json!({ "tab": id, "url": url }))
+                match args.get("space").and_then(|s| s.as_str()).map(|n| (n, self.state.space_index(n))) {
+                    Some((n, None)) => Err(format!("there's no space called {n:?}")),
+                    space => {
+                        let id = self.open_tab(&url, space.and_then(|s| s.1), args["activate"].as_bool().unwrap_or(false));
+                        Ok(json!({ "tab": id, "url": url }))
+                    }
+                }
             }
             // web_search and fetch_page: a tab no one sees, with the active space's logins.
             "web_open" if !self.config.mcp.web_tools => Err("web tools are off (the mcp.web_tools setting)".into()),
@@ -10413,6 +11220,11 @@ impl App {
                 return self.clear_site_data_asked(site, reply);
             }
             "screenshot_ui" | "read_ui" => {
+                // One-time codes are no more readable by agents than passwords.
+                if args["part"].as_str() == Some("command_bar") && self.bar_open && (self.codes_on_screen || self.adding_code_key.is_some()) {
+                    let _ = reply.send(Err("the command bar is showing one-time codes, so it can't be read or captured right now".into()));
+                    return;
+                }
                 let view = match args["part"].as_str().unwrap_or("sidebar") {
                     "command_bar" => Some(self.bar_view()),
                     "chats" => self.chat_view.as_ref(),
@@ -10801,6 +11613,11 @@ fn record_changes_soon() {
     });
 }
 
+/// The user's settings files (config.yaml and this computer's), to tell whose change the watcher saw.
+fn settings_text() -> String {
+    [config::config_path(), config::this_mac_path()].iter().map(|p| std::fs::read_to_string(p).unwrap_or_default()).collect::<Vec<_>>().join("\n\0\n")
+}
+
 fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let path = config::config_path();
@@ -10836,6 +11653,50 @@ fn watch_config(proxy: EventLoopProxy<UserEvent>) {
     });
 }
 
+/// SIGTERM, SIGINT and SIGHUP save and quit the way Quit does, instead of losing what changed since the last save. The
+/// handler only writes the signal's number to a pipe (all it may safely do); a thread hands it to the event loop. A second
+/// signal stops Valerie at once. Windows needs none of this: tao ends the loop (and Valerie saves) at log-off and shutdown.
+#[cfg(unix)]
+fn quit_on_stop_signals(proxy: EventLoopProxy<UserEvent>) {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    static PIPE_IN: AtomicI32 = AtomicI32::new(-1);
+    const SIG_DFL: usize = 0;
+    const SIG_IGN: usize = 1;
+    extern "C" {
+        fn pipe(fds: *mut i32) -> i32;
+        fn read(fd: i32, buf: *mut std::ffi::c_void, n: usize) -> isize;
+        fn write(fd: i32, buf: *const std::ffi::c_void, n: usize) -> isize;
+        fn signal(sig: i32, handler: usize) -> usize;
+    }
+    extern "C" fn on_signal(sig: i32) {
+        let b = sig as u8;
+        unsafe {
+            write(PIPE_IN.load(Ordering::Relaxed), (&b as *const u8).cast(), 1);
+            signal(sig, SIG_DFL);
+        }
+    }
+    let mut fds = [-1i32; 2];
+    if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
+        return crate::log::line("app", "no pipe for stop signals: a stop signal won't save first");
+    }
+    PIPE_IN.store(fds[1], Ordering::Relaxed);
+    // SIGHUP, SIGINT, SIGTERM; one ignored on purpose (nohup) stays ignored.
+    for sig in [1, 2, 15] {
+        if unsafe { signal(sig, on_signal as extern "C" fn(i32) as usize) } == SIG_IGN {
+            unsafe { signal(sig, SIG_IGN) };
+        }
+    }
+    let out = fds[0];
+    std::thread::spawn(move || loop {
+        let mut b = 0u8;
+        match unsafe { read(out, (&mut b as *mut u8).cast(), 1) } {
+            1 => send(&proxy, UserEvent::StopSignal(b as i32)),
+            n if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => {}
+            _ => return,
+        }
+    });
+}
+
 #[cfg(target_os = "windows")]
 static MENU_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 #[cfg(target_os = "windows")]
@@ -10843,7 +11704,7 @@ static MENU_KEYS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsiz
 
 /// Commands that only mean something on one system.
 fn on_this_system(name: &str) -> bool {
-    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location" | "share_page")
+    cfg!(target_os = "macos") || !matches!(name, "sign_in_with_safari" | "bring_login_from_safari" | "toggle_site_location" | "share_page" | "copy_image")
 }
 
 /// The page's HTML without what Valerie put in it (its find bar, toasts and styles).
@@ -10858,7 +11719,7 @@ const BROWSER_MENUS: &[(&str, &[&str])] = &[
     ("Bookmarks", &["toggle_favorite", "review_saved_tabs"]),
     ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs", "close_other_tabs"]),
     ("Spaces", &["next_space", "prev_space", "switch_space", "new_space", "delete_space", "rename_space"]),
-    ("Window", &["downloads", "show_downloads", "extensions"]),
+    ("Window", &["downloads", "show_downloads", "extensions", "task_manager"]),
     ("Help", &["welcome", "report_problem", "check_for_updates", "toggle_test_builds"]),
 ];
 
@@ -11164,6 +12025,8 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
         send(&p, UserEvent::WidgetTick);
     });
     watch_config(proxy.clone());
+    #[cfg(unix)]
+    quit_on_stop_signals(proxy.clone());
     crate::history::configure(config.change_history.enabled, config.change_history.keep);
     trace("  threads started");
     let mut app = App::new(&event_loop, config, proxy)?;
@@ -13359,6 +14222,30 @@ impl App {
         }
     }
 
+    /// A page opened a pop-up without a click (links.block_popups), which was blocked. One quiet note per page, however
+    /// many it tries, offers to open it this once or always allow the site. Tabs out of sight (agents') get no note.
+    fn popup_blocked(&mut self, target: Target, url: String) {
+        let page = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
+        let site = site_of(&page).unwrap_or_default();
+        // Hidden tabs (agents', pages being read) click by script, which isn't a user's click: they go on as before.
+        if matches!(target, Target::Tab(t) if self.state.web_tabs.contains(&t)) {
+            return send(&self.proxy, UserEvent::NewWindow { target, url });
+        }
+        crate::log::line("page", format!("blocked a pop-up {} opened without a click (to {})", if site.is_empty() { "a page" } else { &site }, site_of(&url).unwrap_or_default()));
+        if self.blocked_popups.get(&target).is_some_and(|(p, ..)| *p == page) {
+            return;
+        }
+        let gone: Vec<Target> = self.blocked_popups.keys().copied().filter(|t| self.view_for(*t).is_none()).collect();
+        for t in gone {
+            self.blocked_popups.remove(&t);
+        }
+        let nonce = crate::mcp::random_hex();
+        if let Some(v) = self.view_for(target) {
+            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.popupOffer({}, {})", json!(site), json!(nonce)));
+        }
+        self.blocked_popups.insert(target, (page, url, site, nonce));
+    }
+
     /// A page asked for a passkey, which Valerie can't do yet: offer Safari, once per site per session.
     fn passkey_wanted(&mut self, tab: TabId) {
         let Some(site) = self.state.tabs.get(&tab).and_then(|t| site_of(&t.url)) else { return };
@@ -13889,7 +14776,7 @@ impl App {
         if let Some((_, v)) = &self.float_bar {
             apply(v, "palette.html");
         }
-        for (v, page) in [(&self.chat_view, "chat.html"), (&self.terminal_view, "terminal.html"), (&self.answer_view, "answer.html"), (&self.market_view, "plugins.html"), (&self.welcome_view, "welcome.html")] {
+        for (v, page) in [(&self.chat_view, "chat.html"), (&self.terminal_view, "terminal.html"), (&self.answer_view, "answer.html"), (&self.market_view, "plugins.html"), (&self.welcome_view, "welcome.html"), (&self.tab_card, "tab-card.html")] {
             if let Some(v) = v {
                 apply(v, page);
             }
@@ -14431,6 +15318,8 @@ impl App {
             "list_changes" => Ok(json!(crate::history::entries().into_iter().rev().take(500).collect::<Vec<_>>())),
             "go_back_to_change" => self.go_back_to_change(args["id"].as_str().unwrap_or("")).map(|why| json!(why)),
             "list_saved_settings" | "save_settings" | "switch_settings" | "delete_saved_settings" => self.saved_settings_op(op, args),
+            "list_tasks" => Ok(self.task_list()),
+            "end_tab_process" => self.end_tab_process(args),
             "forget_download" => {
                 let before = self.state.downloads.len();
                 self.state.downloads.retain(|d| if path.is_empty() { d.state == "downloading" } else { d.path != path });
@@ -14453,6 +15342,23 @@ impl App {
     }
 
     /// Show valerie://page/<name>: switch to a tab already showing it (reloaded), or open one.
+    /// The casino page on one game: an open casino tab switches to it, otherwise a new tab opens.
+    fn open_casino(&mut self, game: &str) {
+        let url = format!("valerie://page/casino#{game}");
+        let existing = self.state.tabs.values().find(|t| t.url.split(['?', '#']).next() == Some("valerie://page/casino")).map(|t| t.id);
+        match existing {
+            Some(id) => {
+                if let Some(v) = self.views.get(&id) {
+                    let _ = v.load_url(&url);
+                }
+                self.activate(id);
+            }
+            None => {
+                self.open_tab(&url, None, true);
+            }
+        }
+    }
+
     fn open_page(&mut self, name: &str, activate: bool) -> Result<TabId, String> {
         if page_source(name).is_none() {
             return Err(format!("there's no page called {name:?} (pages live in {})", pages_dir().display()));
@@ -15026,6 +15932,18 @@ mod custom_tests {
         assert_eq!(translate_with(&strings, "Copied https://x.com"), "Copiado https://x.com");
         assert_eq!(translate_with(&strings, "Agent finished: Tidy"), "Agente finished: Tidy");
         assert_eq!(translate_with(&strings, "Something else"), "Something else");
+    }
+
+    #[test]
+    fn saved_pictures_get_safe_names() {
+        assert_eq!(picture_name("https://x.com/a/cat.jpg?w=200", "image/jpeg"), "cat.jpg");
+        assert_eq!(picture_name("https://x.com/photo", "image/webp"), "photo.webp");
+        assert_eq!(picture_name("https://x.com/", "image/png"), "image.png");
+        assert_eq!(picture_name("https://x.com/a%2F..%2Fb", ""), "a-2F..-2Fb");
+        assert_eq!(picture_name("data:image/gif;base64,R0lG", "image/gif"), "image.gif");
+        let (b, kind) = picture_bytes("data:image/png;base64,iVBORw==", "", "").unwrap();
+        assert_eq!((b.len(), kind.as_str()), (4, "image/png"));
+        assert!(picture_bytes("data:text/plain,hi", "", "").is_err());
     }
 
     #[test]

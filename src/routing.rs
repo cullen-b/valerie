@@ -105,15 +105,20 @@ pub fn resolve_input(input: &str, search_engine: &str) -> String {
     if has_scheme {
         return s.to_string();
     }
+    let host = s.split('/').next().unwrap_or("");
+    let is_ip = host.parse::<std::net::SocketAddr>().is_ok()
+        || host.parse::<std::net::Ipv4Addr>().is_ok()
+        || host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).is_some_and(|h| h.parse::<std::net::Ipv6Addr>().is_ok());
     let looks_like_host = !s.contains(' ')
         && (s.starts_with("localhost")
+            || is_ip
             || s.split('/').next().is_some_and(|h| {
                 let h = h.split(':').next().unwrap_or(h);
                 h.contains('.') && !h.starts_with('.') && !h.ends_with('.')
                     && h.rsplit('.').next().is_some_and(|tld| tld.chars().all(|c| c.is_ascii_alphanumeric()) && tld.len() >= 2)
             }));
     if looks_like_host {
-        let scheme = if s.starts_with("localhost") || s.starts_with("127.") { "http" } else { "https" };
+        let scheme = if s.starts_with("localhost") || is_ip { "http" } else { "https" };
         return format!("{scheme}://{s}");
     }
     let q: String = url::form_urlencoded::byte_serialize(s.as_bytes()).collect();
@@ -149,6 +154,10 @@ mod tests {
         assert_eq!(resolve_input("localhost:3000", se), "http://localhost:3000");
         assert_eq!(resolve_input("rust borrow checker", se), "https://s/?q=rust+borrow+checker");
         assert_eq!(resolve_input("v1.2", se), "https://s/?q=v1.2");
+        assert_eq!(resolve_input("127.0.0.1:8960/p", se), "http://127.0.0.1:8960/p");
+        assert_eq!(resolve_input("192.168.1.1", se), "http://192.168.1.1");
+        assert_eq!(resolve_input("[::1]:8960/p", se), "http://[::1]:8960/p");
+        assert_eq!(resolve_input("3.5 kg", se), "https://s/?q=3.5+kg");
         assert_eq!(resolve_input("webkit-extension://ABC/popup.html", se), "webkit-extension://ABC/popup.html");
     }
 }

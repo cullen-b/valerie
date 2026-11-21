@@ -81,6 +81,15 @@ pub struct Config {
     pub logs: LogsConfig,
     pub change_history: ChangeHistoryConfig,
     pub saved_settings: SavedSettingsConfig,
+    pub task_manager: TaskManagerConfig,
+}
+
+/// The Task Manager page: what each tab and Valerie's helper processes cost (`src/task_manager.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskManagerConfig {
+    pub refresh_seconds: u32,
+    pub sort_by: String,
+    pub end_process: bool,
 }
 
 /// Named copies of config.yaml to switch between (`src/saved_settings.rs`).
@@ -176,6 +185,7 @@ pub struct AppConfig {
     pub reload_when_reopened: bool,
     pub refresh_graphics: bool,
     pub graphics_buffers_budget: u64,
+    pub linux_nvidia_fix: String,
 }
 
 /// A network rule: block, redirect, hide or add a header. Exactly one of block / redirect / hide / header.
@@ -213,6 +223,7 @@ pub struct SiteSettings {
     pub unload: Option<bool>,
     pub ad_blocking: Option<bool>,
     pub popups: Option<String>,
+    pub block_popups: Option<bool>,
     pub cookie_banners: Option<String>,
     /// f-hint letters for buttons on this site, by what the button says ("Merge": "m").
     pub hints: Option<BTreeMap<String, String>>,
@@ -224,7 +235,7 @@ impl SiteSettings {
         macro_rules! take {
             ($($f:ident),*) => { $( if more.$f.is_some() { self.$f = more.$f.clone(); } )* };
         }
-        take!(camera, microphone, location, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, cookie_banners, hints);
+        take!(camera, microphone, location, notifications, user_agent, zoom, autoplay, dark_mode, vim, links, unload, ad_blocking, popups, block_popups, cookie_banners, hints);
     }
 }
 
@@ -285,6 +296,7 @@ pub struct Layout {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidebarConfig {
     pub nav_buttons: bool,
+    pub history_menu: bool,
     pub url_bar: bool,
     pub url_path: bool,
     pub url_lock_icon: bool,
@@ -321,6 +333,9 @@ pub struct SidebarConfig {
     pub preload_on_hover: bool,
     pub preload_delay_ms: f64,
     pub preload_at_most: f64,
+    pub tab_preview: bool,
+    pub tab_preview_delay_ms: f64,
+    pub tab_preview_picture: bool,
     pub double_click_edge: bool,
     pub multi_select: bool,
     pub drop_to_split: bool,
@@ -350,6 +365,8 @@ pub struct LinksConfig {
     pub show_url_on_hover: bool,
     pub popups: String,
     pub popup_look: String,
+    pub block_popups: bool,
+    pub app_schemes: Vec<String>,
     pub open_below_current_tab: bool,
 }
 
@@ -742,11 +759,12 @@ pub struct Animations {
     pub keyboard_click: bool,
     pub plugins_window: bool,
     pub built_in_pages: bool,
+    pub tab_preview: bool,
 }
 
 impl Default for Animations {
     fn default() -> Self {
-        Animations { tabs: true, press: true, nav_buttons: true, sound_bars: true, mini_player: true, space_highlight: true, pinned_popup: true, start_logo: true, command_bar: true, command_bar_selection: true, command_bar_height: true, chat_messages: true, chat_steps: true, chat_controls: true, find_bar: true, page_messages: true, link_address: true, keyboard_click: true, plugins_window: true, built_in_pages: true }
+        Animations { tabs: true, press: true, nav_buttons: true, sound_bars: true, mini_player: true, space_highlight: true, pinned_popup: true, start_logo: true, command_bar: true, command_bar_selection: true, command_bar_height: true, chat_messages: true, chat_steps: true, chat_controls: true, find_bar: true, page_messages: true, link_address: true, keyboard_click: true, plugins_window: true, built_in_pages: true, tab_preview: true }
     }
 }
 
@@ -964,6 +982,9 @@ pub struct PagesConfig {
     pub error_page: bool,
     pub offline_game: bool,
     pub http_sign_in: bool,
+    pub visit_anyway: bool,
+    pub crash_reloads_per_minute: u32,
+    pub site_print: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1216,6 +1237,8 @@ pub struct PasswordsConfig {
     pub passkeys_through_safari: bool,
     pub explain_keychain_prompt: bool,
     pub fewer_keychain_prompts: bool,
+    /// One-time codes (TOTP) for saved logins: add, show, copy and offer to fill them.
+    pub one_time_codes: bool,
     pub shared: Vec<SharedVault>,
 }
 

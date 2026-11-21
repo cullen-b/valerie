@@ -572,7 +572,98 @@ pub fn delete(e: &Entry) -> Result<()> {
     keychain::delete(&service(&e.vault), &account(&e.origin, &e.username))?;
     known().remove(&id(&e.vault, &e.origin, &e.username));
     stamp(&e.vault, &e.origin, &e.username, crate::state::now(), true);
+    forget_code_key(e);
     Ok(())
+}
+
+// ---------------------------------------------------------------- one-time-code keys (otp.rs makes the codes)
+
+/// Each login's one-time-code key is its own item beside the password, with the same account name, so passwords saved
+/// before this existed are untouched. Kept as `otp::Secret::to_stored`.
+fn code_service(vault: &str) -> String {
+    format!("Valerie one-time codes — {vault}")
+}
+
+/// Keys this launch has read or saved, in memory only (like KNOWN), so the countdown doesn't read the store each time.
+static KNOWN_CODES: std::sync::Mutex<std::collections::BTreeMap<String, String>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn known_codes() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, String>> {
+    KNOWN_CODES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Logins in these vaults that have a one-time-code key (names only: no key is read).
+pub fn with_code_keys(vaults: &[String]) -> Vec<Entry> {
+    vaults
+        .iter()
+        .flat_map(|v| {
+            keychain::accounts(&code_service(v)).unwrap_or_default().into_iter().filter_map(move |a| {
+                let (origin, username) = a.split_once('\n')?;
+                Some(Entry { vault: v.clone(), origin: origin.to_string(), username: username.to_string() })
+            })
+        })
+        .collect()
+}
+
+pub fn save_code_key(e: &Entry, key: &crate::otp::Secret) -> Result<()> {
+    let host = url::Url::parse(&e.origin).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    let stored = key.to_stored();
+    keychain::save(&code_service(&e.vault), &account(&e.origin, &e.username), &format!("Valerie one-time code: {host} ({})", e.username), &stored)?;
+    known_codes().insert(id(&e.vault, &e.origin, &e.username), stored);
+    Ok(())
+}
+
+fn settle_code(e: &Entry, stored: Option<String>) -> Option<crate::otp::Secret> {
+    let k = id(&e.vault, &e.origin, &e.username);
+    match &stored {
+        Some(s) => known_codes().insert(k, s.clone()),
+        None => known_codes().remove(&k),
+    };
+    // Only Valerie writes these, so one that doesn't parse is treated as missing.
+    stored.and_then(|s| crate::otp::Secret::parse(&s).ok())
+}
+
+/// A login's key, for something the user asked for (fill, copy): the system may stop to ask permission.
+pub fn code_key(e: &Entry) -> Result<Option<crate::otp::Secret>> {
+    let (svc, acct) = (code_service(&e.vault), account(&e.origin, &e.username));
+    #[cfg(target_os = "macos")]
+    let quiet = keychain::get_quiet(&svc, &acct);
+    #[cfg(not(target_os = "macos"))]
+    let quiet = keychain::get(&svc, &acct);
+    match quiet {
+        Ok(s) => return Ok(settle_code(e, s)),
+        Err(err) if !cfg!(target_os = "macos") => return Err(err),
+        Err(_) => {}
+    }
+    if let Some(s) = known_codes().get(&id(&e.vault, &e.origin, &e.username)) {
+        return Ok(crate::otp::Secret::parse(s).ok());
+    }
+    Ok(settle_code(e, keychain::get(&svc, &acct)?))
+}
+
+/// A login's key without the system stopping to ask (for showing codes): None when it would have to, or there's none.
+pub fn code_key_quiet(e: &Entry) -> Option<crate::otp::Secret> {
+    if let Some(s) = known_codes().get(&id(&e.vault, &e.origin, &e.username)) {
+        return crate::otp::Secret::parse(s).ok();
+    }
+    let (svc, acct) = (code_service(&e.vault), account(&e.origin, &e.username));
+    #[cfg(target_os = "macos")]
+    let read = keychain::get_quiet(&svc, &acct);
+    #[cfg(not(target_os = "macos"))]
+    let read = keychain::get(&svc, &acct);
+    read.ok().and_then(|s| settle_code(e, s))
+}
+
+pub fn delete_code_key(e: &Entry) -> Result<()> {
+    keychain::delete(&code_service(&e.vault), &account(&e.origin, &e.username))?;
+    known_codes().remove(&id(&e.vault, &e.origin, &e.username));
+    Ok(())
+}
+
+/// A login that's gone takes its key with it.
+fn forget_code_key(e: &Entry) {
+    if let Err(err) = delete_code_key(e) {
+        crate::log::line("passwords", format!("couldn't remove a deleted login's one-time-code key: {err}"));
+    }
 }
 
 /// Every entry in the given vaults (usernames only; passwords stay in the keychain until filled).
@@ -702,6 +793,9 @@ pub fn import(remote: &[Synced], vaults: &[String]) -> usize {
             let gone = !have || keychain::delete(&service(&e.vault), &account(&e.origin, &e.username)).is_ok();
             if gone {
                 known().remove(&k);
+                if have {
+                    forget_code_key(&Entry { vault: e.vault.clone(), origin: e.origin.clone(), username: e.username.clone() });
+                }
             }
             (gone, have)
         } else {
@@ -764,6 +858,25 @@ mod tests {
         assert_eq!(password_quiet(&e), None);
         assert!(list(&[vault]).is_empty());
         assert_eq!(password(&e).unwrap(), None);
+    }
+
+    /// A login's one-time-code key sits beside its password and goes when the login does. Opt-in like the one above.
+    #[test]
+    #[ignore]
+    fn keychain_code_key_roundtrip() {
+        let vault = format!("Test {}", crate::mcp::random_hex());
+        let e = Entry { vault: vault.clone(), origin: "https://example.test".into(), username: "me".into() };
+        save(&vault, &e.origin, &e.username, "pw").unwrap();
+        let key = crate::otp::Secret::parse("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ").unwrap();
+        save_code_key(&e, &key).unwrap();
+        assert_eq!(with_code_keys(&[vault.clone()]), vec![e.clone()]);
+        assert_eq!(list(&[vault.clone()]), vec![e.clone()], "the key isn't listed as a login");
+        known_codes().clear();
+        assert_eq!(code_key(&e).unwrap(), Some(key.clone()));
+        assert_eq!(code_key_quiet(&e), Some(key));
+        delete(&e).unwrap();
+        assert!(with_code_keys(&[vault]).is_empty());
+        assert_eq!(code_key(&e).unwrap(), None);
     }
 
     /// A password the Keychain would ask about (as after an update) reads as "can't" in the background, and comes from

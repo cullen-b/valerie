@@ -142,6 +142,7 @@ impl InnerWebView {
       background_color,
       pl_attrs.profile_name.as_deref(),
     )?;
+    let process_failed_handler = pl_attrs.process_failed_handler.clone();
     let webview = Self::init_webview(
       parent,
       hwnd,
@@ -152,6 +153,23 @@ impl InnerWebView {
       pl_attrs,
       is_child,
     )?;
+
+    if let Some(handler) = process_failed_handler {
+      let mut token = 0i64;
+      unsafe {
+        webview.add_ProcessFailed(
+          &ProcessFailedEventHandler::create(Box::new(move |_, args| {
+            if let Some(args) = args {
+              let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+              args.ProcessFailedKind(&mut kind)?;
+              handler(kind);
+            }
+            Ok(())
+          })),
+          &mut token,
+        )?;
+      }
+    }
 
     let drag_drop_controller = drop_handler.map(|handler| {
       // Disable file drops, so our handler can capture it
@@ -779,6 +797,9 @@ impl InnerWebView {
             args.Uri(&mut uri)?;
             take_pwstr(uri)
           };
+          let mut user_initiated: BOOL = true.into();
+          let _ = args.IsUserInitiated(&mut user_initiated);
+          let user_initiated = user_initiated.as_bool();
 
           let features = args
             .WindowFeatures()
@@ -814,6 +835,7 @@ impl InnerWebView {
                   webview: webview.clone(),
                   environment: env_.clone(),
                 },
+                user_initiated,
               }
             })
             .unwrap_or_else(|_| NewWindowFeatures {
@@ -823,6 +845,7 @@ impl InnerWebView {
                 webview: webview.clone(),
                 environment: env_.clone(),
               },
+              user_initiated,
             });
 
           let new_window_req_handler = new_window_req_handler.clone();

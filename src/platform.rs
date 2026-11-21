@@ -635,7 +635,180 @@ mod mac {
                 }
             }
             add(sel!(webViewDidClose:), std::mem::transmute::<*const (), Imp>(did_close as *const ()), c"v@:@");
+            // A page's own Print button (window.print()) does nothing in WebKit unless the app prints for it (pages.site_print).
+            extern "C" {
+                static _dispatch_main_q: std::ffi::c_void;
+                fn dispatch_async_f(queue: *const std::ffi::c_void, context: *mut std::ffi::c_void, work: extern "C" fn(*mut std::ffi::c_void));
+            }
+            extern "C" fn print_later(ctx: *mut std::ffi::c_void) {
+                let (wv, frame) = *unsafe { Box::from_raw(ctx as *mut (*mut AnyObject, *mut AnyObject)) };
+                unsafe {
+                    print_view(wv, frame);
+                    let _: () = msg_send![frame, release];
+                    let _: () = msg_send![wv, release];
+                }
+            }
+            unsafe extern "C-unwind" fn print_frame(_: *mut AnyObject, _: Sel, wv: *mut AnyObject, frame: *mut AnyObject) {
+                if wv.is_null() || !super::SITE_PRINT.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                crate::log::line("page", "a page asked to print");
+                // After this returns: the page waits for the answer, and the print panel needs the page to lay itself out.
+                let _: *mut AnyObject = msg_send![wv, retain];
+                let _: *mut AnyObject = msg_send![frame, retain];
+                dispatch_async_f(&raw const _dispatch_main_q, Box::into_raw(Box::new((wv, frame))) as *mut std::ffi::c_void, print_later);
+            }
+            add(sel!(_webView:printFrame:), std::mem::transmute::<*const (), Imp>(print_frame as *const ()), c"v@:@@");
         });
+    }
+
+    /// A server's certificate trust (SecTrustRef).
+    #[repr(C)]
+    struct SecTrust {
+        _p: [u8; 0],
+    }
+    unsafe impl objc2::RefEncode for SecTrust {
+        const ENCODING_REF: objc2::Encoding = objc2::Encoding::Pointer(&objc2::Encoding::Struct("__SecTrust", &[]));
+    }
+
+    thread_local! {
+        /// The leaf certificate each host showed last (host → SHA-256 hex), for "Visit anyway". Never saved.
+        static SEEN_CERTS: std::cell::RefCell<std::collections::HashMap<String, String>> = Default::default();
+        /// Pages showing a certificate error with "Visit anyway": webview → (its address, host, certificate hash).
+        static CERT_FAILED: std::cell::RefCell<std::collections::HashMap<usize, (String, String, String)>> = Default::default();
+    }
+
+    /// SHA-256 (hex) of the leaf certificate in a server's trust.
+    unsafe fn leaf_hash(trust: *const SecTrust) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        #[link(name = "Security", kind = "framework")]
+        extern "C" {
+            fn SecTrustCopyCertificateChain(trust: *const SecTrust) -> *mut AnyObject;
+            fn SecCertificateCopyData(cert: *mut AnyObject) -> *mut AnyObject;
+        }
+        if trust.is_null() {
+            return None;
+        }
+        let chain = SecTrustCopyCertificateChain(trust);
+        if chain.is_null() {
+            return None;
+        }
+        let n: usize = msg_send![chain, count];
+        let mut out = None;
+        if n > 0 {
+            let leaf: *mut AnyObject = msg_send![chain, objectAtIndex: 0usize];
+            let data = SecCertificateCopyData(leaf);
+            if !data.is_null() {
+                let len: usize = msg_send![data, length];
+                let bytes: *const u8 = msg_send![data, bytes];
+                if !bytes.is_null() && len > 0 {
+                    out = Some(crate::crypt::hex(&Sha256::digest(std::slice::from_raw_parts(bytes, len))));
+                }
+                let _: () = msg_send![data, release];
+            }
+        }
+        let _: () = msg_send![chain, release];
+        out
+    }
+
+    /// A server's certificate (pages.visit_anyway): trusted only when the user confirmed this exact certificate for
+    /// this host on its error page; otherwise WebKit checks it as always.
+    unsafe fn server_trust(space: *mut AnyObject, done: &block2::Block<dyn Fn(isize, *mut AnyObject)>) {
+        let null = std::ptr::null_mut::<AnyObject>();
+        let trust: *const SecTrust = msg_send![space, serverTrust];
+        let host: *mut objc2_foundation::NSString = msg_send![space, host];
+        let host = if host.is_null() { String::new() } else { (*host).to_string().to_lowercase() };
+        let Some(hash) = leaf_hash(trust) else { return done.call((1, null)) };
+        let trusted = super::certificate_trusted(&host, &hash);
+        SEEN_CERTS.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.len() >= 256 {
+                s.clear();
+            }
+            s.insert(host, hash);
+        });
+        if trusted {
+            // 0 = use this credential: the certificate the user chose to trust.
+            let cred: *mut AnyObject = msg_send![objc2::class!(NSURLCredential), credentialForTrust: trust];
+            return done.call((0, cred));
+        }
+        done.call((1, null))
+    }
+
+    /// Remember that this view shows a certificate error, with the host and certificate "Visit anyway" would trust.
+    /// False when there's no certificate to offer.
+    unsafe fn note_cert_failure(wv: *mut AnyObject, info: *mut AnyObject, address: &str) -> bool {
+        let host = url::Url::parse(address).ok().and_then(|u| u.host_str().map(str::to_lowercase)).unwrap_or_default();
+        let trust: *mut AnyObject = if info.is_null() { std::ptr::null_mut() } else { msg_send![info, objectForKey: &*objc2_foundation::NSString::from_str("NSURLErrorFailingURLPeerTrustErrorKey")] };
+        let hash = leaf_hash(trust as *const SecTrust).or_else(|| SEEN_CERTS.with(|s| s.borrow().get(&host).cloned())).filter(|_| !host.is_empty());
+        CERT_FAILED.with(|f| {
+            let mut f = f.borrow_mut();
+            if f.len() >= 64 {
+                f.clear();
+            }
+            match &hash {
+                Some(h) => f.insert(wv as usize, (address.to_string(), host.clone(), h.clone())),
+                None => f.remove(&(wv as usize)),
+            };
+        });
+        if hash.is_none() {
+            crate::log::line("page", format!("no certificate to offer \"Visit anyway\" for {host}"));
+        }
+        hash.is_some()
+    }
+
+    /// The certificate error page's "Visit anyway" asked. Only the page this view failed to load, still showing its
+    /// error, can ask, and only for its own host and the certificate seen then; the user decides in a sheet whose
+    /// default button is Cancel. Yes trusts that certificate for that host until Valerie quits.
+    pub fn visit_anyway(wv: &WebView) {
+        use objc2_foundation::NSString;
+        use std::sync::atomic::Ordering::Relaxed;
+        unsafe {
+            let v = ptr(wv);
+            let url: *mut AnyObject = msg_send![v, URL];
+            let s: *mut NSString = if url.is_null() { std::ptr::null_mut() } else { msg_send![url, absoluteString] };
+            let address = if s.is_null() { String::new() } else { (*s).to_string() };
+            let Some((failed_at, host, hash)) = CERT_FAILED.with(|f| f.borrow().get(&(v as usize)).cloned()) else {
+                crate::log::line("page", "ignored \"Visit anyway\" from a page that isn't a certificate error");
+                return;
+            };
+            // A page that really loaded has a trust of its own; the error page has none.
+            let trust: *const SecTrust = msg_send![v, serverTrust];
+            if !super::VISIT_ANYWAY.load(Relaxed) || failed_at != address || !trust.is_null() {
+                crate::log::line("page", format!("ignored \"Visit anyway\" for {host}: its certificate error isn't showing any more"));
+                return;
+            }
+            let window: *mut AnyObject = msg_send![v, window];
+            let open: *mut AnyObject = if window.is_null() { std::ptr::null_mut() } else { msg_send![window, attachedSheet] };
+            if !open.is_null() {
+                return;
+            }
+            let shown = host.trim_start_matches("www.");
+            let body = NSString::from_str(&format!(
+                "Valerie couldn't confirm that this is the real {shown}. Anyone between you and it could read or change what you send, passwords included. Go on only if you know why, like a device on your own network.\n\nValerie will trust this certificate for {shown} until it quits."
+            ));
+            let msg = objc2::rc::Retained::as_ptr(&body) as *mut NSString;
+            if out_of_sight(v, msg) {
+                return;
+            }
+            crate::log::line("page", format!("visit anyway: asking whether to trust {host}'s certificate"));
+            let _: *mut AnyObject = msg_send![v, retain];
+            sheet_titled(v, msg, std::ptr::null_mut(), Some(&format!("Visit {shown} without a private connection?")), &["Cancel", "Visit Anyway"], None, move |code, _| {
+                if code == 1001 {
+                    super::trust_certificate(&host, &hash);
+                    CERT_FAILED.with(|f| f.borrow_mut().remove(&(v as usize)));
+                    crate::log::line("page", format!("visit anyway: trusting {host}'s certificate until Valerie quits"));
+                    let to: *mut AnyObject = msg_send![objc2::class!(NSURL), URLWithString: &*NSString::from_str(&address)];
+                    if !to.is_null() {
+                        let req: *mut AnyObject = msg_send![objc2::class!(NSURLRequest), requestWithURL: to];
+                        let _: *mut AnyObject = msg_send![v, loadRequest: req];
+                    }
+                } else {
+                    crate::log::line("page", format!("visit anyway: kept {host} closed"));
+                }
+                let _: () = msg_send![v, release];
+            });
+        }
     }
 
     /// Two things WebKit leaves to the browser, added to wry's navigation delegate class once: a page that says why a
@@ -669,7 +842,11 @@ mod mac {
             let can: bool = msg_send![wv, respondsToSelector: load];
             if can {
                 // The address stays the one that failed, so reload tries it again and Back goes where it should.
-                let html = super::error_page_html(&address, code, &why, super::OFFLINE_GAME.load(Relaxed));
+                let mut html = super::error_page_html(&address, code, &why, super::OFFLINE_GAME.load(Relaxed));
+                // A certificate that can't be checked (bad date, untrusted, unknown root, not yet valid).
+                if (-1204..=-1201).contains(&code) && super::VISIT_ANYWAY.load(Relaxed) && note_cert_failure(wv, info, &address) {
+                    html = html.replacen("</main>", &format!("{}</main>", super::visit_anyway_html(&address)), 1);
+                }
                 let _: () = msg_send![wv, _loadAlternateHTMLString: &*NSString::from_str(&html), baseURL: url, forUnreachableURL: url];
             }
         }
@@ -677,6 +854,9 @@ mod mac {
             let null = std::ptr::null_mut::<AnyObject>();
             let space: *mut AnyObject = msg_send![ch, protectionSpace];
             let method = if space.is_null() { String::new() } else { text(msg_send![space, authenticationMethod]) };
+            if method == "NSURLAuthenticationMethodServerTrust" && super::VISIT_ANYWAY.load(Relaxed) {
+                return server_trust(space, done);
+            }
             let password = matches!(method.as_str(), "NSURLAuthenticationMethodDefault" | "NSURLAuthenticationMethodHTTPBasic" | "NSURLAuthenticationMethodHTTPDigest" | "NSURLAuthenticationMethodNTLM");
             // 1 = what WebKit does by itself (certificates, a name and password the system already holds).
             if !password || !super::HTTP_SIGN_IN.load(Relaxed) {
@@ -1177,11 +1357,16 @@ mod mac {
     }
 
     pub fn print(wv: &WebView) {
+        unsafe { print_view(ptr(wv), std::ptr::null_mut()) }
+    }
+
+    /// The print panel for a webview, or for one frame of it (`frame`, a `_WKFrameHandle`: a page printing an iframe).
+    unsafe fn print_view(v: *mut AnyObject, frame: *mut AnyObject) {
         use objc2::class;
         unsafe {
-            let v = ptr(wv);
             let info: *mut AnyObject = msg_send![class!(NSPrintInfo), sharedPrintInfo];
-            let op: *mut AnyObject = msg_send![v, printOperationWithPrintInfo: info];
+            let one_frame = !frame.is_null() && { let can: bool = msg_send![v, respondsToSelector: objc2::sel!(_printOperationWithPrintInfo:forFrame:)]; can };
+            let op: *mut AnyObject = if one_frame { msg_send![v, _printOperationWithPrintInfo: info, forFrame: frame] } else { msg_send![v, printOperationWithPrintInfo: info] };
             let win: *mut AnyObject = msg_send![v, window];
             if op.is_null() || win.is_null() {
                 return;
@@ -1791,6 +1976,67 @@ mod mac {
         Ok(out)
     }
 
+    /// Put a picture in any format macOS reads (PNG, JPEG, GIF, WebP, HEIC…) on the clipboard.
+    pub fn copy_image(bytes: &[u8]) -> bool {
+        use objc2::class;
+        unsafe {
+            let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: bytes.as_ptr().cast::<std::ffi::c_void>(), length: bytes.len()];
+            let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
+            let image: *mut AnyObject = msg_send![image, initWithData: data];
+            if image.is_null() {
+                return false;
+            }
+            let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+            let list: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: image];
+            let _: isize = msg_send![pb, clearContents];
+            let ok: bool = msg_send![pb, writeObjects: list];
+            let _: () = msg_send![image, release];
+            ok
+        }
+    }
+
+    /// The tab's pages before the one showing (after it, `forward`), nearest first: (title, address).
+    pub fn history_items(wv: &WebView, forward: bool, at_most: usize) -> Vec<(String, String)> {
+        use objc2_foundation::NSString;
+        let v = ptr(wv);
+        let mut out = Vec::new();
+        unsafe {
+            let text = |s: *mut NSString| if s.is_null() { String::new() } else { (*s).to_string() };
+            let list: *mut AnyObject = msg_send![v, backForwardList];
+            if list.is_null() {
+                return out;
+            }
+            for i in 1..=at_most as isize {
+                let item: *mut AnyObject = msg_send![list, itemAtIndex: if forward { i } else { -i }];
+                if item.is_null() {
+                    break;
+                }
+                let url: *mut AnyObject = msg_send![item, URL];
+                let address: *mut NSString = if url.is_null() { std::ptr::null_mut() } else { msg_send![url, absoluteString] };
+                let title: *mut NSString = msg_send![item, title];
+                out.push((text(title), text(address)));
+            }
+        }
+        out
+    }
+
+    /// Go `steps` pages back (negative) or forward through the tab's history.
+    pub fn go_history(wv: &WebView, steps: isize) -> bool {
+        let v = ptr(wv);
+        unsafe {
+            let list: *mut AnyObject = msg_send![v, backForwardList];
+            if list.is_null() || steps == 0 {
+                return false;
+            }
+            let item: *mut AnyObject = msg_send![list, itemAtIndex: steps];
+            if item.is_null() {
+                return false;
+            }
+            let _: *mut AnyObject = msg_send![v, goToBackForwardListItem: item];
+            true
+        }
+    }
+
     pub fn copy_png(png: &[u8]) -> bool {
         use objc2::class;
         unsafe {
@@ -1850,6 +2096,10 @@ mod mac {
     /// Reload from the server, skipping anything cached.
     pub fn hard_reload(wv: &WebView) {
         let _: *mut AnyObject = unsafe { msg_send![ptr(wv), reloadFromOrigin] };
+    }
+
+    pub fn stop_loading(wv: &WebView) {
+        let _: () = unsafe { msg_send![ptr(wv), stopLoading] };
     }
 
     /// Remove every site's cache (and with `cookies`, cookies and storage too) from this webview's profile.
@@ -2936,6 +3186,31 @@ mod win {
                 "clip": { "x": 0, "y": 0, "width": w, "height": h, "scale": scale } })
         });
     }
+
+    /// The tab's pages before the one showing (after it, `forward`), nearest first: (title, address).
+    pub fn history_items(wv: &WebView, forward: bool, at_most: usize, done: Box<dyn FnOnce(Vec<(String, String)>)>) {
+        cdp(&wv.webview(), "Page.getNavigationHistory", json!({}), move |r| {
+            let Ok(h) = r else { return done(Vec::new()) };
+            let now = h["currentIndex"].as_i64().unwrap_or(0);
+            let list = h["entries"].as_array().cloned().unwrap_or_default();
+            let at = |i: i64| usize::try_from(i).ok().and_then(|i| list.get(i));
+            let step = if forward { 1 } else { -1 };
+            let items = (1..=at_most as i64).map_while(|n| at(now + step * n)).map(|e| (e["title"].as_str().unwrap_or("").to_string(), e["url"].as_str().unwrap_or("").to_string()));
+            done(items.collect())
+        });
+    }
+
+    /// Go `steps` pages back (negative) or forward through the tab's history.
+    pub fn go_history(wv: &WebView, steps: isize) {
+        let w = wv.webview();
+        let w2 = w.clone();
+        cdp(&w, "Page.getNavigationHistory", json!({}), move |r| {
+            let Ok(h) = r else { return };
+            let i = h["currentIndex"].as_i64().unwrap_or(0) + steps as i64;
+            let Some(id) = usize::try_from(i).ok().and_then(|i| h["entries"].get(i)).and_then(|e| e["id"].as_i64()) else { return };
+            cdp(&w2, "Page.navigateToHistoryEntry", json!({ "entryId": id }), |_| {});
+        });
+    }
 }
 
 /// Screenshots on Linux, through WebKitGTK's snapshot.
@@ -3034,6 +3309,25 @@ pub fn hard_reload(wv: &WebView) {
         if let Err(e) = sent {
             crate::log::line("reload", format!("hard reload failed, reloading normally: {e}"));
             let _ = wv.reload();
+        }
+    }
+}
+
+/// Stop loading, a page on its way in included (it can be loading in another web process, out of `window.stop()`'s reach).
+pub fn stop_loading(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::stop_loading(wv);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        wv.webview().stop_loading();
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use wry::WebViewExtWindows;
+        if let Err(e) = wv.controller().CoreWebView2().and_then(|p| p.Stop()) {
+            crate::log::line("page", format!("couldn't stop loading: {e}"));
         }
     }
 }
@@ -3171,6 +3465,63 @@ pub fn copy_png(png: &[u8]) -> bool {
     }
 }
 
+/// Put a picture from the web (any format the system reads) on the clipboard; off macOS only PNG works.
+pub fn copy_image(bytes: &[u8]) -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::copy_image(bytes);
+    #[cfg(not(target_os = "macos"))]
+    copy_png(bytes)
+}
+
+/// The tab's pages before the one showing (after it, `forward`), nearest first, at most `at_most`: (title, address).
+/// Calls `done` on the main thread, later on Windows.
+pub fn history_items(wv: &WebView, forward: bool, at_most: usize, done: impl FnOnce(Vec<(String, String)>) + 'static) {
+    #[cfg(target_os = "macos")]
+    done(mac::history_items(wv, forward, at_most));
+    #[cfg(target_os = "windows")]
+    win::history_items(wv, forward, at_most, Box::new(done));
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::{BackForwardListExt, BackForwardListItemExt, WebViewExt};
+        use wry::WebViewExtUnix;
+        let mut out = Vec::new();
+        if let Some(list) = wv.webview().back_forward_list() {
+            for i in 1..=at_most as i32 {
+                let Some(item) = list.nth_item(if forward { i } else { -i }) else { break };
+                out.push((item.title().map(|s| s.to_string()).unwrap_or_default(), item.uri().map(|s| s.to_string()).unwrap_or_default()));
+            }
+        }
+        done(out);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (wv, forward, at_most);
+        done(Vec::new());
+    }
+}
+
+/// Go `steps` pages back (negative) or forward through the tab's history (one entry of `history_items`).
+pub fn go_history(wv: &WebView, steps: isize) {
+    #[cfg(target_os = "macos")]
+    if !mac::go_history(wv, steps) {
+        crate::log::line("page", format!("no page {steps} steps away in this tab's history"));
+    }
+    #[cfg(target_os = "windows")]
+    win::go_history(wv, steps);
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::{BackForwardListExt, WebViewExt};
+        use wry::WebViewExtUnix;
+        let v = wv.webview();
+        match v.back_forward_list().and_then(|l| l.nth_item(steps as i32)) {
+            Some(item) => v.go_to_back_forward_list_item(&item),
+            None => crate::log::line("page", format!("no page {steps} steps away in this tab's history")),
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    let _ = (wv, steps);
+}
+
 /// Local date and time for file names, like "2026-10-15 at 14.03.22".
 pub fn local_timestamp() -> String {
     match local_time(crate::state::now()) {
@@ -3224,6 +3575,68 @@ pub static ERROR_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 pub static HTTP_SIGN_IN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// `pages.offline_game`: the offline page has a hand of blackjack to play while you wait.
 pub static OFFLINE_GAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// `pages.site_print`: a page's own Print button (window.print()) opens the print panel on the Mac.
+pub static SITE_PRINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// `pages.visit_anyway`: a certificate error page offers to go on, confirmed in a native dialog.
+pub static VISIT_ANYWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Certificates the user chose to trust on a certificate error page: (host, SHA-256 of the leaf certificate, hex).
+/// Kept in memory until Valerie quits, never written to disk.
+static CERT_EXCEPTIONS: std::sync::Mutex<std::collections::BTreeSet<(String, String)>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn trust_certificate(host: &str, cert: &str) {
+    if let Ok(mut set) = CERT_EXCEPTIONS.lock() {
+        set.insert((host.to_lowercase(), cert.to_string()));
+    }
+}
+
+/// Whether a server-trust challenge from `host` showing the leaf certificate `cert` is answered "trust it": only for
+/// that exact host and certificate, after the user confirmed it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn certificate_trusted(host: &str, cert: &str) -> bool {
+    !host.is_empty() && !cert.is_empty() && CERT_EXCEPTIONS.lock().is_ok_and(|set| set.contains(&(host.to_lowercase(), cert.to_string())))
+}
+
+/// The page asked to visit its site despite the certificate error (its "Visit anyway"). The page only asks: the host
+/// and certificate come from what Valerie saw when this view's load failed, and the user confirms in a dialog.
+pub fn visit_anyway(wv: &WebView) {
+    #[cfg(target_os = "macos")]
+    mac::visit_anyway(wv);
+    #[cfg(not(target_os = "macos"))]
+    let _ = wv;
+}
+
+/// The "Advanced" part of a certificate error page, with "Visit anyway" (pages.visit_anyway). The button only asks
+/// Valerie, which confirms in a dialog of its own.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn visit_anyway_html(address: &str) -> String {
+    let host = host_of(address).replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    format!(
+        r#"<details style="margin-top:24px"><summary style="cursor:pointer;opacity:.7;font-size:13px">Advanced</summary><p style="margin:10px 0 14px;font-size:13px">If you know why {host}'s certificate can't be checked (a device on your own network, a test server), you can visit it anyway. Anyone between you and the site could then read or change what you send.</p><button id="visit-anyway" style="background:transparent;color:inherit;box-shadow:inset 0 0 0 1px currentColor">Visit {host} Anyway…</button></details>
+<script>document.getElementById("visit-anyway").onclick=()=>{{try{{window.webkit.messageHandlers.ipc.postMessage('{{"t":"cert_visit"}}')}}catch(e){{}}}}</script>"#
+    )
+}
+
+#[cfg(test)]
+mod cert_exception_tests {
+    #[test]
+    fn exception_covers_only_that_host_and_certificate() {
+        let (host, cert) = ("self-signed.test.invalid", "ab".repeat(32));
+        assert!(!super::certificate_trusted(host, &cert));
+        super::trust_certificate("Self-Signed.test.invalid", &cert);
+        assert!(super::certificate_trusted(host, &cert));
+        assert!(!super::certificate_trusted(host, &"cd".repeat(32)), "another certificate for the same host");
+        assert!(!super::certificate_trusted("other.test.invalid", &cert), "the same certificate on another host");
+        assert!(!super::certificate_trusted("", "") && !super::certificate_trusted(host, ""));
+    }
+
+    #[test]
+    fn visit_anyway_html_escapes_and_only_asks() {
+        let h = super::visit_anyway_html("https://ex<a>mple.com/x?token=1");
+        assert!(h.contains("ex&lt;a&gt;mple.com") && !h.contains("token") && h.contains(r#"{"t":"cert_visit"}"#));
+    }
+}
 
 /// "example.com" from "https://example.com:8080/a?b" (never the path or query: they can hold tokens).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

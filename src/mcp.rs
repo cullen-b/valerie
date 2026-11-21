@@ -1815,7 +1815,7 @@ window.__vgReal = probe;
 return { x, y, name: describe(e) };
 "#;
 
-const REAL_SEEN_JS: &str = "const p = window.__vgReal; return p ? { got: p.got, other: p.other } : {};";
+const REAL_SEEN_JS: &str = "const p = window.__vgReal; return p ? { got: p.got, other: p.other } : { gone: true };";
 const REAL_DONE_JS: &str = "const p = window.__vgReal; if (p) { p.off(); window.__vgReal = null; } return true;";
 
 /// Answers the page's alert, confirm and prompt while an agent's action is under way (until 5 seconds after it), as
@@ -3741,8 +3741,9 @@ fn call_tool(name: &str, mut a: Value, proxy: &EventLoopProxy<UserEvent>) -> Res
                     // The page has the click once its mousedown has run; give it a moment to arrive.
                     for _ in 0..10 {
                         std::thread::sleep(Duration::from_millis(50));
-                        let seen = eval(proxy, tab, REAL_SEEN_JS)?;
-                        if seen["got"] == true || seen["other"].is_string() {
+                        // No probe (or no page to ask): the click already took the tab to another page, so it landed.
+                        let seen = eval(proxy, tab, REAL_SEEN_JS).unwrap_or_else(|_| json!({ "gone": true }));
+                        if seen["got"] == true || seen["other"].is_string() || seen["gone"] == true {
                             let _ = eval(proxy, tab, REAL_DONE_JS);
                             let verb = if clicks == 2 { "double-clicked" } else if a["button"] == "right" { "right-clicked" } else { "clicked" };
                             let name = aim["name"].as_str().unwrap_or("it");

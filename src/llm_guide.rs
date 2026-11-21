@@ -124,6 +124,7 @@ changed in plain words. Some translations:
 | "The text is too small" / "I can't read it" | `tabs.default_zoom: 125` (every website), `sidebar.tab_height: 48`, `command_bar.font_size: 24` |
 | "Too cluttered" / "simpler" | `sidebar.nav_buttons: true`, `sidebar.url_bar: true`, `sidebar.space_switcher: false`, `vim.enabled: false`, `command_bar.calculator: false`, `links.show_url_on_hover: false` |
 | "I keep pressing keys by accident" | `vim.enabled: false`, remove shortcuts under `keybindings` with `null` |
+| "Which tab is slowing everything down?" / "what's using my memory" | the `task_manager` command (each tab's memory and CPU; on a Mac it can end a runaway tab's process); `task_manager.sort_by: cpu` opens it sorted by CPU |
 | "Too fast" / "the animations make me dizzy" | `layout.animation_ms: 0` (also stops every small animation under `animations:`), `vim.smooth_scroll: false`, `sidebar.swipe_between_spaces: false` |
 | "Stop that one animation" (tabs sliding, the logo drawing, the ring after `f`) | its switch under `animations:` (e.g. `animations.tabs: false`); `config/default.yaml` lists them all |
 | "Messages vanish before I read them" | `toast_seconds: 5` |
@@ -148,6 +149,9 @@ changed in plain words. Some translations:
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
 | "Stop explaining the Keychain window" / "stop the Always Allow message" | `passwords.explain_keychain_prompt: false` |
+| "A site's pop-up won't open" / "stop blocking pop-ups" | for one site `sites: {{ example.com: {{ block_popups: false }} }}`; everywhere `links.block_popups: false` (pop-ups from a click always open) |
+| "Let me past certificate errors" / "never let me past them" | `pages.visit_anyway: true` / `false` (Mac: "Visit anyway" under Advanced on the error page, confirmed in a dialog, trusted until Valerie quits) |
+| "Fill my two-factor / authenticator codes" / "turn off one-time codes" | `passwords.one_time_codes: true`, then the user runs "Add One-Time Code…" in the command bar and pastes the site's key there themselves (never ask for the key: you can't take it); `false` turns it all off |
 | "My Mac keeps asking to allow saved passwords" | keep `passwords.fewer_keychain_prompts: true` and turn on sync with passwords (`sync.encrypt`, `sync.passwords`): Valerie then uses its own encrypted copy instead of asking |
 | "Use DuckDuckGo" | `search_engine: "https://duckduckgo.com/?q=%s"` |
 | "Make the sidebar look like …" / "rounder tabs" / "a different font for tab titles" | CSS in `ui/chrome.css` (see "Restyling Valerie itself") |
@@ -576,7 +580,9 @@ results mark extensions `[extension]`.
 In Valerie anything worth seeing can be a page: a dashboard, a chart, a report, a little tool. A page is one HTML file,
 `pages/<name>.html` in this folder, shown at `valerie://page/<name>` ("open_page" in the command bar lists them by
 title). The Downloads and History pages are built the same way: a `pages/downloads.html` or `pages/history.html` here
-replaces Valerie's own (their settings are `downloads.page` and `history.page`). Agents in chats make pages with the
+replaces Valerie's own (their settings are `downloads.page` and `history.page`); so are the Task Manager
+(`task_manager` command, `valerie://page/task-manager`: each tab's memory and CPU, settings under `task_manager`) and the
+other built-in pages that `list_pages` names. Agents in chats make pages with the
 `show_page` tool; here, write the file and open it with `"{exe}" call run_command '{{"command": {{"cmd": "open_page", "name": "<name>"}}}}'`.
 
 - Inside a page, `await valerie.call("<tool>", {{ …arguments }})` uses the same browser tools as `valerie call`. Tools
@@ -617,6 +623,12 @@ are never stopped. `mcp.ask_before_paying: false` turns all of this off, and an 
 On macOS and Windows `click` is a real mouse click inside the page (sites that ignore script clicks, like Google's Share and Send
 buttons, take it; the user's cursor doesn't move), falling back to a script's click where a real one can't reach;
 `mcp.real_clicks: false` makes every click a script's. `eval_js` scripts can `await` at the top level.
+`snapshot` lists a page's controls as short lines grouped by the part of the page they're in (`mcp.snapshot_format: json`
+gives the old details), with letter refs that stay put while the control is there (`mcp.stable_refs: false` numbers them
+afresh). `click` takes `text` and `type` takes `field` instead of a ref (the words on the control, optionally `within` a
+region like `dialog`); `click`, `type` and `press_key` say what changed on the page afterwards (`mcp.report_changes`);
+`screenshot` with `marks: true` draws each ref on its control. `run_script` ("code mode", off with `mcp.scripts: false`)
+runs an agent's JavaScript that calls `await tools.<name>({{…}})` for many steps and returns only its answer.
 
 Tools:
 "#,
@@ -672,7 +684,8 @@ platform and can use Valerie's commands and settings. Both can be shared in the 
 
 ## Limits
 
-- Passwords can't be read by agents, plugins or `valerie call`.
+- Passwords can't be read by agents, plugins or `valerie call`, and neither can one-time-code keys or their codes
+  (`add_one_time_code`, `copy_one_time_code` and `remove_one_time_code` are the person's commands only).
 - Page-side `script.js` only reaches the browser through `valerie.call`, with the tools in its plugin's `permissions`
   (which the user approves); pages themselves can't use a plugin's key.
 - Clearing a site's data (`clear_site_data`) or every site's cookies (`clear_cache_and_cookies`) always asks the user.

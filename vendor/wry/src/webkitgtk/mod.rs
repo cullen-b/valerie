@@ -289,6 +289,10 @@ impl InnerWebView {
 
     let webview = Self::create_webview(web_context, &attributes, &pl_attrs);
 
+    if let Some(handler) = pl_attrs.web_process_terminated_handler {
+      webview.connect_web_process_terminated(move |_, reason| handler(reason));
+    }
+
     // Transparent
     if attributes.transparent {
       webview.set_background_color(&gtk::gdk::RGBA::new(0., 0., 0., 0.));
@@ -505,6 +509,7 @@ impl InnerWebView {
             opener: NewWindowOpener {
               webview: webview.clone(),
             },
+            user_initiated: action.is_user_gesture(),
           },
         ) {
           NewWindowResponse::Allow => {

@@ -398,6 +398,8 @@ use self::webview2::*;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
   ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment,
 };
+#[cfg(target_os = "windows")]
+pub use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND;
 
 use std::{borrow::Cow, collections::HashMap, path::PathBuf, rc::Rc};
 
@@ -529,6 +531,8 @@ pub struct NewWindowFeatures {
   pub position: Option<dpi::LogicalPosition<f64>>,
   /// Information about the webview opener containing data that must be used when creating the new webview.
   pub opener: NewWindowOpener,
+  /// Whether a click or key press started this request (true when the platform can't tell).
+  pub user_initiated: bool,
 }
 
 /// An id for a webview
@@ -1758,6 +1762,7 @@ pub(crate) struct PlatformSpecificWebViewAttributes {
   default_context_menus: bool,
   environment: Option<ICoreWebView2Environment>,
   profile_name: Option<String>,
+  process_failed_handler: Option<std::rc::Rc<dyn Fn(COREWEBVIEW2_PROCESS_FAILED_KIND)>>,
 }
 
 #[cfg(windows)]
@@ -1774,6 +1779,7 @@ impl Default for PlatformSpecificWebViewAttributes {
       extension_path: None,
       environment: None,
       profile_name: None,
+      process_failed_handler: None,
     }
   }
 }
@@ -1871,6 +1877,11 @@ pub trait WebViewBuilderExtWindows {
   /// Profile names must follow the WebView2 naming rules (alphanumeric, `.`,
   /// `_`, `-`, ` `, up to 64 chars, not starting/ending with `.` or ` `).
   fn with_profile_name<S: Into<String>>(self, name: S) -> Self;
+
+  /// Set a handler for WebView2's `ProcessFailed` event: a process the webview uses exited or hung.
+  ///
+  /// <https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2processfailedeventargs>
+  fn with_process_failed_handler(self, handler: impl Fn(COREWEBVIEW2_PROCESS_FAILED_KIND) + 'static) -> Self;
 }
 
 #[cfg(windows)]
@@ -1922,6 +1933,11 @@ impl WebViewBuilderExtWindows for WebViewBuilder<'_> {
 
   fn with_profile_name<S: Into<String>>(mut self, name: S) -> Self {
     self.platform_specific.profile_name = Some(name.into());
+    self
+  }
+
+  fn with_process_failed_handler(mut self, handler: impl Fn(COREWEBVIEW2_PROCESS_FAILED_KIND) + 'static) -> Self {
+    self.platform_specific.process_failed_handler = Some(std::rc::Rc::new(handler));
     self
   }
 }
@@ -2016,6 +2032,7 @@ impl WebViewBuilderExtAndroid for WebViewBuilder<'_> {
 pub(crate) struct PlatformSpecificWebViewAttributes {
   extension_path: Option<PathBuf>,
   related_view: Option<webkit2gtk::WebView>,
+  web_process_terminated_handler: Option<Box<dyn Fn(webkit2gtk::WebProcessTerminationReason)>>,
 }
 
 #[cfg(any(
@@ -2046,6 +2063,12 @@ pub trait WebViewBuilderExtUnix<'a> {
   /// Creates a new webview sharing the same web process with the provided webview.
   /// Useful if you need to link a webview to another, for instance when using the [`WebViewBuilder::with_new_window_req_handler`].
   fn with_related_view(self, webview: webkit2gtk::WebView) -> Self;
+
+  /// Set a handler for WebKitGTK's `web-process-terminated` signal: the page's web process ended.
+  fn with_web_process_terminated_handler(
+    self,
+    handler: impl Fn(webkit2gtk::WebProcessTerminationReason) + 'static,
+  ) -> Self;
 }
 
 #[cfg(any(
@@ -2073,6 +2096,14 @@ impl<'a> WebViewBuilderExtUnix<'a> for WebViewBuilder<'a> {
 
   fn with_related_view(mut self, webview: webkit2gtk::WebView) -> Self {
     self.platform_specific.related_view.replace(webview);
+    self
+  }
+
+  fn with_web_process_terminated_handler(
+    mut self,
+    handler: impl Fn(webkit2gtk::WebProcessTerminationReason) + 'static,
+  ) -> Self {
+    self.platform_specific.web_process_terminated_handler = Some(Box::new(handler));
     self
   }
 }

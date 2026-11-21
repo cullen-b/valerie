@@ -286,6 +286,9 @@ body.pointer #menu div:hover { background: var(--accent); color: #fff; }
 }
 body.right #toast { left: auto; right: 12px; }
 #toast.show { opacity: 1; transform: none; }
+/* the icons-only sidebar is too narrow for a message: it spills over the start page instead */
+body.size-compact #toast { width: max-content; max-width: 260px; }
+@media (prefers-reduced-motion: reduce) { #toast { transform: none; } }
 #empty { position: fixed; top: 0; bottom: 0; right: 0; display: grid; place-items: center; text-align: center; transition: left .2s var(--ease), right .2s var(--ease); }
 #empty h1 { font-size: 44px; font-weight: 700; letter-spacing: -1.5px; opacity: .9; }
 #empty h1 span { color: var(--accent); }
@@ -683,7 +686,40 @@ function keepSpaceDrag(sps) {
 // Not the tab whose − was just clicked: the pointer still resting on it shouldn't load it straight back.
 let preloadTimer = 0, justClosed = new Set();
 function closeHere(ids) { ids.forEach((id) => { justClosed.add(id); cmd({ cmd: "close_tab", tab: id }); }); }
+// sidebar.tab_preview: resting on a tab shows a card beside it (full title, site, a picture of the page), drawn by Valerie
+// in a view of its own so it can reach over the page. A timer runs only while the pointer is on a tab.
+let previewTimer = 0, previewTab = null, previewGone = -1e9;
+function previewOnHover(node, t) {
+  if (!S.sidebar.tab_preview) return;
+  node.removeAttribute("title"); node.dataset.preview = t.id;
+  node.addEventListener("mouseenter", () => {
+    if (drag || resizing || document.body.classList.contains("dragging")) return;
+    clearTimeout(previewTimer);
+    const r = node.getBoundingClientRect(), top = !!node.closest("#topbar");
+    // Moving from one tab to the next while a card shows (or just showed) swaps it almost at once.
+    const quick = previewTab != null || performance.now() - previewGone < 300;
+    previewTimer = setTimeout(() => {
+      previewTimer = 0; previewTab = t.id;
+      send({ t: "tab_preview", tab: t.id, top, rect: { x: r.left, y: r.top, w: r.width, h: r.height } });
+    }, quick ? 50 : Math.max(0, +S.sidebar.tab_preview_delay_ms || 0));
+  });
+  // Onto another tab: that tab's card replaces this one without this one going first.
+  node.addEventListener("mouseleave", (e) => {
+    const next = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("[data-preview]");
+    if (next && next !== node) clearTimeout(previewTimer); else hidePreview();
+  });
+}
+function hidePreview() {
+  clearTimeout(previewTimer); previewTimer = 0;
+  if (previewTab == null) return;
+  previewTab = null; previewGone = performance.now();
+  send({ t: "tab_preview_hide" });
+}
+// A click, drag, scroll or key press puts it away; so does the pointer reaching anything that isn't a tab.
+for (const ev of ["mousedown", "wheel", "keydown", "dragstart"]) addEventListener(ev, hidePreview, { capture: true, passive: true });
+addEventListener("mouseover", (e) => { if ((previewTab != null || previewTimer) && !e.target.closest("[data-preview]")) hidePreview(); }, { passive: true });
 function preloadOnHover(node, t) {
+  previewOnHover(node, t);
   if (t.loaded) return;
   node.addEventListener("mouseenter", () => {
     if (!S.sidebar.preload_on_hover || drag || justClosed.has(t.id)) return;
@@ -1211,7 +1247,8 @@ function slideIn(dir) {
   const sc = $("#lists"), ms = S.layout.animation_ms;
   if (!ms) { sc.style.transition = "none"; sc.style.transform = ""; sc.style.opacity = ""; return; }
   sc.style.transition = "none";
-  sc.style.transform = `translateX(${dir * 28}px)`; sc.style.opacity = "0.45";
+  // Less motion: the list only fades in.
+  sc.style.transform = `translateX(${matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : dir * 28}px)`; sc.style.opacity = "0.45";
   sc.offsetWidth; // reflow so the transition starts from the offset
   sc.style.transition = `transform ${ms}ms var(--ease), opacity ${Math.round(ms * 0.8)}ms ease`;
   sc.style.transform = "translateX(0)"; sc.style.opacity = "1";
@@ -1382,6 +1419,7 @@ function render(state) {
   $("#url").style.display = O.url_bar && !(S.chats && S.chats.open) ? "" : "none";
   $("#back").classList.toggle("off", !S.active);
   $("#fwd").classList.toggle("off", !S.active);
+  $("#reload").classList.toggle("off", !S.active);
   const u = $("#url"); u.innerHTML = "";
   if (S.url) {
     const h = host(S.url), secure = !S.url.startsWith("http:");
@@ -1609,7 +1647,7 @@ function renderTop() {
   all.forEach((t) => {
     const c = el("div", "chip" + (t.id === S.active ? " active" : ""));
     c.append(icon(t, "ico", "top")); if (!t.pinned && !S.favorites.includes(t)) c.append(el("div", "title", t.title || host(t.url)));
-    c.title = t.title; c.onclick = (e) => openTab(e, t.id);
+    c.title = t.title; c.onclick = (e) => openTab(e, t.id); previewOnHover(c, t);
     c.oncontextmenu = (e) => { e.preventDefault(); tabMenu(e, t); };
     tabs.append(c);
   });
@@ -1646,6 +1684,21 @@ const prompt_ = (label, value, then, field) => cmd({ cmd: "prompt", label, value
 
 $("#back").onclick = () => cmd({ cmd: "back" });
 $("#fwd").onclick = () => cmd({ cmd: "forward" });
+// sidebar.history_menu: right-click, or press and hold, back or forward for a menu of the tab's pages that way.
+for (const [id, forward] of [["#back", false], ["#fwd", true]]) {
+  const b = $(id); let hold = 0, held = false;
+  const open = () => {
+    if (!S || !S.sidebar.history_menu || !S.active) return false;
+    const r = b.getBoundingClientRect();
+    cmd({ cmd: "history_menu", forward, x: r.left, y: r.bottom + 4 });
+    return true;
+  };
+  b.addEventListener("contextmenu", (e) => { if (open()) e.preventDefault(); });
+  b.addEventListener("mousedown", (e) => { held = false; clearTimeout(hold); if (e.button === 0) hold = setTimeout(() => { held = open(); }, 450); });
+  for (const ev of ["mouseup", "mouseleave"]) b.addEventListener(ev, () => clearTimeout(hold));
+  // The click that ends a press and hold doesn't also go back.
+  b.addEventListener("click", (e) => { if (held) { held = false; e.stopImmediatePropagation(); } }, true);
+}
 $("#reload").onclick = () => cmd({ cmd: "reload" });
 // animations.nav_buttons: back nudges left, forward right, reload turns once; clicking again mid-way starts it over.
 function navNudge(b, turn, dx) {
@@ -1855,8 +1908,8 @@ addEventListener("keydown", (e) => {
 
 // Hover effects only while the pointer is over the sidebar: it can't see the pointer leave onto a page.
 addEventListener("mousemove", () => document.body.classList.add("pointer"), { passive: true });
-document.documentElement.addEventListener("mouseleave", () => { document.body.classList.remove("pointer"); closeFly(); });
-function pointerOut() { if (!resizing && !(drag && drag.active)) { document.body.classList.remove("pointer"); closeFly(); } }
+document.documentElement.addEventListener("mouseleave", () => { document.body.classList.remove("pointer"); closeFly(); hidePreview(); });
+function pointerOut() { hidePreview(); if (!resizing && !(drag && drag.active)) { document.body.classList.remove("pointer"); closeFly(); } }
 
 // Key sequences: after the first key of one, the next key pressed here goes to Valerie.
 let seqUntil = 0;

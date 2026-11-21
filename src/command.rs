@@ -136,6 +136,29 @@ pub enum Command {
         #[serde(default)]
         tab: Option<TabId>,
     },
+    /// A menu of the tab's earlier pages (or later ones, `forward`), at (x, y) in the window; picking one goes there.
+    HistoryMenu {
+        #[serde(default)]
+        forward: bool,
+        #[serde(default)]
+        x: Option<f64>,
+        #[serde(default)]
+        y: Option<f64>,
+    },
+    /// Go this many pages back (negative) or forward in the tab's history.
+    GoHistory {
+        steps: i64,
+        #[serde(default)]
+        tab: Option<TabId>,
+    },
+    /// Put a picture from the web on the clipboard (macOS).
+    CopyImage {
+        url: String,
+    },
+    /// Save a picture from the web to the downloads folder.
+    SaveImage {
+        url: String,
+    },
     Reload {
         #[serde(default)]
         tab: Option<TabId>,
@@ -657,6 +680,27 @@ pub enum Command {
         origin: String,
         username: String,
     },
+    /// Add a one-time-code key to a saved login. Without the login, pick one; the key itself is only ever pasted into
+    /// the box Valerie opens (never a command's argument, a setting or a command line).
+    AddOneTimeCode {
+        #[serde(default)]
+        vault: Option<String>,
+        #[serde(default)]
+        origin: Option<String>,
+        #[serde(default)]
+        username: Option<String>,
+    },
+    /// Copy a saved login's current one-time code to the clipboard. Never available to pages or agents.
+    CopyOneTimeCode {
+        vault: String,
+        origin: String,
+        username: String,
+    },
+    RemoveOneTimeCode {
+        vault: String,
+        origin: String,
+        username: String,
+    },
     FindInPage {
         #[serde(default)]
         query: Option<String>,
@@ -710,6 +754,8 @@ pub enum Command {
     },
     /// The Saved Settings page: save, switch and delete sets of settings (valerie://page/saved-settings).
     SavedSettings,
+    /// The Task Manager page: each tab's memory and CPU, Valerie's own processes (valerie://page/task-manager).
+    TaskManager,
     /// Casino games drawn as pixel art (valerie://page/casino; also on the "You're offline" page), one per command.
     PlayBlackjack,
     PlayPoker,
@@ -764,6 +810,9 @@ impl Command {
             self,
             Command::CopyPassword { .. }
                 | Command::DeletePassword { .. }
+                | Command::AddOneTimeCode { .. }
+                | Command::CopyOneTimeCode { .. }
+                | Command::RemoveOneTimeCode { .. }
                 | Command::OpenDownload { .. }
                 | Command::OpenFile
                 | Command::BringLoginFromSafari
@@ -939,6 +988,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("clear_cache_and_cookies", "Clear Cache and Cookies… (signs you out of every site)"),
     ("sign_in_with_safari", "Sign In with Safari (for passkeys)"),
     ("bring_login_from_safari", "Bring Login from Safari"),
+    ("add_one_time_code", "Add One-Time Code… (to a saved login)"),
     ("set_default_browser", "Make Valerie the Default Browser"),
     ("set_default_markdown_app", "Open Markdown Files in Valerie"),
     ("open_config", "Open Config File"),
@@ -955,6 +1005,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("save_settings", "Save Settings As… (keep these settings under a name to switch back to)"),
     ("switch_settings", "Switch to the Next Saved Settings"),
     ("saved_settings", "Saved Settings (save, switch between and delete sets of settings)"),
+    ("task_manager", "Task Manager (what each tab uses: memory and CPU; end a runaway tab)"),
     ("play_blackjack", "Play Blackjack"),
     ("play_poker", "Play Poker (Texas hold'em against bots)"),
     ("play_baccarat", "Play Baccarat"),
@@ -1003,6 +1054,10 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("find_in_page", "{ query? }"),
     ("toggle_mute", "{ tab? }"),
     ("copy_text", "{ text }"),
+    ("history_menu", "{ forward?, x?, y? }  (a menu of the tab's earlier pages, or later ones with forward: true; the back and forward buttons show it on right-click or press and hold)"),
+    ("go_history", "{ steps, tab? }  (go back (negative) or forward this many pages in the tab's history)"),
+    ("copy_image", "{ url }  (put the picture at this address on the clipboard; Mac)"),
+    ("save_image", "{ url }  (save the picture at this address to the downloads folder)"),
     ("new_terminal", "{ folder? }  (a shell in the terminal panel; default: the open coding chat's project)"),
     ("open_terminal", "{ chat? }  (the terminal panel on a coding chat's project)"),
     ("new_chat", "{ prompt?, agent?, folder?, in_project?, background? }  (ask an agent something in a new chat; it can see and use the browser; background: true sends it to Chats and stays put)"),

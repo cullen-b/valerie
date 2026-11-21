@@ -1,0 +1,269 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Task Manager</title>
+<meta name="valerie-tools" content="list_tasks end_tab_process activate_tab close_tab run_command">
+<style>
+:root { --bg: var(--v-bg, #16151c); --fg: var(--v-fg, #ecebf5); --dim: var(--v-dim, rgba(236,235,245,.62)); --line: var(--v-line, rgba(255,255,255,.12));
+  --card: var(--v-card, rgba(255,255,255,.045)); --accent: var(--v-accent, #9d8cff); --danger: #ff7a7a; --danger: light-dark(#c42f2f, #ff7a7a); }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 900px; margin: 0 auto; padding: 44px 32px 80px; }
+h1 { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 0 0 4px; text-wrap: balance; }
+.summary { color: var(--dim); font-size: 12.5px; margin: 0 2px 20px; font-variant-numeric: tabular-nums; min-height: 19px; }
+button { font: inherit; color: inherit; background: none; border: none; border-radius: 7px; cursor: default; touch-action: manipulation; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cols, .row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 72px 132px; align-items: center; gap: 0 8px; }
+.cols { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); padding: 6px 10px 6px; margin-bottom: 4px;
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+.cols button { justify-self: end; padding: 2px 4px; margin-right: -4px; text-transform: inherit; letter-spacing: inherit; font-weight: inherit; color: inherit;
+  transition-property: color, background-color; transition-duration: .12s; }
+.cols button:hover { color: var(--fg); background: var(--card); }
+.cols button[aria-pressed="true"] { color: var(--fg); }
+.cols button[aria-pressed="true"]::after { content: " ↓"; }
+.row { padding: 7px 10px; border-radius: 10px; min-height: 48px; scroll-margin-top: 44px; }
+.row:hover { background: var(--card); }
+.row.tab { cursor: default; }
+.row.child { padding-left: 34px; min-height: 40px; }
+.row.child .name { font-weight: 500; }
+.info { min-width: 0; }
+.name { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub .now { color: var(--accent); font-weight: 600; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.num.none { color: var(--dim); }
+.num.hot { color: var(--danger); }
+.actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity .12s; }
+.row:hover .actions, .row:focus-within .actions { opacity: 1; }
+@media (hover: none) { .actions { opacity: 1; } }
+.actions button { position: relative; width: 30px; height: 30px; display: grid; place-items: center; color: var(--dim); transition-property: color, background-color; transition-duration: .12s; }
+.actions button::before { content: ""; position: absolute; inset: -5px -1px; }
+.actions button:hover { color: var(--fg); background: var(--card); }
+.actions button.end:hover { color: var(--danger); }
+.actions button.sure { width: auto; padding: 0 9px; color: #fff; color: light-dark(#fff, #1a0505); background: var(--danger); font-size: 12.5px; font-weight: 600; }
+.row:has(.sure) .actions { opacity: 1; }
+.actions button:active { transform: scale(.96); }
+h2 { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 26px 0 6px 10px; }
+h2 button { color: inherit; padding: 2px 6px; margin-left: -6px; text-transform: inherit; letter-spacing: inherit; font-weight: inherit; }
+h2 button:hover { color: var(--fg); background: var(--card); }
+.note { color: var(--dim); font-size: 12.5px; margin: 0 10px 8px; text-wrap: pretty; max-width: 70ch; }
+.asleep .name { color: var(--dim); }
+.row.asleep { content-visibility: auto; contain-intrinsic-size: auto 48px; }
+@media (prefers-reduced-motion: reduce) { .actions button:active { transform: none; } }
+.flash:empty { display: none; }
+.flash { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); max-width: min(560px, 90vw); padding: 8px 14px; border-radius: 10px;
+  background: var(--fg); color: var(--bg); font-size: 13px; }
+.flash.bad { background: var(--danger); color: #1a0505; }
+@media (max-width: 620px) {
+  main { padding: 28px 16px 60px; }
+  .cols, .row { grid-template-columns: minmax(0, 1fr) 76px 56px; }
+  .actions { grid-column: 1 / -1; justify-content: flex-start; opacity: 1; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Task Manager</h1>
+  <div class="summary" id="summary" aria-live="off"></div>
+  <div class="cols" role="presentation">
+    <span>Name</span>
+    <button id="by-memory" type="button" aria-pressed="true">Memory</button>
+    <button id="by-cpu" type="button" aria-pressed="false">CPU</button>
+    <span></span>
+  </div>
+  <div id="list"></div>
+</main>
+<div id="flash" class="flash" role="status" aria-live="polite"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+let data = null, opts = { refresh_seconds: 2, sort_by: "memory", end_process: true }, showAsleep = false, timer = null, flashTimer = null;
+const sure = new Map();
+
+function svg(d) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("width", "15"); s.setAttribute("height", "15"); s.setAttribute("viewBox", "0 0 16 16"); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "1.5");
+  p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+  s.append(p); return s;
+}
+const ICON = {
+  go: "M6 3.5h6.5V10M12.5 3.5l-9 9",
+  reload: "M13 8a5 5 0 11-1.5-3.6M13 2.5v3h-3",
+  x: "M4.5 4.5l7 7M11.5 4.5l-7 7",
+  end: "M8 2.5v5M4.6 4.4a5 5 0 106.8 0",
+};
+function iconButton(icon, label, fn, cls) {
+  const b = el("button", cls); b.type = "button"; b.title = label; b.setAttribute("aria-label", label); b.append(svg(ICON[icon]));
+  b.addEventListener("click", (e) => { e.stopPropagation(); fn(b); }); return b;
+}
+
+const KB = 1024;
+function bytes(b) {
+  if (b == null) return "—";
+  if (b < KB * KB) return Math.max(1, Math.round(b / KB)) + "\u00a0KB";
+  if (b < KB ** 3) return (b / KB ** 2).toFixed(b < 100 * KB ** 2 ? 1 : 0) + "\u00a0MB";
+  return (b / KB ** 3).toFixed(2) + "\u00a0GB";
+}
+const pct = (c) => c == null ? "—" : (c < 10 ? c.toFixed(1) : Math.round(c)) + "%";
+
+function flash(msg, bad) {
+  const f = $("flash"); f.textContent = msg; f.classList.toggle("bad", !!bad);
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => { f.textContent = ""; }, bad ? 5000 : 3500);
+}
+async function act(tool, args) {
+  try { const r = await valerie.call(tool, args); load(); return r; } catch (e) { flash(e.message, true); }
+}
+
+function sub(parts) {
+  const s = el("div", "sub");
+  parts.filter(Boolean).forEach((p, i) => { if (i) s.append(" · "); s.append(typeof p === "string" ? p : p); });
+  return s;
+}
+function tabLine(t) {
+  return [t.active ? el("span", "now", "Showing") : null, t.little ? "Little window" : null, t.host, t.space, t.playing ? "Playing sound" : null];
+}
+function tabActions(t, proc) {
+  const a = el("div", "actions");
+  if (t.tab == null) return a;
+  a.append(iconButton("go", "Go to Tab", () => act("activate_tab", { tab: t.tab })));
+  a.append(iconButton("reload", "Reload", () => act("run_command", { command: { cmd: "reload", tab: t.tab } })));
+  a.append(iconButton("x", "Close Tab", () => act("close_tab", { tab: t.tab })));
+  if (proc) a.append(endButton(proc, t.tab));
+  return a;
+}
+function endButton(p, tab) {
+  return iconButton("end", "End Process", (b) => {
+    if (!sure.has(p.pid)) {
+      sure.set(p.pid, setTimeout(() => { sure.delete(p.pid); render(); }, 3000));
+      return render();
+    }
+    clearTimeout(sure.get(p.pid)); sure.delete(p.pid);
+    act("end_tab_process", { tab, pid: p.pid }).then((r) => {
+      if (r) flash(r.tabs > 1 ? `Ended the process of ${r.tabs} tabs. They reload when you go back to them.` : "Ended the tab's process. It reloads when you go back to it.");
+    });
+  }, "end");
+}
+function figures(r, mem, cpu, shared) {
+  const m = el("div", "num" + (mem == null ? " none" : ""), shared ? "" : bytes(mem));
+  const c = el("div", "num" + (cpu == null ? " none" : cpu >= 80 ? " hot" : ""), shared ? "" : pct(cpu));
+  r.append(m, c);
+}
+function goOnClick(r, t) {
+  if (t.tab == null) return;
+  r.classList.add("tab");
+  r.addEventListener("click", () => act("activate_tab", { tab: t.tab }));
+}
+
+const KIND_NOTE = { valerie: "The app itself", helper: "Valerie's helper process", own: "Valerie's own window", spare: "Kept ready for the next page" };
+function processRows(p) {
+  const rows = [], tabs = p.tabs || [], can = p.can_end && opts.end_process;
+  if (p.kind === "tabs" && tabs.length === 1) {
+    const t = tabs[0], r = el("div", "row");
+    const info = el("div", "info"); info.append(el("div", "name", t.title || t.host || "Untitled"), sub(tabLine(t)));
+    r.append(info); figures(r, p.memory, p.cpu); r.append(tabActions(t, can ? p : null)); goOnClick(r, t);
+    rows.push([`p${p.pid}`, r]);
+    return rows;
+  }
+  const r = el("div", "row");
+  const info = el("div", "info");
+  let name = p.name, line;
+  if (p.kind === "tabs") { name = `${tabs.length} tabs share a process`; line = [`Process ${p.pid}`]; }
+  else if (p.kind === "mixed") { name = `${p.name} and ${tabs.length} ${tabs.length === 1 ? "tab" : "tabs"}`; line = ["Valerie's own window", `Process ${p.pid}`]; }
+  else line = [KIND_NOTE[p.kind] || "Valerie's helper process", `Process ${p.pid}`];
+  info.append(el("div", "name", name), sub(line));
+  r.append(info); figures(r, p.memory, p.cpu);
+  const a = el("div", "actions");
+  if (can && tabs[0] && tabs[0].tab != null) a.append(endButton(p, tabs[0].tab));
+  r.append(a); rows.push([`p${p.pid}`, r]);
+  for (const t of tabs) {
+    const c = el("div", "row child");
+    const ci = el("div", "info"); ci.append(el("div", "name", t.title || t.host || "Untitled"), sub(tabLine(t)));
+    c.append(ci); figures(c, null, null, true); c.append(tabActions(t, null)); goOnClick(c, t);
+    rows.push([`p${p.pid}t${t.tab ?? t.title}`, c]);
+  }
+  return rows;
+}
+function plainTabRow(t, key, asleep) {
+  const r = el("div", "row" + (asleep ? " asleep" : ""));
+  const info = el("div", "info"); info.append(el("div", "name", t.title || t.host || "Untitled"), sub(asleep ? ["Asleep", t.host, t.space] : tabLine(t)));
+  r.append(info, el("div", "num none", asleep ? "" : "—"), el("div", "num none", asleep ? "" : "—"));
+  const a = el("div", "actions");
+  if (t.tab != null) {
+    a.append(iconButton("go", asleep ? "Go to Tab (wakes it)" : "Go to Tab", () => act("activate_tab", { tab: t.tab })));
+    if (!asleep) a.append(iconButton("reload", "Reload", () => act("run_command", { command: { cmd: "reload", tab: t.tab } })));
+    a.append(iconButton("x", "Close Tab", () => act("close_tab", { tab: t.tab })));
+  }
+  r.append(a); goOnClick(r, t);
+  return [key, r];
+}
+
+// Rows are rebuilt each look; the one holding focus gets it back so keyboard users don't lose their place.
+function render() {
+  if (!data) return;
+  const focused = document.activeElement, focusKey = focused && focused.closest && focused.closest("[data-key]");
+  const at = focusKey ? [focusKey.dataset.key, [...focusKey.querySelectorAll("button")].indexOf(focused)] : null;
+  const by = opts.sort_by === "cpu" ? "cpu" : "memory";
+  $("by-memory").setAttribute("aria-pressed", String(by === "memory"));
+  $("by-cpu").setAttribute("aria-pressed", String(by === "cpu"));
+  const procs = [...data.processes].sort((a, b) => (b[by] ?? -1) - (a[by] ?? -1) || (b.memory ?? -1) - (a.memory ?? -1));
+  const out = [];
+  for (const p of procs) out.push(...processRows(p));
+  if (data.unmeasured.length) {
+    out.push(["h-open", el("h2", null, "Open tabs")]);
+    if (!data.per_tab) out.push(["n-open", el("p", "note", "This system doesn't say what each tab uses, so the figures are by process above.")]);
+    data.unmeasured.forEach((t, i) => out.push(plainTabRow(t, `u${t.tab ?? i}`, false)));
+  }
+  if (data.asleep.length) {
+    const h = el("h2"), b = el("button", null, `${showAsleep ? "▾" : "▸"} Asleep · ${data.asleep.length}`);
+    b.type = "button"; b.setAttribute("aria-expanded", String(showAsleep));
+    b.addEventListener("click", () => { showAsleep = !showAsleep; render(); });
+    h.append(b); out.push(["h-asleep", h]);
+    if (showAsleep) {
+      out.push(["n-asleep", el("p", "note", "Sleeping tabs use no memory or CPU. They load again when you go to them.")]);
+      data.asleep.forEach((t) => out.push(plainTabRow(t, `a${t.tab}`, true)));
+    }
+  }
+  for (const [k, e] of out) e.dataset.key = k;
+  $("list").replaceChildren(...out.map(([, e]) => e));
+  for (const [pid] of sure) {
+    const b = $("list").querySelector(`[data-key="p${pid}"] button.end`);
+    if (b) { b.classList.add("sure"); b.replaceChildren("End Process?"); b.title = "Click again to end it"; b.setAttribute("aria-label", "Click again to end the process"); }
+  }
+  if (at) {
+    const row = $("list").querySelector(`[data-key="${CSS.escape(at[0])}"]`), btn = row && row.querySelectorAll("button")[at[1]];
+    if (btn) btn.focus({ preventScroll: true });
+  }
+  const tabs = data.processes.reduce((n, p) => n + (p.tabs || []).filter((t) => !t.little).length, 0) + data.unmeasured.length;
+  const bits = [];
+  if (data.total.memory != null) bits.push(`${bytes(data.total.memory)} in all`);
+  if (data.total.cpu != null) bits.push(`${pct(data.total.cpu)} CPU`);
+  bits.push(`${data.processes.length} processes`, `${tabs} ${tabs === 1 ? "tab" : "tabs"} open`);
+  if (data.asleep.length) bits.push(`${data.asleep.length} asleep`);
+  $("summary").textContent = bits.join(" · ");
+}
+
+async function load() {
+  try { data = await valerie.call("list_tasks", {}); } catch (e) { valerie.log("error: list_tasks", e); return; }
+  render();
+}
+// Looks only while the page is on screen, so a hidden or closed Task Manager costs nothing.
+function schedule() {
+  clearTimeout(timer); timer = null;
+  if (document.visibilityState !== "visible") return;
+  const secs = Math.min(60, Math.max(1, Number(opts.refresh_seconds) || 2));
+  timer = setTimeout(async () => { await load(); schedule(); }, secs * 1000);
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { load(); schedule(); } else { clearTimeout(timer); timer = null; } });
+$("by-memory").addEventListener("click", () => { opts.sort_by = "memory"; render(); });
+$("by-cpu").addEventListener("click", () => { opts.sort_by = "cpu"; render(); });
+valerie.call("get_settings", { key: "task_manager" }).then((s) => { Object.assign(opts, s.in_use || {}); render(); schedule(); }).catch(() => {});
+// The first look has no CPU figures (it needs two), so the second comes soon after.
+load().then(() => setTimeout(load, 800));
+schedule();
+</script>
+</body>
+</html>

@@ -15,6 +15,7 @@ mod import;
 mod llm_guide;
 mod mcp;
 mod passwords;
+mod otp;
 mod permission_tile;
 mod platform;
 #[cfg(target_os = "windows")]
@@ -335,6 +336,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     one_of(&mut p, "mcp: network_log".into(), &c.mcp.network_log, &["when_asked", "always", "never"]);
     one_of(&mut p, "vim: hint_labels".into(), &c.vim.hint_labels, &["stable", "reading_order"]);
     one_of(&mut p, "vim: hint_mode".into(), &c.vim.hint_mode, &["stay", "once"]);
+    one_of(&mut p, "app: linux_nvidia_fix".into(), &c.app.linux_nvidia_fix, &["auto", "on", "off"]);
     const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);
@@ -520,24 +522,64 @@ fn call(port: u16, tool: &str, args: &str) -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("Valerie isn't running"))?;
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| anyhow::anyhow!("HTTP {status}: {body}"))?;
     let r = &v["result"];
+    // `valerie call … | head`: once the reader has gone, stop quietly instead of panicking on the closed pipe.
+    let say = |line: String| {
+        use std::io::Write;
+        if let Err(e) = writeln!(std::io::stdout(), "{line}") {
+            std::process::exit(if e.kind() == std::io::ErrorKind::BrokenPipe { 0 } else { 1 });
+        }
+    };
     for c in r["content"].as_array().into_iter().flatten() {
         match c["type"].as_str() {
-            Some("text") => println!("{}", c["text"].as_str().unwrap_or("")),
+            Some("text") => say(c["text"].as_str().unwrap_or("").to_string()),
             Some("image") => {
                 // Save images (screenshots) to a file so scripts and assistants can open them.
                 let path = std::env::temp_dir().join(format!("valerie-{tool}-{}.png", state::now()));
                 match mcp::unbase64(c["data"].as_str().unwrap_or("")).map(|png| std::fs::write(&path, png)) {
-                    Some(Ok(())) => println!("[image saved to {}]", path.display()),
-                    _ => println!("[{} image that could not be saved]", c["mimeType"].as_str().unwrap_or("")),
+                    Some(Ok(())) => say(format!("[image saved to {}]", path.display())),
+                    _ => say(format!("[{} image that could not be saved]", c["mimeType"].as_str().unwrap_or(""))),
                 }
             }
             _ => {}
         }
     }
     if r["isError"].as_bool() == Some(true) || v.get("error").is_some() {
+        if let Some(e) = v.get("error") {
+            eprintln!("valerie call {tool}: {}", e["message"].as_str().map_or_else(|| e.to_string(), str::to_string));
+        }
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// WebKitGTK's DMA-BUF renderer draws blank or white pages with NVIDIA's own driver (tauri-apps/tauri#9394), so it's
+/// turned off there (app.linux_nvidia_fix) before the first webview reads the variable. One the user set is kept.
+#[cfg(target_os = "linux")]
+fn linux_nvidia_fix(setting: &str) {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    // Set by an earlier Valerie (a restart inherits its environment), not the user: decide again.
+    const OURS: &str = "VALERIE_SET_DMABUF_OFF";
+    if std::env::var_os(OURS).is_some() {
+        std::env::remove_var(VAR);
+        std::env::remove_var(OURS);
+    }
+    if let Some(v) = std::env::var_os(VAR) {
+        log::line("graphics", format!("{VAR}={} was set before Valerie started; kept", v.to_string_lossy()));
+        return;
+    }
+    let nvidia = std::path::Path::new("/sys/module/nvidia").exists() || std::path::Path::new("/proc/driver/nvidia/version").exists();
+    let off = match setting {
+        "on" => true,
+        "off" => false,
+        _ => nvidia,
+    };
+    if off {
+        std::env::set_var(VAR, "1");
+        std::env::set_var(OURS, "1");
+    }
+    let driver = if nvidia { "loaded" } else { "not loaded" };
+    let renderer = if off { "turned off" } else { "left on" };
+    log::line("graphics", format!("linux_nvidia_fix: {setting}; NVIDIA driver {driver}: WebKit's DMA-BUF renderer {renderer}"));
 }
 
 fn main() -> anyhow::Result<()> {
@@ -848,6 +890,8 @@ fn main() -> anyhow::Result<()> {
     if std::env::var_os("GDK_BACKEND").is_none() {
         std::env::set_var("GDK_BACKEND", "x11");
     }
+    #[cfg(target_os = "linux")]
+    linux_nvidia_fix(&config.app.linux_nvidia_fix);
     let result = app::run(config, urls);
     if let Err(e) = &result {
         log::line("app", format!("couldn't start: {e:#}"));

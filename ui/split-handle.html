@@ -9,6 +9,8 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 #pill > div { position: absolute; inset: 0; border-radius: 999px; background: var(--accent, #9d8cff); transform: scale(.4, .2); opacity: 0;
   transition: transform 260ms cubic-bezier(.4, 0, .7, .2), opacity 220ms ease-in 40ms; }
 #pill.on > div { transform: none; opacity: 1; transition: transform 600ms var(--pop, cubic-bezier(.34, 1.56, .64, 1)), opacity 120ms ease-out; }
+/* less motion: the pill fades in and out at full size and sits under the mouse without the spring */
+@media (prefers-reduced-motion: reduce) { #pill > div, #pill.on > div { transform: none; transition: opacity 120ms ease-out; } }
 </style>
 </head>
 <body>
@@ -39,6 +41,7 @@ window.handle = {
 function place(stretch) { pill.style.transform = `translateY(${pos - H / 2}px) scale(${1 - stretch * 0.4}, ${1 + stretch})`; }
 // A lively spring after the mouse, stretching taller and thinner while it moves fast, like a drop of liquid.
 function run() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { pos = target; v = 0; return place(0); }
   if (raf) return;
   let last = performance.now();
   const step = (now) => {

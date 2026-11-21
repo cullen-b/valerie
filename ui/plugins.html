@@ -19,14 +19,17 @@ h1 { font-size: 34px; letter-spacing: -.9px; margin: 0; font-weight: 740; flex: 
 .x { all: unset; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; color: var(--dim); background: var(--card); }
 .x:hover { color: var(--fg); background: var(--card2); }
 .sub { color: var(--dim); margin: 6px 0 18px; }
-.bar { display: flex; gap: 10px; align-items: center; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
 .tabs button { all: unset; padding: 7px 14px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--dim); }
 .tabs button.on { background: var(--card2); color: var(--fg); }
 .tabs .n { color: var(--faint); font-weight: 500; margin-left: 4px; }
-input { all: unset; flex: 1; padding: 10px 14px; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid var(--line); font-size: 14.5px; user-select: text; }
+input { all: unset; flex: 1; min-width: 140px; padding: 10px 14px; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid var(--line); font-size: 14.5px; user-select: text; }
 input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
-main { position: absolute; inset: 186px 0 0; overflow-y: auto; }
+/* the list starts under the header however tall it wraps in a narrow window */
+body { display: flex; flex-direction: column; }
+header { flex: none; width: 100%; }
+main { position: relative; flex: 1; min-height: 0; overflow-y: auto; }
 .wrap { max-width: 1040px; margin: 0 auto; padding: 8px 40px 50px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; min-height: 150px; transition: border-color .2s; }
