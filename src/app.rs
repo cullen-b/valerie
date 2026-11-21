@@ -5993,6 +5993,7 @@ impl App {
         platform::QUICK_FULLSCREEN.store(self.config.pages.quick_full_screen, std::sync::atomic::Ordering::Relaxed);
         platform::ERROR_PAGE.store(self.config.pages.error_page, std::sync::atomic::Ordering::Relaxed);
         platform::HTTP_SIGN_IN.store(self.config.pages.http_sign_in, std::sync::atomic::Ordering::Relaxed);
+        platform::OFFLINE_GAME.store(self.config.pages.offline_game, std::sync::atomic::Ordering::Relaxed);
         crate::mcp::set_web_tools(self.config.mcp.web_tools);
         crate::mcp::set_ask_user(self.config.mcp.ask_user);
         let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();

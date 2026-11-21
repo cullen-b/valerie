@@ -1,0 +1,145 @@
+<section id="bj" aria-label="Blackjack">
+<style>
+#bj{margin-top:36px;padding-top:24px;border-top:1px solid color-mix(in srgb,CanvasText 12%,transparent);text-align:left}
+#bj .row{display:flex;justify-content:space-between;font-size:13px;opacity:.6;margin:0 0 6px;font-variant-numeric:tabular-nums}
+#bj .hand{display:flex;height:84px;margin-bottom:16px;padding-right:18px}
+#bj .card{position:relative;flex:none;width:58px;height:82px;margin-right:-18px;border-radius:6px;background:#fff;color:#1d1d1f;box-shadow:0 0 0 1px rgba(0,0,0,.14),0 1px 3px rgba(0,0,0,.12);font-family:Georgia,"New York",serif}
+#bj .card.red{color:#c4262e}
+#bj .card .ix{position:absolute;top:4px;left:5px;font-size:14px;line-height:1;text-align:center}
+#bj .card .ix b{display:block;font-weight:600}
+#bj .card .pip{position:absolute;inset:0;display:grid;place-items:center;font-size:28px;padding-top:8px}
+#bj .card.back{background:repeating-linear-gradient(45deg,#2c4f9e 0 4px,#21407f 4px 8px);box-shadow:inset 0 0 0 3px #fff,0 0 0 1px rgba(0,0,0,.18)}
+#bj .card.new{animation:bj-in .2s ease-out both}
+@keyframes bj-in{from{transform:translateY(-10px) rotate(-3deg);opacity:0}}
+#bj #bj-msg{min-height:1.5em;margin:0 0 12px;opacity:.8}
+#bj .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#bj .bar button{padding:6px 14px;background:transparent;color:CanvasText;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 30%,transparent)}
+#bj .bar button:disabled{opacity:.35;cursor:default;transform:none}
+#bj .bar button.go{background:CanvasText;color:Canvas;box-shadow:none}
+#bj #bj-chips{margin-left:auto;font-size:13px;opacity:.6;font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){#bj .card.new{animation:none}}
+</style>
+<div class="row"><span>Dealer</span><span id="bj-dt"></span></div>
+<div class="hand" id="bj-d"></div>
+<div class="row"><span>You</span><span id="bj-pt"></span></div>
+<div class="hand" id="bj-p"></div>
+<p id="bj-msg" role="status">While you wait, a hand of blackjack.</p>
+<div class="bar">
+<button id="bj-deal" class="go" aria-keyshortcuts="Enter" title="Enter">Deal</button>
+<button id="bj-hit" aria-keyshortcuts="H" title="H">Hit</button>
+<button id="bj-stand" aria-keyshortcuts="S" title="S">Stand</button>
+<button id="bj-double" aria-keyshortcuts="D" title="D">Double</button>
+<span id="bj-chips"></span>
+</div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const SUITS = ["♠", "♥", "♦", "♣"], RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"], BET = 10;
+  let shoe = [], dealer = [], player = [], chips = 100, stake = BET, live = false, hide = true, shownD = 0, shownP = 0;
+  const fill = () => {
+    shoe = [];
+    for (let d = 0; d < 6; d++) for (const s of SUITS) for (const r of RANKS) shoe.push({ r, s });
+    for (let i = shoe.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [shoe[i], shoe[j]] = [shoe[j], shoe[i]]; }
+  };
+  const draw = () => { if (shoe.length < 78) fill(); return shoe.pop(); };
+  const score = hand => {
+    let t = 0, aces = 0;
+    for (const c of hand) { t += c.r === "A" ? 11 : isNaN(c.r) ? 10 : +c.r; if (c.r === "A") aces++; }
+    while (t > 21 && aces) { t -= 10; aces--; }
+    return t;
+  };
+  const natural = hand => hand.length === 2 && score(hand) === 21;
+  const card = (c, down, fresh) => {
+    const el = document.createElement("div");
+    el.className = "card" + (down ? " back" : c.s === "♥" || c.s === "♦" ? " red" : "") + (fresh ? " new" : "");
+    if (down) { el.setAttribute("aria-label", "face-down card"); return el; }
+    el.setAttribute("aria-label", c.r + " of " + c.s);
+    const ix = document.createElement("span"), rank = document.createElement("b"), pip = document.createElement("span");
+    ix.className = "ix"; pip.className = "pip";
+    rank.textContent = c.r; ix.append(rank, c.s); pip.textContent = c.s;
+    el.append(ix, pip);
+    return el;
+  };
+  const show = (box, hand, shown, hole) => {
+    box.replaceChildren(...hand.map((c, i) => card(c, hole && i === 1, i >= shown)));
+    return hand.length;
+  };
+  const render = () => {
+    shownD = show($("bj-d"), dealer, shownD, live && hide);
+    shownP = show($("bj-p"), player, shownP, false);
+    $("bj-dt").textContent = dealer.length ? (live && hide ? score([dealer[0]]) : score(dealer)) : "";
+    $("bj-pt").textContent = player.length ? score(player) : "";
+    $("bj-chips").textContent = chips + " chips";
+    $("bj-deal").disabled = live;
+    $("bj-hit").disabled = $("bj-stand").disabled = !live;
+    $("bj-double").disabled = !live || player.length !== 2 || chips < BET * 2;
+    $("bj-deal").classList.toggle("go", !live);
+    $("bj-hit").classList.toggle("go", live);
+  };
+  const say = text => { $("bj-msg").textContent = text; };
+  const finish = () => {
+    live = false;
+    const p = score(player), d = score(dealer);
+    let win;
+    if (natural(player) && !natural(dealer)) win = stake * 1.5;
+    else if (p > 21) win = -stake;
+    else if (natural(dealer) && !natural(player)) win = -stake;
+    else if (d > 21 || p > d) win = stake;
+    else if (p < d) win = -stake;
+    else win = 0;
+    chips += win;
+    say(win === 0 ? "Push. Your bet comes back."
+      : natural(player) && win > 0 ? "Blackjack! You win " + win + "."
+      : p > 21 ? "Bust. You lose " + stake + "."
+      : d > 21 ? "Dealer busts. You win " + win + "."
+      : win > 0 ? "You win " + win + "." : "Dealer wins. You lose " + stake + ".");
+    render();
+    if (window.bjBackOnline) location.reload();
+  };
+  const deal = () => {
+    if (live) return;
+    window.bjPlaying = true;
+    let note = "";
+    if (chips < BET) { chips = 100; note = "The house gave you 100 more chips. "; }
+    stake = BET; shownD = shownP = 0; live = true; hide = true;
+    player = [draw(), draw()]; dealer = [draw(), draw()];
+    say(note + "Bet " + BET + ". Hit or stand?");
+    render();
+    if (natural(player) || natural(dealer)) finish();
+  };
+  const stand = () => {
+    if (!live) return;
+    hide = false;
+    while (score(dealer) < 17) dealer.push(draw());
+    finish();
+  };
+  const hit = () => {
+    if (!live) return;
+    player.push(draw());
+    const t = score(player);
+    if (t > 21) finish(); else if (t === 21) stand(); else render();
+  };
+  const double = () => {
+    if (!live || player.length !== 2 || chips < BET * 2) return;
+    stake = BET * 2;
+    player.push(draw());
+    if (score(player) > 21) finish(); else stand();
+  };
+  $("bj-deal").onclick = deal; $("bj-hit").onclick = hit; $("bj-stand").onclick = stand; $("bj-double").onclick = double;
+  addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+    const k = e.key.toLowerCase();
+    const act = (k === "enter" || k === " ") && !live ? deal : k === "h" ? hit : k === "s" ? stand : k === "d" ? double : null;
+    if (act) { e.preventDefault(); act(); }
+  }, true);
+  // Back online mid-hand: the hand finishes first, then the page loads.
+  window.bjOnline = () => {
+    if (!live) return location.reload();
+    window.bjBackOnline = true;
+    document.querySelector("h1").textContent = "You're back online";
+    document.querySelector("main > p").textContent = "The page loads when this hand ends.";
+  };
+  render();
+})();
+</script>
+</section>

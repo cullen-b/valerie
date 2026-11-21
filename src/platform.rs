@@ -669,7 +669,7 @@ mod mac {
             let can: bool = msg_send![wv, respondsToSelector: load];
             if can {
                 // The address stays the one that failed, so reload tries it again and Back goes where it should.
-                let html = super::error_page_html(&address, code, &why);
+                let html = super::error_page_html(&address, code, &why, super::OFFLINE_GAME.load(Relaxed));
                 let _: () = msg_send![wv, _loadAlternateHTMLString: &*NSString::from_str(&html), baseURL: url, forUnreachableURL: url];
             }
         }
@@ -3222,6 +3222,8 @@ pub struct Note<'a> {
 /// `pages.error_page` and `pages.http_sign_in`, for the native code that has no way to the settings.
 pub static ERROR_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 pub static HTTP_SIGN_IN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// `pages.offline_game`: the offline page has a hand of blackjack to play while you wait.
+pub static OFFLINE_GAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// "example.com" from "https://example.com:8080/a?b" (never the path or query: they can hold tokens).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -3234,7 +3236,7 @@ pub fn host_of(address: &str) -> String {
 
 /// The page shown in place of a site that didn't load. `code` is the system's (NSURLError…), `why` its own words.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn error_page_html(address: &str, code: isize, why: &str) -> String {
+pub fn error_page_html(address: &str, code: isize, why: &str, game: bool) -> String {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let host = esc(&host_of(address));
     let (title, body) = match code {
@@ -3252,6 +3254,9 @@ pub fn error_page_html(address: &str, code: isize, why: &str) -> String {
         Some(rest) if code == -1004 => format!(r#"<a href="http://{}">Try without https</a>"#, esc(rest)),
         _ => String::new(),
     };
+    let game = if game && code == -1009 { include_str!("../ui/offline-blackjack.html") } else { "" };
+    // Not focused when there's a game: Space deals a hand instead of reloading.
+    let focus = if game.is_empty() { " autofocus" } else { "" };
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light dark"><title>{host}</title><style>
 html{{height:100%}}body{{margin:0;min-height:100%;display:grid;place-items:center;font:15px/1.5 -apple-system,system-ui,sans-serif;background:Canvas;color:CanvasText;-webkit-font-smoothing:antialiased}}
@@ -3263,8 +3268,8 @@ button:active{{transform:scale(.97)}}button:focus-visible,a:focus-visible{{outli
 a{{color:inherit;opacity:.7;margin-left:16px}}
 small{{display:block;margin-top:26px;font:12px/1.4 ui-monospace,monospace;opacity:.45;overflow-wrap:anywhere}}
 @media (prefers-reduced-motion:reduce){{button{{transition:none}}}}
-</style></head><body><main><h1>{title}</h1><p>{body}</p><button autofocus onclick="location.reload()">Try Again</button>{plain}<small>{why} ({code})</small></main>
-<script>addEventListener("online",()=>location.reload())</script></body></html>"#,
+</style></head><body><main><h1>{title}</h1><p>{body}</p><button{focus} onclick="location.reload()">Try Again</button>{plain}<small>{why} ({code})</small>{game}</main>
+<script>addEventListener("online",()=>window.bjOnline?bjOnline():location.reload())</script></body></html>"#,
         why = esc(why),
     )
 }
@@ -3793,11 +3798,18 @@ mod error_page_tests {
 
     #[test]
     fn error_page_escapes_and_offers_http_only_when_refused() {
-        let refused = error_page_html("https://exa<b>mple.com/x?a=\"1\"", -1004, "Could not <connect>");
+        let refused = error_page_html("https://exa<b>mple.com/x?a=\"1\"", -1004, "Could not <connect>", true);
         assert!(refused.contains("exa&lt;b&gt;mple.com refused to connect") && !refused.contains("<b>mple"));
         assert!(refused.contains(r#"href="http://exa&lt;b&gt;mple.com/x?a=&quot;1&quot;""#) && refused.contains("Could not &lt;connect&gt; (-1004)"));
-        let cert = error_page_html("https://example.com/", -1202, "untrusted");
+        let cert = error_page_html("https://example.com/", -1202, "untrusted", true);
         assert!(cert.contains("isn't private") && !cert.contains("Try without https"));
-        assert!(error_page_html("https://example.com/", -1009, "offline").contains("You're offline"));
+        assert!(error_page_html("https://example.com/", -1009, "offline", true).contains("You're offline"));
+    }
+
+    #[test]
+    fn blackjack_only_when_offline_and_switched_on() {
+        assert!(error_page_html("https://example.com/", -1009, "offline", true).contains("id=\"bj\""));
+        assert!(!error_page_html("https://example.com/", -1009, "offline", false).contains("id=\"bj\""));
+        assert!(!error_page_html("https://example.com/", -1004, "refused", true).contains("id=\"bj\""));
     }
 }

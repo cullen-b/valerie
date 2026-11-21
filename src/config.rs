@@ -962,6 +962,7 @@ pub struct PagesConfig {
     pub youtube_downloads: bool,
     pub quick_full_screen: bool,
     pub error_page: bool,
+    pub offline_game: bool,
     pub http_sign_in: bool,
 }
 
