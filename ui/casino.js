@@ -30,7 +30,7 @@
   const still = matchMedia("(prefers-reduced-motion: reduce)");
   // Only Valerie's own page keeps your chips: the offline page belongs to the site that didn't load.
   const OWN = location.protocol === "valerie:";
-  let oy = 0, S = 2, ink = "#535353", dim = "#cfcfcf", chips = 100, best = 100, ended = -Infinity, backOnline = false, said = "", bots = 3;
+  let oy = 0, S = 2, ink = "#535353", dim = "#cfcfcf", chips = 100, best = 100, ended = -Infinity, backOnline = false, said = "", bots = 1;
   try { const s = OWN && JSON.parse(localStorage.getItem("casino") || "{}"); if (s && s.chips > 0) { chips = s.chips; best = s.best || chips; } if (s && s.bots >= 1 && s.bots <= 5) bots = s.bots; } catch {}
   const save = () => { best = Math.max(best, chips); if (OWN) try { localStorage.setItem("casino", JSON.stringify({ chips, best, bots, game: game.name })); } catch {} };
 
