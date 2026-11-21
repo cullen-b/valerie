@@ -519,6 +519,11 @@ pages:
   quick_full_screen: true  # a page's full screen (a video's button) fills the whole screen straight away: no slide to a
                            # separate desktop on the Mac, and over the whole window everywhere. false = the system's own way:
                            # the Mac's slide; on Windows and Linux the video stays inside the tab's area
+  error_page: true         # Mac: when a site doesn't load (offline, a mistyped address, a site that's down), a page says
+                           # why, with Try Again; it loads by itself when you're back online. false = the tab stays as it was.
+                           # (Windows and Linux show their system's own error page either way.) true | false
+  http_sign_in: true       # Mac: the name and password box for sites that ask the old way (HTTP sign-in: routers, staging
+                           # sites, intranets). false = such sites only show their "401" page. true | false
   youtube_sharp_start: true # YouTube videos start at full quality even if a past hiccup left YouTube expecting a bad connection.
                            # Your real connection speed still counts. false = leave YouTube's saved estimate alone
   youtube_downloads: true  # YouTube is told Valerie is Chrome, so YouTube Premium's Download button shows (YouTube only
@@ -715,6 +720,9 @@ keybindings:
   "CmdOrCtrl+6": { cmd: go_to_tab, index: 5 }
   "CmdOrCtrl+7": { cmd: go_to_tab, index: 6 }
   "CmdOrCtrl+8": { cmd: go_to_tab, index: 7 }
+  "CmdOrCtrl+9": { cmd: go_to_tab, last: true }   # the last tab in the list, however many there are
+  "CmdOrCtrl+Shift+]": next_tab      # as in other browsers
+  "CmdOrCtrl+Shift+[": prev_tab
   "Ctrl+Shift+Equal": split_view
   "Ctrl+Shift+Minus": unsplit
   "Ctrl+Shift+Right": focus_next_pane

@@ -4751,6 +4751,14 @@ impl App {
         if keeps {
             e.push(item("Close and Remove from Sidebar", json!({ "cmd": "delete_items", "tabs": [tab] })));
         }
+        let today = &self.state.space().today;
+        if today.iter().any(|t| *t != tab) {
+            e.push(item("Close Other Tabs", json!({ "cmd": "close_other_tabs", "tab": tab })));
+        }
+        if today.iter().position(|t| *t == tab).is_some_and(|i| i + 1 < today.len()) {
+            let after = if self.config.layout.tab_bar == TabBar::Top { "Close Tabs to the Right" } else { "Close Tabs Below" };
+            e.push(item(after, json!({ "cmd": "close_other_tabs", "tab": tab, "below": true })));
+        }
         let ctx: std::collections::BTreeMap<String, String> = [("tab".to_string(), t.url.clone())].into();
         e.extend(self.plugin_menu_items(&["tab"], &ctx));
         self.popup(e, x, y);
@@ -5508,7 +5516,8 @@ impl App {
             Command::SwitchSpace { index: Some(i), .. } => {
                 format!("Switch to {}", self.state.spaces.get(*i).map(|s| s.name.clone()).unwrap_or(format!("Space {}", i + 1)))
             }
-            Command::GoToTab { index } => format!("Go to Tab {}", index + 1),
+            Command::GoToTab { last: true, .. } => "Go to Last Tab".into(),
+            Command::GoToTab { index, .. } => format!("Go to Tab {}", index + 1),
             Command::OpenCommandBar { mode: BarMode::Current } => "Edit URL".into(),
             Command::OpenCommandBar { .. } => "Command Bar".into(),
             c => {
@@ -5982,6 +5991,8 @@ impl App {
     /// Window, Dock and system-wide settings that apply to the app as a whole (window.*, app.*, global_keybindings).
     fn apply_app_settings(&mut self) {
         platform::QUICK_FULLSCREEN.store(self.config.pages.quick_full_screen, std::sync::atomic::Ordering::Relaxed);
+        platform::ERROR_PAGE.store(self.config.pages.error_page, std::sync::atomic::Ordering::Relaxed);
+        platform::HTTP_SIGN_IN.store(self.config.pages.http_sign_in, std::sync::atomic::Ordering::Relaxed);
         crate::mcp::set_web_tools(self.config.mcp.web_tools);
         crate::mcp::set_ask_user(self.config.mcp.ask_user);
         let print = serde_json::to_string(&(&self.config.window, &self.config.app.icon, &self.config.global_keybindings)).unwrap_or_default();
@@ -6990,8 +7001,8 @@ impl App {
                 Command::CloseTab { tab: None } if more => return self.little_close_tab(id),
                 Command::NextTab | Command::LastTab if more => return self.little_show_tab(id, l.page_along(1)),
                 Command::PrevTab if more => return self.little_show_tab(id, l.page_along(-1)),
-                Command::GoToTab { index } if more => {
-                    let n = l.order.get(*index).copied().unwrap_or(l.page);
+                Command::GoToTab { index, last } if more => {
+                    let n = if *last { l.order.last() } else { l.order.get(*index) }.copied().unwrap_or(l.page);
                     return self.little_show_tab(id, n);
                 }
                 // With other tabs and `little_window.open_all_tabs` off, only this one moves (it loads again there).
@@ -7178,8 +7189,9 @@ impl App {
                 };
                 self.activate(list[next]);
             }
-            Command::GoToTab { index } => {
-                if let Some(t) = self.cycle_list().get(index).copied() {
+            Command::GoToTab { index, last } => {
+                let list = self.cycle_list();
+                if let Some(t) = if last { list.last() } else { list.get(index) }.copied() {
                     self.activate(t);
                 }
             }
@@ -8234,6 +8246,23 @@ impl App {
                 }
                 let input = text.lines().next().unwrap_or(text).chars().take(2000).collect();
                 self.dispatch(Command::Go { input, new_tab: true }, elwt);
+            }
+            Command::CloseOtherTabs { tab, below } => {
+                let Some(keep) = self.target_tab(tab) else { return };
+                let sp = self.state.space();
+                // A split's other panes stay with it.
+                let together: Vec<TabId> = sp.splits.iter().find(|g| g.contains(&keep)).cloned().unwrap_or_default();
+                let from = if below { sp.today.iter().position(|t| *t == keep).map_or(usize::MAX, |i| i + 1) } else { 0 };
+                let close: Vec<TabId> = sp.today.iter().skip(from).copied().filter(|t| *t != keep && !together.contains(t)).collect();
+                let n = close.len();
+                for id in close {
+                    self.dispatch(Command::CloseTab { tab: Some(id) }, elwt);
+                }
+                self.toast(&match n {
+                    0 => "No other tabs to close".to_string(),
+                    1 => "Closed 1 tab".to_string(),
+                    n => format!("Closed {n} tabs"),
+                });
             }
             Command::CloseDuplicateTabs => {
                 let active = self.state.active_tab();
@@ -10826,7 +10855,7 @@ const BROWSER_MENUS: &[(&str, &[&str])] = &[
     ("View", &["toggle_sidebar", "toggle_tab_bar_position", "cycle_sidebar_size", "reload", "hard_reload", "stop", "zoom_in", "zoom_out", "zoom_reset", "reader_view", "toggle_dark_page", "translate_page", "split_view", "unsplit", "focus_next_pane", "focus_pane", "toggle_terminal", "new_terminal", "layout_gallery", "next_layout", "reset_layout", "duplicate_layout", "switch_layout", "dev_tools", "view_source", "hide_element", "show_hidden_elements", "forget_cookie_choice"]),
     ("History", &["back", "forward", "reopen_closed_tab", "history", "clear_site_data", "clear_cache", "clear_cache_and_cookies"]),
     ("Bookmarks", &["toggle_favorite", "review_saved_tabs"]),
-    ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs"]),
+    ("Tabs", &["duplicate_tab", "toggle_pin", "toggle_keep", "new_folder", "clear_today_tabs", "next_tab", "prev_tab", "last_tab", "go_to_tab", "toggle_mute", "toggle_media", "skip_media", "close_duplicate_tabs", "close_other_tabs"]),
     ("Spaces", &["next_space", "prev_space", "switch_space", "new_space", "delete_space", "rename_space"]),
     ("Window", &["downloads", "show_downloads", "extensions"]),
     ("Help", &["welcome", "report_problem", "check_for_updates", "toggle_test_builds"]),

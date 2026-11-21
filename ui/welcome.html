@@ -19,7 +19,7 @@ body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sa
 @keyframes drift { to { transform: translate(3%, -2%) scale(1.04); } }
 #drag { position: fixed; top: 0; left: 0; right: 0; height: 38px; z-index: 5; }
 #top { position: fixed; top: 0; left: 0; right: 0; height: 64px; display: flex; align-items: center; justify-content: center; gap: 10px; z-index: 6; pointer-events: none; }
-.dot { height: 6px; width: 6px; border-radius: 3px; background: var(--faint); transition: all .35s cubic-bezier(.2,.8,.2,1); }
+.dot { height: 6px; width: 6px; border-radius: 3px; background: var(--faint); transition: width .35s cubic-bezier(.2,.8,.2,1), background-color .35s cubic-bezier(.2,.8,.2,1); }
 .dot.on { width: 26px; background: var(--accent); } .dot.past { background: color-mix(in srgb, var(--accent) 55%, transparent); }
 #stage { position: absolute; inset: 64px 0 84px; overflow-y: auto; }
 .step { max-width: 880px; margin: 0 auto; padding: 22px 40px 40px; animation: enter .45s cubic-bezier(.2,.8,.2,1); }
@@ -120,7 +120,7 @@ h2.section { font-size: 22px; letter-spacing: -.4px; margin: 34px 0 6px; font-we
 .q { font-size: 26px; font-weight: 700; letter-spacing: -.5px; margin: 0 0 6px; }
 .qhelp { color: var(--dim); margin: 0 0 18px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.pick { padding: 9px 15px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); font-size: 14px; transition: all .15s; }
+.pick { padding: 9px 15px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); font-size: 14px; transition: background-color .15s, border-color .15s, color .15s; }
 .pick:hover { background: var(--card2); } .pick.on { background: color-mix(in srgb, var(--accent) 20%, transparent); border-color: var(--accent); color: var(--fg); }
 textarea, input { all: unset; display: block; width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 12px; background: rgba(0,0,0,.28);
   border: 1px solid var(--line); color: var(--fg); font-size: 14.5px; line-height: 1.5; user-select: text; }

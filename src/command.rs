@@ -41,7 +41,11 @@ pub enum Command {
     NextTab,
     PrevTab,
     GoToTab {
+        #[serde(default)]
         index: usize,
+        /// The last tab in the list, whatever its number (⌘9 in other browsers).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        last: bool,
     },
     TogglePin {
         #[serde(default)]
@@ -572,6 +576,13 @@ pub enum Command {
     },
     /// Close Today tabs showing the same page as another tab in this space.
     CloseDuplicateTabs,
+    /// Close this space's Today tabs except one (pinned and kept tabs stay); `below`: only the ones listed after it.
+    CloseOtherTabs {
+        #[serde(default)]
+        tab: Option<TabId>,
+        #[serde(default)]
+        below: bool,
+    },
     /// Switch this computer between test builds (every change as soon as it's built) and stable releases.
     ToggleTestBuilds,
     /// Ask about pinned, kept and favorite tabs you haven't opened in `tabs.ask_to_keep_unused_days`.
@@ -883,6 +894,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("search_selection", "Search Selected Text"),
     ("paste_and_go", "Paste and Go"),
     ("close_duplicate_tabs", "Close Duplicate Tabs"),
+    ("close_other_tabs", "Close Other Tabs"),
     ("toggle_test_builds", "Toggle Test Builds (get every change as soon as it's made, or go back to stable releases)"),
     ("review_saved_tabs", "Review Saved Tabs (pinned and kept ones you haven't opened in a while)"),
     ("print", "Print Page…"),
@@ -949,8 +961,9 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("go", "{ input, new_tab? }  (URL or search terms, like typing in the command bar)"),
     ("navigate", "{ url, tab? }"),
     ("close_tab", "{ tab? }"),
+    ("close_other_tabs", "{ tab?, below? }  (Today tabs only; below: true closes just the ones listed after it)"),
     ("activate_tab", "{ tab }"),
-    ("go_to_tab", "{ index }  (0-based, favorites first)"),
+    ("go_to_tab", "{ index }  (0-based, favorites first), or { last: true } for the last tab"),
     ("toggle_pin", "{ tab? }"),
     ("toggle_favorite", "{ tab? }"),
     ("move_tab", "{ tab, section?: pinned | kept | today, space?, folder?, index?, favorite? }"),
