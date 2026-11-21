@@ -60,13 +60,25 @@ extern "C" fn start_task(
   webview: &WryWebView,
   task: &ProtocolObject<dyn WKURLSchemeTask>,
 ) {
+  // A pop-up the app made itself is a plain WKWebView sharing this handler, without wry's fields: fail its request.
+  if !is_wry(webview) {
+    return answer_500(task);
+  }
   if std::panic::catch_unwind(AssertUnwindSafe(|| start_task_inner(this, sel, webview, task))).is_err() {
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| fail_task(webview, task)));
   }
 }
 
+fn is_wry(webview: &WryWebView) -> bool {
+  webview.isKindOfClass(WryWebView::class())
+}
+
 fn fail_task(webview: &WryWebView, task: &ProtocolObject<dyn WKURLSchemeTask>) {
   webview.remove_custom_task_key(task.hash());
+  answer_500(task);
+}
+
+fn answer_500(task: &ProtocolObject<dyn WKURLSchemeTask>) {
   let Some(url) = (unsafe { task.request() }).URL() else { return };
   let response = NSHTTPURLResponse::initWithURL_statusCode_HTTPVersion_headerFields(
     NSHTTPURLResponse::alloc(),
@@ -373,5 +385,7 @@ extern "C" fn stop_task(
   webview: &WryWebView,
   task: &ProtocolObject<dyn WKURLSchemeTask>,
 ) {
-  webview.remove_custom_task_key(task.hash());
+  if is_wry(webview) {
+    webview.remove_custom_task_key(task.hash());
+  }
 }
