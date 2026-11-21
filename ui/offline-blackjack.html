@@ -29,7 +29,7 @@
   const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"], BET = 10;
   const still = matchMedia("(prefers-reduced-motion: reduce)"), dark = matchMedia("(prefers-color-scheme: dark)");
   let S = 2, ink, dim, shoe = [], dealer = [], player = [], chips = 100, best = 100, stake = BET;
-  let live = false, busy = false, hide = true, msg = "PRESS SPACE TO DEAL", buttons = [];
+  let ended = -Infinity, live = false, busy = false, hide = true, msg = "PRESS SPACE TO DEAL", buttons = [];
 
   const px = (x, y, w = 1, h = 1, c = ink) => { ctx.fillStyle = c; ctx.fillRect(x * S, y * S, w * S, h * S); };
   const wide = s => s.length * 4 - 1;
@@ -40,7 +40,7 @@
       x += 4;
     }
   };
-  const card = (x, y, c, down) => {
+  const card = (x, y, c, down, top) => {
     ctx.clearRect(x * S, y * S, 22 * S, 30 * S);
     px(x + 1, y, 20); px(x + 1, y + 29, 20); px(x, y + 1, 1, 28); px(x + 21, y + 1, 1, 28);
     if (down) {
@@ -49,7 +49,7 @@
     }
     text(c.r, x + 2, y + 2);
     // In the corner under the rank, so it still shows when the next card covers the rest.
-    SUIT[c.s].forEach((row, j) => [...row].forEach((b, i) => b === "1" && px(x + 2 + i, y + 9 + j)));
+    SUIT[c.s].forEach((row, j) => [...row].forEach((b, i) => b === "1" && (px(x + 2 + i, y + 9 + j), top && px(x + 12 + i, y + 19 + j))));
   };
   const button = (label, x, on, lit) => {
     const w = wide(label) + 6, c = on ? ink : dim;
@@ -63,16 +63,18 @@
     const r = cv.getBoundingClientRect();
     S = Math.max(1, Math.round((r.width || 420) / W * devicePixelRatio));
     if (cv.width !== W * S) { cv.width = W * S; cv.height = H * S; }
-    ink = dark.matches ? "#acacac" : "#535353";
-    dim = dark.matches ? "#4a4a4a" : "#cfcfcf";
+    // Follow the page's own colours (light text = a dark page), not just the system's setting.
+    const [r0, g0, b0] = getComputedStyle(document.body).color.match(/\d+/g).map(Number), night = r0 + g0 + b0 > 384;
+    ink = night ? "#acacac" : "#535353";
+    dim = night ? "#4a4a4a" : "#cfcfcf";
     ctx.clearRect(0, 0, cv.width, cv.height);
     const score = "HI " + pad(best) + "  " + pad(chips), sx = W - wide(score);
     text("HI " + pad(best), sx, 0, dim); text(pad(chips), sx + wide("HI " + pad(best)) + 9, 0);
     text("DEALER" + (dealer.length ? " " + (live && hide ? total([dealer[0]]) : total(dealer)) : ""), 0, 0);
-    dealer.forEach((c, i) => card(i * 14, 8, c, live && hide && i === 1));
+    dealer.forEach((c, i) => card(i * 14, 8, c, live && hide && i === 1, i === dealer.length - 1));
     for (let x = 0; x < W; x += 4) px(x, 42, 2);
     text("YOU" + (player.length ? " " + total(player) : ""), 0, 47);
-    player.forEach((c, i) => card(i * 14, 55, c, false));
+    player.forEach((c, i) => card(i * 14, 55, c, false, i === player.length - 1));
     text(msg, 0, 92);
     buttons = [];
     let x = button("DEAL", 0, !live && !busy, true);
@@ -97,7 +99,7 @@
   const natural = hand => hand.length === 2 && total(hand) === 21;
 
   const finish = () => {
-    live = false; busy = false;
+    live = false; busy = false; ended = performance.now();
     const p = total(player), d = total(dealer), bj = natural(player) && !natural(dealer);
     const win = bj ? stake * 1.5 : p > 21 || (natural(dealer) && !natural(player)) ? -stake : d > 21 || p > d ? stake : p < d ? -stake : 0;
     chips += win; best = Math.max(best, chips);
@@ -148,7 +150,8 @@
     if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
     const k = e.key.toLowerCase();
     const act = (k === " " || k === "enter") && !live ? deal : k === "h" || k === " " ? hit : k === "s" ? stand : k === "d" ? double : null;
-    if (act) { e.preventDefault(); act(); }
+    // A short pause after a hand ends, so pressing Space again right away doesn't skip past the result.
+    if (act) { e.preventDefault(); if (act !== deal || performance.now() - ended > 500) act(); }
   }, true);
   dark.addEventListener("change", draw);
   addEventListener("resize", draw);
