@@ -176,12 +176,13 @@ changed in plain words. Some translations:
 | "cmd+D from another app should bring Valerie's window forward too" | `command_bar: {{ over_other_apps: false }}` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "Sidebar only when I push the mouse to the edge" / "the page shouldn't resize when it shows" | `layout.sidebar_visible: false`, `layout.reveal_sidebar_on_edge: true`, `layout.reveal_sidebar_over_page: true` (`false` squeezes the page instead) |
-| "Always show the little window's bar" / "hide it until I point at the top" | `little_window.top_bar: always` / `hover` |
+| "Always show the little window's bar" / "slide it out (growing the window) only when I point at the top" / "keep its space but fade it in when the mouse comes near" | `little_window.top_bar: always` / `hover` / `fade` (the default) |
 | "The little window's bar should come out more easily" / "only at the very edge" | `little_window.reveal_zone` (pixels from the top, default 24; `6` = the very edge) |
 | "Square corners on the little window's page under the bar" | `little_window.page_corner_radius: 0` (default 10) |
 | "The little window's bar should slide down over the page instead of growing the window upward" | `little_window.bar_reveal: over` (`above`, the default, grows the window upward so the bar covers nothing) |
 | "In full screen, the little window's bar should cover the page, not push it down" | `little_window.full_screen_bar: over` (`room`, the default, keeps a strip for the bar above the page) |
 | "No tabs in little windows" / "the command bar in a little window should open the main window" | `little_window.tabs: false` (⌘T and the command bar then work as in the main window) |
+| "The command bar key in a little window should just ask for an address in its own bar" | `little_window.command_bar: false` (`true`, the default, opens the full command bar over the little window; what you open from it becomes a tab there) |
 | "⌘N in a little window should open another little window" / "a different key for that" / "turn it off" | `little_window.new_window_key: "CmdOrCtrl+N"` (the default) / `"CmdOrCtrl+Shift+N"` / `""` |
 | "A different key for a new little window" / "turn Ctrl+; off" | `global_keybindings: {{ "Ctrl+Semicolon": null, "Ctrl+Alt+L": new_little_window }}`; other apps (Karabiner, Raycast) can run `open -b dev.valerie.browser 'valerie://little'` |
 | "Quit when I close the window" / "stay running in the Dock" | `app.keep_running_when_closed: false` (quits) / `true` (stays; ⌘Q quits) on macOS; on Windows and Linux `app.keep_running_when_closed_without_dock` (`false` quits, the default; `true` stays, and opening Valerie again shows it) |

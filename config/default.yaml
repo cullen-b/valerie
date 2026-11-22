@@ -365,10 +365,13 @@ downloads:
 
 # Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
 reader_view:
-  theme: auto              # one of: auto (follows your computer's light/dark mode) | light | dark | sepia
-  font: serif              # one of: serif | sans
+  theme: auto              # one of: auto (follows your computer's light/dark mode) | light | sepia | gray | dark | black
+  font: serif              # one of: serif | sans | mono
   font_size: 19            # text size in pixels
   width: 680               # column width in pixels
+  line_height: 1.65        # space between lines, as a multiple of the text size (1.4 tight … 1.95 loose)
+                           # A PDF's reader has an Aa button to change these while you read; it remembers your picks for
+                           # that site (or for files on this computer) until you press "Reset to your settings file".
 
 # The Chats space: conversations with your agents, to the left of your first space (⌘J opens it).
 chats:
@@ -557,6 +560,10 @@ pages:
   markdown_live: true      # a file on this computer updates on screen as soon as it's saved (yours or your AI's edits)
   pdf_viewer: true         # show PDFs in Valerie's own viewer, which can add text, a signature or arrows and save a
                            # marked-up copy to your downloads. false = macOS's built-in PDF view
+  pdf_reader: true         # a Reader button in the PDF viewer (also the reader_view command, ⌘⌥R / Ctrl+Alt+R): the PDF's
+                           # text in one clean column, styled by reader_view. true | false (false = no reader for PDFs)
+  pdf_reader_pictures: true # the reader also shows the PDF's pictures, and pages that are only a picture (scans).
+                           # true | false (false = text only)
   markdown_edit: here      # what Edit does on a file on this computer. one of: here (Valerie's own editor beside a live
                            # preview; saves as you type) | editor (opens it in your `editor` app)
                            # ("Open Markdown Files in Valerie" in the command bar makes Valerie the app .md files open in;
@@ -603,11 +610,12 @@ links:
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
-  top_bar: hover           # the bar with "Open in …". one of: hover (hidden; bring the mouse to the window's top and
-                           # it slides out) | always
+  top_bar: fade            # the bar with "Open in …". one of: fade (its strip stays above the page but is see-through
+                           # until the mouse comes near the top, then it fades in quickly) | hover (hidden; bring the
+                           # mouse to the window's top and the window grows to slide it out) | always
   bar_reveal: above        # where the hidden bar slides out. one of: above (the window grows upward to fit it, so the
                            # bar sits on top of the page and covers nothing) | over (down over the page's top, inside the window)
-  reveal_zone: 24          # with top_bar: hover, how close to the window's top the mouse has to move (upward) to bring
+  reveal_zone: 24          # with top_bar: hover or fade, how close to the window's top the mouse has to move (upward) to bring
                            # the bar out, pixels. Bigger = easier to reach; 6 = only the very edge
   page_corner_radius: 10   # rounds the page's top corners while the bar shows above it, pixels (Mac). 0 = square
   full_screen_bar: room    # with top_bar: hover, when a little window is full screen (or fills the screen). one of: room
@@ -633,6 +641,9 @@ little_window:
   tabs: true               # a little window can hold tabs: ⌘T (Ctrl+T) and the command bar open a new tab in it, and
                            # its tabs show in the top bar once there are two. true | false (false = one page each;
                            # the command bar opens in the main window)
+  command_bar: true        # with tabs on, the command bar key in a little window opens the full command bar over it,
+                           # and an address or search from it opens as a new tab in the little window. true | false
+                           # (false = the key opens an empty tab in the little window that asks in its own bar)
   open_all_tabs: true      # "Open in …" on a little window with tabs moves all of its tabs into your tabs, in its
                            # order. true | false (false = only the tab showing moves; the others close)
   width: 960               # pixels, until you've resized one (or always, with remember_size off)

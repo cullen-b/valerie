@@ -66,6 +66,45 @@ body.tool-text .vpdf-marks { cursor: text; }
 .textLayer ::selection { background: color-mix(in srgb, AccentColor, transparent 50%); color: transparent; }
 .textLayer br::selection { background: transparent; }
 .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; -webkit-user-select: none; }
+.vpdf-reader { position: fixed; inset: 0; z-index: 40; overflow: auto; overscroll-behavior: contain; outline: none; background: var(--rbg); color: var(--rfg);
+  --rdim: color-mix(in srgb, var(--rfg) 62%, transparent); --rline: color-mix(in srgb, var(--rfg) 13%, transparent); --rsoft: color-mix(in srgb, var(--rfg) 7%, transparent); }
+html.reading { overflow: hidden; }
+.rd-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; height: 46px; padding: 0 12px 0 16px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--rbg) 86%, transparent); backdrop-filter: saturate(1.4) blur(16px); -webkit-backdrop-filter: saturate(1.4) blur(16px);
+  font: 13px/1.3 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+.rd-bar .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; } .rd-bar .grow { flex: 1; }
+.rd-bar .info { color: var(--rdim); white-space: nowrap; font-variant-numeric: tabular-nums; padding: 0 6px; }
+.vpdf-reader button { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 7px; color: var(--rdim); font: 550 13px/1.3 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; white-space: nowrap; }
+.vpdf-reader button:hover, .vpdf-reader button[aria-expanded=true] { color: var(--rfg); background: var(--rsoft); }
+.vpdf-reader button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rd-bar .aa { font-family: Georgia, serif; font-size: 15px; font-weight: 500; letter-spacing: -.2px; }
+.rd-col { max-width: var(--rwidth); margin: 0 auto; padding: 40px 28px 160px; font: var(--rsize)/var(--rlh) var(--rfont); text-wrap: pretty; overflow-wrap: break-word; }
+.rd-col h1 { font-size: 1.85em; line-height: 1.18; margin: .4em 0 1em; letter-spacing: -.01em; text-wrap: balance; }
+.rd-col h2 { font-size: 1.35em; line-height: 1.25; margin: 1.7em 0 .55em; text-wrap: balance; }
+.rd-col h3 { font-size: 1.1em; line-height: 1.3; margin: 1.5em 0 .45em; }
+.rd-col p { margin: 0 0 1em; content-visibility: auto; contain-intrinsic-size: auto 6em; } .rd-col ul { margin: 0 0 1em; padding-left: 1.3em; } .rd-col li { margin: 0 0 .35em; }
+.rd-col li.num { list-style: none; margin-left: -1.3em; }
+.rd-col .small, .rd-col .caption { font-size: .84em; color: var(--rdim); }
+.rd-col figure { margin: 1.4em 0; } .rd-col figure canvas { display: block; max-width: 100%; height: auto; border-radius: 4px; background: #fff; }
+.vpdf-reader[data-dark] .rd-col figure canvas { filter: brightness(.88); }
+.rd-col .status { color: var(--rdim); font-style: italic; }
+.rd-col .pg { display: block; margin: 2.2em 0 1.2em; border-top: 1px solid var(--rline); font: 11px/1 -apple-system, system-ui, sans-serif; color: var(--rdim); padding-top: 6px; text-align: right; font-variant-numeric: tabular-nums; }
+.rd-panel { position: fixed; top: 50px; right: 12px; z-index: 3; width: 272px; padding: 14px; box-sizing: border-box; border-radius: 14px; display: flex; flex-direction: column; gap: 14px;
+  background: color-mix(in srgb, var(--rbg) 92%, var(--rfg) 4%); border: 1px solid var(--rline); box-shadow: 0 18px 50px rgba(0,0,0,.28);
+  font: 12px/1.3 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+.rd-panel .lbl { color: var(--rdim); margin-bottom: 6px; }
+.rd-panel .seg { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--rsoft); }
+.rd-panel .seg button { flex: 1; text-align: center; padding: 6px 4px; font-size: 12px; }
+.rd-panel .seg button[aria-pressed=true] { color: var(--rfg); background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.rd-panel .themes { display: flex; justify-content: space-between; }
+.rd-panel .themes button { width: 38px; height: 38px; padding: 0; border-radius: 50%; display: grid; place-items: center; font: 500 14px/1 Georgia, serif;
+  box-shadow: inset 0 0 0 1px var(--rline); }
+.rd-panel .themes button[aria-pressed=true] { box-shadow: 0 0 0 2px var(--rbg), 0 0 0 4px var(--accent); }
+.rd-panel .size { display: flex; align-items: center; gap: 6px; } .rd-panel .size output { flex: 1; text-align: center; font-variant-numeric: tabular-nums; color: var(--rfg); }
+.rd-panel .size button { padding: 6px 12px; background: var(--rsoft); }
+.rd-panel .reset { align-self: flex-start; padding: 2px 0; font-size: 12px; } .rd-panel .reset:hover { background: none; text-decoration: underline; }
+@media (max-width: 520px) { .rd-col { padding: 28px 18px 120px; } .rd-bar .name { display: none; } }
+@media print { .vpdf-reader { position: static; overflow: visible; } html.reading .vpdf-bar, html.reading .vpdf-pages, .rd-bar, .rd-panel { display: none !important; } }
 @media print { .vpdf-bar { display: none; } .vpdf-pages { padding: 0; gap: 0; } .vpdf-page { box-shadow: none; } }`;
 
 async function readBytes() {
@@ -127,14 +166,17 @@ async function start() {
     arrow: btn("Arrow", "Drag on the page to draw an arrow", () => setTool("arrow")),
   };
   const color = el("input"); color.type = "color"; color.value = localStorage.getItem("valerie-pdf-color") || "#d43f3a"; color.title = tr("Colour for text and arrows");
-  color.oninput = () => { localStorage.setItem("valerie-pdf-color", color.value); if (selected && selected.color) { snapshot(); selected.color = color.value; drawMarks(selected.page); } };
+  let picking = false;   // one undo step per trip to the colour picker, not one per colour it passes through
+  color.onchange = () => { picking = false; };
+  color.oninput = () => { localStorage.setItem("valerie-pdf-color", color.value); if (selected && selected.color) { if (!picking) snapshot(); picking = true; selected.color = color.value; drawMarks(selected.page); } };
   const undoBtn = btn("Undo", /Mac/.test(navigator.platform) ? "Undo (⌘Z)" : "Undo (Ctrl+Z)", () => undo());
+  const readerBtn = btn("Reader", "Read the text in one column, in the type and colours you like", () => openReader());
   const saveBtn = btn("Save Copy", "Save a copy with your marks to your downloads", () => save(), "primary");
   const toolGroup = el("div", "group"); toolGroup.append(...Object.values(tools));
   const zoomGroup = el("div", "group");
   zoomGroup.append(btn("−", "Zoom out", () => setZoom(zoom / 1.2)), zoomLabel, btn("+", "Zoom in", () => setZoom(zoom * 1.2)));
   zoomLabel.title = tr("Fit the width of the window"); zoomLabel.onclick = () => setZoom(fitZoom());
-  bar.append(el("span", "name", fileName), el("span", "grow"), info, zoomGroup, toolGroup, color, undoBtn, saveBtn);
+  bar.append(el("span", "name", fileName), el("span", "grow"), info, ...(CFG.pages && CFG.pages.pdf_reader === false ? [] : [readerBtn]), zoomGroup, toolGroup, color, undoBtn, saveBtn);
   const pagesEl = el("main", "vpdf-pages");
   body.append(bar, pagesEl);
 
@@ -199,8 +241,9 @@ async function start() {
   // ---------- marks ----------
   // Each mark lives in its page's own units (PDF points, from the top-left), so zooming just scales the layer.
   let tool = "select", selected = null, history = [], dirty = false, signature = localStorage.getItem("valerie-signature");
-  const snapshot = () => { history.push(JSON.stringify(pages.map((p) => p.list))); if (history.length > 100) history.shift(); undoBtn.disabled = false; dirty = true; };
+  const snapshot = (state = JSON.stringify(pages.map((p) => p.list))) => { history.push(state); if (history.length > 100) history.shift(); undoBtn.disabled = false; dirty = true; };
   const undo = () => {
+    if (document.activeElement && document.activeElement.isContentEditable) document.activeElement.blur();   // ends an edit, so it's undone first
     const last = history.pop(); if (!last) return;
     JSON.parse(last).forEach((list, i) => { pages[i].list = list.map((m) => ({ ...m, page: pages[i].n })); });
     selected = null; pages.forEach((p) => drawMarks(p.n)); undoBtn.disabled = !history.length;
@@ -276,20 +319,31 @@ async function start() {
     const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
     addEventListener("pointermove", move); addEventListener("pointerup", up);
   }
-  function editText(d, m) {
+  function editText(d, m, fresh) {
     select(m); d = m.el;
     d.contentEditable = "true"; d.focus();
     const range = document.createRange(); range.selectNodeContents(d); const s = getSelection(); s.removeAllRanges(); s.addRange(range);
     // The text is kept as it's typed: a toolbar click doesn't take the focus away in WebKit, it just redraws.
+    // An edit is one undo step; a new box's typing is part of placing it, which already is one.
+    const start = m.text, now = () => d.innerText.replace(/\n$/, "");
     let changed = false;
-    d.addEventListener("input", () => { if (!changed) { snapshot(); changed = true; } m.text = d.innerText.replace(/\n$/, ""); });
+    d.addEventListener("input", () => { if (!changed && !fresh) snapshot(); changed = true; m.text = now(); dirty = true; });
     const done = () => {
       d.removeEventListener("blur", done);
-      if (!m.text.trim()) { const p = pageOf(m); p.list = p.list.filter((k) => k !== m); selected = null; }
+      const gone = !m.text.trim();
+      if (gone) { const p = pageOf(m); p.list = p.list.filter((k) => k !== m); selected = null; }
+      if (fresh && gone) { history.pop(); undoBtn.disabled = !history.length; }
       d.contentEditable = "false"; drawMarks(m.page);
     };
     d.addEventListener("blur", done);
-    d.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) { e.preventDefault(); d.blur(); } });
+    d.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      // ⌘Z (Ctrl+Z) with nothing typed left to undo in the box ends the edit and undoes the last change to the document.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z" && now() === start) {
+        e.preventDefault(); if (changed && !fresh) history.pop();   // typing undone back to the start leaves no step
+        d.blur(); undo(); return;
+      }
+      if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) { e.preventDefault(); d.blur(); } });
   }
   // Tools: a click places text or the signature; a drag draws an arrow.
   for (const p of pages) {
@@ -300,7 +354,7 @@ async function start() {
       if (tool === "text") {
         snapshot();
         const m = { type: "text", page: p.n, x, y: y - 9, text: tr("Text"), size: 14, color: color.value };
-        p.list.push(m); drawMarks(p.n); editText(m.el, m); setTool("select");
+        p.list.push(m); drawMarks(p.n); editText(m.el, m, true); setTool("select");
       } else if (tool === "sign") {
         if (!signature) return signaturePad();
         const img = new Image();
@@ -326,7 +380,8 @@ async function start() {
   }
   document.addEventListener("pointerdown", (e) => { if (selected && !e.target.closest(".mk") && !e.target.classList.contains("hit") && !e.target.closest(".vpdf-bar")) select(null); });
   document.addEventListener("keydown", (e) => {
-    const typing = e.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+    if (rdEl) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (rdPanel) closePanel(); else closeReader(); } return; }
+    const typing = e.target.isContentEditable || e.target.tagName === "TEXTAREA" || (e.target.tagName === "INPUT" && e.target.type !== "color");
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); e.stopPropagation(); undo(); }
     else if ((e.key === "Backspace" || e.key === "Delete") && selected && !typing) {
       e.preventDefault(); e.stopPropagation(); snapshot();
@@ -334,6 +389,267 @@ async function start() {
     } else if (e.key === "Enter" && selected && selected.type === "text" && !typing) { e.preventDefault(); editText(selected.el, selected); }
     else if (e.key === "Escape" && !typing && (tool !== "select" || selected)) { e.preventDefault(); e.stopPropagation(); setTool("select"); select(null); }
   }, true);
+
+  // ---------- reader (pages.pdf_reader): the PDF's text in one column, in the type and colours you pick ----------
+  // Lines come from pdf.js's text in reading order; size, gaps and indents make them headings, paragraphs and lists.
+  // Running headers, footers and page numbers are left out; pictures are cut from the pages (pages.pdf_reader_pictures).
+  const THEMES = { light: ["#fbf8f2", "#26231f", "Light"], sepia: ["#f4ecd8", "#5b4636", "Sepia"], gray: ["#4a4a50", "#e7e5df", "Gray"],
+    dark: ["#1d1c21", "#e3e0d9", "Dark"], black: ["#000000", "#b9b5ac", "Black"] };
+  const FONTS = { serif: ['"New York", "Iowan Old Style", Charter, Georgia, serif', "Serif"], sans: ["-apple-system, BlinkMacSystemFont, system-ui, sans-serif", "Sans"],
+    mono: ["ui-monospace, Menlo, Consolas, monospace", "Mono"] };
+  const WIDTHS = [[560, "Narrow"], [680, "Medium"], [840, "Wide"]], SPACINGS = [[1.4, "Tight"], [1.65, "Normal"], [1.95, "Loose"]];
+  const rdDefaults = () => { const r = CFG.reader || {}; return { theme: r.theme || "auto", font: r.font || "serif", size: r.font_size || 19, width: r.width || 680, spacing: r.line_height || 1.65 }; };
+  let rd = rdDefaults();
+  try { Object.assign(rd, JSON.parse(localStorage.getItem("valerie-pdf-reader") || "{}")); } catch (_) {}
+  const rdSave = () => { try { localStorage.setItem("valerie-pdf-reader", JSON.stringify(rd)); } catch (_) {} };
+  let rdEl = null, rdPanel = null, rdText = null;
+
+  async function readText() {
+    const lines = [];
+    for (const p of pages) {
+      const tc = await p.page.getTextContent();
+      let cur = null;
+      const flush = () => { if (cur && cur.text.trim()) lines.push(cur); cur = null; };
+      for (const it of tc.items) {
+        if (typeof it.str !== "string") continue;
+        if (!it.str) { if (it.hasEOL) flush(); continue; }
+        const t = it.transform, size = Math.hypot(t[2], t[3]) || it.height || 10, [x, y] = p.vp1.convertToViewportPoint(t[4], t[5]);
+        if (cur && (Math.abs(y - cur.y) > Math.max(size, cur.size) * 0.5 || x < cur.x1 - size * 2)) flush();
+        if (!cur) cur = { page: p.n, x, y, x1: x, size, text: "", H: p.vp1.height };
+        else if (x - cur.x1 > size * 0.15 && !/\s$/.test(cur.text) && !/^\s/.test(it.str)) cur.text += " ";
+        cur.text += it.str; cur.x1 = Math.max(cur.x1, x + (it.width || 0)); cur.size = Math.max(cur.size, size);
+        if (it.hasEOL) flush();
+      }
+      flush();
+    }
+    // Running headers and footers: the same words (numbers aside) at the top or bottom of many pages, and page numbers.
+    const key = (l) => l.text.replace(/\d+/g, "#").replace(/\s+/g, " ").trim().toLowerCase();
+    const edge = (l) => l.y < l.H * 0.09 || l.y > l.H * 0.93;
+    const seen = new Map();
+    for (const l of lines) if (edge(l)) seen.set(key(l), (seen.get(key(l)) || new Set()).add(l.page));
+    const pageNo = /^[\s\-–—|]*((page|p\.)\s*)?(\d+|[ivxlc]+)(\s*(of|\/)\s*\d+)?[\s\-–—|]*$/i;
+    const body = lines.filter((l) => !(edge(l) && (pageNo.test(l.text) || (pages.length >= 2 && seen.get(key(l)).size >= Math.max(2, pages.length * 0.4)))));
+    // The body text's size (by how much text is set in it) and its usual line spacing.
+    const bySize = body.map((l) => [l.size, l.text.length]).sort((a, b) => a[0] - b[0]);
+    let half = bySize.reduce((n, a) => n + a[1], 0) / 2, base = 12;
+    for (const [sz, n] of bySize) if ((half -= n) <= 0) { base = sz; break; }
+    const same = (a, b) => Math.abs(a - b) <= Math.max(a, b) * 0.12;
+    const gaps = [];
+    for (let i = 1; i < body.length; i++) { const a = body[i - 1], b = body[i]; if (a.page === b.page && same(a.size, base) && same(b.size, base) && b.y > a.y && b.y - a.y < base * 2.5) gaps.push(b.y - a.y); }
+    gaps.sort((a, b) => a - b);
+    const lead = gaps.length ? gaps[Math.floor(gaps.length / 2)] : base * 1.3;
+    // A page's usual line length, so a short line that ends a sentence ends its paragraph.
+    const widths = new Map();
+    for (const l of body) if (same(l.size, base)) (widths.get(l.page) || widths.set(l.page, []).get(l.page)).push(l.x1 - l.x);
+    const usual = new Map([...widths].map(([n, w]) => [n, w.sort((a, b) => a - b)[Math.floor(w.length / 2)]]));
+    const bullet = /^([•●○◦▪■□►▸‣⁃∙·*–-]|\(?\d{1,3}[.)]|\(?[a-z]\))\s+/, ends = (t) => /[.!?:;"”’)\]]$/.test(t);
+    const blocks = [];
+    let b = null, prev = null;
+    for (const l of body) {
+      const t = l.text.replace(/\s+/g, " ").trim();
+      let fresh = !b || !same(l.size, prev.size) || bullet.test(t);
+      if (!fresh) {
+        const gap = l.y - prev.y, pt = prev.text.trim();
+        if (l.page !== prev.page || gap < -base) fresh = ends(pt);           // the next page or column carries on a sentence
+        else if (gap > lead * 1.45) fresh = true;
+        else if (ends(pt) && (prev.x1 < b.x1 - base * 3 || prev.x1 - prev.x < (usual.get(prev.page) || 0) * 0.7 || l.x > prev.x + base * 1.2)) fresh = true;   // short last line, or an indent
+      }
+      if (fresh) blocks.push((b = { lines: [], page: l.page, y: l.y - l.size, size: l.size, x1: 0, li: bullet.test(t) }));
+      b.lines.push(t); b.x1 = Math.max(b.x1, l.x1); prev = l;
+    }
+    const join = (ls) => ls.reduce((s, t) => (!s ? t : /[A-Za-z]-$/.test(s) && /^[a-z]/.test(t) ? s.slice(0, -1) + t : s + " " + t), "");
+    let titled = false;
+    const out = blocks.map((b) => {
+      const text = join(b.lines), r = b.size / base;
+      let k = b.li ? "li" : "p";
+      if (!b.li && text.length < 220 && r >= 1.12) k = !titled && r >= 1.45 && b.page <= 2 ? "h1" : r >= 1.3 ? "h2" : "h3";
+      else if (r <= 0.86) k = "small";
+      if (k === "h1") titled = true;
+      if (/^(fig(ure)?|table|chart|exhibit|plate)\.?\s*[\dA-Z]+[.:\s]/i.test(text) && text.length < 500) k = "caption";
+      return { k, text, page: b.page, y: b.y, num: b.li && /^\(?[\da-z]{1,3}[.)]/.test(text) };
+    });
+    const chars = new Map();
+    for (const l of body) chars.set(l.page, (chars.get(l.page) || 0) + l.text.length);
+    return { blocks: out, chars };
+  }
+
+  // Where a page's pictures are, from the drawing commands (a picture, or the whole page when it has almost no text).
+  async function pictures(p, chars) {
+    const W = p.vp1.width, H = p.vp1.height;
+    if ((chars.get(p.n) || 0) < 40) return [{ x: 0, y: 0, w: W, h: H, whole: true }];
+    const ol = await p.page.getOperatorList(), O = lib.OPS, U = lib.Util, found = [], stack = [];
+    let m = [1, 0, 0, 1, 0, 0];
+    for (let i = 0; i < ol.fnArray.length; i++) {
+      const f = ol.fnArray[i], a = ol.argsArray[i];
+      if (f === O.save) stack.push(m);
+      else if (f === O.restore) m = stack.pop() || m;
+      else if (f === O.transform) m = U.transform(m, a);
+      else if (f === O.paintFormXObjectBegin) { stack.push(m); const mat = (a || []).find((x) => x && x.length === 6); if (mat) m = U.transform(m, Array.from(mat)); }
+      else if (f === O.paintFormXObjectEnd) m = stack.pop() || m;
+      else if (f === O.paintImageXObject || f === O.paintInlineImageXObject || f === O.paintImageXObjectRepeat) {
+        const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => p.vp1.convertToViewportPoint(m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]));
+        const x0 = Math.max(0, Math.min(...pts.map((q) => q[0]))), y0 = Math.max(0, Math.min(...pts.map((q) => q[1])));
+        const x1 = Math.min(W, Math.max(...pts.map((q) => q[0]))), y1 = Math.min(H, Math.max(...pts.map((q) => q[1])));
+        found.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      }
+    }
+    // Pieces of one picture are joined; small ones, page backgrounds and logos in the margins are left out.
+    const boxes = [];
+    for (const f of found.filter((f) => f.w > 2 && f.h > 2)) {
+      let g = { ...f };
+      for (let i = boxes.length - 1; i >= 0; i--) {
+        const o = boxes[i];
+        if (g.x <= o.x + o.w + 3 && o.x <= g.x + g.w + 3 && g.y <= o.y + o.h + 3 && o.y <= g.y + g.h + 3) {
+          const x = Math.min(g.x, o.x), y = Math.min(g.y, o.y);
+          g = { x, y, w: Math.max(g.x + g.w, o.x + o.w) - x, h: Math.max(g.y + g.h, o.y + o.h) - y }; boxes.splice(i, 1);
+        }
+      }
+      boxes.push(g);
+    }
+    return boxes.filter((g) => g.w >= 60 && g.h >= 40 && g.w * g.h < W * H * 0.85 && g.y + g.h > H * 0.1 && g.y < H * 0.9);
+  }
+  async function paintPicture(p, f, c) {
+    const s = Math.min(3, 1400 / Math.max(1, f.w)) * Math.min(2, window.devicePixelRatio || 1), vp = p.page.getViewport({ scale: s });
+    c.width = Math.max(1, Math.round(f.w * s)); c.height = Math.max(1, Math.round(f.h * s));
+    try { await p.page.render({ canvasContext: c.getContext("2d"), canvas: c, viewport: vp, transform: [1, 0, 0, 1, -f.x * s, -f.y * s] }).promise; }
+    catch (e) { console.warn("valerie pdf reader: picture", e); c.closest("figure")?.remove(); }
+  }
+
+  function applyReader() {
+    if (!rdEl) return;
+    const auto = rd.theme === "auto" || !THEMES[rd.theme], name = auto ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : rd.theme, [bg, fg] = THEMES[name];
+    const st = rdEl.style;
+    st.setProperty("--rbg", bg); st.setProperty("--rfg", fg); st.setProperty("--rfont", (FONTS[rd.font] || FONTS.serif)[0]);
+    st.setProperty("--rsize", rd.size + "px"); st.setProperty("--rlh", rd.spacing); st.setProperty("--rwidth", rd.width + "px");
+    const dark = name === "gray" || name === "dark" || name === "black";
+    rdEl.toggleAttribute("data-dark", dark); st.colorScheme = dark ? "dark" : "light";
+    if (rdPanel) rdPanel.refresh();
+  }
+  function closePanel() { if (!rdPanel) return; rdPanel.remove(); rdPanel = null; rdEl && rdEl.querySelector(".aa").setAttribute("aria-expanded", "false"); }
+  function openPanel(anchor) {
+    if (rdPanel) return closePanel();
+    const panel = el("div", "rd-panel"), refreshers = [];
+    panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", tr("Reader settings"));
+    const row = (label, ...kids) => { const r = el("div"); r.append(el("div", "lbl", tr(label)), ...kids); panel.append(r); };
+    const choose = (cls, items, prop) => {
+      const g = el("div", cls);
+      for (const [value, label, make] of items) {
+        const b = make ? make() : el("button", null, tr(label));
+        b.type = "button"; b.onclick = () => { rd[prop] = value; rdSave(); applyReader(); };
+        refreshers.push(() => b.setAttribute("aria-pressed", String(rd[prop] === value)));
+        g.append(b);
+      }
+      return g;
+    };
+    row("Theme", choose("themes", [["auto", "Auto"], ...Object.entries(THEMES).map(([k, v]) => [k, v[2]])].map(([k, label]) => [k, label, () => {
+      const b = el("button", null, "Aa"), [bg, fg] = k === "auto" ? ["linear-gradient(135deg, #fbf8f2 50%, #1d1c21 50%)", "#8a8780"] : THEMES[k];
+      b.style.background = bg; b.style.color = fg; b.title = tr(k === "auto" ? "Auto (follows light or dark mode)" : label); b.setAttribute("aria-label", b.title);
+      return b;
+    }]), "theme"));
+    row("Font", choose("seg", Object.entries(FONTS).map(([k, v]) => [k, v[1], () => { const b = el("button", null, tr(v[1])); b.style.fontFamily = v[0]; return b; }]), "font"));
+    const out = el("output"), minus = el("button", null, "A−"), plus = el("button", null, "A+"), size = el("div", "size");
+    minus.setAttribute("aria-label", tr("Smaller text")); plus.setAttribute("aria-label", tr("Bigger text"));
+    minus.style.fontSize = "12px"; plus.style.fontSize = "15px";
+    const step = (d) => { rd.size = Math.max(12, Math.min(34, rd.size + d)); rdSave(); applyReader(); };
+    minus.onclick = () => step(-1); plus.onclick = () => step(1);
+    refreshers.push(() => { out.textContent = rd.size + " px"; });
+    size.append(minus, out, plus); row("Size", size);
+    row("Width", choose("seg", WIDTHS.map(([w, l]) => [w, l]), "width"));
+    row("Line spacing", choose("seg", SPACINGS.map(([v, l]) => [v, l]), "spacing"));
+    const reset = el("button", "reset", tr("Reset to your settings file"));
+    reset.title = tr("reader_view in your Valerie settings");
+    reset.onclick = () => { rd = rdDefaults(); try { localStorage.removeItem("valerie-pdf-reader"); } catch (_) {} applyReader(); };
+    panel.append(reset);
+    panel.refresh = () => refreshers.forEach((f) => f());
+    rdPanel = panel; rdEl.append(panel); panel.refresh();
+    anchor.setAttribute("aria-expanded", "true");
+  }
+
+  function closeReader() {
+    if (!rdEl) return;
+    const at = +(rdEl.dataset.page || 0);
+    closePanel(); rdEl.remove(); rdEl = null; document.documentElement.classList.remove("reading");
+    if (at && pages[at - 1]) pages[at - 1].box.scrollIntoView({ block: "start" });
+  }
+  async function openReader() {
+    if (rdEl) return closeReader();
+    setTool("select"); select(null);
+    if (document.activeElement && document.activeElement.isContentEditable) document.activeElement.blur();
+    const r = (rdEl = el("div", "vpdf-reader")), top = el("div", "rd-bar"), where = el("span", "info");
+    r.tabIndex = -1;
+    const aa = btn("Aa", "Type, size and colours", () => openPanel(aa), "aa"), back = btn("Pages", "Back to the PDF's pages (Esc)", () => closeReader());
+    aa.setAttribute("aria-haspopup", "dialog"); aa.setAttribute("aria-expanded", "false");
+    top.append(el("span", "name", fileName), el("span", "grow"), where, aa, back);
+    const col = el("article", "rd-col"), status = el("p", "status", tr("Reading the PDF…"));
+    status.setAttribute("aria-live", "polite");
+    col.append(status);
+    r.append(top, col);
+    r.addEventListener("pointerdown", (e) => { if (rdPanel && !e.target.closest(".rd-panel, .aa")) closePanel(); });
+    body.append(r); document.documentElement.classList.add("reading"); applyReader(); r.focus();
+    // Open where you were reading.
+    let from = 1;
+    for (const p of pages) { if (p.box.getBoundingClientRect().top < innerHeight / 2) from = p.n; else break; }
+
+    let data;
+    try { data = await (rdText || (rdText = readText())); } catch (e) { console.warn("valerie pdf reader", e); status.textContent = tr("Couldn't read this PDF's text."); return; }
+    if (rdEl !== r) return;
+    status.remove();
+    const marks = [];
+    let page = 0, list = null;
+    for (const b of data.blocks) {
+      if (b.page !== page) {
+        if (page) { const pg = el("span", "pg", tr("Page") + " " + b.page); pg.dataset.page = b.page; col.append(pg); marks.push(pg); }
+        page = b.page; list = null;
+      }
+      if (b.k === "li") {
+        if (!list) col.append((list = el("ul")));
+        const li = el("li", b.num ? "num" : null, b.num ? b.text : b.text.replace(/^\S+\s+/, ""));
+        li.dataset.page = b.page; li.dataset.y = b.y; list.append(li); continue;
+      }
+      list = null;
+      const e = el(/^h\d$/.test(b.k) ? b.k : "p", b.k === "small" || b.k === "caption" ? b.k : null, b.text);
+      e.dataset.page = b.page; e.dataset.y = b.y; col.append(e);
+    }
+    if (!data.blocks.length) col.append(el("p", "status", tr("This PDF has no text to read: its pages are pictures.")));
+    // Which page you're reading, in the bar; the reader starts at the page you were on.
+    const all = () => col.querySelectorAll("[data-page]");
+    let queued = false;
+    const track = () => {
+      queued = false;
+      let cur = data.blocks.length ? data.blocks[0].page : 1;
+      for (const e of col.querySelectorAll(".pg")) { if (e.getBoundingClientRect().top < 120) cur = +e.dataset.page; else break; }
+      r.dataset.page = cur; where.textContent = `${cur} / ${doc.numPages}`;
+    };
+    r.addEventListener("scroll", () => { if (!queued) { queued = true; requestAnimationFrame(track); } }, { passive: true });
+    if (from > 1) { const first = [...all()].find((e) => +e.dataset.page >= from); if (first) r.scrollTop = first.getBoundingClientRect().top - 60; }
+    track();
+
+    // Pictures go in afterwards, page by page, each before the first text below it; each is drawn when it comes near.
+    if (CFG.pages && CFG.pages.pdf_reader_pictures === false) return;
+    const io = new IntersectionObserver((es) => {
+      for (const x of es) if (x.isIntersecting) { io.unobserve(x.target); paintPicture(x.target._p, x.target._f, x.target.querySelector("canvas")); }
+    }, { root: r, rootMargin: "800px 0px" });
+    for (const p of pages) {
+      let found;
+      try { found = await pictures(p, data.chars); } catch (e) { console.warn("valerie pdf reader: pictures", e); continue; }
+      if (rdEl !== r) return io.disconnect();
+      for (const f of found) {
+        const fig = el("figure"), c = el("canvas");
+        c.style.width = Math.round(f.w * (f.whole ? 1 : 1.25)) + "px"; c.style.aspectRatio = `${f.w} / ${f.h}`;
+        c.setAttribute("role", "img"); c.setAttribute("aria-label", tr("Picture from page") + " " + p.n);
+        fig.append(c); fig._p = p; fig._f = f;
+        const after = [...all()].find((e) => +e.dataset.page > p.n || (+e.dataset.page === p.n && e.dataset.y !== undefined && +e.dataset.y > f.y));
+        const keepTop = r.scrollTop, anchorEl = [...all()].find((e) => e.getBoundingClientRect().top >= 46);
+        const before = anchorEl && anchorEl.getBoundingClientRect().top;
+        const spot = after ? (after.tagName === "LI" ? after.parentElement : after) : null;
+        if (spot && spot.parentElement === col) col.insertBefore(fig, spot); else col.append(fig);
+        if (anchorEl) r.scrollTop = keepTop + anchorEl.getBoundingClientRect().top - before;   // what you're reading stays put
+        io.observe(fig);
+      }
+    }
+  }
+  if (!(CFG.pages && CFG.pages.pdf_reader === false)) window.__valeriePdfReader = openReader;
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyReader());
 
   // ---------- signature pad: draw it once; it's remembered for PDFs from this site ----------
   function signaturePad() {

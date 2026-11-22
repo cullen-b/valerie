@@ -2288,19 +2288,21 @@ function readerBlocks(root) {
   return out.filter(([k, t]) => k === "img" || (t && t.trim()));
 }
 function reader() {
+  if (window.__valeriePdfReader) return window.__valeriePdfReader();   // a PDF in Valerie's viewer has its own reader
   if (readerHost) { readerHost.remove(); readerHost = null; return; }
   const root = articleRoot();
   if (!root) return toast("No article on this page");
   const r = cfg.reader || {}, theme = r.theme && r.theme !== "auto" ? r.theme : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  const dark = theme === "dark", sepia = theme === "sepia";
+  const dark = theme === "dark" || theme === "gray" || theme === "black", sepia = theme === "sepia";
+  const bg = { dark: "#1d1c21", gray: "#4a4a50", black: "#000000" }[theme], fg = { dark: "#e6e3dc", gray: "#e7e5df", black: "#b9b5ac" }[theme];
   const host = document.createElement("valerie-reader");
   host.style.cssText = `all: initial; position: fixed; inset: 0; z-index: 2147483646; overflow: auto; outline: none; display: block;
-    background: ${dark ? "#1d1c21" : sepia ? "#f4ecd8" : "#fbf8f2"};`;
+    background: ${dark ? bg : sepia ? "#f4ecd8" : "#fbf8f2"};`;
   host.tabIndex = -1;
   const sh = host.attachShadow({ mode: "closed" }), st = document.createElement("style");
-  const font = r.font === "sans" ? "-apple-system, system-ui, sans-serif" : '"New York", "Iowan Old Style", Charter, Georgia, serif';
+  const font = r.font === "sans" ? "-apple-system, system-ui, sans-serif" : r.font === "mono" ? "ui-monospace, Menlo, Consolas, monospace" : '"New York", "Iowan Old Style", Charter, Georgia, serif';
   st.textContent = `
-    main { max-width: ${r.width || 680}px; margin: 0 auto; padding: 56px 28px 140px; font: ${r.font_size || 19}px/1.65 ${font}; color: ${dark ? "#e6e3dc" : sepia ? "#5b4636" : "#26231f"}; }
+    main { max-width: ${r.width || 680}px; margin: 0 auto; padding: 56px 28px 140px; font: ${r.font_size || 19}px/${r.line_height || 1.65} ${font}; color: ${dark ? fg : sepia ? "#5b4636" : "#26231f"}; }
     .site { font: 600 12px/1 -apple-system, system-ui, sans-serif; letter-spacing: .6px; text-transform: uppercase; color: ${cfg.accent || "#9d8cff"}; margin-bottom: 14px; }
     h1 { font-size: 1.9em; line-height: 1.2; margin: 0 0 1.1em; } h2 { font-size: 1.35em; margin: 1.6em 0 .5em; } h3, h4 { font-size: 1.1em; margin: 1.4em 0 .4em; }
     p, li { margin: 0 0 1em; } ul { padding-left: 1.2em; } img { max-width: 100%; height: auto; border-radius: 8px; margin: .6em 0; }
