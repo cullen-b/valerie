@@ -550,6 +550,8 @@ pub struct App {
     pending_save: Option<PendingSave>,
     keychain_prompt_explained: bool,
     peek: Option<PeekView>,
+    /// Peeks hidden with the tab they were opened from (`peek.stays_with_tab`), back when that tab is.
+    parked_peeks: Vec<PeekView>,
     /// Tabs whose page script has reported in (so it can handle vim keys).
     ready_views: std::collections::HashSet<TabId>,
     /// New webviews kept hidden until their page has drawn, so they don't flash white (pages.wait_for_first_draw).
@@ -663,6 +665,8 @@ struct HookEvent {
 struct PeekView {
     view: WebView,
     url: String,
+    /// The tab it was opened over.
+    tab: Option<TabId>,
 }
 
 struct PendingSave {
@@ -1855,6 +1859,7 @@ impl App {
             pending_save: None,
             keychain_prompt_explained: false,
             peek: None,
+            parked_peeks: Vec::new(),
             ready_views: Default::default(),
             waiting_draw: Default::default(),
             view_profiles: HashMap::new(),
@@ -4281,6 +4286,7 @@ impl App {
         }
         self.layout();
         self.focus_active();
+        self.peek_follow_tab();
         self.render();
         self.dirty = true;
     }
@@ -4338,6 +4344,7 @@ impl App {
     }
 
     fn close(&mut self, tab: TabId) {
+        self.parked_peeks.retain(|p| p.tab != Some(tab));
         if let Some(h) = self.helping.remove(&tab) {
             self.answer_help(tab, h.reply, Err("The user closed the tab instead of finishing. Ask them what they'd like, or try another way.".into()));
         }
@@ -4419,6 +4426,7 @@ impl App {
         if settings_changed {
             self.refresh_content_config();
         }
+        self.peek_follow_tab();
         self.dirty = true;
     }
 
@@ -6911,7 +6919,7 @@ impl App {
         }
         platform::fade_in(&view, self.anim_secs());
         let _ = focus_view(&view);
-        self.peek = Some(PeekView { view, url: url.to_string() });
+        self.peek = Some(PeekView { view, url: url.to_string(), tab: self.state.active_tab() });
         if self.config.escape_hints {
             let _ = self.peek.as_ref().map(|p| p.view.evaluate_script(&format!("setTimeout(() => window.__valerie && __valerie.toast('Peek · esc to close · {} to open as tab'), 400)", if cfg!(target_os = "macos") { "⌘O" } else { "Ctrl+O" })));
         }
@@ -6921,6 +6929,46 @@ impl App {
         if self.peek.take().is_none() {
             return;
         }
+        self.undim_panes();
+    }
+
+    /// `peek.stays_with_tab`: a peek over another tab hides (its video and sound paused) until that tab is shown again.
+    fn peek_follow_tab(&mut self) {
+        let active = self.state.active_tab();
+        if self.peek.as_ref().is_some_and(|p| p.tab != active) {
+            let p = self.peek.take().unwrap();
+            if self.config.peek.stays_with_tab && p.tab.is_some_and(|t| self.state.tabs.contains_key(&t)) {
+                let _ = p.view.set_visible(false);
+                let _ = p.view.evaluate_script("document.querySelectorAll('video,audio').forEach((m) => m.pause())");
+                crate::log::event("peek", format!("hidden with tab {:?}", p.tab));
+                self.parked_peeks.retain(|q| q.tab != p.tab);
+                self.parked_peeks.push(p);
+                // Each is a whole page: only the last few wait.
+                if self.parked_peeks.len() > 4 {
+                    self.parked_peeks.remove(0);
+                }
+            }
+            self.undim_panes();
+        }
+        if self.peek.is_none() {
+            if let Some(i) = self.parked_peeks.iter().position(|p| p.tab.is_some() && p.tab == active) {
+                let p = self.parked_peeks.remove(i);
+                let (x, y, w, h) = self.peek_rect();
+                let _ = p.view.set_bounds(rect(x, y, w, h));
+                let _ = p.view.set_visible(true);
+                for t in self.panes() {
+                    if let Some(v) = self.views.get(&t) {
+                        platform::set_alpha(v, self.config.peek.dim.clamp(0.0, 1.0), 0.0);
+                    }
+                }
+                let _ = focus_view(&p.view);
+                crate::log::event("peek", format!("back over tab {:?}", p.tab));
+                self.peek = Some(p);
+            }
+        }
+    }
+
+    fn undim_panes(&mut self) {
         for p in self.panes() {
             if let Some(v) = self.views.get(&p) {
                 platform::set_alpha(v, 1.0, self.anim_secs());
@@ -7660,7 +7708,10 @@ impl App {
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(url));
                     return self.toast("Copied URL");
                 }
-                // Anything that changes what's on screen dismisses the preview first.
+                // Going to another tab or space hides it with its tab (peek.stays_with_tab); they put it back.
+                Command::ActivateTab { .. } | Command::GoToTab { .. } | Command::NextTab | Command::PrevTab | Command::LastTab | Command::SwitchSpace { .. } | Command::NextSpace | Command::PrevSpace
+                    if self.config.peek.stays_with_tab => {}
+                // Anything else that changes what's on screen dismisses the preview first.
                 _ => self.close_peek(),
             }
         }

@@ -780,6 +780,7 @@ pub struct PeekConfig {
     pub margin: f64,
     pub dim: f64,
     pub corner_radius: f64,
+    pub stays_with_tab: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

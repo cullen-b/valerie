@@ -344,6 +344,8 @@ peek:
   margin: 6                # space around the preview, percent of the window
   dim: 0.45                # how see-through the page behind gets (0 = invisible, 1 = not dimmed)
   corner_radius: 12        # rounding of the preview's corners, pixels
+  stays_with_tab: true     # going to another tab or space hides the preview (its video and sound paused) and coming back
+                           # to the tab shows it again, as you left it; closing the tab closes it. false = switching closes it
 
 # What Valerie remembers.
 history:
