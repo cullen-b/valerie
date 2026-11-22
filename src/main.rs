@@ -147,8 +147,8 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["site", "tab"].contains(&c.tabs.zoom.as_str()) {
                 problems.push(format!("tabs: zoom is {:?}; use site or tab", c.tabs.zoom));
             }
-            if !["auto", "light", "dark", "sepia"].contains(&c.reader_view.theme.as_str()) {
-                problems.push(format!("reader_view: theme is {:?}; use auto, light, dark or sepia", c.reader_view.theme));
+            if !["auto", "light", "sepia", "gray", "dark", "black"].contains(&c.reader_view.theme.as_str()) {
+                problems.push(format!("reader_view: theme is {:?}; use auto, light, sepia, gray, dark or black", c.reader_view.theme));
             }
             if !["errors", "events", "verbose"].contains(&c.logs.level.as_str()) {
                 problems.push(format!("logs: level is {:?}; use errors, events or verbose", c.logs.level));
@@ -283,8 +283,11 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["reject", "hide", "off"].contains(&c.privacy.cookie_banners.as_str()) {
                 problems.push(format!("privacy: cookie_banners is {:?}; use reject, hide or off", c.privacy.cookie_banners));
             }
-            if !["serif", "sans"].contains(&c.reader_view.font.as_str()) {
-                problems.push(format!("reader_view: font is {:?}; use serif or sans", c.reader_view.font));
+            if !["serif", "sans", "mono"].contains(&c.reader_view.font.as_str()) {
+                problems.push(format!("reader_view: font is {:?}; use serif, sans or mono", c.reader_view.font));
+            }
+            if !(1.0..=3.0).contains(&c.reader_view.line_height) {
+                problems.push(format!("reader_view: line_height is {}; use a number from 1 to 3, like 1.65", c.reader_view.line_height));
             }
             if !["pin", "star", "favicons"].contains(&c.sidebar.pinned_folder_icon.as_str()) {
                 problems.push(format!("sidebar: pinned_folder_icon is {:?}; use pin, star or favicons", c.sidebar.pinned_folder_icon));

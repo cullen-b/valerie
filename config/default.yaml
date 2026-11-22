@@ -365,10 +365,13 @@ downloads:
 
 # Reader view (reader_view command, ⌘⇧R): the page's article as clean text.
 reader_view:
-  theme: auto              # one of: auto (follows your computer's light/dark mode) | light | dark | sepia
-  font: serif              # one of: serif | sans
+  theme: auto              # one of: auto (follows your computer's light/dark mode) | light | sepia | gray | dark | black
+  font: serif              # one of: serif | sans | mono
   font_size: 19            # text size in pixels
   width: 680               # column width in pixels
+  line_height: 1.65        # space between lines, as a multiple of the text size (1.4 tight … 1.95 loose)
+                           # A PDF's reader has an Aa button to change these while you read; it remembers your picks for
+                           # that site (or for files on this computer) until you press "Reset to your settings file".
 
 # The Chats space: conversations with your agents, to the left of your first space (⌘J opens it).
 chats:
@@ -557,6 +560,10 @@ pages:
   markdown_live: true      # a file on this computer updates on screen as soon as it's saved (yours or your AI's edits)
   pdf_viewer: true         # show PDFs in Valerie's own viewer, which can add text, a signature or arrows and save a
                            # marked-up copy to your downloads. false = macOS's built-in PDF view
+  pdf_reader: true         # a Reader button in the PDF viewer (also the reader_view command, ⌘⌥R / Ctrl+Alt+R): the PDF's
+                           # text in one clean column, styled by reader_view. true | false (false = no reader for PDFs)
+  pdf_reader_pictures: true # the reader also shows the PDF's pictures, and pages that are only a picture (scans).
+                           # true | false (false = text only)
   markdown_edit: here      # what Edit does on a file on this computer. one of: here (Valerie's own editor beside a live
                            # preview; saves as you type) | editor (opens it in your `editor` app)
                            # ("Open Markdown Files in Valerie" in the command bar makes Valerie the app .md files open in;

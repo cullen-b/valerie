@@ -451,6 +451,7 @@ pub struct ReaderConfig {
     pub font: String,
     pub font_size: f64,
     pub width: f64,
+    pub line_height: f64,
 }
 
 /// One agent: a CLI Valerie knows (claude, codex, opencode, pi, cursor, hermes) and the model to ask for, or any
@@ -973,6 +974,8 @@ pub struct PagesConfig {
     pub markdown_live: bool,
     pub markdown_edit: String,
     pub pdf_viewer: bool,
+    pub pdf_reader: bool,
+    pub pdf_reader_pictures: bool,
     pub wait_for_first_draw: bool,
     pub share_process_by_site: bool,
     pub slow_background_tabs: bool,
