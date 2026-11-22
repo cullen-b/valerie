@@ -534,6 +534,12 @@ function ui() {
     .find .ask { display: none; padding: 2px 7px; border-radius: 6px; background: ${cfg.accent || "#9d8cff"}; color: #fff; font-size: 11px; white-space: nowrap; }
     .find.question .ask { display: inline-block; }
     .find.question .count { display: none; }
+    .find .opt { all: unset; padding: 1px 5px; border-radius: 5px; color: rgba(255,255,255,.45); font-size: 11px; font-weight: 600; cursor: default; user-select: none; }
+    .find .opt:hover { color: rgba(255,255,255,.8); }
+    .find .opt.on { background: rgba(255,255,255,.18); color: #fff; }
+    .find.question .opt { display: none; }
+    .swipe-x { position: fixed; left: 0; top: 50%; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(28,28,32,.82); color: #fff; font: 22px/1 -apple-system, system-ui; pointer-events: none; transition: background .12s; }
+    .swipe-x.ready { background: ${cfg.accent || "#9d8cff"}; }
     .loadbar { position: fixed; top: 0; left: 0; height: 2px; width: 0; background: ${cfg.accent || "#9d8cff"}; box-shadow: 0 0 6px ${cfg.accent || "#9d8cff"};
                transition: width 2.5s cubic-bezier(.1,.7,.3,1), opacity .25s; }
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
@@ -1432,16 +1438,19 @@ function ensureFindStyle() {
   st.textContent = `::highlight(valerie-find){background-color:${f.highlight_color || "rgba(255,206,64,.55)"};color:inherit}::highlight(valerie-find-current){background-color:${f.current_color || "#ff9632"};color:#000}`;
   (document.head || document.documentElement).appendChild(st);
 }
+// find.match_case / find.whole_words: the bar's Aa and W, also Alt+C and Alt+W while typing.
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
 function searchPage(q) {
-  const out = [], needle = q.toLowerCase(), s = findScroller();
+  const out = [], exact = !!fnd.matchCase, whole = !!fnd.wholeWords, needle = exact ? q : q.toLowerCase(), s = findScroller();
   if (!needle || !document.body) return out;
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode(n) {
     const t = n.parentElement && n.parentElement.tagName;
     return !t || t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEXTAREA" ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
   } });
   for (let n = walker.nextNode(); n && out.length < 3000; n = walker.nextNode()) {
-    const text = n.data.toLowerCase();
+    const text = exact ? n.data : n.data.toLowerCase();
     for (let i = text.indexOf(needle); i !== -1 && out.length < 3000; i = text.indexOf(needle, i + needle.length)) {
+      if (whole && (WORD_CHAR.test(n.data[i - 1] || "") || WORD_CHAR.test(n.data[i + needle.length] || ""))) continue;
       const range = document.createRange(); range.setStart(n, i); range.setEnd(n, i + needle.length);
       const r = range.getBoundingClientRect();
       if (r.width || r.height) out.push({ range, y: docY(r, s), h: r.height });
@@ -1541,12 +1550,25 @@ function openFind(initial) {
     fnd.input = document.createElement("input"); fnd.input.placeholder = "Find in page";
     fnd.count = document.createElement("span"); fnd.count.className = "count";
     fnd.ask = document.createElement("span"); fnd.ask.className = "ask"; fnd.ask.textContent = "Ask ↵";
-    fnd.bar.append(fnd.input, fnd.count, fnd.ask);
+    const f = cfg.find || {}, alt = /Mac/.test(navigator.platform) ? "⌥" : "Alt+";
+    if (fnd.matchCase === undefined) { fnd.matchCase = !!f.match_case; fnd.wholeWords = !!f.whole_words; }
+    fnd.opts = {};
+    const opt = (key, label, tip) => {
+      const b = document.createElement("button"); b.type = "button"; b.tabIndex = -1; b.className = "opt"; b.textContent = label; b.title = tip;
+      b.setAttribute("aria-label", tip); b.setAttribute("aria-pressed", String(!!fnd[key]));
+      b.classList.toggle("on", !!fnd[key]);
+      b.addEventListener("mousedown", (e) => { e.preventDefault(); toggleFindOption(key); });
+      fnd.opts[key] = b;
+      return b;
+    };
+    const opts = f.option_buttons === false ? [] : [opt("matchCase", "Aa", "Match case (" + alt + "C)"), opt("wholeWords", "W", "Whole words (" + alt + "W)")];
+    fnd.bar.append(fnd.input, fnd.count, ...opts, fnd.ask);
     root.appendChild(fnd.bar);
     enter(fnd.bar, "find_bar", [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }], 140);
     fnd.input.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.isComposing || e.keyCode === 229) return; // an input method's own Enter or Esc
+      if (e.altKey && !e.metaKey && !e.ctrlKey && (e.code === "KeyC" || e.code === "KeyW")) { e.preventDefault(); return toggleFindOption(e.code === "KeyC" ? "matchCase" : "wholeWords"); }
       if (e.key === "Enter") {
         e.preventDefault(); clearTimeout(fnd.timer);
         if (!e.shiftKey && isQuestion(fnd.input.value)) askPage(fnd.input.value.trim());
@@ -1582,6 +1604,11 @@ function openFind(initial) {
   if (fnd.input.value) runSearch(); else drawMinimap();
   setTimeout(() => { fnd.input.focus(); fnd.input.select(); }, 0);
 }
+function toggleFindOption(key) {
+  fnd[key] = !fnd[key];
+  if (fnd.opts && fnd.opts[key]) { fnd.opts[key].classList.toggle("on", fnd[key]); fnd.opts[key].setAttribute("aria-pressed", String(fnd[key])); }
+  if (fnd.input) { runSearch(); fnd.input.focus(); }
+}
 // Find Next / Find Previous: step through the matches, or bring back the last search (or the selected text).
 function findStep(d) {
   if (fnd.bar && fnd.items.length) return goToMatch(fnd.cur + d);
@@ -1608,6 +1635,50 @@ document.addEventListener("focusin", (e) => {
   const t = e.composedPath ? e.composedPath()[0] : e.target;
   if (editable(t)) { kb.asked = t; t.blur(); }
 }, true);
+
+// ---------- tab numbers: hold ⌘ (Ctrl elsewhere) a moment and the sidebar shows each tab's number key ----------
+const MOD_KEY = /Mac/.test(navigator.platform) ? "Meta" : "Control";
+let modTimer = 0, modShown = false;
+function modUp() { clearTimeout(modTimer); if (cfg.tab_numbers) { modShown = false; post({ t: "mod_held", on: false }); } }
+addEventListener("pointerdown", () => clearTimeout(modTimer), true);
+addEventListener("keydown", (e) => {
+  if (!e.isTrusted || e.key !== MOD_KEY) return clearTimeout(modTimer);
+  if (e.repeat || !cfg.tab_numbers || e.shiftKey || e.altKey || (MOD_KEY === "Meta" ? e.ctrlKey : e.metaKey)) return;
+  clearTimeout(modTimer); modTimer = setTimeout(() => { modShown = true; post({ t: "mod_held", on: true }); }, 350);
+}, true);
+addEventListener("keyup", (e) => { if (e.isTrusted && e.key === MOD_KEY) modUp(); }, true);
+addEventListener("blur", () => { if (modShown) modUp(); });
+
+// ---------- gestures.swipe_back_closes_tab: a swipe back on a link's tab, from its first page, closes it ----------
+const SWIPE_CLOSE_PX = 160;
+const swipe = { acc: 0, timer: 0, mark: null, vertAt: 0 };
+function scrollsLeft(t) {
+  for (let n = t; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode && n.getRootNode().host)) if (n.scrollLeft > 0) return true;
+  return (document.scrollingElement || document.documentElement).scrollLeft > 0;
+}
+function swipeMark(p) {
+  if (!swipe.mark) { swipe.mark = document.createElement("div"); swipe.mark.className = "swipe-x"; swipe.mark.textContent = "×"; swipe.mark.setAttribute("aria-hidden", "true"); ui().appendChild(swipe.mark); }
+  const q = Math.min(p, 1);
+  swipe.mark.style.transform = `translate(${q * 60 - 44}px, -50%) scale(${0.7 + q * 0.3})`;
+  swipe.mark.style.opacity = String(q);
+  swipe.mark.classList.toggle("ready", p >= 1);
+}
+function swipeEnd() {
+  const done = swipe.acc <= -SWIPE_CLOSE_PX;
+  swipe.acc = 0;
+  if (swipe.mark) { swipe.mark.remove(); swipe.mark = null; }
+  if (done) post({ t: "swipe_close" });
+}
+addEventListener("wheel", (e) => {
+  if (!cfg.swipe_closes || !e.isTrusted || history.length > 1 || e.ctrlKey) return;
+  const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5;
+  if (!sideways) swipe.vertAt = e.timeStamp;
+  // A new swipe starts sideways and back, not just after scrolling up or down, and not where the page scrolls left.
+  if (!swipe.acc && !(sideways && e.deltaX < 0 && e.timeStamp - swipe.vertAt > 300 && !scrollsLeft(e.target))) return;
+  swipe.acc = Math.min(0, swipe.acc + e.deltaX * (e.deltaMode === 1 ? 16 : 1));
+  clearTimeout(swipe.timer); swipe.timer = setTimeout(swipeEnd, 200);
+  if (swipe.acc < 0) swipeMark(-swipe.acc / SWIPE_CLOSE_PX);
+}, { passive: true, capture: true });
 
 // ---------- key handling ----------
 function editable(e) {

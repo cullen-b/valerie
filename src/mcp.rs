@@ -323,6 +323,16 @@ fn run_script(script: &str, tab: Option<i64>, proxy: &EventLoopProxy<UserEvent>)
     }
 }
 
+/// A setting's text that YAML would read as something shorter (a "#" starts a comment), so it has to be quoted.
+fn yaml_would_cut(s: &str) -> bool {
+    let t = s.trim();
+    match serde_yaml::from_str::<serde_yaml::Value>(t) {
+        Ok(serde_yaml::Value::String(y)) => y != t && !t.starts_with(['"', '\'']),
+        Ok(serde_yaml::Value::Null) => !matches!(t, "" | "~" | "null" | "Null" | "NULL"),
+        _ => false,
+    }
+}
+
 /// The first of `words` in `text`: whole words, so "pay" doesn't match "display". Words with symbols or non-English
 /// letters ("$", "購入") match anywhere, since those languages don't put spaces between words.
 fn paying_word<'a>(text: &str, words: &'a [String]) -> Option<&'a str> {
@@ -3615,6 +3625,12 @@ fn call_tool(name: &str, mut a: Value, proxy: &EventLoopProxy<UserEvent>) -> Res
             let value = match &a["value"] {
                 Value::Null => return Err("give a value".into()),
                 // Written as in the YAML file ("32", "true", "[a, b]"); if that doesn't fit, it's taken as plain text.
+                // Text YAML would cut short or drop ("#" starts a comment) is written quoted, whole.
+                Value::String(s) if yaml_would_cut(s) => {
+                    let quoted = json!(s).to_string();
+                    crate::config::change_setting(&path, &quoted, here).map_err(|e| format!("{e:#}"))?;
+                    quoted
+                }
                 Value::String(s) => match crate::config::change_setting(&path, s, here) {
                     Ok(()) => s.clone(),
                     Err(_) => {
@@ -3949,6 +3965,14 @@ mod tests {
         assert!(always("web_search") && always("fetch_page") && !always("click"));
         assert!(tools.iter().any(|t| t["name"] == "drag" && t["annotations"]["readOnlyHint"] == json!(false)), "drag changes the page");
         assert!(catalog_answer("tools/call", &json!({}), &who).is_none());
+    }
+
+    #[test]
+    fn settings_that_yaml_would_cut_are_quoted() {
+        assert!(super::yaml_would_cut("linear-gradient(135deg, #283c86, #45a247)"));
+        assert!(super::yaml_would_cut("#1d2b3a"));
+        assert!(!super::yaml_would_cut("'#1d2b3a'"));
+        assert!(!super::yaml_would_cut("32") && !super::yaml_would_cut("true") && !super::yaml_would_cut("[a, b]") && !super::yaml_would_cut("hello world") && !super::yaml_would_cut("null"));
     }
 
     #[test]

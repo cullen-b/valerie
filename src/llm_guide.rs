@@ -141,6 +141,11 @@ changed in plain words. Some translations:
 | "A video tab should start playing when I open it" / "…shouldn't" | `tabs.play_when_shown: true` / `false` |
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
 | "Free memory of unused tabs even while the window is open" | `tabs.unload_while_window_open: true` |
+| "Keep YouTube / this site loaded" / "never put this site's tabs to sleep" | `sites: {{ youtube.com: {{ unload: false }} }}` (the `toggle_keep_awake` command, "Keep This Site Awake", flips the site you're on) |
+| "Show tab numbers when I hold cmd" / "no numbers on my tabs" | `sidebar.tab_numbers: true` / `false` (they follow the `go_to_tab` keys in `keybindings`) |
+| "Find should match capitals" / "only whole words" / "no buttons in the find bar" | `find.match_case: true`, `find.whole_words: true` (how find starts; Aa and W in the bar, or Alt+C and Alt+W, switch them), `find.option_buttons: false` |
+| "Swiping back on a tab a link opened should close it" | `gestures.swipe_back_closes_tab: true` (only from the tab's first page; you land on the tab the link was in) |
+| "A picture / colour / gradient behind the empty page" | `start_background: "~/Pictures/wall.jpg"` (or an https:// address, `'#1d2b3a'`, `"linear-gradient(135deg, #283c86, #45a247)"`); `""` goes back to the space's colours |
 | "Turn off that plugin / extension" | `"{exe}" plugins off <name>` (`on` to turn it back on; add `--extension` when a plugin has the same name) |
 | "Find me a plugin for…" / "is there a plugin that…" | `"{exe}" plugins search <words>`, then `"{exe}" plugins install <name>`; "Plugins" in the command bar browses them |
 | "Don't update by yourself" / "ask before updating" | `updates.install: ask` (or `off` to only be told) |
