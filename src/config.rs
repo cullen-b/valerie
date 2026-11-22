@@ -18,6 +18,7 @@ pub struct Config {
     pub layout: Layout,
     pub sidebar: SidebarConfig,
     pub start_page: String,
+    pub start_background: String,
     pub escape_hints: bool,
     pub welcome: bool,
     pub welcome_permissions: bool,
@@ -168,6 +169,7 @@ pub struct MouseConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GesturesConfig {
     pub swipe_to_go_back: bool,
+    pub swipe_back_closes_tab: bool,
     pub pinch_to_zoom: bool,
 }
 
@@ -336,6 +338,7 @@ pub struct SidebarConfig {
     pub tab_preview: bool,
     pub tab_preview_delay_ms: f64,
     pub tab_preview_picture: bool,
+    pub tab_numbers: bool,
     pub double_click_edge: bool,
     pub multi_select: bool,
     pub drop_to_split: bool,
@@ -376,6 +379,9 @@ pub struct FindConfig {
     pub highlight_all: bool,
     pub highlight_color: String,
     pub current_color: String,
+    pub match_case: bool,
+    pub whole_words: bool,
+    pub option_buttons: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1353,6 +1359,13 @@ pub fn data_dir() -> PathBuf {
         return PathBuf::from(d);
     }
     dirs::data_dir().unwrap_or_default().join("Valerie")
+}
+
+/// The picture on this computer that `start_background` names (with ~ expanded), if it names one.
+pub fn start_background_file(v: &str) -> Option<PathBuf> {
+    let v = v.trim();
+    let home = v.strip_prefix("~/").map(|r| dirs::home_dir().unwrap_or_default().join(r));
+    home.or_else(|| (v.starts_with('/') || v.get(1..3) == Some(":\\")).then(|| PathBuf::from(v)))
 }
 
 /// Set one setting in the user's config.yaml (`path` like ["agents", "default"], `value` written as YAML), keeping

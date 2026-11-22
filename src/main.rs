@@ -463,6 +463,9 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     } else {
         one_of(&mut p, "start_page".into(), &c.start_page, &["logo", "wordmark", "blank"]);
     }
+    if let Some(f) = config::start_background_file(&c.start_background).filter(|f| !f.is_file()) {
+        p.push(format!("start_background: there's no picture at {}", f.display()));
+    }
     for k in c.agents.instructions_for.keys() {
         one_of(&mut p, "agents: instructions_for has".into(), k, &["chat", "find", "tasks", "customize"]);
     }

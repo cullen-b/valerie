@@ -177,6 +177,8 @@ sidebar:
                            # next tab while one shows swaps it almost at once)
   tab_preview_picture: true # the card shows a small picture of the page (taken when the card shows; a tab that's
                            # asleep shows the last one taken, if any). false = title and site only. true | false
+  tab_numbers: true        # while you hold ⌘ (Ctrl on Windows and Linux) for a moment, each tab shows the number key that
+                           # jumps to it (the go_to_tab keys in `keybindings`). true | false
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false
@@ -198,6 +200,9 @@ sidebar:
 
 start_page: logo           # what an empty space shows. one of: logo | wordmark | blank | plugin:<name> (that plugin's
                            # start.html, which can open sites and run the plugin's commands)
+start_background: ""       # what fills the empty space behind that: "" (the space's own colours) | a CSS colour ("#1d2b3a")
+                           # | a CSS gradient ("linear-gradient(135deg, #283c86, #45a247)") | a picture: a file on this
+                           # computer ("~/Pictures/wall.jpg") or a web address (https://…), shown filling the space
 escape_hints: false        # "esc to close"-style reminders (Peek, vim insert mode, the command bar's footer). Valerie never shows a
                            # "press Esc to exit full screen" banner, whatever this is set to.
 welcome: true              # the welcome guide (AI, sync, describe your browser, a tour) the first time Valerie opens;
@@ -302,6 +307,10 @@ find:
   highlight_all: true      # highlight every match, not just the current one
   highlight_color: "rgba(255,206,64,.55)"   # colour behind every match (any CSS colour)
   current_color: "#ff9632" # colour behind the match you're on
+  match_case: false        # find starts out matching capitals exactly ("Apple" doesn't find "apple"). true | false
+  whole_words: false       # find starts out matching whole words only ("pay" doesn't find "display"). true | false
+  option_buttons: true     # Aa (match case) and W (whole words) buttons in the find bar; Alt+C and Alt+W switch them
+                           # either way (Option on a Mac). true | false
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -832,6 +841,8 @@ mouse:
 # Trackpad gestures.
 gestures:
   swipe_to_go_back: true   # two-finger swipe sideways on a page goes back / forward. true | false
+  swipe_back_closes_tab: false # a swipe back on a tab a link opened, before you've gone anywhere in it, closes that tab
+                           # and takes you back to the tab the link was in (a × follows your fingers). true | false
   pinch_to_zoom: false     # pinch to zoom into a page (like Safari). true | false
 
 # Vim keys inside web pages. They're ignored while you type in a text field (Escape leaves the field).

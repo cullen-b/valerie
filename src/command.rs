@@ -286,6 +286,8 @@ pub enum Command {
         name: String,
     },
     ToggleSiteBlocking,
+    /// Keep this site's tabs loaded: never put to sleep to free memory (`sites: { <site>: { unload: false } }`).
+    ToggleKeepAwake,
     /// Make a pinned / kept / favorite tab's home the page it's on now.
     SetPinnedUrl {
         #[serde(default)]
@@ -983,6 +985,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("history", "History (every page you've visited, by day; search and forget)"),
     ("show_downloads", "Show Downloads Folder"),
     ("toggle_site_blocking", "Toggle Ad Blocking for This Site"),
+    ("toggle_keep_awake", "Keep This Site Awake (its tabs never sleep to free memory)"),
     ("clear_site_data", "Clear Site Data for This Site (signs you out of it)"),
     ("clear_cache", "Clear Cache (keeps you signed in)"),
     ("clear_cache_and_cookies", "Clear Cache and Cookies… (signs you out of every site)"),

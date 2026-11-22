@@ -559,6 +559,8 @@ pub struct App {
     pending_focus: std::cell::Cell<Option<TabId>>,
     /// The last sidebar state sent, so unchanged states aren't redrawn.
     last_render: std::cell::RefCell<String>,
+    /// The `start_background` the sidebar was last sent (a picture goes once, not with every render).
+    start_bg_sent: std::cell::RefCell<Option<String>>,
     /// The layout on screen (None: the classic window) and its name.
     win_layout: Option<window_layout::Layout>,
     win_layout_name: String,
@@ -1240,6 +1242,39 @@ fn download_rule(d: &config::DownloadsConfig, name: &str, url: &str, page: &str)
 static BLOCK_POPUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A URL's host without "www.", which is how boosts and per-site settings are keyed.
+/// The CSS background for `start_background`: a colour or gradient as written, a picture by web address, or a picture
+/// file on this computer (sent as a data address, since the sidebar can't read files).
+fn start_background_css(v: &str) -> String {
+    if v.is_empty() {
+        return String::new();
+    }
+    if let Some(f) = config::start_background_file(v) {
+        let mime = match f.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+            Some("png") => "image/png",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            Some("avif") => "image/avif",
+            Some("svg") => "image/svg+xml",
+            _ => "image/jpeg",
+        };
+        return match std::fs::read(&f) {
+            Ok(b) if b.len() <= 30 << 20 => format!("url(\"data:{mime};base64,{}\") center / cover no-repeat", crate::mcp::base64(&b)),
+            Ok(_) => {
+                crate::log::line("start", format!("start_background: {} is over 30 MB, so it isn't shown", f.display()));
+                String::new()
+            }
+            Err(e) => {
+                crate::log::line("start", format!("start_background: can't read {}: {e}", f.display()));
+                String::new()
+            }
+        };
+    }
+    if v.starts_with("https://") || v.starts_with("http://") {
+        return if v.contains(['"', '\\', '\n']) { String::new() } else { format!("url(\"{v}\") center / cover no-repeat") };
+    }
+    v.to_string()
+}
+
 fn site_of(url: &str) -> Option<String> {
     url::Url::parse(url).ok()?.host_str().map(|h| h.trim_start_matches("www.").to_lowercase())
 }
@@ -1825,6 +1860,7 @@ impl App {
             view_profiles: HashMap::new(),
             pending_focus: std::cell::Cell::new(None),
             last_render: Default::default(),
+            start_bg_sent: Default::default(),
             win_layout: None,
             win_layout_name: window_layout::CLASSIC.to_string(),
             panels: HashMap::new(),
@@ -1937,7 +1973,7 @@ impl App {
             .filter(|p| p.manifest.enabled && !p.css.is_empty())
             .map(|p| json!({ "matches": p.manifest.matches, "css": p.css, "spaces": p.manifest.spaces }))
             .collect();
-        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "live_icons": self.config.tabs.live_icons, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
+        json!({ "vim": self.config.vim, "accent": self.theme_for(self.state.active_space).accent, "boost_css": css, "plugin_css": plugin_css, "edge": edge, "peek": self.sidebar_peek, "split_grab": self.split_grab.is_some(), "links": self.config.links, "escape_hints": self.config.escape_hints, "find": self.config.find, "tab_numbers": self.config.sidebar.tab_numbers, "tabs": { "autoplay_in_background": self.config.tabs.autoplay_in_background, "picture_in_picture_on_leave": self.config.tabs.picture_in_picture_on_leave, "play_when_shown": self.config.tabs.play_when_shown, "live_icons": self.config.tabs.live_icons, "undo_close": self.config.tabs.undo_close }, "reader": self.config.reader_view,
             "privacy": self.config.privacy, "toast_seconds": self.config.toast_seconds, "animations": animations_on(&self.config),
             "network_log": if self.config.mcp.enabled { self.config.mcp.network_log.as_str() } else { "never" },
             "ui_css": user_css("page.css", &self.config), "strings": self.strings, "hide_menu": self.config.context_menu.hide,
@@ -1976,6 +2012,8 @@ impl App {
         // A tab no one sees (an agent's, or one fetch_page reads): pages there still draw (content.js timerFrames).
         if let Target::Tab(id) = target {
             c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
+            // gestures.swipe_back_closes_tab: a link's tab, swiped back from its first page, closes.
+            c["swipe_closes"] = json!(self.config.gestures.swipe_back_closes_tab && self.config.gestures.swipe_to_go_back && self.swipe_close_to(id).is_some());
         }
         // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover | fade`), not the sidebar's edge.
         if let Target::Little(id, _) = target {
@@ -4112,11 +4150,49 @@ impl App {
         let mut vm = vm;
         vm["peek_float"] = json!(self.sidebar_floats());
         let vm = vm.to_string();
+        self.send_start_background();
         if *self.last_render.borrow() == vm {
             return;
         }
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.render({vm})"));
         *self.last_render.borrow_mut() = vm;
+    }
+
+    /// The tab a swipe back on `tab` would close it into: the tab whose link opened it, still open in the same space.
+    fn swipe_close_to(&self, tab: TabId) -> Option<TabId> {
+        let from = self.state.tabs.get(&tab)?.opener?;
+        (self.state.section_of(tab) == Some("today") && self.state.tabs.contains_key(&from) && self.state.space_of(from).is_some() && self.state.space_of(from) == self.state.space_of(tab)).then_some(from)
+    }
+
+    /// `sidebar.tab_numbers`: while ⌘ (Ctrl elsewhere) is held, each tab shows the number key that jumps to it.
+    fn show_tab_numbers(&self, on: bool) {
+        let mut map = serde_json::Map::new();
+        if on && self.config.sidebar.tab_numbers {
+            let list = self.cycle_list();
+            let primary: &[&str] = if cfg!(target_os = "macos") { &["cmdorctrl", "cmd", "command", "super", "meta"] } else { &["cmdorctrl", "ctrl", "control"] };
+            for (key, b) in &self.config.keybindings {
+                let Some(config::Binding::Full(Command::GoToTab { index, last })) = b else { continue };
+                let Some((mods, digit)) = key.rsplit_once('+') else { continue };
+                if digit.len() != 1 || !digit.chars().all(|c| c.is_ascii_digit()) || !primary.contains(&mods.to_ascii_lowercase().as_str()) {
+                    continue;
+                }
+                if let Some(t) = if *last { list.last() } else { list.get(*index) } {
+                    map.entry(t.to_string()).or_insert(json!(digit));
+                }
+            }
+        }
+        let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.tabNumbers && valerie.tabNumbers({})", Value::Object(map)));
+    }
+
+    /// `start_background` for the empty space, sent to the sidebar only when it changes.
+    fn send_start_background(&self) {
+        let v = self.config.start_background.trim();
+        if self.start_bg_sent.borrow().as_deref() == Some(v) {
+            return;
+        }
+        *self.start_bg_sent.borrow_mut() = Some(v.to_string());
+        let css = start_background_css(v);
+        let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.startBackground && valerie.startBackground({})", json!(css)));
     }
 
     fn render_little(&self, id: WindowId) {
@@ -4228,10 +4304,14 @@ impl App {
 
     /// Add a tab for a link opened from `from`: below that tab (`links.open_below_current_tab`), else where new tabs go.
     fn add_link_tab(&mut self, space: usize, url: &str, from: Target) -> TabId {
-        match from {
+        let id = match from {
             Target::Tab(src) if self.config.links.open_below_current_tab => self.state.add_tab_below(space, url, src),
             _ => self.state.add_tab(space, url, self.config.tabs.new_tab_position != "bottom"),
+        };
+        if let (Target::Tab(src), Some(t)) = (from, self.state.tabs.get_mut(&id)) {
+            t.opener = Some(src);
         }
+        id
     }
 
     fn navigate(&mut self, tab: TabId, url: &str) {
@@ -9214,6 +9294,18 @@ impl App {
                 }
             }
             Command::Prompt { label, value, then, field } => self.open_prompt(&label, &value, then, &field),
+            Command::ToggleKeepAwake => {
+                let Some(site) = self.state.active_tab().and_then(|t| self.state.tabs.get(&t)).and_then(|t| site_of(&t.url)) else { return };
+                let awake = self.site_settings(&format!("https://{site}/")).unload != Some(false);
+                if let Err(e) = config::set_setting(&["sites", &site, "unload"], if awake { "false" } else { "true" }) {
+                    return self.toast(&format!("Couldn't save that: {e}"));
+                }
+                self.reload_config();
+                if (self.site_settings(&format!("https://{site}/")).unload == Some(false)) != awake {
+                    return self.toast(&format!("Another sites: entry in your config decides this for {site}"));
+                }
+                self.toast(&if awake { format!("{site} stays awake: its tabs never sleep") } else { format!("{site} can sleep again when unused") });
+            }
             Command::ToggleSiteBlocking => {
                 let host = self
                     .state
@@ -9389,6 +9481,7 @@ impl App {
         match (from, kind) {
             (Source::Chrome, "ready") => {
                 self.last_render.borrow_mut().clear();
+                self.start_bg_sent.borrow_mut().take();
                 self.render();
                 trace("sidebar drawn");
                 if self.reveal_when_chrome_ready {
@@ -9407,6 +9500,13 @@ impl App {
             (Source::Overlay, "swipe") => {
                 let _ = self.chrome.evaluate_script(&format!("swipeWheel({m})"));
             }
+            (Source::Page(Target::Tab(id)), "swipe_close") if self.config.gestures.swipe_back_closes_tab => {
+                if let Some(from) = self.swipe_close_to(id) {
+                    self.close(id);
+                    self.activate(from);
+                }
+            }
+            (Source::Chrome, "mod_held") | (Source::Page(Target::Tab(_)), "mod_held") => self.show_tab_numbers(m["on"].as_bool() == Some(true)),
             (Source::Chrome, "unpeek") | (Source::Page(Target::Tab(_)), "unpeek") => {
                 if self.sidebar_peek {
                     self.sidebar_peek = false;
