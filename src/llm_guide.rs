@@ -176,7 +176,7 @@ changed in plain words. Some translations:
 | "cmd+D from another app should bring Valerie's window forward too" | `command_bar: {{ over_other_apps: false }}` |
 | "A shortcut that works from any app" | `global_keybindings: {{ "Ctrl+Alt+Space": open_command_bar }}` |
 | "Sidebar only when I push the mouse to the edge" / "the page shouldn't resize when it shows" | `layout.sidebar_visible: false`, `layout.reveal_sidebar_on_edge: true`, `layout.reveal_sidebar_over_page: true` (`false` squeezes the page instead) |
-| "Always show the little window's bar" / "hide it until I point at the top" | `little_window.top_bar: always` / `hover` |
+| "Always show the little window's bar" / "slide it out (growing the window) only when I point at the top" / "keep its space but fade it in when the mouse comes near" | `little_window.top_bar: always` / `hover` / `fade` (the default) |
 | "The little window's bar should come out more easily" / "only at the very edge" | `little_window.reveal_zone` (pixels from the top, default 24; `6` = the very edge) |
 | "Square corners on the little window's page under the bar" | `little_window.page_corner_radius: 0` (default 10) |
 | "The little window's bar should slide down over the page instead of growing the window upward" | `little_window.bar_reveal: over` (`above`, the default, grows the window upward so the bar covers nothing) |

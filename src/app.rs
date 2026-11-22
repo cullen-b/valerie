@@ -1975,9 +1975,9 @@ impl App {
         if let Target::Tab(id) = target {
             c["unseen_tab"] = json!(self.state.web_tabs.contains(&id));
         }
-        // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover`), not the sidebar's edge.
+        // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover | fade`), not the sidebar's edge.
         if let Target::Little(id, _) = target {
-            let hover = self.little_bar_hides();
+            let hover = self.little_bar_hides() || self.little_bar_fades();
             c["edge"] = json!(hover.then_some("top"));
             c["edge_zone"] = json!(self.config.little_window.reveal_zone.max(1.0));
             c["peek"] = json!(hover && self.littles.get(&id).is_some_and(|l| l.bar_out));
@@ -3591,7 +3591,7 @@ impl App {
             if l.bar_over && !room {
                 platform::bring_to_front(&l.bar);
             }
-            platform::set_traffic_lights_hidden(&l.window, !shown);
+            platform::set_traffic_lights_hidden(&l.window, !shown || self.little_bar_fades() && !l.bar_out);
         }
         if self.answer_window == Some(id) {
             self.layout_answer();
@@ -3610,7 +3610,12 @@ impl App {
 
     /// `little_window.top_bar: hover`: the bar stays hidden until the mouse comes to the window's top.
     fn little_bar_hides(&self) -> bool {
-        self.config.little_window.top_bar != "always"
+        !matches!(self.config.little_window.top_bar.as_str(), "always" | "fade")
+    }
+
+    /// `little_window.top_bar: fade`: the bar keeps its strip above the page but stays see-through until the mouse comes near.
+    fn little_bar_fades(&self) -> bool {
+        self.config.little_window.top_bar == "fade"
     }
 
     /// Slide a little window's bar out above its page, or back away. The window's top edge glides up or down so the page
@@ -3620,6 +3625,21 @@ impl App {
         // little_window.bar_reveal: over (slide over the page's top) | above (the window grows upward to fit it).
         let over = self.config.little_window.bar_reveal != "above";
         let corner = self.little_corner();
+        if self.little_bar_fades() {
+            let Some(l) = self.littles.get_mut(&id) else { return };
+            if l.bar_out == out || (!out && l.asking()) {
+                return;
+            }
+            l.bar_out = out;
+            let _ = l.bar.evaluate_script(&format!("window.little && little.show({out})"));
+            platform::set_traffic_lights_hidden(&l.window, !out);
+            let page = l.page;
+            let cfg = self.page_config_for(Target::Little(id, page), &self.page_config());
+            if let Some(l) = self.littles.get(&id) {
+                let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
+            }
+            return;
+        }
         let Some(room) = self.littles.get(&id).map(|l| self.little_fills_screen(l)) else { return };
         let Some(l) = self.littles.get_mut(&id) else { return };
         if !hover || room {
@@ -4096,6 +4116,8 @@ impl App {
                 "font": self.config.layout.font,
                 "private": l.private,
                 "ask": l.asking(),
+                "fade": self.little_bar_fades(),
+                "shown": l.bar_out,
                 "tab_key": self.little_tab_key(),
                 "tabs": l.order.iter().filter(|_| l.order.len() > 1).map(|&n| {
                     let (url, title) = if n == l.page { (&l.url, &l.title) } else { l.others.iter().find(|p| p.n == n).map(|p| (&p.url, &p.title)).unwrap_or((&l.url, &l.title)) };
@@ -9472,7 +9494,7 @@ impl App {
                 let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
                 self.show_space_menu(id, x, y);
             }
-            (Source::Page(Target::Little(id, _)), "edge") => self.set_little_bar(id, true),
+            (Source::Page(Target::Little(id, _)), "edge") | (Source::LittleBar(id), "bar_near") => self.set_little_bar(id, true),
             (Source::Page(Target::Little(id, _)), "unpeek") | (Source::LittleBar(id), "bar_away") => self.set_little_bar(id, false),
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {

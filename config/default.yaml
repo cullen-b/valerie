@@ -610,11 +610,12 @@ links:
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
-  top_bar: hover           # the bar with "Open in …". one of: hover (hidden; bring the mouse to the window's top and
-                           # it slides out) | always
+  top_bar: fade            # the bar with "Open in …". one of: fade (its strip stays above the page but is see-through
+                           # until the mouse comes near the top, then it fades in quickly) | hover (hidden; bring the
+                           # mouse to the window's top and the window grows to slide it out) | always
   bar_reveal: above        # where the hidden bar slides out. one of: above (the window grows upward to fit it, so the
                            # bar sits on top of the page and covers nothing) | over (down over the page's top, inside the window)
-  reveal_zone: 24          # with top_bar: hover, how close to the window's top the mouse has to move (upward) to bring
+  reveal_zone: 24          # with top_bar: hover or fade, how close to the window's top the mouse has to move (upward) to bring
                            # the bar out, pixels. Bigger = easier to reach; 6 = only the very edge
   page_corner_radius: 10   # rounds the page's top corners while the bar shows above it, pixels (Mac). 0 = square
   full_screen_bar: room    # with top_bar: hover, when a little window is full screen (or fills the screen). one of: room
