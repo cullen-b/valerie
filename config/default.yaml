@@ -610,8 +610,9 @@ links:
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
-  top_bar: fade            # the bar with "Open in …". one of: fade (its strip stays above the page but is see-through
-                           # until the mouse comes near the top, then it fades in quickly) | hover (hidden; bring the
+  top_bar: fade            # the bar with "Open in …". one of: fade (it sits above the page, see-through so you see
+                           # what's behind the window, and fades in quickly when the mouse comes near; outside a Mac
+                           # the strip is plain) | hover (hidden; bring the
                            # mouse to the window's top and the window grows to slide it out) | always
   bar_reveal: above        # where the hidden bar slides out. one of: above (the window grows upward to fit it, so the
                            # bar sits on top of the page and covers nothing) | over (down over the page's top, inside the window)

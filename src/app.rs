@@ -74,6 +74,8 @@ pub enum UserEvent {
     PrepareLittle,
     /// A little window's bar finished sliding out or away.
     LittleBarSlid(WindowId),
+    /// A little window's bar finished fading (`little_window.top_bar: fade`): redraw the window's shadow.
+    LittleShadow(WindowId),
     /// Time to look where the mouse is over little windows whose page is still loading (`watch_little_tops`).
     LittleTopWatch,
     Menu(MenuId),
@@ -3618,6 +3620,11 @@ impl App {
         self.config.little_window.top_bar == "fade"
     }
 
+    /// With `top_bar: fade` on a Mac, the strip above the page shows what's behind the window (elsewhere, a plain backdrop).
+    fn little_see_through(&self) -> bool {
+        cfg!(target_os = "macos") && self.little_bar_fades()
+    }
+
     /// Slide a little window's bar out above its page, or back away. The window's top edge glides up or down so the page
     /// stays where it is on screen, the same size; with no room above (or filling the screen) the bar slides over the page.
     fn set_little_bar(&mut self, id: WindowId, out: bool) {
@@ -3633,6 +3640,12 @@ impl App {
             l.bar_out = out;
             let _ = l.bar.evaluate_script(&format!("window.little && little.show({out})"));
             platform::set_traffic_lights_hidden(&l.window, !out);
+            platform::refresh_shadow(&l.window);
+            let p = self.proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                send(&p, UserEvent::LittleShadow(id));
+            });
             let page = l.page;
             let cfg = self.page_config_for(Target::Little(id, page), &self.page_config());
             if let Some(l) = self.littles.get(&id) {
@@ -4117,6 +4130,7 @@ impl App {
                 "private": l.private,
                 "ask": l.asking(),
                 "fade": self.little_bar_fades(),
+                "see_through": self.little_see_through(),
                 "shown": l.bar_out,
                 "tab_key": self.little_tab_key(),
                 "tabs": l.order.iter().filter(|_| l.order.len() > 1).map(|&n| {
@@ -5370,7 +5384,8 @@ impl App {
             .with_title(if private { "Valerie — Private" } else { "Valerie" })
             .with_visible(visible)
             .with_inner_size(LogicalSize::new(w, h))
-            .with_min_inner_size(LogicalSize::new(360.0, 240.0));
+            .with_min_inner_size(LogicalSize::new(360.0, 240.0))
+            .with_transparent(self.little_see_through());
         let window = match builder.build(elwt) {
             Ok(w) => {
                 place_test_window(&w, elwt);
@@ -5395,6 +5410,7 @@ impl App {
         let p = self.proxy.clone();
         let bar = platform::ui_builder(&self.chrome)
             .with_html(ui_page("little.html", &self.config))
+            .with_transparent(self.little_see_through())
             .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
@@ -10737,6 +10753,11 @@ impl App {
             UserEvent::DrawTimeout(id) => self.drawn(id),
             UserEvent::PrepareLittle => self.prepare_little(elwt),
             UserEvent::LittleBarSlid(id) => self.little_bar_slid(id),
+            UserEvent::LittleShadow(id) => {
+                if let Some(l) = self.littles.get(&id) {
+                    platform::refresh_shadow(&l.window);
+                }
+            }
             UserEvent::LittleTopWatch => {
                 self.little_top_watching = false;
                 self.watch_little_tops();
