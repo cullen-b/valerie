@@ -529,8 +529,13 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 44px; paddin
   body { font-size: 16px; }
   .rail, .top a.lnk { display: none; }
   .top { padding-block: 10px; }
-  .ch-in { align-items: flex-end; padding: 0 18px 22px; }
-  .txt { width: 100%; min-height: 43svh; }
+  /* the window stays in a band at the top; the text is a plain page that scrolls under it at the finger's speed */
+  .stage { bottom: auto; height: var(--band, 42svh); z-index: 2; -webkit-mask-image: linear-gradient(#000 calc(100% - 30px), transparent); mask-image: linear-gradient(#000 calc(100% - 30px), transparent); }
+  .ch, .ch.hero, .ch[style] { height: auto !important; min-height: calc((100svh - var(--band, 42svh)) * .8); }
+  .ch-in { position: static; height: auto; display: block; padding: 26px 18px 48px; }
+  .hero .ch-in { padding-top: calc(var(--band, 42svh) + 4px); }
+  .txt { width: 100%; will-change: auto; }
+  .ch :is(h1, h2) .l { font-stretch: var(--wd, 100%); font-weight: var(--wg, 800); transition: none; }
   .ch h1, .ch h2, .get h2 { font-size: calc(var(--fs, 1) * clamp(30px, 9.4vw, 54px)); margin-bottom: 14px; }
   .ch p { margin-bottom: 14px; } .hint { margin-top: 14px; } .ctas { margin-bottom: 10px; }
   .btn { min-height: 46px; padding: 0 18px; }
@@ -818,11 +823,19 @@ function fit() {
 // ---------- scroll: fade chapters, switch looks, move the camera ----------
 let picked = null, inSpaces = false, space = 0;
 let scale = 1, cx = 0, cy = 0, drift = 0, tiltX = 0, tiltY = 0, want = { drift: 0, tiltX: 0, tiltY: 0 }, ticking = false, current = chapters[0];
-function measure() {
-  const vw = innerWidth, vh = innerHeight, wide = vw >= 860;
-  scale = wide ? Math.min(vw * 0.55 / 1040, vh * 0.72 / 660) : Math.min(vw * 0.93 / 1040, vh * 0.36 / 660);
-  cx = wide ? vw * 0.69 : vw / 2; cy = wide ? vh * 0.5 : 64 + vh * 0.2;
-  root.style.setProperty("--cx", cx + "px");
+// phones get a plain page: the window sits in a band at the top and the text scrolls normally under it
+let phone = false, band = 0, measuredW = 0;
+function measure(e) {
+  const vw = innerWidth, wide = vw >= 860;
+  // on phones the address bar showing or hiding resizes the page; only a new width needs a new layout
+  if (e && !wide && vw === measuredW) return;
+  const vh = innerHeight;
+  measuredW = vw; phone = !wide;
+  scale = wide ? Math.min(vw * 0.55 / 1040, vh * 0.72 / 660) : Math.min(vw * 0.93 / 1040, vh * 0.34 / 660);
+  cx = wide ? vw * 0.69 : vw / 2; cy = wide ? vh * 0.5 : 70 + 330 * scale;
+  band = cy + 330 * scale + 34;
+  root.style.setProperty("--cx", cx + "px"); root.style.setProperty("--band", band + "px");
+  if (phone) for (const ch of chapters) ch.firstElementChild.firstElementChild.style.cssText = "";
   fit(); place(); glideFrame();
 }
 const clamp = (n) => Math.max(0, Math.min(1, n));
@@ -834,12 +847,14 @@ let lookAt = 0, scrolling = false, lit = null;
 // the looks chapter steps through its looks while its text is within this share of its fade distance of the middle, so each look shows while the text is readable
 const STEPS = 0.55;
 // read layout once per resize, not on every scroll, so a scroll frame never waits on layout
-function place() { for (const ch of chapters) { ch.mid = ch.offsetTop + ch.offsetHeight / 2; ch.txt = ch.firstElementChild.firstElementChild; ch.was = {}; } }
+function place() { for (const ch of chapters) { ch.top = ch.offsetTop; ch.mid = ch.top + ch.offsetHeight / 2; ch.txt = ch.firstElementChild.firstElementChild; ch.was = {}; } }
 function onScroll() { if (!scrolling) { scrolling = true; requestAnimationFrame(glideFrame); } }
 function glideFrame() {
   scrolling = false;
   const vh = innerHeight, y = scrollY; let active = chapters[0], near = Infinity;
-  for (const ch of chapters) {
+  // a phone's chapter is the one whose text has reached the upper part of the space under the window
+  if (phone) for (const ch of chapters) { if (ch.top - y <= band + (vh - band) * 0.4) active = ch; }
+  else for (const ch of chapters) {
     const d = (ch.mid - y - vh / 2) / vh, g = glide(ch), at = d * (1 - g.k);
     const o = ch === chapters[0] && at > 0 ? 1 : clamp((g.gone - Math.abs(at)) / (g.gone - g.full));
     // rounded to whole device pixels so glyphs don't shimmer between subpixel positions
@@ -855,15 +870,15 @@ function glideFrame() {
   if (active !== current) {
     current = active; picked = null; press();
     inSpaces = active.id === "spaces"; space = inSpaces ? 1 : 0; showSpace();
-    dreaming(active.id === "exts");
+    dreaming(active.id === "exts"); cycling(phone && !!active.dataset.steps);
     $("#asked").textContent = "";
   }
   if (active !== lit) { lit = active; for (const ch of chapters) { ch.classList.toggle("on", ch === active); ch.railButton.setAttribute("aria-current", ch === active); } }
   const steps = active.dataset.steps?.split("|");
-  if (steps) showLook(Math.min(steps.length - 1, Math.floor(clamp((STEPS - lookAt) / (2 * STEPS)) * steps.length)));
+  if (steps && !phone) showLook(Math.min(steps.length - 1, Math.floor(clamp((STEPS - lookAt) / (2 * STEPS)) * steps.length)));
   picked ? wear(picked.look, picked.lay, [...picked.fx].join(" ")) : steps ? wear(...steps[lookStep].split(" ")) : wear(spaceLook(), active.dataset.lay);
   // the window bobs gently with the whole page, never jumping between chapters
-  want.drift = Math.sin(scrollY / vh * 1.3) * 14; kick();
+  want.drift = phone ? 0 : Math.sin(scrollY / vh * 1.3) * 14; kick();
 }
 function frame() {
   ticking = false;
@@ -883,7 +898,11 @@ function showLook(n) {
   lookSegs.forEach((b, i) => b.setAttribute("aria-pressed", i === n));
   $("#lookset").textContent = LOOKSETS[n];
 }
+// on a phone the looks take turns by themselves until one is tapped
+let cycleTimer = 0;
+function cycling(on) { clearInterval(cycleTimer); if (on && !calm) cycleTimer = setInterval(() => { showLook((lookStep + 1) % lookSegs.length); glideFrame(); }, 2600); }
 lookSegs.forEach((b, i) => (b.onclick = () => {
+  if (phone) { cycling(false); showLook(i); return glideFrame(); }
   const ch = $("#looks");
   scrollTo({ top: centred(ch, glide(ch).gone * STEPS * (1 - 2 * (i + 0.5) / lookSegs.length)), behavior: calm ? "auto" : "smooth" });
 }));
@@ -1108,7 +1127,7 @@ fetch("https://api.github.com/repos/cullen-b/valerie/releases/latest").then((r) 
 
 showSpace();
 measure();
-if (document.fonts) document.fonts.ready.then(measure);
+if (document.fonts) document.fonts.ready.then(() => measure());
 </script>
 </body>
 </html>
