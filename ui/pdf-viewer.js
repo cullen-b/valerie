@@ -127,7 +127,9 @@ async function start() {
     arrow: btn("Arrow", "Drag on the page to draw an arrow", () => setTool("arrow")),
   };
   const color = el("input"); color.type = "color"; color.value = localStorage.getItem("valerie-pdf-color") || "#d43f3a"; color.title = tr("Colour for text and arrows");
-  color.oninput = () => { localStorage.setItem("valerie-pdf-color", color.value); if (selected && selected.color) { snapshot(); selected.color = color.value; drawMarks(selected.page); } };
+  let picking = false;   // one undo step per trip to the colour picker, not one per colour it passes through
+  color.onchange = () => { picking = false; };
+  color.oninput = () => { localStorage.setItem("valerie-pdf-color", color.value); if (selected && selected.color) { if (!picking) snapshot(); picking = true; selected.color = color.value; drawMarks(selected.page); } };
   const undoBtn = btn("Undo", /Mac/.test(navigator.platform) ? "Undo (⌘Z)" : "Undo (Ctrl+Z)", () => undo());
   const saveBtn = btn("Save Copy", "Save a copy with your marks to your downloads", () => save(), "primary");
   const toolGroup = el("div", "group"); toolGroup.append(...Object.values(tools));
@@ -199,8 +201,9 @@ async function start() {
   // ---------- marks ----------
   // Each mark lives in its page's own units (PDF points, from the top-left), so zooming just scales the layer.
   let tool = "select", selected = null, history = [], dirty = false, signature = localStorage.getItem("valerie-signature");
-  const snapshot = () => { history.push(JSON.stringify(pages.map((p) => p.list))); if (history.length > 100) history.shift(); undoBtn.disabled = false; dirty = true; };
+  const snapshot = (state = JSON.stringify(pages.map((p) => p.list))) => { history.push(state); if (history.length > 100) history.shift(); undoBtn.disabled = false; dirty = true; };
   const undo = () => {
+    if (document.activeElement && document.activeElement.isContentEditable) document.activeElement.blur();   // ends an edit, so it's undone first
     const last = history.pop(); if (!last) return;
     JSON.parse(last).forEach((list, i) => { pages[i].list = list.map((m) => ({ ...m, page: pages[i].n })); });
     selected = null; pages.forEach((p) => drawMarks(p.n)); undoBtn.disabled = !history.length;
@@ -276,20 +279,31 @@ async function start() {
     const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
     addEventListener("pointermove", move); addEventListener("pointerup", up);
   }
-  function editText(d, m) {
+  function editText(d, m, fresh) {
     select(m); d = m.el;
     d.contentEditable = "true"; d.focus();
     const range = document.createRange(); range.selectNodeContents(d); const s = getSelection(); s.removeAllRanges(); s.addRange(range);
     // The text is kept as it's typed: a toolbar click doesn't take the focus away in WebKit, it just redraws.
+    // An edit is one undo step; a new box's typing is part of placing it, which already is one.
+    const start = m.text, now = () => d.innerText.replace(/\n$/, "");
     let changed = false;
-    d.addEventListener("input", () => { if (!changed) { snapshot(); changed = true; } m.text = d.innerText.replace(/\n$/, ""); });
+    d.addEventListener("input", () => { if (!changed && !fresh) snapshot(); changed = true; m.text = now(); dirty = true; });
     const done = () => {
       d.removeEventListener("blur", done);
-      if (!m.text.trim()) { const p = pageOf(m); p.list = p.list.filter((k) => k !== m); selected = null; }
+      const gone = !m.text.trim();
+      if (gone) { const p = pageOf(m); p.list = p.list.filter((k) => k !== m); selected = null; }
+      if (fresh && gone) { history.pop(); undoBtn.disabled = !history.length; }
       d.contentEditable = "false"; drawMarks(m.page);
     };
     d.addEventListener("blur", done);
-    d.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) { e.preventDefault(); d.blur(); } });
+    d.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      // ⌘Z (Ctrl+Z) with nothing typed left to undo in the box ends the edit and undoes the last change to the document.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z" && now() === start) {
+        e.preventDefault(); if (changed && !fresh) history.pop();   // typing undone back to the start leaves no step
+        d.blur(); undo(); return;
+      }
+      if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) { e.preventDefault(); d.blur(); } });
   }
   // Tools: a click places text or the signature; a drag draws an arrow.
   for (const p of pages) {
@@ -300,7 +314,7 @@ async function start() {
       if (tool === "text") {
         snapshot();
         const m = { type: "text", page: p.n, x, y: y - 9, text: tr("Text"), size: 14, color: color.value };
-        p.list.push(m); drawMarks(p.n); editText(m.el, m); setTool("select");
+        p.list.push(m); drawMarks(p.n); editText(m.el, m, true); setTool("select");
       } else if (tool === "sign") {
         if (!signature) return signaturePad();
         const img = new Image();
@@ -326,7 +340,7 @@ async function start() {
   }
   document.addEventListener("pointerdown", (e) => { if (selected && !e.target.closest(".mk") && !e.target.classList.contains("hit") && !e.target.closest(".vpdf-bar")) select(null); });
   document.addEventListener("keydown", (e) => {
-    const typing = e.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+    const typing = e.target.isContentEditable || e.target.tagName === "TEXTAREA" || (e.target.tagName === "INPUT" && e.target.type !== "color");
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); e.stopPropagation(); undo(); }
     else if ((e.key === "Backspace" || e.key === "Delete") && selected && !typing) {
       e.preventDefault(); e.stopPropagation(); snapshot();
