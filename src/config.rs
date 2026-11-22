@@ -1026,6 +1026,8 @@ pub struct LittleWindowConfig {
     #[serde(default = "yes")]
     pub tabs: bool,
     #[serde(default = "yes")]
+    pub command_bar: bool,
+    #[serde(default = "yes")]
     pub open_all_tabs: bool,
     pub width: f64,
     pub height: f64,

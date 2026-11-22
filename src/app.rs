@@ -479,6 +479,8 @@ pub struct App {
     /// The command bar's own panel for opening it over other apps, made the first time; and whether the bar is open there.
     float_bar: Option<(Window, WebView)>,
     bar_floating: bool,
+    /// The little window the open command bar belongs to: what you open from it opens as a tab there (`little_window.command_bar`).
+    bar_little: Option<WindowId>,
     /// What to show in that panel once its page has loaded.
     float_pending: Option<String>,
     /// How tall the command bar drew itself (only used where its view is just the bar: `bar_bounds`).
@@ -1773,6 +1775,7 @@ impl App {
             bar_open: false,
             float_bar: None,
             bar_floating: false,
+            bar_little: None,
             float_pending: None,
             bar_height: 120.0,
             remote: Vec::new(),
@@ -4827,6 +4830,17 @@ impl App {
         self.open_bar(mode);
     }
 
+    /// Put the command bar's panel over little window `id`, centred, as far down as it sits in the main window.
+    fn place_bar_over_little(&self, id: WindowId) {
+        let (Some((w, _)), Some(l)) = (self.float_bar.as_ref().filter(|_| self.bar_floating), self.littles.get(&id)) else { return };
+        let scale = l.window.scale_factor();
+        let (Ok(pos), size) = (l.window.outer_position(), l.window.outer_size()) else { return };
+        let (pos, size) = (pos.to_logical::<f64>(scale), size.to_logical::<f64>(scale));
+        let width = self.config.command_bar.width.min(size.width - 24.0).max(320.0);
+        w.set_inner_size(LogicalSize::new(width, w.inner_size().to_logical::<f64>(w.scale_factor()).height));
+        w.set_outer_position(tao::dpi::LogicalPosition::new(pos.x + (size.width - width) / 2.0, pos.y + size.height * self.config.command_bar.top / 100.0));
+    }
+
     /// The view the command bar is open in (its own panel when it's over other apps).
     fn bar_view(&self) -> &WebView {
         self.float_bar.as_ref().filter(|_| self.bar_floating).map(|(_, v)| v).unwrap_or(&self.overlay)
@@ -5258,6 +5272,10 @@ impl App {
             if let Some((w, v)) = &self.float_bar {
                 let _ = v.evaluate_script("palette.hide()");
                 w.set_visible(false);
+            }
+            if let Some(l) = self.bar_little.take().and_then(|id| self.littles.get(&id)) {
+                l.window.set_focus();
+                let _ = focus_view(if l.asking() { &l.bar } else { &l.view });
             }
             return;
         }
@@ -7540,6 +7558,11 @@ impl App {
             match &cmd {
                 // little_window.tabs: new tabs and the command bar stay in the little window.
                 Command::NewTab { url, .. } if tabs => return self.little_new_tab(id, url.clone()),
+                Command::OpenCommandBar { .. } if tabs && self.config.little_window.command_bar => {
+                    self.open_floating_bar(BarMode::NewTab, elwt);
+                    self.bar_little = Some(id).filter(|_| self.bar_floating);
+                    return self.place_bar_over_little(id);
+                }
                 Command::OpenCommandBar { .. } if tabs => return self.little_new_tab(id, None),
                 Command::CloseTab { tab: None } if more => return self.little_close_tab(id),
                 Command::NextTab | Command::LastTab if more => return self.little_show_tab(id, l.page_along(1)),
@@ -9478,9 +9501,15 @@ impl App {
                     Source::SplitHandle(_) | Source::TabCard => return,
                     Source::Overlay | Source::FloatBar => {
                         if !matches!(cmd, Command::CloseCommandBar) {
+                            let little = self.bar_little.filter(|id| floating_pick && self.littles.contains_key(id));
                             self.close_bar();
+                            // The bar was over a little window: an address or search opens as a tab there, other picks act on it.
+                            if let (Some(id), Command::Go { input, .. }) = (little, &cmd) {
+                                return self.little_new_tab(id, Some(input.clone()));
+                            }
                             // Picked from the bar over another app: Valerie comes forward for it (a copy needn't).
-                            if floating_pick && !matches!(cmd, Command::CopyText { .. } | Command::CopyPassword { .. } | Command::CopyOneTimeCode { .. }) {
+                            let stays_little = little.is_some() && !matches!(cmd, Command::ActivateTab { .. });
+                            if floating_pick && !stays_little && !matches!(cmd, Command::CopyText { .. } | Command::CopyPassword { .. } | Command::CopyOneTimeCode { .. }) {
                                 platform::activate_app();
                                 self.show_main();
                             }
