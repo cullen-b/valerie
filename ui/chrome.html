@@ -231,6 +231,47 @@ body.pointer .chat-label.project:hover .add { opacity: .7; } body.pointer .chat-
 body.pointer .chat-label.fold:hover { color: var(--fg); }
 #scroll.chats { display: flex; flex-direction: column; }
 #scroll.chats > * { flex: none; }
+/* chats from the other AI apps, the search box and the app buttons (chats.search, chats.app_buttons, chats.other_apps) */
+#chat-tools { flex: none; padding: 2px 0 6px; }
+#chat-tools[hidden] { display: none; }
+.chat-search { display: flex; align-items: center; gap: 7px; height: calc(var(--tab-h) - 2px); margin: 2px 0 6px; padding: 0 9px;
+  border-radius: calc(var(--tab-h) * .26); background: var(--hover); color: var(--fg-dim); transition: box-shadow .15s; }
+.chat-search:focus-within { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent); }
+.chat-search .line-ic { width: 13px; height: 13px; flex: none; stroke-width: 2.2; }
+.chat-search input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; outline: 0; color: var(--fg); font: inherit; font-size: var(--tab-font); }
+.chat-search input::placeholder { color: var(--fg-dim); }
+.chat-search .busy { width: 11px; height: 11px; flex: none; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--fg) 20%, transparent); border-top-color: var(--fg-dim); animation: spin .8s linear infinite; }
+.app-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.app-chip { height: 22px; padding: 0 9px; border-radius: 11px; display: inline-flex; align-items: center; gap: 5px; border: 0; font: inherit; font-size: 11.5px;
+  color: var(--fg); background: var(--hover); cursor: default; transition: opacity .15s, background .12s, box-shadow .12s; }
+.app-chip[aria-pressed="false"] { opacity: .5; background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+body.pointer .app-chip:hover { background: var(--active); opacity: 1; }
+.app-chip:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+.app-chip .default { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.app-mark { width: var(--tab-icon); height: var(--tab-icon); flex: none; border-radius: calc(var(--tab-icon) * .3); display: grid; place-items: center;
+  font-size: calc(var(--tab-icon) * .52); font-weight: 650; letter-spacing: -.3px; color: var(--fg); background: color-mix(in srgb, var(--app-hue, var(--fg)) 22%, transparent); }
+.app-claude { --app-hue: hsl(24 70% 60%); } .app-codex { --app-hue: hsl(205 70% 60%); } .app-opencode { --app-hue: hsl(150 45% 55%); }
+.app-t3 { --app-hue: hsl(275 60% 65%); } .app-pi { --app-hue: hsl(48 70% 55%); } .app-cursor { --app-hue: hsl(0 0% 65%); } .app-hermes { --app-hue: hsl(330 55% 62%); }
+.row.other .title { color: color-mix(in srgb, var(--fg) 88%, transparent); }
+.row.other.opening .app-mark { animation: other-open 1s ease-in-out infinite; }
+@keyframes other-open { 50% { opacity: .35; } }
+.row.hit { height: auto; min-height: var(--tab-h); padding-top: 6px; padding-bottom: 6px; align-items: flex-start; }
+.row.hit .app-mark, .row.hit .chat-ic { margin-top: 1px; }
+.row.hit .body { flex: 1; min-width: 0; }
+.row.hit .body .title { display: block; }
+.row.hit .snip { font-size: 11.5px; line-height: 1.35; color: var(--fg-dim); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.newtab .agent-pick { font-size: 11.5px; color: var(--fg-dim); padding: 2px 6px; border-radius: 6px; display: flex; align-items: center; gap: 3px; }
+.newtab .agent-pick .line-ic { width: 10px; height: 10px; stroke-width: 2.4; }
+body.pointer .newtab .agent-pick:hover { background: var(--hover); color: var(--fg); }
+.row.t3 { color: var(--fg-dim); }
+body.pointer .row.t3:hover { color: var(--fg); }
+.row.t3.launching .app-mark { animation: t3-launch .55s cubic-bezier(.2, .8, .2, 1); }
+@keyframes t3-launch {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-hue) 70%, transparent); }
+  35% { transform: scale(.82); }
+  100% { transform: scale(1); box-shadow: 0 0 0 16px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .row.t3.launching .app-mark { animation: none; } }
 .working-shelf { margin-top: auto !important; position: sticky; bottom: 0; margin: 10px -4px 0; padding: 0 4px 6px; border-top: 1px solid var(--line);
   background: linear-gradient(color-mix(in srgb, var(--bg2) 92%, transparent), var(--bg2)); backdrop-filter: blur(8px); }
 body.pointer .row.chat:hover .when { display: none; }
@@ -403,7 +444,7 @@ html.anim-start-logo #empty svg circle { transform-box: fill-box; transform-orig
   <div id="url"></div>
   <div id="favorites" class="grid"></div>
   <div id="widgets"></div>
-  <div id="lists"><div id="pins"></div><div id="scroll"></div></div>
+  <div id="lists"><div id="pins"></div><div id="chat-tools" hidden></div><div id="scroll"></div></div>
   <div id="nowplaying"></div>
   <div id="needs" role="button"></div>
   <div id="bottom"></div>
@@ -1196,8 +1237,8 @@ function elapsed(start) {
 function chatRow(c, here) {
   const shown = c.id === S.chats.active && (!here || S.chats.float);
   const r = el("div", "row chat" + (shown ? " active" : "") + (c.unread ? " unread" : ""));
-  const ic = el("div", "chat-ic" + (c.running ? " running" : ""), c.running || here ? "" : "✦");
-  if (here && !c.running) ic.append(glyph(LINE.chat, "line-ic"));
+  const ic = c.from && !c.running ? appMark(c.from) : el("div", "chat-ic" + (c.running ? " running" : ""), c.running || here ? "" : "✦");
+  if (here && !c.running && !c.from) ic.append(glyph(LINE.chat, "line-ic"));
   r.append(ic, el("div", "title", c.title));
   if (c.asking) { const a = el("div", "when asking", "needs you"); r.append(a); }
   else if (c.running && c.started) { const t = el("div", "when elapsed", elapsed(c.started)); t.dataset.started = c.started; r.append(t); elapsedTimer ||= setInterval(tickElapsed, 1000); }
@@ -1219,6 +1260,7 @@ const LINE = {
   chat: "M7.9 20A9 9 0 1 0 4 16.1L2 22z",
   pen: "M12 20h9M16.38 3.62a1 1 0 0 1 3 3L7.37 18.64a2 2 0 0 1-.86.5l-2.87.84a.5.5 0 0 1-.62-.62l.84-2.87a2 2 0 0 1 .5-.86z",
   down: "M6 9l6 6 6-6",
+  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
   folder: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
 };
 // sidebar.space_chats: the chats started in this space, under a "Chats" heading that folds; the pen starts another.
@@ -1254,10 +1296,20 @@ function renderChatList(sc) {
   const nt = el("div", "row newtab"); nt.append(el("div", "plus", "+"), el("div", "title", "New chat"));
   nt.title = `New chat (${/Mac/.test(navigator.platform) ? "⌘N" : "Ctrl+N"} starts one on the open chat's project)`;
   nt.onclick = () => cmd({ cmd: "new_chat" }); sc.append(nt);
+  if (S.chats.new_agent) {
+    const pick = el("div", "agent-pick"); pick.append(el("span", null, S.chats.new_agent), glyph(LINE.down, "line-ic"));
+    pick.title = "Which AI new chats use"; pick.setAttribute("role", "button");
+    pick.onclick = (e) => { e.stopPropagation(); const b = pick.getBoundingClientRect(); send({ t: "chat_agent_menu", x: b.left, y: b.bottom + 2 }); };
+    nt.append(pick);
+  }
+  if (S.chats.t3) sc.append(t3Row());
+  if (S.chats.found) return renderChatHits(sc, S.chats.found);
   const list = S.chats.list || [];
   const working = list.filter((c) => c.running), rest = list.filter((c) => !c.running);
   const pinned = rest.filter((c) => c.pinned && !c.snoozed);
-  const active = rest.filter((c) => !c.pinned && !c.snoozed);
+  // Chats from the other apps sit among Valerie's own, newest first.
+  const active = rest.filter((c) => !c.pinned && !c.snoozed).concat((S.chats.others || []).map((o) => ({ ...o, other: true, project: o.folder })))
+    .sort((a, b) => b.updated - a.updated);
   const snoozed = rest.filter((c) => c.snoozed);
   if (pinned.length) { sc.append(el("div", "chat-label", "Pinned")); pinned.forEach((c) => sc.append(chatRow(c))); }
   // Chats with a project folder sit under the project's name, newest project first; a + starts another chat there.
@@ -1269,9 +1321,9 @@ function renderChatList(sc) {
     const add = el("span", "add", "+"); add.title = "New chat in this project";
     add.onclick = (e) => { e.stopPropagation(); cmd({ cmd: "new_chat", folder: path }); };
     h.append(add); sc.append(h);
-    cs.forEach((c) => sc.append(chatRow(c)));
+    cs.forEach((c) => sc.append(c.other ? otherRow(c) : chatRow(c)));
   }
-  if (plain.length) { sc.append(el("div", "chat-label", "Chats")); plain.forEach((c) => sc.append(chatRow(c))); }
+  if (plain.length) { sc.append(el("div", "chat-label", "Chats")); plain.forEach((c) => sc.append(c.other ? otherRow(c) : chatRow(c))); }
   const fold = (into, key, label, items) => {
     if (!items.length) return;
     const h = el("div", "chat-label fold" + (chatFolds[key] ? " closed" : ""), `${label} · ${items.length}`);
@@ -1279,7 +1331,7 @@ function renderChatList(sc) {
     into.append(h);
     if (!chatFolds[key]) items.forEach((c) => into.append(chatRow(c)));
   };
-  if (!list.length) sc.append(el("div", "kept-hint", "Ask anything: your agent can see and use your browser"));
+  if (!list.length && !(S.chats.others || []).length) sc.append(el("div", "kept-hint", "Ask anything: your agent can see and use your browser"));
   // Snoozed, Working and Closed live at the bottom of the sidebar.
   const closed = S.chats.closed || [];
   if (working.length || snoozed.length || closed.length) {
@@ -1296,6 +1348,82 @@ function renderChatList(sc) {
     sc.append(shelf);
   }
 }
+// ---------- every chat in one place: the other AI apps' chats, search and the app buttons ----------
+const APP_MARK = { claude: "Cc", codex: "Cx", opencode: "Oc", t3: "T3", pi: "Pi", cursor: "Cu", hermes: "He" };
+function appMark(app) { return el("div", "app-mark app-" + app, APP_MARK[app] || (app || "?").slice(0, 2)); }
+// A chat in another app: opening it carries it on in Valerie, through that app.
+function otherRow(o, snip) {
+  const r = el("div", "row chat other" + (snip ? " hit" : ""));
+  r.append(appMark(o.source));
+  if (snip) { const b = el("div", "body"); b.append(el("div", "title", o.title), el("div", "snip", snip)); r.append(b); }
+  else r.append(el("div", "title", o.title));
+  r.append(el("div", "when", ago(o.updated)));
+  r.title = o.title + "\n" + (o.app || o.source) + (o.folder ? " · " + o.folder : "") + "\nOpen it to carry on here";
+  r.onclick = () => { r.classList.add("opening"); cmd({ cmd: "open_other_chat", source: o.source, id: o.id }); };
+  r.oncontextmenu = (e) => { e.preventDefault(); send({ t: "other_chat_menu", source: o.source, id: o.id, x: e.clientX, y: e.clientY }); };
+  return r;
+}
+function renderChatHits(sc, found) {
+  const hits = found.hits || [];
+  if (!hits.length) sc.append(el("div", "kept-hint", found.busy ? "Searching every chat…" : "No chat mentions that"));
+  hits.forEach((h) => {
+    if (h.chat) {
+      const r = chatRow(h.chat); r.classList.add("hit");
+      const t = r.querySelector(".title"), b = el("div", "body"); t.replaceWith(b); b.append(t, el("div", "snip", h.snippet || ""));
+      sc.append(r);
+    } else sc.append(otherRow(h, h.snippet || h.folder || " "));
+  });
+}
+// T3 Code's own app, in a tab: the page grows out of this button.
+function t3Row() {
+  const r = el("div", "row t3"); r.append(appMark("t3"), el("div", "title", "T3 Code"));
+  r.title = "Open T3 Code in a tab, signed in";
+  r.onclick = () => {
+    r.classList.remove("launching"); void r.offsetWidth; r.classList.add("launching");
+    const b = r.getBoundingClientRect();
+    cmd({ cmd: "open_t3", from: [b.left, b.top, b.width, b.height] });
+  };
+  return r;
+}
+let chatQuery = "", searchTimer = 0, searchBox = null;
+function chatSearchBox() {
+  if (searchBox) return searchBox;
+  searchBox = el("label", "chat-search");
+  const inp = el("input"); inp.type = "text"; inp.placeholder = "Search chats"; inp.spellcheck = false; inp.autocomplete = "off";
+  inp.setAttribute("aria-label", "Search every chat, here and in your other AI apps");
+  const run = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => cmd({ cmd: "search_chats", query: chatQuery.trim() }), 220); };
+  inp.oninput = () => { chatQuery = inp.value; if (!chatQuery.trim()) { clearTimeout(searchTimer); cmd({ cmd: "search_chats", query: "" }); } else run(); };
+  inp.onkeydown = (e) => {
+    if (e.key === "Escape" && inp.value) { e.preventDefault(); e.stopPropagation(); inp.value = ""; inp.oninput(); }
+    else if (e.key === "Enter") { const first = $("#scroll .row.chat"); if (first) first.click(); }
+  };
+  searchBox.append(glyph(LINE.search, "line-ic"), inp, el("div", "busy"));
+  return searchBox;
+}
+function renderChatTools(box) {
+  const C = S.chats;
+  if (C.search) {
+    if (!box.contains(chatSearchBox())) box.prepend(searchBox);
+    // A search started elsewhere (the command bar, an agent) shows in the box too, unless you're typing in it.
+    const inp = searchBox.querySelector("input"), q = C.found ? C.found.query : "";
+    if (document.activeElement !== inp && inp.value.trim() !== q) { inp.value = q; chatQuery = q; }
+    searchBox.querySelector(".busy").hidden = !(C.found && C.found.busy);
+  }
+  else if (searchBox) { searchBox.remove(); if (chatQuery) { chatQuery = ""; searchBox.querySelector("input").value = ""; } }
+  let row = box.querySelector(".app-chips");
+  if (!(C.apps || []).length) { if (row) row.remove(); return; }
+  if (!row) { row = el("div", "app-chips"); row.setAttribute("role", "group"); row.setAttribute("aria-label", "Show chats from"); box.append(row); }
+  row.replaceChildren(...C.apps.map((a) => {
+    const b = el("button", "app-chip"); b.setAttribute("aria-pressed", String(a.shown));
+    if (a.default) { const d = el("span", "default"); d.title = "New chats use this"; b.append(d); }
+    b.append(el("span", null, a.title));
+    b.title = (a.shown ? "Hide " : "Show ") + a.title + " chats" + (a.agent ? "\nRight-click to start new chats with it" : "");
+    b.onclick = () => cmd({ cmd: "toggle_chat_app", app: a.id });
+    b.oncontextmenu = (e) => { e.preventDefault(); send({ t: "chat_app_menu", app: a.id, x: e.clientX, y: e.clientY }); };
+    return b;
+  }));
+}
+
 // Running chats' timers tick every second.
 // Running chats' clocks: the timer only exists while one is on screen, so an idle sidebar never wakes.
 const elapsedEls = document.getElementsByClassName("elapsed"); var elapsedTimer;
@@ -1537,7 +1665,8 @@ function render(state) {
   const pinTop = $("#pins"); pinTop.replaceChildren();
   const chatsOpen = !!(S.chats && S.chats.open);
   sc.classList.toggle("chats", chatsOpen);
-  if (chatsOpen) renderChatList(sc);
+  const tools = $("#chat-tools"); tools.hidden = !chatsOpen || !(S.chats.search || (S.chats.apps || []).length);
+  if (chatsOpen) { renderChatTools(tools); renderChatList(sc); }
   else {
   const parts = {};
   const into = (name) => (parts[name] = parts[name] || document.createDocumentFragment());

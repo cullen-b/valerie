@@ -168,6 +168,7 @@ changed in plain words. Some translations:
 | "Put the menus back the old way" / "no File, History or Help menus" | `menu.browser_menus: false` (Edit, Tabs, Spaces, View, Tools, Window only) |
 | "No recent pages in the History menu" / "no Bookmarks menu" | `menu.recent_pages: 0`, `menu.bookmarks: false` |
 | "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
+| "Hide my Codex chats" / "only show T3 chats" / "new chats should use Codex" | `chats.show: [claude, t3]` (apps listed; [] = all), `chats.other_apps.apps`, `agents.use.chat: codex` |
 | "Keep chats out of my spaces" / "plain folders" / "no needs-you pill" | `sidebar.space_chats: false` (chats only in the Chats space), `sidebar.folder_style: plain`, `sidebar.needs_you: false`; `move_chat {{ chat, space }}` moves a chat to another space's sidebar |
 | "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
 | "Let this map use my location" / "no site may ask where I am" | `sites: {{ maps.example.com: {{ location: allow }} }}`, `permissions.location: deny` (the `toggle_site_location` command flips the site you're on) |
@@ -441,7 +442,14 @@ agent's work is shown, `chats.usage` the time and context line under answers, `c
 `chats.worktrees` (auto | always | never) gives each coding chat its own git worktree on a `valerie/<name>` branch, so
 several chats can change one project at once; auto skips repos six-ten manages. `chats.worktree_folder` is where they
 go and `chats.worktree_copy` the untracked files (like `.env`) copied in. Change-action prompts can use {{folder}},
-{{branch}} and {{base}}. The terminal panel (`toggle_terminal`, Ctrl+'; settings under `terminal_panel`) runs real shells
+{{branch}} and {{base}}. The Chats sidebar also lists the other AI apps' chats on this computer (Claude Code, Codex,
+OpenCode, T3 Code; `chats.other_apps`: `enabled`, `apps`, `recent` = how many of each app's newest are listed). They're
+read where each app keeps them, never copied; opening one (`open_other_chat {{ source, id }}`) carries it on in Valerie
+through the same app and conversation (a T3 Code thread keeps running in T3 Code). `chats.search` is the search box
+(`search_chats {{ query }}`, every chat all the way back), `chats.app_buttons` the row of app buttons under it,
+`chats.show` which apps' chats are listed ([] = all; `toggle_chat_app {{ app, only? }}`), and `agents.use.chat` the agent
+new chats use (`set_new_chat_agent {{ agent }}`, also the menu beside "New chat"). `chats.t3_button` shows a T3 Code
+button that opens T3 Code's own app in a tab, signed in (`open_t3 {{ thread? }}`). The terminal panel (`toggle_terminal`, Ctrl+'; settings under `terminal_panel`) runs real shells
 along the bottom of the window; in a coding chat it opens in that chat's project or worktree.
 A chat started from a space floats in the middle of the window (`chats.from_space`: float | chats): Esc sends it on
 to Chats and the user stays in their space, Shift+Esc goes to Chats with it. In the command bar, Shift+Enter on "Ask agent"

@@ -401,19 +401,41 @@ chats:
   auto_close_days: 3       # chats untouched this many days move to Closed (click one there to bring it back); 0 = never
   closed_list: true        # a "Closed" fold at the bottom of the Chats sidebar with the chats you've closed; click one
                            # to bring it back. true | false
+  close_key_closes_chat: true # in the Chats space, ⌘W (Ctrl+W elsewhere) closes the open chat, and the window once no
+                           # chats are left. false = it acts as it does in a space (the tab, or the window when there's none)
   from_space: float        # a chat started from a space (the command bar, an AI action, ⌘N). one of: float (it opens in
                            # the middle of the window, over your space; Esc sends it on to Chats and you keep working,
                            # Shift+Esc goes to Chats with it) | chats (switch to the Chats space)
   agent_menu: installed    # agents in the composer's agent menu. one of: installed (only ones on this computer, plus
                            # any with their own `command`) | all (every agent under agents.available)
+  search: true             # a "Search chats" box at the top of the Chats sidebar: it searches every chat, Valerie's and
+                           # the other apps' (below), all the way back. true | false
+  app_buttons: true        # a row of buttons under it, one per app (Claude Code, Codex, T3 Code …): click one to show or
+                           # hide its chats; right-click one to start new chats with it. true | false
+  show: []                 # whose chats the Chats sidebar lists, by app: any of claude | codex | opencode | t3 | pi |
+                           # cursor | hermes. Valerie's own chats count as the app they talk to. [] = every app's
+  other_apps:              # chats from the AI apps on this computer, listed in the Chats sidebar beside Valerie's own.
+                           # Open one to carry on in Valerie: the same app answers, in the same conversation
+    enabled: true          # true | false
+    apps: [claude, codex, opencode, t3]  # which apps' chats to list. any of: claude (Claude Code) | codex | opencode |
+                           # t3 (T3 Code)
+    recent: 25             # how many of each app's newest chats are listed; the search box finds all the older ones
+  t3_button: true          # a "T3 Code" button in the Chats sidebar that opens T3 Code's own app in a tab, signed in
+                           # (shown when T3 Code is installed). true | false
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
+  project_hints: false     # in a new coding chat, the line about how its agent works and three starter ideas under
+                           # "What should we build in …?" (click the project's name there to pick another). true | false
   sync: true               # sync chats between machines (encrypted with the sync passphrase). false = this machine only
   ask_in_find: true        # in find (/), Enter on something that reads like a question asks the find agent about the page
   find_answer_notification: true # notify you when an answer asked in find is ready and you'd clicked away from it. true | false
   find_question_words: 4   # a find query this many words long (or ending in "?") counts as a question
   page_text_limit: 60000   # most characters of the page sent along with a question
   browser_context: true    # tell chat agents which tabs you have open (titles and addresses) so they can answer about them
+  snooze: [hour, three_hours, evening, tomorrow, next_week, custom]
+                           # the Snooze choices when you right-click a chat, in order. Each is one of: hour | three_hours |
+                           # evening (6pm) | tomorrow (9am) | next_week (Monday 9am) | a length of time (30m, 2h, 3d, 1w) |
+                           # custom ("Snooze for…": you type how long). A snoozed chat comes back marked unread
   suggestions:             # ideas shown in an empty chat
     - "What's in my open tabs?"
     - "Summarize the page I'm on"

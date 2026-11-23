@@ -118,6 +118,11 @@ pre.out .cmd { color: var(--accent); }
 #empty .mark { font-size: 34px; color: var(--accent); }
 #empty h1 { font-size: 21px; font-weight: 600; margin: 10px 0 6px; letter-spacing: -.3px; }
 #empty p { color: var(--dim); margin: 0 0 22px; }
+#empty .pick-folder { font: inherit; color: inherit; letter-spacing: inherit; background: none; border: 0; padding: 0 2px; margin: 0 -2px;
+  border-radius: 5px; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 4px;
+  transition: background .12s, text-decoration-color .12s; }
+#empty .pick-folder:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); text-decoration-color: var(--accent); }
+#empty .pick-folder:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #empty .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: default; }
 .chip:hover { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
@@ -724,13 +729,24 @@ function renderLog() {
   if (!c || !c.messages.length) {
     const e = el("div"); e.id = "empty";
     const coding = c && c.folder;
-    e.append(el("div", "mark", "✦"), el("h1", null, coding ? "What should we build in " + folderName(c.folder) + "?" : "Ask anything"),
-      el("p", null, coding ? "Your agent works in this folder like it would in a terminal, and can use your browser to check what it builds."
+    const h = el("h1", null, coding ? "What should we build in " : "Ask anything");
+    if (coding) {
+      // The project's name picks another project folder.
+      const f = el("button", "pick-folder", folderName(c.folder)); f.type = "button"; f.title = c.folder + "\nClick to pick another project";
+      f.onclick = () => cmd({ cmd: "pick_chat_folder", chat: c.id });
+      h.append(f, "?");
+    }
+    e.append(el("div", "mark", "✦"), h);
+    // chats.project_hints: the line about how the agent works and three starter ideas, in a new coding chat.
+    if (!coding || D.project_hints) {
+      e.append(el("p", null, coding ? "Your agent works in this folder like it would in a terminal, and can use your browser to check what it builds."
         : "Your agent can see and use your whole browser: open tabs, read pages, click, fill in, and report back. Pick a folder below to have it work on code."));
-    const chips = el("div", "chips");
-    (coding ? ["What does this project do?", "Run the tests and fix what fails", "Start the dev server and show me the app"] : D.suggestions || [])
-      .forEach((s) => { const c2 = el("div", "chip", s); c2.onclick = () => submit(s); chips.append(c2); });
-    e.append(chips); log.append(e); return;
+      const chips = el("div", "chips");
+      (coding ? ["What does this project do?", "Run the tests and fix what fails", "Start the dev server and show me the app"] : D.suggestions || [])
+        .forEach((s) => { const c2 = el("div", "chip", s); c2.onclick = () => submit(s); chips.append(c2); });
+      e.append(chips);
+    }
+    log.append(e); return;
   }
   quiet = !same;
   c.messages.forEach((m, i) => log.append(msgEl(m, i, D.running && i === c.messages.length - 1 && m.role === "assistant")));

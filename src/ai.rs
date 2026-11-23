@@ -1426,6 +1426,9 @@ pub struct Chat {
     /// Tools the user allowed for the rest of this chat ("Always Allow" on an Ask-first question).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,
+    /// The other app's conversation this chat carries on ("claude:<id>", "t3:<thread>"); "" = started in Valerie.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub origin: String,
     /// Messages sent while the agent was busy, sent in order when it's done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queue: Vec<String>,
@@ -1494,6 +1497,9 @@ pub struct ClosedChat {
     pub folder: String,
     pub agent: String,
     pub closed: u64,
+    /// The other app's conversation it carried on, if any (so opening that conversation again brings this back).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub origin: String,
 }
 
 /// Closed chats, most recently closed first.
@@ -1506,7 +1512,7 @@ pub fn load_closed(dir: &Path) -> Vec<ClosedChat> {
         .filter_map(|e| {
             let c: Chat = serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok()?;
             let title = if c.title.is_empty() { "New chat".to_string() } else { c.title };
-            Some(ClosedChat { id: c.id, title, folder: c.folder, agent: c.agent, closed: if c.closed_at > 0 { c.closed_at } else { c.updated } })
+            Some(ClosedChat { id: c.id, title, folder: c.folder, agent: c.agent, closed: if c.closed_at > 0 { c.closed_at } else { c.updated }, origin: c.origin })
         })
         .collect();
     out.sort_by(|a, b| b.closed.cmp(&a.closed));

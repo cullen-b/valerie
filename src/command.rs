@@ -466,6 +466,33 @@ pub enum Command {
         chat: Option<String>,
         path: String,
     },
+    /// Carry on a chat from another AI app (Claude Code, Codex, OpenCode, T3 Code) in Valerie.
+    OpenOtherChat {
+        source: String,
+        id: String,
+    },
+    /// Search every chat, Valerie's and the other apps', for these words ("" ends the search).
+    SearchChats {
+        #[serde(default)]
+        query: String,
+    },
+    /// Show or hide one app's chats in the Chats sidebar (chats.show).
+    ToggleChatApp {
+        app: String,
+        #[serde(default)]
+        only: bool,
+    },
+    /// The agent new chats use (agents.use.chat).
+    SetNewChatAgent {
+        agent: String,
+    },
+    /// T3 Code's own app in a tab, signed in. `from`: the button it grows out of (x, y, width, height).
+    OpenT3 {
+        #[serde(default)]
+        from: Option<Vec<f64>>,
+        #[serde(default)]
+        thread: Option<String>,
+    },
     /// Bring a closed chat back from the Closed list.
     ReopenChat {
         chat: String,
@@ -846,6 +873,8 @@ impl Command {
                 | Command::AllowFromOtherMachines
                 // Changes other apps' settings: the person's call.
                 | Command::ConnectAiApps
+                // It signs a page in to T3 Code, which runs agents with the person's access.
+                | Command::OpenT3 { .. }
                 // It asks the person at the computer which tabs to remove.
                 | Command::ReviewSavedTabs
                 // Which builds this computer runs is the person's choice.
@@ -969,6 +998,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("duplicate_layout", "Duplicate This Layout to Edit"),
     ("new_terminal", "New Terminal"),
     ("new_chat", "New Chat"),
+    ("open_t3", "T3 Code (open its app in a tab, signed in)"),
     ("stop_chat", "Stop the Agent in This Chat"),
     ("close_chat", "Close Chat"),
     ("toggle_pin_chat", "Pin / Unpin Chat"),
@@ -1072,12 +1102,17 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_chat", "{ prompt?, agent?, folder?, in_project?, background? }  (ask an agent something in a new chat; it can see and use the browser; background: true sends it to Chats and stays put)"),
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),
+    ("open_other_chat", "{ source, id }  (carry on a chat from another AI app in Valerie; source: claude | codex | opencode | t3)"),
+    ("search_chats", "{ query }  (search every chat, Valerie's and the other AI apps', in the Chats sidebar)"),
+    ("toggle_chat_app", "{ app, only? }  (show or hide one app's chats in the Chats sidebar; only: true shows just that app)"),
+    ("set_new_chat_agent", "{ agent }  (the agent new chats use, a name under agents.available)"),
+    ("open_t3", "{ thread? }  (T3 Code's own app in a tab, signed in; thread opens that thread)"),
     ("close_chat", "{ chat? }  (it moves to the Closed list)"),
     ("move_chat", "{ chat, space }  (show the chat in that space's sidebar; space \"\" leaves it only in Chats)"),
     ("reopen_chat", "{ chat }  (from the Closed list)"),
     ("rename_chat", "{ chat, title }"),
     ("set_chat_options", "{ chat, agent?, model?, effort?: low|medium|high|max, access?: read|ask|full, plan? }"),
-    ("snooze_chat", "{ chat?, until: hour | three_hours | evening | tomorrow | next_week | wake }"),
+    ("snooze_chat", "{ chat?, until: hour | three_hours | evening | tomorrow | next_week | wake | a length of time like 45m, 2h30m, 3 days, 1w }"),
     ("copy_chat_id", "{ chat? }"),
     ("ai_action", "{ name, input? }  (run one of the ai_actions from the config)"),
     ("watch_page", "{ condition? }"),

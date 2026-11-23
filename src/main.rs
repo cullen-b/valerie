@@ -6,6 +6,7 @@ mod app;
 mod blocking;
 mod command;
 mod history;
+mod other_chats;
 mod config;
 mod connect;
 mod crypt;
@@ -161,6 +162,17 @@ pub fn config_problems() -> (Vec<String>, usize) {
             }
             if !["float", "chats"].contains(&c.chats.from_space.as_str()) {
                 problems.push(format!("chats: from_space is {:?}; use float or chats", c.chats.from_space));
+            }
+            for s in &c.chats.snooze {
+                if s != "custom" && !crate::app::snooze_choice_ok(s) {
+                    problems.push(format!("chats: snooze has {s:?}; use hour, three_hours, evening, tomorrow, next_week, custom or a length of time like 2h"));
+                }
+            }
+            for a in c.chats.other_apps.apps.iter().filter(|a| !other_chats::SOURCES.iter().any(|s| s.0 == a.as_str())) {
+                problems.push(format!("chats: other_apps.apps has {a:?}; use claude, codex, opencode or t3"));
+            }
+            for a in c.chats.show.iter().filter(|a| !other_chats::SOURCES.iter().any(|s| s.0 == a.as_str()) && ai::kind(a).is_none()) {
+                problems.push(format!("chats: show has {a:?}; use claude, codex, opencode, t3, pi, cursor or hermes"));
             }
             if !["installed", "all"].contains(&c.chats.agent_menu.as_str()) {
                 problems.push(format!("chats: agent_menu is {:?}; use installed or all", c.chats.agent_menu));

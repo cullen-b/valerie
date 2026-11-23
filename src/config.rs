@@ -693,6 +693,7 @@ pub struct ChatsConfig {
     pub auto_close_days: f64,
     pub plan_button: bool,
     pub composer_hint: bool,
+    pub project_hints: bool,
     pub sync: bool,
     pub ask_in_find: bool,
     pub find_answer_notification: bool,
@@ -700,6 +701,7 @@ pub struct ChatsConfig {
     pub page_text_limit: usize,
     pub browser_context: bool,
     pub suggestions: Vec<String>,
+    pub snooze: Vec<String>,
     pub projects: Vec<String>,
     pub group_by_project: bool,
     pub steps: String,
@@ -710,8 +712,22 @@ pub struct ChatsConfig {
     pub worktree_folder: String,
     pub worktree_copy: Vec<String>,
     pub closed_list: bool,
+    pub close_key_closes_chat: bool,
     pub from_space: String,
     pub agent_menu: String,
+    pub search: bool,
+    pub app_buttons: bool,
+    pub show: Vec<String>,
+    pub other_apps: OtherAppsConfig,
+    pub t3_button: bool,
+}
+
+/// Chats from the other AI apps on this computer (chats.other_apps).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtherAppsConfig {
+    pub enabled: bool,
+    pub apps: Vec<String>,
+    pub recent: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

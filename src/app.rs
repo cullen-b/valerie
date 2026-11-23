@@ -128,6 +128,14 @@ pub enum UserEvent {
     SyncSetup(crate::github::Step),
     ChatEv { chat: String, ev: crate::ai::Ev },
     ChatDone { chat: String },
+    /// The other AI apps' newest chats, which of them are here, and whether T3 Code is installed.
+    OtherChats { list: Vec<crate::other_chats::Found>, here: Vec<&'static str>, t3: bool },
+    /// Chats a search found in one app; `done` once every app has been searched.
+    ChatHits { query: String, hits: Vec<crate::other_chats::Found>, done: bool },
+    /// Another app's chat, read so it can carry on here.
+    OtherChatLoaded { source: String, id: String, result: Result<(crate::other_chats::Found, Vec<crate::ai::Msg>), String> },
+    /// T3 Code's address to open (a sign-in link the first time), growing out of `from`.
+    T3Ready { result: Result<String, String>, from: Option<Vec<f64>>, thread: Option<String> },
     /// What's uncommitted in a project folder (git), for coding chats' changes card.
     ChatChanges { folder: String, info: Value },
     /// A diff to show in a chat (one file, or all of them).
@@ -387,6 +395,17 @@ pub struct App {
     chat_changes: HashMap<String, Value>,
     /// Chats that were closed, for the Closed list in the Chats sidebar.
     closed_chats: Vec<crate::ai::ClosedChat>,
+    /// The other AI apps' newest chats (chats.other_apps), read in the background when Chats opens; when they were
+    /// read; which of those apps are on this computer; and whether T3 Code is installed.
+    other_chats: Vec<crate::other_chats::Found>,
+    other_chats_read: u64,
+    other_chats_loading: bool,
+    other_apps_here: Vec<&'static str>,
+    t3_installed: bool,
+    /// The search typed in the Chats sidebar, what it found so far (newest first) and whether it's still looking.
+    chat_query: String,
+    chat_hits: Vec<(u64, Value)>,
+    chat_searching: bool,
     /// The models each CLI says it has: { id, label, group?, efforts? }.
     found_models: std::collections::BTreeMap<String, Vec<Value>>,
     /// Each tab's last question from find: (question, answer so far, agent), for "Open in Chats".
@@ -1761,6 +1780,14 @@ impl App {
             help_answers: HashMap::new(),
             chat_changes: HashMap::new(),
             closed_chats: crate::ai::load_closed(&chats_dir(&config)),
+            other_chats: Vec::new(),
+            other_chats_read: 0,
+            other_chats_loading: false,
+            other_apps_here: Vec::new(),
+            t3_installed: false,
+            chat_query: String::new(),
+            chat_hits: Vec::new(),
+            chat_searching: false,
             found_models: Default::default(),
             page_answers: HashMap::new(),
             page_ask_times: Vec::new(),
@@ -4125,12 +4152,7 @@ impl App {
             "chats": {
                 "enabled": self.config.chats.enabled, "open": self.chats_open, "active": self.active_chat,
                 // Only drawn while Chats is open; leaving it out otherwise keeps chat activity from redrawing the sidebar.
-                "list": self.chats.iter().filter(|_| self.chats_open).map(|c| json!({
-                    "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "pinned": c.pinned,
-                    "running": self.chat_running.contains(&c.id), "started": self.chat_started.get(&c.id), "updated": c.updated,
-                    "agent": c.agent, "snoozed": c.snoozed_until > now(), "unread": c.unread,
-                    "project": c.folder, "asking": self.chat_asks.values().any(|a| a.chat == c.id),
-                })).collect::<Vec<_>>(),
+                "list": self.chats.iter().filter(|c| self.chats_open && self.app_shown(&self.chat_app(c))).map(|c| self.chat_row_vm(c)).collect::<Vec<_>>(),
                 "group_by_project": self.config.chats.group_by_project,
                 "float": self.chat_float,
                 "here": here_chats,
@@ -4154,6 +4176,11 @@ impl App {
         }
         let mut vm = vm;
         vm["peek_float"] = json!(self.sidebar_floats());
+        if self.chats_open {
+            if let (Some(c), Value::Object(more)) = (vm["chats"].as_object_mut(), self.other_chats_vm()) {
+                c.extend(more);
+            }
+        }
         let vm = vm.to_string();
         self.send_start_background();
         if *self.last_render.borrow() == vm {
@@ -7870,6 +7897,11 @@ impl App {
                     self.navigate(t, &url);
                 }
             }
+            // In the Chats space ⌘W closes the open chat (chats.close_key_closes_chat); with none left, the window.
+            Command::CloseTab { tab: None } if self.chats_open && self.config.chats.close_key_closes_chat => match self.active_chat.clone() {
+                Some(id) if self.chats.iter().any(|c| c.id == id) => self.close_chat(id),
+                _ => self.dispatch(Command::CloseWindow, elwt),
+            },
             Command::CloseTab { tab } => {
                 if let Some(t) = self.target_tab(tab) {
                     self.close(t);
@@ -8838,6 +8870,11 @@ impl App {
                     }
                 });
             }
+            Command::OpenOtherChat { source, id } => self.open_other_chat(source, id, elwt),
+            Command::SearchChats { query } => self.search_chats(query),
+            Command::ToggleChatApp { app, only } => self.toggle_chat_app(&app, only),
+            Command::SetNewChatAgent { agent } => self.set_new_chat_agent(&agent),
+            Command::OpenT3 { from, thread } => self.open_t3(from, thread),
             Command::ReopenChat { chat } => {
                 let dir = chats_dir(&self.config);
                 let Some(c) = crate::ai::reopen_chat(&dir, &chat) else { return self.toast("That chat isn't in the Closed list anymore") };
@@ -8945,6 +8982,9 @@ impl App {
             Command::SnoozeChat { chat, until } => {
                 let id = chat.or_else(|| self.active_chat.clone());
                 let wake = snooze_until(&until);
+                if wake == 0 && until.trim() != "wake" {
+                    return self.toast(&format!("Couldn't read “{}” as a time: try 45m, 2h, 3 days or 1w", until.trim()));
+                }
                 if let Some(c) = self.chats.iter_mut().find(|c| Some(&c.id) == id.as_ref()) {
                     c.snoozed_until = wake;
                     crate::ai::save_chat(&chats_dir(&self.config), c);
@@ -10155,6 +10195,15 @@ impl App {
                     }
                 }
             }
+            (Source::Chrome, "chat_agent_menu") => self.chat_agent_menu(m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0)),
+            (Source::Chrome, "chat_app_menu") => {
+                let app = m["app"].as_str().unwrap_or("").to_string();
+                self.chat_app_menu(&app, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
+            }
+            (Source::Chrome, "other_chat_menu") => {
+                let (source, id) = (m["source"].as_str().unwrap_or("").to_string(), m["id"].as_str().unwrap_or("").to_string());
+                self.other_chat_menu(&source, &id, m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
+            }
             (Source::Chrome, "chat_menu") => {
                 if let Some(id) = m["chat"].as_str() {
                     self.chat_menu(id.to_string(), m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0));
@@ -10981,6 +11030,16 @@ impl App {
                 }
             }
             UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false }, elwt),
+            UserEvent::OtherChats { list, here, t3 } => {
+                self.other_chats = list;
+                self.other_apps_here = here;
+                self.t3_installed = t3;
+                self.other_chats_loading = false;
+                self.render();
+            }
+            UserEvent::ChatHits { query, hits, done } => self.chat_hits_found(query, hits, done),
+            UserEvent::OtherChatLoaded { source, id, result } => self.other_chat_loaded(source, id, result, elwt),
+            UserEvent::T3Ready { result, from, thread } => self.t3_ready(result, from, thread),
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
@@ -12361,6 +12420,7 @@ impl App {
         let was = self.chats_open;
         self.chats_open = true;
         self.chat_float = false;
+        self.refresh_other_chats(false);
         let secs = self.anim_secs();
         self.layout();
         if let Some(v) = self.chat_view.as_ref().filter(|_| !was && secs > 0.0) {
@@ -12492,6 +12552,7 @@ impl App {
             "default_agent": self.config.agent_for("chat").0, "default_access": self.config.chats.access,
             "default_effort": self.config.chats.effort, "suggestions": self.config.chats.suggestions,
             "plan_button": self.config.chats.plan_button, "composer_hint": self.config.chats.composer_hint,
+            "project_hints": self.config.chats.project_hints,
             "theme": self.chats_theme(), "font": self.config.layout.font,
             "projects": self.recent_projects(), "home": dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
             "changes": chat.and_then(chat_workdir).and_then(|w| self.chat_changes.get(&*w.to_string_lossy())).filter(|_| self.config.chats.changes),
@@ -12532,11 +12593,16 @@ impl App {
         if c.snoozed_until > 0 {
             e.push(snooze("Wake now", "wake"));
         } else {
-            e.push(snooze("Snooze 1 hour", "hour"));
-            e.push(snooze("Snooze 3 hours", "three_hours"));
-            e.push(snooze("Snooze until this evening", "evening"));
-            e.push(snooze("Snooze until tomorrow", "tomorrow"));
-            e.push(snooze("Snooze until next week", "next_week"));
+            // chats.snooze: the choices, in order; "custom" asks how long.
+            for s in &self.config.chats.snooze {
+                if s == "custom" {
+                    let then = json!({ "cmd": "snooze_chat", "chat": id });
+                    let ask = json!({ "cmd": "prompt", "label": "Snooze for how long? (e.g. 45m, 2h, 3 days, 1w)", "value": "", "then": then, "field": "until" });
+                    e.push(Some(("Snooze for…".to_string(), ask)));
+                } else if let Some(label) = snooze_label(s) {
+                    e.push(snooze(&label, s));
+                }
+            }
         }
         e.extend([
             None,
@@ -12700,6 +12766,11 @@ impl App {
             return;
         }
         self.active_chat = Some(id.clone());
+        // A T3 Code thread carries on through T3 Code itself.
+        if let Some(thread) = self.chats.iter().find(|c| c.id == id).and_then(|c| c.origin.strip_prefix("t3:")).map(str::to_string) {
+            let text = if files.is_empty() { text } else { format!("{text}\n\nAttached files: {}", files.join(", ")) };
+            return self.send_t3(id, thread, text);
+        }
         let Some(pos) = self.chats.iter().position(|c| c.id == id) else { return };
         let folder = (!self.chats[pos].folder.is_empty()).then(|| PathBuf::from(&self.chats[pos].folder));
         if let Some(f) = folder.as_ref().filter(|f| !f.is_dir()) {
@@ -14597,8 +14668,55 @@ fn snooze_until(preset: &str) -> u64 {
             let today = days.iter().position(|d| weekday.starts_with(d)).unwrap_or(0) as u64;
             midnight + (7 - today) * 86400 + 9 * 3600
         }
-        _ => 0,
+        other => snooze_secs(other).map_or(0, |s| t + s),
     }
+}
+
+/// A length of time typed for a snooze ("45m", "2h30m", "3 days", "1 week"; a bare number is minutes), in seconds.
+/// At most a year.
+fn snooze_secs(s: &str) -> Option<u64> {
+    let s = s.trim().to_lowercase();
+    let mut total = 0u64;
+    let mut rest = s.as_str();
+    while !rest.trim_start().is_empty() {
+        rest = rest.trim_start().trim_start_matches(|c: char| c == ',' || c.is_whitespace()).trim_start_matches("and ");
+        let n_end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+        let n: f64 = rest[..n_end].parse().ok()?;
+        rest = rest[n_end..].trim_start();
+        let u_end = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+        let unit = match &rest[..u_end] {
+            "" | "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3600.0,
+            "d" | "day" | "days" => 86400.0,
+            "w" | "wk" | "week" | "weeks" => 604800.0,
+            _ => return None,
+        };
+        rest = &rest[u_end..];
+        total += (n * unit) as u64;
+    }
+    (total > 0 && total <= 366 * 86400).then_some(total)
+}
+
+/// For `valerie check-config`: a chats.snooze entry Valerie understands (besides "custom").
+pub fn snooze_choice_ok(s: &str) -> bool {
+    snooze_label(s).is_some()
+}
+
+/// The menu wording for a chats.snooze choice; None for one that isn't a preset or a length of time.
+fn snooze_label(s: &str) -> Option<String> {
+    Some(match s {
+        "hour" => "Snooze 1 hour".into(),
+        "three_hours" => "Snooze 3 hours".into(),
+        "evening" => "Snooze until this evening".into(),
+        "tomorrow" => "Snooze until tomorrow".into(),
+        "next_week" => "Snooze until next week".into(),
+        _ => {
+            let secs = snooze_secs(s)?;
+            let (n, unit) = [(604800, "week"), (86400, "day"), (3600, "hour"), (60, "minute")].into_iter().find(|(u, _)| secs % u == 0).unwrap_or((60, "minute"));
+            let k = secs / n;
+            format!("Snooze {k} {unit}{}", if k == 1 { "" } else { "s" })
+        }
+    })
 }
 
 impl App {
@@ -16278,6 +16396,24 @@ mod custom_tests {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn snooze_lengths() {
+        use super::{snooze_label, snooze_secs};
+        assert_eq!(snooze_secs("45m"), Some(45 * 60));
+        assert_eq!(snooze_secs("2h30m"), Some(2 * 3600 + 30 * 60));
+        assert_eq!(snooze_secs("3 days"), Some(3 * 86400));
+        assert_eq!(snooze_secs("1 hour and 15 minutes"), Some(4500));
+        assert_eq!(snooze_secs("90"), Some(90 * 60));
+        assert_eq!(snooze_secs("1.5h"), Some(5400));
+        assert_eq!(snooze_secs("soon"), None);
+        assert_eq!(snooze_secs(""), None);
+        assert_eq!(snooze_secs("2 years"), None);
+        assert_eq!(snooze_label("2h").as_deref(), Some("Snooze 2 hours"));
+        assert_eq!(snooze_label("90m").as_deref(), Some("Snooze 90 minutes"));
+        assert_eq!(snooze_label("1w").as_deref(), Some("Snooze 1 week"));
+        assert!(snooze_label("custom").is_none());
+    }
     #[test]
     fn browser_menus_name_real_commands() {
         for (menu, names) in super::BROWSER_MENUS {
@@ -16415,4 +16551,475 @@ mod tests {
 /// How `known_plugins` holds an extension, apart from a plugin of the same name.
 fn ext_key(name: &str) -> String {
     format!("extension:{name}")
+}
+
+// ---------------------------------------------------------------- every chat in one place: the other AI apps' chats
+
+impl App {
+    /// The app a chat belongs to: the one it came from, or the CLI its agent runs (its name for one with a `command`).
+    fn chat_app(&self, c: &crate::ai::Chat) -> String {
+        if let Some((app, _)) = c.origin.split_once(':') {
+            return app.to_string();
+        }
+        let (name, def) = self.config.agent_named(&c.agent);
+        if def.cli.is_empty() {
+            name
+        } else {
+            def.cli
+        }
+    }
+
+    /// chats.show: whether this app's chats are listed ([] = every app's).
+    fn app_shown(&self, app: &str) -> bool {
+        let show = &self.config.chats.show;
+        show.is_empty() || show.iter().any(|a| a == app)
+    }
+
+    fn chat_row_vm(&self, c: &crate::ai::Chat) -> Value {
+        json!({
+            "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "pinned": c.pinned,
+            "running": self.chat_running.contains(&c.id), "started": self.chat_started.get(&c.id), "updated": c.updated,
+            "agent": c.agent, "snoozed": c.snoozed_until > now(), "unread": c.unread,
+            "project": c.folder, "asking": self.chat_asks.values().any(|a| a.chat == c.id),
+            "from": c.origin.split_once(':').map(|o| o.0),
+        })
+    }
+
+    /// Other apps' conversations already carried on here (or that Valerie's own agents had): left out of their list.
+    fn linked_chats(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for c in &self.chats {
+            if let Some((_, id)) = c.origin.split_once(':') {
+                out.insert(id.to_string());
+            }
+            out.extend(c.sessions.values().cloned());
+        }
+        out.extend(self.closed_chats.iter().filter_map(|c| c.origin.split_once(':')).map(|o| o.1.to_string()));
+        out
+    }
+
+    /// The apps with a button above the Chats list: the other apps on this computer, then the ones Valerie's chats use.
+    fn chat_apps(&self) -> Vec<String> {
+        let mut apps: Vec<String> = self.other_apps_here.iter().map(|a| a.to_string()).collect();
+        for c in &self.chats {
+            let a = self.chat_app(c);
+            if !apps.contains(&a) {
+                apps.push(a);
+            }
+        }
+        apps
+    }
+
+    /// The agent (a name under agents.available) that runs this CLI, preferring one named after it.
+    fn agent_for_cli(&self, cli: &str) -> Option<String> {
+        let avail = &self.config.agents.available;
+        let runs = |n: &String| avail.get(n).and_then(|d| d.as_ref()).is_some_and(|d| d.cli == cli && d.command.is_empty());
+        avail.keys().find(|n| n.as_str() == cli && runs(n)).or_else(|| avail.keys().find(|n| runs(n))).cloned()
+    }
+
+    fn other_chats_vm(&self) -> Value {
+        let cc = &self.config.chats;
+        let linked = self.linked_chats();
+        let others: Vec<Value> = self
+            .other_chats
+            .iter()
+            .filter(|f| self.app_shown(f.source) && !linked.contains(&f.id))
+            .map(|f| {
+                let mut v = json!(f);
+                v["app"] = json!(crate::other_chats::source_title(f.source));
+                v
+            })
+            .collect();
+        let (name, def) = self.config.agent_for("chat");
+        let new_agent = crate::ai::kind(&def.cli).filter(|k| k.id == name).map(|k| k.title.to_string()).unwrap_or(name);
+        let apps: Vec<Value> = if cc.app_buttons {
+            self.chat_apps()
+                .iter()
+                .map(|a| {
+                    let title = Some(crate::other_chats::source_title(a)).filter(|t| !t.is_empty()).or(crate::ai::kind(a).map(|k| k.title)).unwrap_or(a);
+                    json!({ "id": a, "title": title, "shown": self.app_shown(a), "default": def.cli == *a, "agent": self.agent_for_cli(a).is_some() })
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+        json!({
+            "others": others,
+            "apps": apps,
+            "new_agent": new_agent,
+            "t3": cc.t3_button && self.t3_installed,
+            "search": cc.search,
+            "found": (!self.chat_query.is_empty()).then(|| json!({
+                "query": self.chat_query, "busy": self.chat_searching,
+                "hits": self.chat_hits.iter().map(|h| &h.1).collect::<Vec<_>>(),
+            })),
+        })
+    }
+
+    /// Read the other apps' newest chats again, in the background (at most once a minute unless `force`).
+    fn refresh_other_chats(&mut self, force: bool) {
+        if self.other_chats_loading || (!force && now().saturating_sub(self.other_chats_read) < 60) {
+            return;
+        }
+        self.other_chats_loading = true;
+        self.other_chats_read = now();
+        let oa = self.config.chats.other_apps.clone();
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            use crate::other_chats as oc;
+            let skip = oc::skip_dirs();
+            let here: Vec<&'static str> = if oa.enabled { oc::SOURCES.iter().map(|s| s.0).filter(|s| oa.apps.iter().any(|a| a == s) && oc::available(s)).collect() } else { vec![] };
+            let mut list = Vec::new();
+            for s in &here {
+                list.extend(oc::recent(s, oa.recent, &skip));
+            }
+            send(&p, UserEvent::OtherChats { list, here, t3: oc::t3_bin().is_some() });
+        });
+    }
+
+    /// Search every chat: Valerie's own at once (they're in memory), each other app's in the background as it's found.
+    fn search_chats(&mut self, query: String) {
+        use crate::other_chats as oc;
+        let generation = oc::SEARCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        self.chat_query = query.trim().to_string();
+        self.chat_hits.clear();
+        self.chat_searching = false;
+        if self.chat_query.is_empty() {
+            return self.render();
+        }
+        let q = self.chat_query.to_ascii_lowercase();
+        let mut hits = Vec::new();
+        for c in self.chats.iter().filter(|c| self.app_shown(&self.chat_app(c))) {
+            let snip = if c.title.to_ascii_lowercase().contains(&q) {
+                Some(c.messages.iter().find(|m| m.role == "user").map(|m| oc::snippet(&m.text, &q).unwrap_or_default()).unwrap_or_default())
+            } else {
+                c.messages.iter().find_map(|m| oc::snippet(&m.text, &q))
+            };
+            if let Some(snip) = snip {
+                hits.push((c.updated, json!({ "chat": self.chat_row_vm(c), "snippet": snip })));
+            }
+        }
+        self.chat_hits = hits;
+        let apps: Vec<&'static str> = self.other_apps_here.iter().copied().filter(|a| self.app_shown(a)).collect();
+        self.chat_searching = !apps.is_empty();
+        let p = self.proxy.clone();
+        let query = self.chat_query.clone();
+        std::thread::spawn(move || {
+            let skip = oc::skip_dirs();
+            for a in &apps {
+                let hits = oc::search(a, &query, 40, &skip, generation);
+                if oc::SEARCH.load(std::sync::atomic::Ordering::Relaxed) != generation {
+                    return;
+                }
+                send(&p, UserEvent::ChatHits { query: query.clone(), hits, done: false });
+            }
+            send(&p, UserEvent::ChatHits { query, hits: vec![], done: true });
+        });
+        self.render();
+    }
+
+    fn chat_hits_found(&mut self, query: String, hits: Vec<crate::other_chats::Found>, done: bool) {
+        if query != self.chat_query {
+            return;
+        }
+        let linked = self.linked_chats();
+        for f in hits.into_iter().filter(|f| !linked.contains(&f.id)) {
+            let mut v = json!(f);
+            v["app"] = json!(crate::other_chats::source_title(f.source));
+            self.chat_hits.push((f.updated, v));
+        }
+        self.chat_hits.sort_by(|a, b| b.0.cmp(&a.0));
+        if done {
+            self.chat_searching = false;
+        }
+        self.render();
+    }
+
+    /// Carry on another app's chat here: the one already carried on, or a new Valerie chat holding its conversation.
+    fn open_other_chat(&mut self, source: String, id: String, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let origin = format!("{source}:{id}");
+        if let Some(chat) = self.chats.iter().find(|c| c.origin == origin || c.sessions.values().any(|s| *s == id)).map(|c| c.id.clone()) {
+            return self.dispatch(Command::ActivateChat { chat }, elwt);
+        }
+        if let Some(chat) = self.closed_chats.iter().find(|c| c.origin == origin).map(|c| c.id.clone()) {
+            return self.dispatch(Command::ReopenChat { chat }, elwt);
+        }
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            let result = crate::other_chats::load(&source, &id).map_err(|e| format!("{e:#}"));
+            send(&p, UserEvent::OtherChatLoaded { source, id, result });
+        });
+    }
+
+    fn other_chat_loaded(&mut self, source: String, id: String, result: Result<(crate::other_chats::Found, Vec<crate::ai::Msg>), String>, elwt: &EventLoopWindowTarget<UserEvent>) {
+        let (found, messages) = match result {
+            Ok(r) => r,
+            Err(e) => {
+                crate::log::line("other chats", format!("opening {source} chat {id}: {e}"));
+                self.render();
+                return self.toast(&e);
+            }
+        };
+        let agent = if source == "t3" {
+            "T3 Code".to_string()
+        } else {
+            match self.agent_for_cli(&source) {
+                Some(a) => a,
+                None => {
+                    self.render();
+                    return self.toast(&format!("To carry on {} chats here, add an agent with `cli: {source}` under agents.available", crate::other_chats::source_title(&source)));
+                }
+            }
+        };
+        let mut c = crate::ai::Chat::new(&agent);
+        c.title = found.title;
+        c.folder = found.folder;
+        c.origin = format!("{source}:{id}");
+        c.messages = messages;
+        if source != "t3" {
+            // Valerie's next message continues the app's own conversation (its CLI resumes it by this id).
+            c.sessions.insert(format!("{agent}@{}", config::device_id()), id);
+        }
+        crate::ai::save_chat(&chats_dir(&self.config), &c);
+        let chat = c.id.clone();
+        self.chats.insert(0, c);
+        crate::log::event("chats", format!("carried on a {source} chat as {chat}"));
+        self.dispatch(Command::ActivateChat { chat }, elwt);
+    }
+
+    /// A T3 Code thread's turn: T3 Code runs it (its agent, its settings); its answers show here as they're written.
+    fn send_t3(&mut self, id: String, thread: String, text: String) {
+        use crate::ai::{Ev, Msg};
+        let Some(bin) = crate::other_chats::t3_bin() else { return self.toast("T3 Code isn't installed on this computer") };
+        let Some(pos) = self.chats.iter().position(|c| c.id == id) else { return };
+        let mut c = self.chats.remove(pos);
+        let t = now();
+        c.messages.push(Msg { role: "user".into(), text: text.clone(), at: t, ..Default::default() });
+        c.messages.push(Msg { role: "assistant".into(), agent: "T3 Code".into(), at: t, ..Default::default() });
+        c.updated = t;
+        c.unread = false;
+        c.snoozed_until = 0;
+        crate::ai::save_chat(&chats_dir(&self.config), &c);
+        self.chats.insert(0, c);
+        self.chat_running.insert(id.clone());
+        self.chat_started.insert(id.clone(), t);
+        self.render();
+        self.render_chat();
+        let p = self.proxy.clone();
+        let limit = std::time::Duration::from_secs_f64(self.config.agents.timeout_minutes.max(1.0) * 60.0);
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let on = |ev: Ev| send(&p, UserEvent::ChatEv { chat: id.clone(), ev });
+            let mut seen: HashSet<String> = crate::other_chats::t3_messages(&thread).unwrap_or_default().into_iter().map(|m| m.0).collect();
+            let mut cmd = platform::command(&bin);
+            cmd.args(["thread", "send", &thread, "-", "--wait"]).env("PATH", crate::ai::search_path());
+            cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    on(Ev::Error { text: format!("Couldn't run T3 Code: {e}") });
+                    return send(&p, UserEvent::ChatDone { chat: id });
+                }
+            };
+            if let Some(mut i) = child.stdin.take() {
+                let _ = i.write_all(text.as_bytes());
+            }
+            let mut out = child.stdout.take();
+            let reader = std::thread::spawn(move || {
+                let mut s = String::new();
+                if let Some(o) = out.as_mut() {
+                    let _ = o.read_to_string(&mut s);
+                }
+                s
+            });
+            let mut err = child.stderr.take();
+            let err_reader = std::thread::spawn(move || {
+                let mut s = String::new();
+                if let Some(e) = err.as_mut() {
+                    let _ = e.read_to_string(&mut s);
+                }
+                s
+            });
+            let started = std::time::Instant::now();
+            let mut shown = false;
+            let poll = |seen: &mut HashSet<String>, shown: &mut bool| {
+                for (mid, role, text, _) in crate::other_chats::t3_messages(&thread).unwrap_or_default() {
+                    if seen.insert(mid) && role == "assistant" && !text.trim().is_empty() {
+                        on(Ev::Block { text });
+                        *shown = true;
+                    }
+                }
+            };
+            let status = loop {
+                std::thread::sleep(std::time::Duration::from_millis(700));
+                poll(&mut seen, &mut shown);
+                match child.try_wait() {
+                    Ok(Some(s)) => break Some(s),
+                    Ok(None) if started.elapsed() > limit => {
+                        let _ = child.kill();
+                        break None;
+                    }
+                    Ok(None) => {}
+                    Err(_) => break None,
+                }
+            };
+            poll(&mut seen, &mut shown);
+            let reply = reader.join().unwrap_or_default();
+            let errors = err_reader.join().unwrap_or_default();
+            match status.and_then(|s| s.code()) {
+                Some(0) if !shown && !reply.trim().is_empty() => on(Ev::Final { text: reply.trim().to_string() }),
+                Some(0) => {}
+                Some(2) => on(Ev::Error { text: "T3 Code is waiting for your answer to a question: open the thread in T3 Code to reply.".into() }),
+                None => on(Ev::Error { text: "T3 Code took too long to answer (agents.timeout_minutes); it may still be working in T3 Code.".into() }),
+                Some(_) => {
+                    crate::log::line("other chats", format!("t3 thread send: {}", errors.trim()));
+                    on(Ev::Error { text: format!("T3 Code couldn't finish this turn{}", if errors.trim().is_empty() { String::new() } else { format!(": {}", crate::ai::clip(errors.trim(), 400)) }) });
+                }
+            }
+            send(&p, UserEvent::ChatDone { chat: id });
+        });
+    }
+
+    /// T3 Code's own app in a tab, signed in; started first if it isn't running.
+    fn open_t3(&mut self, from: Option<Vec<f64>>, thread: Option<String>) {
+        if crate::other_chats::t3_bin().is_none() {
+            return self.toast("T3 Code isn't installed on this computer");
+        }
+        // A T3 tab that's already open is just shown (going to the thread, if one was asked for).
+        let origin = crate::other_chats::t3_origin();
+        let open = origin.as_ref().and_then(|o| self.state.tabs.values().find(|t| t.url.starts_with(o.as_str())).map(|t| t.id));
+        if let (Some(o), Some(_)) = (&origin, open) {
+            let url = thread.as_ref().map(|t| format!("{o}/threads/{}/{t}", crate::other_chats::t3_environment())).unwrap_or_default();
+            return self.t3_ready(Ok(url), from, None);
+        }
+        let p = self.proxy.clone();
+        std::thread::spawn(move || {
+            // A new tab signs in with a one-time link; the page then goes on to the thread.
+            let result = crate::other_chats::t3_start().and_then(|_| crate::other_chats::t3_pair_url()).map_err(|e| format!("{e:#}"));
+            send(&p, UserEvent::T3Ready { result, from, thread });
+        });
+    }
+
+    fn t3_ready(&mut self, result: Result<String, String>, from: Option<Vec<f64>>, thread: Option<String>) {
+        let url = match result {
+            Ok(u) => u,
+            Err(e) => {
+                crate::log::line("other chats", format!("opening T3 Code: {e}"));
+                return self.toast(&format!("Couldn't open T3 Code: {e}"));
+            }
+        };
+        let origin = crate::other_chats::t3_origin().unwrap_or_default();
+        let tab = match self.state.tabs.values().find(|t| !origin.is_empty() && t.url.starts_with(&origin)).map(|t| t.id) {
+            Some(t) => {
+                if !url.is_empty() {
+                    self.navigate(t, &url);
+                }
+                self.activate(t);
+                t
+            }
+            None => self.open_tab(&url, None, true),
+        };
+        if let Some(t) = thread {
+            // After signing in, T3 Code shows its home page: go on to the thread once the sign-in has had a moment.
+            let (p, url) = (self.proxy.clone(), format!("{origin}/threads/{}/{t}", crate::other_chats::t3_environment()));
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                send(&p, UserEvent::T3Ready { result: Ok(url), from: None, thread: None });
+            });
+        }
+        let secs = self.anim_secs();
+        let (Some(f), Some(v)) = (from.filter(|f| f.len() == 4 && secs > 0.0), self.views.get(&tab)) else { return };
+        // The page grows out of the button: from its rect (in the sidebar's view) to where the page belongs.
+        let scale = self.window.scale_factor();
+        let (Ok(to), Ok(chrome)) = (v.bounds(), self.chrome.bounds()) else { return };
+        let (pos, size) = (to.position.to_logical::<f64>(scale), to.size.to_logical::<f64>(scale));
+        let at = chrome.position.to_logical::<f64>(scale);
+        let _ = v.set_bounds(rect(at.x + f[0], at.y + f[1], f[2].max(1.0), f[3].max(1.0)));
+        platform::set_alpha(v, 0.0, 0.0);
+        let grow = (secs * 2.4).clamp(0.3, 0.6);
+        if platform::animate_bounds(v, pos.x, pos.y, size.width, size.height, grow) {
+            platform::set_alpha(v, 1.0, grow * 0.55);
+        } else {
+            let _ = v.set_bounds(to);
+            platform::fade_in(v, grow);
+        }
+    }
+
+    /// The menu under "New chat": which agent new chats use.
+    fn chat_agent_menu(&mut self, x: f64, y: f64) {
+        let current = self.config.agent_for("chat").0;
+        let path = crate::ai::search_path();
+        let mut e = Vec::new();
+        for (name, def) in self.config.agents.available.iter().filter_map(|(n, d)| d.as_ref().map(|d| (n, d))) {
+            let here = !def.command.is_empty() || crate::ai::kind(&def.cli).is_some_and(|k| crate::ai::find_bin(k, &path).is_some());
+            if !here && self.config.chats.agent_menu == "installed" {
+                continue;
+            }
+            let title = crate::ai::kind(&def.cli).filter(|k| k.id == name.as_str()).map(|k| k.title.to_string()).unwrap_or(name.clone());
+            let mark = if *name == current { "✓ " } else { "    " };
+            e.push(Some((format!("{mark}{title}"), json!({ "cmd": "set_new_chat_agent", "agent": name }))));
+        }
+        self.popup(e, x, y);
+    }
+
+    fn chat_app_menu(&mut self, app: &str, x: f64, y: f64) {
+        let title = Some(crate::other_chats::source_title(app)).filter(|t| !t.is_empty()).or(crate::ai::kind(app).map(|k| k.title)).unwrap_or(app).to_string();
+        let mut e = Vec::new();
+        if let Some(agent) = self.agent_for_cli(app) {
+            e.push(Some((format!("Use {title} for New Chats"), json!({ "cmd": "set_new_chat_agent", "agent": agent }))));
+            e.push(None);
+        }
+        e.push(Some((format!("Show Only {title}"), json!({ "cmd": "toggle_chat_app", "app": app, "only": true }))));
+        if !self.config.chats.show.is_empty() {
+            e.push(Some(("Show Every App".to_string(), json!({ "cmd": "toggle_chat_app", "app": "", "only": true }))));
+        }
+        self.popup(e, x, y);
+    }
+
+    fn other_chat_menu(&mut self, source: &str, id: &str, x: f64, y: f64) {
+        let mut e = vec![Some(("Open Here".to_string(), json!({ "cmd": "open_other_chat", "source": source, "id": id })))];
+        if source == "t3" {
+            e.push(Some(("Open in T3 Code".to_string(), json!({ "cmd": "open_t3", "thread": id }))));
+        }
+        e.push(Some((format!("Hide {} Chats", crate::other_chats::source_title(source)), json!({ "cmd": "toggle_chat_app", "app": source }))));
+        self.popup(e, x, y);
+    }
+
+    /// Show or hide one app's chats (`only`: show just it; app "" with `only`: every app's), saved in chats.show.
+    fn toggle_chat_app(&mut self, app: &str, only: bool) {
+        let all = self.chat_apps();
+        let mut show: Vec<String> = if self.config.chats.show.is_empty() { all.clone() } else { self.config.chats.show.clone() };
+        if only {
+            show = if app.is_empty() { vec![] } else { vec![app.to_string()] };
+        } else if show.iter().any(|a| a == app) {
+            show.retain(|a| a != app);
+        } else {
+            show.push(app.to_string());
+        }
+        if all.iter().all(|a| show.contains(a)) {
+            show.clear();
+        }
+        let yaml = format!("[{}]", show.join(", "));
+        if let Err(e) = config::change_setting(&["chats", "show"], &yaml, false) {
+            return self.toast(&format!("Couldn't save chats.show: {e:#}"));
+        }
+        self.config.chats.show = show;
+        if !self.chat_query.is_empty() {
+            let q = self.chat_query.clone();
+            self.search_chats(q);
+        }
+        self.render();
+    }
+
+    fn set_new_chat_agent(&mut self, agent: &str) {
+        if !self.config.agents.available.get(agent).is_some_and(|d| d.is_some()) {
+            return self.toast(&format!("There's no agent named {agent} under agents.available"));
+        }
+        if let Err(e) = config::change_setting(&["agents", "use", "chat"], agent, false) {
+            return self.toast(&format!("Couldn't save agents.use.chat: {e:#}"));
+        }
+        self.config.agents.use_for.chat = agent.to_string();
+        self.render();
+        self.render_chat();
+    }
 }
