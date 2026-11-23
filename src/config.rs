@@ -715,6 +715,19 @@ pub struct ChatsConfig {
     pub close_key_closes_chat: bool,
     pub from_space: String,
     pub agent_menu: String,
+    pub search: bool,
+    pub app_buttons: bool,
+    pub show: Vec<String>,
+    pub other_apps: OtherAppsConfig,
+    pub t3_button: bool,
+}
+
+/// Chats from the other AI apps on this computer (chats.other_apps).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtherAppsConfig {
+    pub enabled: bool,
+    pub apps: Vec<String>,
+    pub recent: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

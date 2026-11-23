@@ -408,6 +408,20 @@ chats:
                            # Shift+Esc goes to Chats with it) | chats (switch to the Chats space)
   agent_menu: installed    # agents in the composer's agent menu. one of: installed (only ones on this computer, plus
                            # any with their own `command`) | all (every agent under agents.available)
+  search: true             # a "Search chats" box at the top of the Chats sidebar: it searches every chat, Valerie's and
+                           # the other apps' (below), all the way back. true | false
+  app_buttons: true        # a row of buttons under it, one per app (Claude Code, Codex, T3 Code …): click one to show or
+                           # hide its chats; right-click one to start new chats with it. true | false
+  show: []                 # whose chats the Chats sidebar lists, by app: any of claude | codex | opencode | t3 | pi |
+                           # cursor | hermes. Valerie's own chats count as the app they talk to. [] = every app's
+  other_apps:              # chats from the AI apps on this computer, listed in the Chats sidebar beside Valerie's own.
+                           # Open one to carry on in Valerie: the same app answers, in the same conversation
+    enabled: true          # true | false
+    apps: [claude, codex, opencode, t3]  # which apps' chats to list. any of: claude (Claude Code) | codex | opencode |
+                           # t3 (T3 Code)
+    recent: 25             # how many of each app's newest chats are listed; the search box finds all the older ones
+  t3_button: true          # a "T3 Code" button in the Chats sidebar that opens T3 Code's own app in a tab, signed in
+                           # (shown when T3 Code is installed). true | false
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
   project_hints: false     # in a new coding chat, the line about how its agent works and three starter ideas under
