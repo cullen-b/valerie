@@ -453,9 +453,11 @@ and with `chats.other_apps.come_back` it returns to the list when that app adds 
 new chats use (`set_new_chat_agent {{ agent }}`, also the menu beside "New chat"). `chats.t3_button` shows a T3 Code
 button that opens T3 Code's own app in a tab, signed in (`open_t3 {{ thread? }}`). The terminal panel (`toggle_terminal`, Ctrl+'; settings under `terminal_panel`) runs real shells
 along the bottom of the window; in a coding chat it opens in that chat's project or worktree.
-A chat started from a space floats in the middle of the window (`chats.from_space`: float | chats): Esc sends it on
-to Chats and the user stays in their space, Shift+Esc goes to Chats with it. In the command bar, Shift+Enter on "Ask agent"
-sends the chat straight to Chats without showing it (`command_bar.shift_enter_to_chats`; a one-time tip says so,
+A chat started from a space opens as a normal tab there (`chats.from_space`: tab | float | chats), at the address
+`valerie://chat/<id>`: it can be pinned, dragged into a folder or another space, and closing the tab closes the chat (it
+stays in Chats' Closed list; reopening the tab brings it back). It's in the Chats space too. float shows it in the middle of
+the window instead (Esc sends it on to Chats, Shift+Esc goes to Chats with it); chats switches to the Chats space. In the
+command bar, Shift+Enter on "Ask agent" starts the chat without showing it (a background tab with tab, else Chats) (`command_bar.shift_enter_to_chats`; a one-time tip says so,
 `command_bar.send_to_chats_tip`).
 Closed chats go to a folded "Closed" list at the bottom of the Chats sidebar (`chats.closed_list`); `reopen_chat`
 brings one back (a coding chat gets its worktree again).

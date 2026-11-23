@@ -2467,7 +2467,8 @@ impl App {
 
     /// Loads the page whatever the window is doing: for agents, who can work with it closed.
     fn load_view(&mut self, tab: TabId) {
-        if self.views.contains_key(&tab) {
+        // A chat tab has no page of its own: the chat view takes its place.
+        if self.views.contains_key(&tab) || self.chat_of_tab(tab).is_some() {
             return;
         }
         let Some(t) = self.state.tabs.get(&tab) else { return };
@@ -2825,6 +2826,7 @@ impl App {
     /// Lay out every view; with `secs > 0` visible panes glide to their new bounds instead of jumping.
     fn layout_anim(&mut self, secs: f64) {
         self.state.tidy_splits();
+        self.follow_chat_tab();
         let size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let full = rect(0.0, 0.0, size.width, size.height);
         // The welcome guide's share of the window while an agent works beside it.
@@ -2846,6 +2848,7 @@ impl App {
             self.split_grab = None;
         }
         let rects = self.pane_rects(&panes, x, w);
+        let chat_pane = panes.iter().position(|t| self.chat_of_tab(*t).is_some_and(|c| self.chats.iter().any(|x| x.id == c))).map(|i| (i, rects[i]));
         for (id, v) in &self.views {
             if !panes.contains(id) && !platform::in_page_fullscreen(v) {
                 let _ = v.set_visible(false);
@@ -2916,6 +2919,12 @@ impl App {
                 platform::round_corners(cv, 0.0, platform::Corners::None);
                 let _ = cv.set_bounds(full);
                 platform::follow_window(cv, platform::Follow::Fill);
+                let _ = cv.set_visible(true);
+            } else if let Some((i, (px, pw))) = chat_pane {
+                // A chat tab: the chat sits where the tab's page would.
+                platform::round_corners(cv, self.config.layout.corner_radius, self.pane_corners(i, panes.len()));
+                let _ = cv.set_bounds(rect(px, y, pw, h));
+                platform::follow_window(cv, platform::Follow::Pane { first: i == 0, last: i + 1 == panes.len() });
                 let _ = cv.set_visible(true);
             } else {
                 let _ = cv.set_visible(false);
@@ -3847,7 +3856,7 @@ impl App {
             let _ = v.evaluate_script("window.term && term.focus()");
             return;
         }
-        if self.chats_open {
+        if self.chats_open || self.state.active_tab().is_some_and(|t| self.chat_of_tab(t).is_some()) {
             if let Some(v) = &self.chat_view {
                 let _ = focus_view(v);
                 let _ = v.evaluate_script("window.chat && chat.focus()");
@@ -3879,6 +3888,16 @@ impl App {
             return json!({
                 "id": t.id, "url": t.url, "favicon": p.favicon, "title": p.title, "loaded": false, "loading": false,
                 "playing": false, "muted": false, "media": null, "pinned": self.state.is_pinned(t.id), "section": self.state.section_of(t.id),
+            });
+        }
+        if let Some(chat) = self.chat_of_tab(t.id) {
+            let c = self.chats.iter().find(|c| c.id == chat);
+            let title = c.map(|c| c.title.as_str()).filter(|s| !s.is_empty()).unwrap_or("New chat");
+            return json!({
+                "id": t.id, "url": t.url, "favicon": CHAT_TAB_ICON, "chat": chat,
+                "title": t.custom_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| title.to_string()),
+                "loaded": true, "loading": self.chat_running.contains(chat), "playing": false, "muted": false, "media": null,
+                "unread": c.is_some_and(|c| c.unread), "pinned": self.state.is_pinned(t.id), "section": self.state.section_of(t.id),
             });
         }
         json!({
@@ -4110,10 +4129,11 @@ impl App {
         let arrangement = self.arrangement_vm(window_size.width, window_size.height);
         let asking = |c: &crate::ai::Chat| self.chat_asks.values().any(|a| a.chat == c.id);
         // This space's own chats (sidebar.space_chats), drawn as a list in its sidebar.
+        let tabbed: HashSet<&str> = self.state.tabs.values().filter_map(|t| t.url.strip_prefix(CHAT_TAB)).collect();
         let here_chats: Vec<Value> = self
             .chats
             .iter()
-            .filter(|c| !self.chats_open && self.config.sidebar.space_chats && c.snoozed_until <= now() && c.space == s.name)
+            .filter(|c| !self.chats_open && self.config.sidebar.space_chats && c.snoozed_until <= now() && c.space == s.name && !tabbed.contains(c.id.as_str()))
             .map(|c| json!({
                 "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "running": self.chat_running.contains(&c.id),
                 "started": self.chat_started.get(&c.id), "updated": c.updated, "agent": c.agent, "unread": c.unread,
@@ -4138,6 +4158,7 @@ impl App {
             "splits": s.splits,
             "split_dividers": self.split_dividers(window_size.width, window_size.height),
             "url": active.and_then(|a| self.state.tabs.get(&a)).map(|t| t.url.clone()),
+            "chat_tab": active.is_some_and(|a| self.chat_of_tab(a).is_some()),
             "agents": self.agents_running,
             "peek": self.sidebar_peek,
             "sidebar": self.config.sidebar,
@@ -4388,7 +4409,7 @@ impl App {
             if was_active {
                 let order: Vec<TabId> = self.state.order(self.state.active_space, true);
                 // A tab preloaded on hover looks closed, so it's not where closing lands.
-                let next = order.iter().copied().find(|t| *t != tab && self.views.contains_key(t) && !self.preloaded.contains_key(t));
+                let next = order.iter().copied().find(|t| *t != tab && self.tab_loaded(*t) && !self.preloaded.contains_key(t));
                 self.state.space_mut().active = next;
                 if let Some(n) = next {
                     return self.activate(n);
@@ -4397,9 +4418,15 @@ impl App {
         } else {
             self.queue_event("tab_closed", Some(tab), None);
             let space = self.state.space_of(tab);
+            let chat = self.chat_of_tab(tab).map(str::to_string);
+            let chat_tabs = self.chat_tabs();
             let (views, preloaded) = (&self.views, &self.preloaded);
-            let next = self.state.close_tab(tab, |t| views.contains_key(&t) && !preloaded.contains_key(&t));
+            let next = self.state.close_tab(tab, |t| (views.contains_key(&t) || chat_tabs.contains(&t)) && !preloaded.contains_key(&t));
             self.drop_view(tab);
+            // Closing a chat's tab closes the chat (to Closed, where it can be opened again).
+            if let Some(c) = chat.filter(|c| self.chats.iter().any(|x| &x.id == c)) {
+                self.close_chat(c);
+            }
             if space == Some(self.state.active_space) || space.is_none() {
                 if let Some(n) = next {
                     return self.activate(n);
@@ -8757,7 +8784,11 @@ impl App {
                 if let Some(f) = folder {
                     self.set_chat_folder(&id, &f);
                 }
-                if background {
+                let as_tab = background && self.config.chats.from_space == "tab";
+                if as_tab {
+                    self.close_bar();
+                    self.open_chat_tab(&id, false);
+                } else if background {
                     self.close_bar();
                     self.render();
                 } else {
@@ -8766,7 +8797,9 @@ impl App {
                 if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
                     self.send_chat(Some(id), p, agent, vec![]);
                 }
-                if background {
+                if as_tab {
+                    self.toast(&format!("Opened in a tab: {name} is on it"));
+                } else if background {
                     self.toast(&format!("Sent to Chats: {name} is on it"));
                 } else if from_bar && self.config.command_bar.shift_enter_to_chats && self.config.command_bar.send_to_chats_tip
                     && self.state.tips_shown.insert("send_to_chats".into())
@@ -8930,6 +8963,9 @@ impl App {
                 self.render();
             }
             Command::ActivateChat { chat } => {
+                if let Some(tab) = self.chat_tab_for(&chat).filter(|_| !self.chats_open) {
+                    return self.activate(tab);
+                }
                 let home = self.chats.iter().find(|c| c.id == chat).and_then(|c| self.chat_home(c));
                 if let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) {
                     if c.unread {
@@ -8958,6 +8994,7 @@ impl App {
                     c.title = title.trim().chars().take(120).collect();
                     crate::ai::save_chat(&chats_dir(&self.config), c);
                 }
+                self.sync_chat_tabs();
                 self.render();
                 self.render_chat();
             }
@@ -11048,6 +11085,7 @@ impl App {
             UserEvent::ChatDone { chat } => {
                 self.offer_to_share();
                 self.chat_running.remove(&chat);
+                self.sync_chat_tabs();
                 if self.welcome_chat.as_ref() == Some(&chat) {
                     self.welcome_send(&json!({ "type": "agent_setup", "state": "idle" }));
                 }
@@ -11201,7 +11239,7 @@ impl App {
                     self.state.tabs.get(id).map(|t| json!({
                         "tab": t.id, "title": t.display_title(), "url": t.url, "section": section,
                         "space": space.map(|s| self.state.spaces[s].name.clone()),
-                        "active": Some(t.id) == active, "loaded": self.views.contains_key(&t.id),
+                        "active": Some(t.id) == active, "loaded": self.tab_loaded(t.id),
                     }))
                 };
                 let mut out: Vec<Value> = Vec::new();
@@ -12440,6 +12478,105 @@ impl App {
     }
 
     /// Show the open chat where the user is: floating over their space (chats.from_space: float), else in Chats.
+    /// The chat a tab shows, for a chat tab (valerie://chat/<id>).
+    fn chat_of_tab(&self, tab: TabId) -> Option<&str> {
+        self.state.tabs.get(&tab)?.url.strip_prefix(CHAT_TAB)
+    }
+
+    fn chat_tab_for(&self, chat: &str) -> Option<TabId> {
+        self.state.tabs.values().find(|t| t.url.strip_prefix(CHAT_TAB) == Some(chat)).map(|t| t.id)
+    }
+
+    fn chat_tabs(&self) -> HashSet<TabId> {
+        self.state.tabs.values().filter(|t| t.url.starts_with(CHAT_TAB)).map(|t| t.id).collect()
+    }
+
+    /// A page that's loaded, or a chat tab (always ready: it borrows the chat view).
+    fn tab_loaded(&self, tab: TabId) -> bool {
+        self.views.contains_key(&tab) || self.chat_of_tab(tab).is_some()
+    }
+
+    /// Chat tabs carry their chat's title, for the command bar and agents' tab lists.
+    fn sync_chat_tabs(&mut self) {
+        for t in self.state.tabs.values_mut() {
+            let Some(id) = t.url.strip_prefix(CHAT_TAB) else { continue };
+            if let Some(c) = self.chats.iter().find(|c| c.id == id) {
+                let title = if c.title.is_empty() { "New chat" } else { c.title.as_str() };
+                if t.title != title {
+                    t.title = title.to_string();
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+
+    /// Open a chat as a tab (its home space, else this one), or go to the tab it already has.
+    fn open_chat_tab(&mut self, chat: &str, activate: bool) {
+        let tab = match self.chat_tab_for(chat) {
+            Some(t) => t,
+            None => {
+                let sp = self.chats.iter().find(|c| c.id == chat).and_then(|c| self.chat_home(c)).unwrap_or(self.state.active_space);
+                let at_top = self.config.tabs.new_tab_position != "bottom";
+                let t = self.state.add_tab(sp, &format!("{CHAT_TAB}{chat}"), at_top);
+                self.queue_event("tab_opened", Some(t), None);
+                self.dirty = true;
+                t
+            }
+        };
+        self.sync_chat_tabs();
+        if activate {
+            self.activate(tab);
+        } else {
+            self.layout();
+            self.render();
+        }
+    }
+
+    /// A chat that closed takes its tabs with it.
+    fn drop_chat_tabs(&mut self, chat: &str) {
+        let tabs: Vec<TabId> = self.state.tabs.values().filter(|t| t.url.strip_prefix(CHAT_TAB) == Some(chat)).map(|t| t.id).collect();
+        if tabs.is_empty() {
+            return;
+        }
+        let mut next = None;
+        for tab in tabs {
+            self.queue_event("tab_closed", Some(tab), None);
+            let was_active = self.state.active_tab() == Some(tab);
+            let chat_tabs = self.chat_tabs();
+            let (views, preloaded) = (&self.views, &self.preloaded);
+            let n = self.state.close_tab(tab, |t| (views.contains_key(&t) || chat_tabs.contains(&t)) && !preloaded.contains_key(&t));
+            if was_active {
+                next = n;
+            }
+        }
+        self.dirty = true;
+        if let Some(n) = next.filter(|_| !self.chats_open) {
+            self.activate(n);
+        }
+    }
+
+    /// The chat tab on screen shows its chat (chats.from_space: tab); one closed elsewhere opens again.
+    fn follow_chat_tab(&mut self) {
+        let Some(chat) = self.panes().into_iter().find_map(|t| self.chat_of_tab(t).map(str::to_string)) else { return };
+        if !self.chats.iter().any(|c| c.id == chat) {
+            let dir = chats_dir(&self.config);
+            let Some(c) = crate::ai::reopen_chat(&dir, &chat) else { return };
+            self.closed_chats.retain(|x| x.id != chat);
+            self.chats.insert(0, c);
+        }
+        self.ensure_chat_view();
+        if self.chat_float || self.active_chat.as_deref() == Some(chat.as_str()) {
+            return;
+        }
+        if let Some(c) = self.chats.iter_mut().find(|c| c.id == chat && c.unread) {
+            c.unread = false;
+            crate::ai::save_chat(&chats_dir(&self.config), c);
+        }
+        self.active_chat = Some(chat.clone());
+        self.render_chat();
+        self.refresh_changes(&chat);
+    }
+
     fn show_chat_here(&mut self) {
         // With a chats block the chat is already beside the page: no need to float it.
         if self.chats_block_rect().is_some() {
@@ -12459,6 +12596,14 @@ impl App {
                 self.refresh_changes(&id);
             }
             return;
+        }
+        // chats.from_space: tab — the chat becomes a tab in this space, like any page.
+        if !self.chats_open && self.config.chats.enabled && self.config.chats.from_space == "tab" {
+            if let Some(id) = self.active_chat.clone().filter(|id| self.chats.iter().any(|c| &c.id == id)) {
+                self.close_bar();
+                self.close_peek();
+                return self.open_chat_tab(&id, true);
+            }
         }
         if self.chats_open || self.config.chats.from_space != "float" || !self.config.chats.enabled {
             return self.open_chats();
@@ -13191,6 +13336,11 @@ impl App {
         self.show_chat_here();
     }
 }
+
+/// A chat opened as a tab (chats.from_space: tab) has this address, then the chat's id.
+const CHAT_TAB: &str = "valerie://chat/";
+/// The chat tab's icon in the sidebar: a sparkle, like Chats.
+const CHAT_TAB_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%239d8cff' d='M8 1l1.6 4.4L14 7l-4.4 1.6L8 13l-1.6-4.4L2 7l4.4-1.6z'/%3E%3C/svg%3E";
 
 // ---------------------------------------------------------------- AI actions and watched pages
 
@@ -14736,6 +14886,7 @@ impl App {
     /// Close a chat: it stops, its worktree goes, and it moves to the Closed list.
     fn close_chat(&mut self, id: String) {
         crate::ai::stop(&id);
+        self.drop_chat_tabs(&id);
         if let Some(c) = self.chats.iter().find(|c| c.id == id && !c.worktree.is_empty()) {
             let (folder, wt, branch, p) = (PathBuf::from(&c.folder), PathBuf::from(&c.worktree), c.branch.clone(), self.proxy.clone());
             std::thread::spawn(move || {
