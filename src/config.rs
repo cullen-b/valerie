@@ -319,6 +319,7 @@ pub struct SidebarConfig {
     pub space_chats: bool,
     pub needs_you: bool,
     pub folder_style: String,
+    pub folder_preview: bool,
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
@@ -728,6 +729,8 @@ pub struct OtherAppsConfig {
     pub enabled: bool,
     pub apps: Vec<String>,
     pub recent: usize,
+    pub close_button: bool,
+    pub come_back: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
