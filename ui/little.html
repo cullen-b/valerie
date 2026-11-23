@@ -37,13 +37,10 @@ body.private #split { display: none; }
 body.rise > * { animation: rise .28s cubic-bezier(.22,1,.36,1); }
 @keyframes rise { from { transform: translateY(5px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { body.rise > * { animation: none; } }
-/* little_window.top_bar: fade: the bar keeps its strip above the page, see-through (Mac) or a plain backdrop, until the mouse comes near */
-html.fade { background: #fff; }
-@media (prefers-color-scheme: dark) { html.fade { background: #1e1e20; } }
-html.fade.see { background: transparent; }
-html.fade body { transition: opacity .18s ease-out; }
-html.fade.away body { opacity: 0; transition-duration: .25s; }
-@media (prefers-reduced-motion: reduce) { html.fade body { transition: none; } }
+/* little_window.top_bar: fade: the window's top jumps up and the whole bar fades in quickly instead */
+html.fade body.rise { animation: fadein .15s ease-out; } html.fade body.rise > * { animation: none; }
+@keyframes fadein { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { html.fade body.rise { animation: none; } }
 body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
 /* little_window.tabs: with two or more tabs, they take the title's place */
 #tabs { display: none; flex: 1; min-width: 0; gap: 2px; align-items: center; overflow: hidden; }
@@ -91,10 +88,6 @@ document.body.onmousedown = (e) => { if ((e.target === document.body || e.target
 document.documentElement.addEventListener("mouseleave", (e) => {
   if (e.clientY < document.body.offsetHeight - 2 && !document.body.classList.contains("ask")) send({ t: "bar_away" });
 });
-// With top_bar: fade, the mouse coming onto the see-through bar brings it in.
-document.documentElement.addEventListener("mouseenter", () => {
-  if (document.documentElement.classList.contains("away")) send({ t: "bar_near" });
-});
 // ⌘T (Ctrl+T elsewhere) here opens a tab too, while keybindings leaves the key free (tabKey).
 let tabKey = false, lastPage;
 addEventListener("keydown", (e) => {
@@ -118,14 +111,11 @@ function drawTabs(tabs) {
   document.body.classList.toggle("tabs", tabs.length > 1);
 }
 window.little = {
-  show(on) { document.documentElement.classList.toggle("away", document.documentElement.classList.contains("fade") && !on); },
   reveal() { const b = document.body; b.classList.remove("rise"); void b.offsetWidth; b.classList.add("rise"); },
   render(s) {
     const r = document.documentElement;
     r.classList.toggle("light", s.theme.mode === "light");
     r.classList.toggle("fade", !!s.fade);
-    r.classList.toggle("see", !!s.see_through);
-    r.classList.toggle("away", !!s.fade && !s.shown);
     r.style.setProperty("--bg1", s.theme.background[0]);
     r.style.setProperty("--bg2", s.theme.background[1] || s.theme.background[0]);
     r.style.setProperty("--accent", s.theme.accent);

@@ -2330,31 +2330,6 @@ mod mac {
         }
     }
 
-    /// Hide the whole title bar area (its buttons and the backdrop macOS draws behind them on a see-through window).
-    pub fn set_titlebar_hidden(window: &tao::window::Window, hidden: bool) {
-        use tao::platform::macos::WindowExtMacOS;
-        let w = window.ns_window() as *mut AnyObject;
-        unsafe {
-            let close: *mut AnyObject = msg_send![w, standardWindowButton: 0usize];
-            if close.is_null() {
-                return;
-            }
-            let titlebar: *mut AnyObject = msg_send![close, superview];
-            let container: *mut AnyObject = if titlebar.is_null() { titlebar } else { msg_send![titlebar, superview] };
-            if !container.is_null() {
-                let _: () = msg_send![container, setHidden: hidden];
-            }
-        }
-    }
-
-    pub fn refresh_shadow(window: &tao::window::Window) {
-        use tao::platform::macos::WindowExtMacOS;
-        let w = window.ns_window() as *mut AnyObject;
-        unsafe {
-            let _: () = msg_send![w, invalidateShadow];
-        }
-    }
-
     pub fn set_window_opacity(window: &tao::window::Window, alpha: f64) {
         use tao::platform::macos::WindowExtMacOS;
         let w = window.ns_window() as *mut AnyObject;
@@ -2702,22 +2677,6 @@ pub fn prefer_dark(wv: &WebView, dark: bool) {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = (wv, dark);
-}
-
-/// Hide the title bar area of a see-through window, so nothing is drawn over what's behind it (Mac).
-pub fn set_titlebar_hidden(window: &tao::window::Window, hidden: bool) {
-    #[cfg(target_os = "macos")]
-    mac::set_titlebar_hidden(window, hidden);
-    #[cfg(not(target_os = "macos"))]
-    let _ = (window, hidden);
-}
-
-/// Redraw a see-through window's shadow around what it now shows (Mac).
-pub fn refresh_shadow(window: &tao::window::Window) {
-    #[cfg(target_os = "macos")]
-    mac::refresh_shadow(window);
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
 }
 
 /// How solid the whole window is (window.opacity).

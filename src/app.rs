@@ -74,8 +74,6 @@ pub enum UserEvent {
     PrepareLittle,
     /// A little window's bar finished sliding out or away.
     LittleBarSlid(WindowId),
-    /// A little window's bar finished fading (`little_window.top_bar: fade`): redraw the window's shadow.
-    LittleShadow(WindowId),
     /// Time to look where the mouse is over little windows whose page is still loading (`watch_little_tops`).
     LittleTopWatch,
     Menu(MenuId),
@@ -2022,7 +2020,7 @@ impl App {
         }
         // A little window's page reports the mouse reaching its top (`little_window.top_bar: hover | fade`), not the sidebar's edge.
         if let Target::Little(id, _) = target {
-            let hover = self.little_bar_hides() || self.little_bar_fades();
+            let hover = self.little_bar_hides();
             c["edge"] = json!(hover.then_some("top"));
             c["edge_zone"] = json!(self.config.little_window.reveal_zone.max(1.0));
             c["peek"] = json!(hover && self.littles.get(&id).is_some_and(|l| l.bar_out));
@@ -3636,10 +3634,7 @@ impl App {
             if l.bar_over && !room {
                 platform::bring_to_front(&l.bar);
             }
-            platform::set_traffic_lights_hidden(&l.window, !shown || self.little_bar_fades() && !l.bar_out);
-            if self.little_see_through() {
-                platform::set_titlebar_hidden(&l.window, !l.bar_out);
-            }
+            platform::set_traffic_lights_hidden(&l.window, !shown);
         }
         if self.answer_window == Some(id) {
             self.layout_answer();
@@ -3658,17 +3653,12 @@ impl App {
 
     /// `little_window.top_bar: hover`: the bar stays hidden until the mouse comes to the window's top.
     fn little_bar_hides(&self) -> bool {
-        !matches!(self.config.little_window.top_bar.as_str(), "always" | "fade")
+        self.config.little_window.top_bar != "always"
     }
 
-    /// `little_window.top_bar: fade`: the bar keeps its strip above the page but stays see-through until the mouse comes near.
+    /// `little_window.top_bar: fade`: the window's top jumps up at once and the bar fades in, instead of sliding.
     fn little_bar_fades(&self) -> bool {
         self.config.little_window.top_bar == "fade"
-    }
-
-    /// With `top_bar: fade` on a Mac, the strip above the page shows what's behind the window (elsewhere, a plain backdrop).
-    fn little_see_through(&self) -> bool {
-        cfg!(target_os = "macos") && self.little_bar_fades()
     }
 
     /// Slide a little window's bar out above its page, or back away. The window's top edge glides up or down so the page
@@ -3678,31 +3668,8 @@ impl App {
         // little_window.bar_reveal: over (slide over the page's top) | above (the window grows upward to fit it).
         let over = self.config.little_window.bar_reveal != "above";
         let corner = self.little_corner();
-        if self.little_bar_fades() {
-            let see = self.little_see_through();
-            let Some(l) = self.littles.get_mut(&id) else { return };
-            if l.bar_out == out || (!out && l.asking()) {
-                return;
-            }
-            l.bar_out = out;
-            let _ = l.bar.evaluate_script(&format!("window.little && little.show({out})"));
-            platform::set_traffic_lights_hidden(&l.window, !out);
-            if see {
-                platform::set_titlebar_hidden(&l.window, !out);
-            }
-            platform::refresh_shadow(&l.window);
-            let p = self.proxy.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                send(&p, UserEvent::LittleShadow(id));
-            });
-            let page = l.page;
-            let cfg = self.page_config_for(Target::Little(id, page), &self.page_config());
-            if let Some(l) = self.littles.get(&id) {
-                let _ = l.view.evaluate_script(&format!("window.__valerie && __valerie.configure({cfg})"));
-            }
-            return;
-        }
+        // little_window.top_bar: fade: no slide; the window's top moves at once and the bar fades in (little.reveal).
+        let (secs_out, secs_away) = if self.little_bar_fades() { (0.0, 0.0) } else { (LITTLE_BAR_OUT, LITTLE_BAR_SLIDE) };
         let Some(room) = self.littles.get(&id).map(|l| self.little_fills_screen(l)) else { return };
         let Some(l) = self.littles.get_mut(&id) else { return };
         if !hover || room {
@@ -3730,7 +3697,7 @@ impl App {
             if above && corner > 0.0 {
                 platform::round_corners(&l.view, corner, platform::Corners::Top);
             }
-            l.bar_over = fills || over || !platform::grow_window_top(&l.window, LITTLE_BAR, LITTLE_BAR_OUT);
+            l.bar_over = fills || over || !platform::grow_window_top(&l.window, LITTLE_BAR, secs_out);
             if l.bar_over {
                 platform::round_corners(&l.view, 0.0, platform::Corners::None);
             }
@@ -3738,7 +3705,7 @@ impl App {
             if l.bar_over {
                 let _ = l.bar.set_bounds(rect(0.0, -LITTLE_BAR, w, LITTLE_BAR));
                 platform::bring_to_front(&l.bar);
-                platform::animate_bounds(&l.bar, 0.0, 0.0, w, LITTLE_BAR, LITTLE_BAR_OUT)
+                platform::animate_bounds(&l.bar, 0.0, 0.0, w, LITTLE_BAR, secs_out)
             } else {
                 cfg!(target_os = "macos")
             }
@@ -3746,10 +3713,10 @@ impl App {
             l.bar_over = false;
             platform::set_traffic_lights_hidden(&l.window, true);
             if was_over {
-                platform::animate_bounds(&l.bar, 0.0, -LITTLE_BAR, w, LITTLE_BAR, LITTLE_BAR_SLIDE)
+                platform::animate_bounds(&l.bar, 0.0, -LITTLE_BAR, w, LITTLE_BAR, secs_away)
             } else {
                 platform::bring_to_front(&l.view);
-                platform::grow_window_top(&l.window, -LITTLE_BAR, LITTLE_BAR_SLIDE);
+                platform::grow_window_top(&l.window, -LITTLE_BAR, secs_away);
                 cfg!(target_os = "macos")
             }
         };
@@ -3757,7 +3724,7 @@ impl App {
             l.sliding = true;
             let p = self.proxy.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs_f64(if out { LITTLE_BAR_OUT } else { LITTLE_BAR_SLIDE } + 0.03));
+                std::thread::sleep(std::time::Duration::from_secs_f64(if out { secs_out } else { secs_away } + 0.03));
                 send(&p, UserEvent::LittleBarSlid(id));
             });
         } else {
@@ -4218,8 +4185,6 @@ impl App {
                 "private": l.private,
                 "ask": l.asking(),
                 "fade": self.little_bar_fades(),
-                "see_through": self.little_see_through(),
-                "shown": l.bar_out,
                 "tab_key": self.little_tab_key(),
                 "tabs": l.order.iter().filter(|_| l.order.len() > 1).map(|&n| {
                     let (url, title) = if n == l.page { (&l.url, &l.title) } else { l.others.iter().find(|p| p.n == n).map(|p| (&p.url, &p.title)).unwrap_or((&l.url, &l.title)) };
@@ -5479,8 +5444,7 @@ impl App {
             .with_title(if private { "Valerie — Private" } else { "Valerie" })
             .with_visible(visible)
             .with_inner_size(LogicalSize::new(w, h))
-            .with_min_inner_size(LogicalSize::new(360.0, 240.0))
-            .with_transparent(self.little_see_through());
+            .with_min_inner_size(LogicalSize::new(360.0, 240.0));
         let window = match builder.build(elwt) {
             Ok(w) => {
                 place_test_window(&w, elwt);
@@ -5505,7 +5469,6 @@ impl App {
         let p = self.proxy.clone();
         let bar = platform::ui_builder(&self.chrome)
             .with_html(ui_page("little.html", &self.config))
-            .with_transparent(self.little_see_through())
             .with_bounds(rect(0.0, 0.0, w, LITTLE_BAR))
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |r| send(&p, UserEvent::Ipc { from: Source::LittleBar(id), msg: r.into_body() }))
@@ -9668,7 +9631,7 @@ impl App {
                 let (x, y) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(LITTLE_BAR));
                 self.show_space_menu(id, x, y);
             }
-            (Source::Page(Target::Little(id, _)), "edge") | (Source::LittleBar(id), "bar_near") => self.set_little_bar(id, true),
+            (Source::Page(Target::Little(id, _)), "edge") => self.set_little_bar(id, true),
             (Source::Page(Target::Little(id, _)), "unpeek") | (Source::LittleBar(id), "bar_away") => self.set_little_bar(id, false),
             (Source::LittleBar(id), "drag") => {
                 if let Some(l) = self.littles.get(&id) {
@@ -10911,11 +10874,6 @@ impl App {
             UserEvent::DrawTimeout(id) => self.drawn(id),
             UserEvent::PrepareLittle => self.prepare_little(elwt),
             UserEvent::LittleBarSlid(id) => self.little_bar_slid(id),
-            UserEvent::LittleShadow(id) => {
-                if let Some(l) = self.littles.get(&id) {
-                    platform::refresh_shadow(&l.window);
-                }
-            }
             UserEvent::LittleTopWatch => {
                 self.little_top_watching = false;
                 self.watch_little_tops();
