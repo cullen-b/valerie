@@ -14100,6 +14100,7 @@ impl App {
             "only": self.welcome_only,
             "permission_step": self.config.welcome_permissions && crate::update::app_bundle().is_some(),
             "full_disk_access": crate::permission_tile::full_disk_access(),
+            "access_drag": crate::permission_tile::can_drag_in(),
             "resume": self.state.welcome_resume,
             "agent_setup": self.config.welcome_agent_setup && self.config.chats.enabled,
             // Unknown until the first sync has looked at the repo.
@@ -14607,7 +14608,7 @@ impl App {
             Ok(c) => c,
             Err(std::io::ErrorKind::PermissionDenied) => {
                 let Some(v) = self.views.get(&tab) else { return };
-                let body = "Turn on Valerie in Privacy & Security > Full Disk Access, then quit and reopen Valerie. It only reads Safari's logins when you ask.";
+                let body = "In Privacy & Security > Full Disk Access, add Valerie with the + button if it isn't listed and turn it on, then quit and reopen Valerie. It only reads Safari's logins when you ask.";
                 platform::ask(v, "Valerie needs Full Disk Access to read Safari's logins", body, "Open Settings", "Cancel", |yes| {
                     if yes {
                         platform::open_external("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");

@@ -19,6 +19,17 @@ pub fn full_disk_access() -> Option<bool> {
     None
 }
 
+/// macOS 27.3 took away dragging an app into the Full Disk Access list: there the user clicks + and picks it.
+pub fn can_drag_in() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let v = objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion();
+        (v.majorVersion, v.minorVersion) < (27, 3)
+    }
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
 #[cfg(target_os = "macos")]
 pub use mac::{close, follow, show};
 
@@ -61,6 +72,8 @@ mod mac {
     thread_local! {
         static PANEL: RefCell<Option<Retained<NSPanel>>> = const { RefCell::new(None) };
         static APP: RefCell<String> = const { RefCell::new(String::new()) };
+        // Once the user moves the window it stays where they put it.
+        static MOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     fn app_icon(path: &str) -> Retained<AnyObject> {
@@ -98,6 +111,13 @@ mod mac {
 
             #[unsafe(method(mouseDragged:))]
             fn mouse_dragged(&self, event: &NSEvent) {
+                if !super::can_drag_in() {
+                    MOVED.set(true);
+                    if let Some(w) = self.window() {
+                        w.performWindowDragWithEvent(event);
+                    }
+                    return;
+                }
                 let path = APP.with_borrow(|a| a.clone());
                 if path.is_empty() {
                     return;
@@ -137,6 +157,7 @@ mod mac {
     pub fn show(app: &Path) -> bool {
         let Some(mtm) = MainThreadMarker::new() else { return false };
         APP.set(app.to_string_lossy().into_owned());
+        MOVED.set(false);
         if PANEL.with_borrow(|p| p.is_some()) {
             return true;
         }
@@ -165,8 +186,14 @@ mod mac {
             let icon: Retained<AnyObject> = msg_send![class!(NSImageView), imageViewWithImage: &*app_icon(&APP.with_borrow(|a| a.clone()))];
             let _: () = msg_send![&*icon, setFrame: ICON];
             let _: () = msg_send![&*tile, addSubview: &*icon];
-            let title = label("Drag Valerie into the list", 80.0, 42.0, 14.0, true, 0.96);
-            let hint = label("Then turn on the switch beside it", 80.0, 21.0, 12.0, false, 0.66);
+            let folder = app.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let (top, under) = if super::can_drag_in() {
+                ("Drag Valerie into the list".to_string(), "Then turn on the switch beside it".to_string())
+            } else {
+                ("Click + under the list".to_string(), format!("Then pick Valerie in {folder}"))
+            };
+            let title = label(&top, 80.0, 42.0, 14.0, true, 0.96);
+            let hint = label(&under, 80.0, 21.0, 12.0, false, 0.66);
             let _: () = msg_send![&*tile, addSubview: &*title];
             let _: () = msg_send![&*tile, addSubview: &*hint];
 
@@ -214,7 +241,8 @@ mod mac {
         None
     }
 
-    /// Beside the window if there's room, else under it, so the two never cover each other.
+    /// Beside the window if there's room, else under or over it. With no room at all, inside its top right corner,
+    /// well away from the + and - under the list.
     fn spot(window: NSRect, screen: NSRect) -> NSPoint {
         let right = window.origin.x + window.size.width + GAP;
         let left = window.origin.x - GAP - WIDTH;
@@ -226,7 +254,15 @@ mod mac {
             NSPoint::new(left, clamped)
         } else {
             let x = window.origin.x + (window.size.width - WIDTH) / 2.0;
-            NSPoint::new(x, (window.origin.y - GAP - HEIGHT).max(screen.origin.y))
+            let below = window.origin.y - GAP - HEIGHT;
+            let above = window.origin.y + window.size.height + GAP;
+            if below >= screen.origin.y {
+                NSPoint::new(x, below)
+            } else if above + HEIGHT <= screen.origin.y + screen.size.height {
+                NSPoint::new(x, above)
+            } else {
+                NSPoint::new(window.origin.x + window.size.width - WIDTH - GAP, window.origin.y + window.size.height - HEIGHT - 52.0)
+            }
         }
     }
 
@@ -237,6 +273,12 @@ mod mac {
         PANEL.with_borrow(|panel| {
             let Some(panel) = panel else { return };
             let Some(window) = window else { return panel.orderOut(None) };
+            if MOVED.get() {
+                if !panel.isVisible() {
+                    panel.orderFrontRegardless();
+                }
+                return;
+            }
             let center = NSPoint::new(window.origin.x + window.size.width / 2.0, window.origin.y + window.size.height / 2.0);
             let screens = NSScreen::screens(mtm);
             let screen = screens.iter().find(|s| {
@@ -273,6 +315,10 @@ mod mac {
             assert_eq!(spot(rect(1000.0, 100.0, 590.0, 600.0), screen).x, 686.0);
             let under = spot(rect(200.0, 300.0, 1200.0, 500.0), screen);
             assert_eq!((under.x, under.y), (650.0, 206.0));
+            let over = spot(rect(200.0, 0.0, 1200.0, 700.0), screen);
+            assert_eq!((over.x, over.y), (650.0, 714.0));
+            let inside = spot(rect(0.0, 0.0, 1600.0, 900.0), screen);
+            assert_eq!((inside.x, inside.y), (1286.0, 768.0));
         }
     }
 }

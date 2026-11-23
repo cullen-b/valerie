@@ -236,8 +236,10 @@ function permissionsStep(root) {
   root.append(c);
   if (S.helper && !a.granted) {
     const h = el("div", "howto"); h.setAttribute("role", "status");
-    h.append(el("p", null, "Drag Valerie from the small window beside System Settings into the list, then turn on its switch. This page updates by itself."),
-      el("p", "note", "If your Mac offers Quit & Reopen, choose it. Valerie comes back to this step."));
+    h.append(W.access_drag !== false
+      ? el("p", null, "Drag Valerie from the small window beside System Settings into the list, then turn on its switch. This page updates by itself.")
+      : el("p", null, "In System Settings, open Full Disk Access, click + under the list and choose Valerie, then turn on its switch. If you're offered a choice of folders, choose full access: folders alone don't cover Safari's bookmarks and logins. This page updates by itself."),
+      el("p", "note", "If your Mac quits Valerie to apply it, open Valerie again: it comes back to this step."));
     root.append(h);
   }
   root.append(el("p", "note plain", "Anything you run inside Valerie, including your AI and its terminal, gets the same access."));
