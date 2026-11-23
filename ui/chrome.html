@@ -325,6 +325,9 @@ body.folders-card .folder-row .title { flex: 0 1 auto; }
 .fpeek img.ico, .fpeek .letter { width: 14px; height: 14px; border-radius: 3.5px; font-size: 8px; }
 .fpeek .count { margin-left: 3px; }
 body.size-compact .fchev, body.size-compact .fpeek { display: none; }
+/* sidebar.folder_arrow: false hides the open/closed arrow on folders */
+body.no-folder-arrow .fchev, body.no-folder-arrow .folder > .row .chev { display: none; }
+body.no-folder-arrow .folder-row .title { margin-right: auto; }
 /* icons-only sidebar: pinned tabs tucked into one folder tile that opens a column on hover */
 .pinfolder .mini { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; }
 .pinfolder .mini img, .pinfolder .mini .letter { width: 12px; height: 12px; border-radius: 3px; font-size: 7px; }
@@ -1621,7 +1624,7 @@ function render(state) {
   const hadPointer = b.classList.contains("pointer");
   b.className = (hadPointer ? "pointer " : "") + (S.layout.tab_bar === "top" ? "top " : "") + S.layout.sidebar_position + " size-" + (S.layout.sidebar_size || "full") +
     (drag && drag.active ? " dragging" : "") + (edge.dir ? (edge.dir < 0 ? " edge-prev" : " edge-next") : "") + (resizing ? " resizing" : "") +
-    (S.sidebar.folder_style === "plain" ? "" : " folders-card");
+    (S.sidebar.folder_style === "plain" ? "" : " folders-card") + (S.sidebar.folder_arrow ? "" : " no-folder-arrow");
   const hidden = !S.layout.sidebar_visible && !S.peek;
   root.classList.toggle("floating", !!S.peek_float);
   $("#sidebar").classList.toggle("hidden", hidden);

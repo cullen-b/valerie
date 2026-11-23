@@ -320,6 +320,7 @@ pub struct SidebarConfig {
     pub needs_you: bool,
     pub folder_style: String,
     pub folder_preview: bool,
+    pub folder_arrow: bool,
     pub today_label: bool,
     pub clear_button: String,
     pub space_switcher: bool,
