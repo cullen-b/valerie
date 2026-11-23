@@ -156,6 +156,7 @@ sidebar:
   folder_style: card       # how folders look in the sidebar. one of: card (an open folder is a rounded card; a folded one
                            # is a plain row) | plain (a row with the tabs indented under it)
   folder_preview: false    # card folders: a folded folder shows its first three icons and how many tabs it holds. true | false
+  folder_arrow: false      # the little arrow beside a folder's name that shows whether it's open. true | false
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
   space_switcher: true     # the space icons at the bottom
