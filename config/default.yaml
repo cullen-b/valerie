@@ -405,9 +405,11 @@ chats:
                            # to bring it back. true | false
   close_key_closes_chat: true # in the Chats space, ⌘W (Ctrl+W elsewhere) closes the open chat, and the window once no
                            # chats are left. false = it acts as it does in a space (the tab, or the window when there's none)
-  from_space: float        # a chat started from a space (the command bar, an AI action, ⌘N). one of: float (it opens in
-                           # the middle of the window, over your space; Esc sends it on to Chats and you keep working,
-                           # Shift+Esc goes to Chats with it) | chats (switch to the Chats space)
+  from_space: tab          # a chat started from a space (the command bar, an AI action, ⌘N). one of: tab (it opens as a
+                           # normal tab in that space: pin it, drag it into a folder, close it like any tab; closing it
+                           # closes the chat, which stays in Chats' Closed list) | float (it opens in the middle of the
+                           # window, over your space; Esc sends it on to Chats and you keep working, Shift+Esc goes to
+                           # Chats with it) | chats (switch to the Chats space)
   agent_menu: installed    # agents in the composer's agent menu. one of: installed (only ones on this computer, plus
                            # any with their own `command`) | all (every agent under agents.available)
   search: true             # a "Search chats" box at the top of the Chats sidebar: it searches every chat, Valerie's and

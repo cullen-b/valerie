@@ -1641,7 +1641,7 @@ function render(state) {
   if (!S.arrangement) $("#topbar").style.height = S.layout.top_bar_height + "px";
 
   for (const id of ["#back", "#fwd", "#reload"]) $(id).style.display = O.nav_buttons ? "" : "none";
-  $("#url").style.display = O.url_bar && !(S.chats && S.chats.open) ? "" : "none";
+  $("#url").style.display = O.url_bar && !(S.chats && S.chats.open) && !S.chat_tab ? "" : "none";
   $("#back").classList.toggle("off", !S.active);
   $("#fwd").classList.toggle("off", !S.active);
   $("#reload").classList.toggle("off", !S.active);

@@ -160,8 +160,8 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["summary", "open", "hidden"].contains(&c.chats.steps.as_str()) {
                 problems.push(format!("chats: steps is {:?}; use summary, open or hidden", c.chats.steps));
             }
-            if !["float", "chats"].contains(&c.chats.from_space.as_str()) {
-                problems.push(format!("chats: from_space is {:?}; use float or chats", c.chats.from_space));
+            if !["tab", "float", "chats"].contains(&c.chats.from_space.as_str()) {
+                problems.push(format!("chats: from_space is {:?}; use tab, float or chats", c.chats.from_space));
             }
             for s in &c.chats.snooze {
                 if s != "custom" && !crate::app::snooze_choice_ok(s) {
