@@ -471,6 +471,11 @@ pub enum Command {
         source: String,
         id: String,
     },
+    /// Take another AI app's chat off Valerie's list (to Closed); the app itself keeps it.
+    CloseOtherChat {
+        source: String,
+        id: String,
+    },
     /// Search every chat, Valerie's and the other apps', for these words ("" ends the search).
     SearchChats {
         #[serde(default)]
@@ -1103,6 +1108,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),
     ("open_other_chat", "{ source, id }  (carry on a chat from another AI app in Valerie; source: claude | codex | opencode | t3)"),
+    ("close_other_chat", "{ source, id }  (take another AI app's chat off the Chats list, to Closed; the app itself keeps it)"),
     ("search_chats", "{ query }  (search every chat, Valerie's and the other AI apps', in the Chats sidebar)"),
     ("toggle_chat_app", "{ app, only? }  (show or hide one app's chats in the Chats sidebar; only: true shows just that app)"),
     ("set_new_chat_agent", "{ agent }  (the agent new chats use, a name under agents.available)"),
