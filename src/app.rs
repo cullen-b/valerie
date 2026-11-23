@@ -19,6 +19,8 @@ const LITTLE_BAR: f64 = 36.0;
 const LITTLE_BAR_SLIDE: f64 = 0.2;
 /// Seconds it takes to slide out: a touch slower than away, so it eases in.
 const LITTLE_BAR_OUT: f64 = 0.3;
+/// Seconds the window's top takes to move with `little_window.top_bar: fade` (the bar fades over the same time).
+const LITTLE_BAR_FADE: f64 = 0.14;
 const MAX_UNTRUSTED_IPC: usize = 64 * 1024;
 /// URL schemes handed to other apps when a page links to them.
 const EXTERNAL_SCHEMES: &[&str] = &[
@@ -3635,15 +3637,19 @@ impl App {
                 platform::bring_to_front(&l.bar);
             }
             platform::set_traffic_lights_hidden(&l.window, !shown);
+            let _ = l.bar.evaluate_script(&format!("window.little && little.shown({shown})"));
         }
         if self.answer_window == Some(id) {
             self.layout_answer();
         }
     }
 
-    /// Full screen (or zoomed to fill it) with `little_window.full_screen_bar: room`: the bar keeps a strip of its own above the page.
+    /// Full screen (or zoomed to fill it), or with no room above the window for the bar to come out, with
+    /// `little_window.full_screen_bar: room`: the bar keeps showing in a strip of its own above the page.
     fn little_fills_screen(&self, l: &Little) -> bool {
-        self.config.little_window.full_screen_bar == "room" && (l.window.fullscreen().is_some() || l.window.is_maximized())
+        let grown = l.bar_out && !l.bar_over;
+        self.config.little_window.full_screen_bar == "room"
+            && (l.window.fullscreen().is_some() || l.window.is_maximized() || !grown && platform::room_above(&l.window) < LITTLE_BAR - 0.5)
     }
 
     /// `little_window.page_corner_radius`: the page's top corners while the bar shows above it.
@@ -3668,8 +3674,8 @@ impl App {
         // little_window.bar_reveal: over (slide over the page's top) | above (the window grows upward to fit it).
         let over = self.config.little_window.bar_reveal != "above";
         let corner = self.little_corner();
-        // little_window.top_bar: fade: no slide; the window's top moves at once and the bar fades in (little.reveal).
-        let (secs_out, secs_away) = if self.little_bar_fades() { (0.0, 0.0) } else { (LITTLE_BAR_OUT, LITTLE_BAR_SLIDE) };
+        // little_window.top_bar: fade: the window's top glides quickly while the bar fades in (little.reveal).
+        let (secs_out, secs_away) = if self.little_bar_fades() { (LITTLE_BAR_FADE, LITTLE_BAR_FADE) } else { (LITTLE_BAR_OUT, LITTLE_BAR_SLIDE) };
         let Some(room) = self.littles.get(&id).map(|l| self.little_fills_screen(l)) else { return };
         let Some(l) = self.littles.get_mut(&id) else { return };
         if !hover || room {
@@ -3702,6 +3708,7 @@ impl App {
                 platform::round_corners(&l.view, 0.0, platform::Corners::None);
             }
             let _ = l.bar.evaluate_script("window.little && little.reveal()");
+            platform::set_traffic_lights_hidden(&l.window, false);
             if l.bar_over {
                 let _ = l.bar.set_bounds(rect(0.0, -LITTLE_BAR, w, LITTLE_BAR));
                 platform::bring_to_front(&l.bar);
@@ -3712,6 +3719,8 @@ impl App {
         } else {
             l.bar_over = false;
             platform::set_traffic_lights_hidden(&l.window, true);
+            // The bar's contents go first, so nothing half-hidden shows while the window's top moves down.
+            let _ = l.bar.evaluate_script("window.little && little.shown(false)");
             if was_over {
                 platform::animate_bounds(&l.bar, 0.0, -LITTLE_BAR, w, LITTLE_BAR, secs_away)
             } else {
@@ -4185,6 +4194,7 @@ impl App {
                 "private": l.private,
                 "ask": l.asking(),
                 "fade": self.little_bar_fades(),
+                "shown": !self.little_bar_hides() || l.bar_out || self.little_fills_screen(l),
                 "tab_key": self.little_tab_key(),
                 "tabs": l.order.iter().filter(|_| l.order.len() > 1).map(|&n| {
                     let (url, title) = if n == l.page { (&l.url, &l.title) } else { l.others.iter().find(|p| p.n == n).map(|p| (&p.url, &p.title)).unwrap_or((&l.url, &l.title)) };
@@ -11533,6 +11543,8 @@ impl App {
                 }
             }
             WindowEvent::Moved(_) if main => self.remember_frame(),
+            // Moved to or from the screen's top: the bar starts or stops always showing (little_fills_screen).
+            WindowEvent::Moved(_) if self.littles.contains_key(&id) => self.layout_little(id),
             WindowEvent::CloseRequested => {
                 let keep_running = self.keep_running_when_closed();
                 if main && (keep_running || self.config.little_window.keep_open_when_main_closes && !self.littles.is_empty()) {

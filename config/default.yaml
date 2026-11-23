@@ -629,8 +629,9 @@ little_window:
   reveal_zone: 24          # with top_bar: fade or hover, how close to the window's top the mouse has to move (upward) to bring
                            # the bar out, pixels. Bigger = easier to reach; 6 = only the very edge
   page_corner_radius: 10   # rounds the page's top corners while the bar shows above it, pixels (Mac). 0 = square
-  full_screen_bar: room    # with top_bar: fade or hover, when a little window is full screen (or fills the screen). one of: room
-                           # (the page starts below the bar, which stays showing) | over (the bar slides over the page's top)
+  full_screen_bar: room    # with top_bar: fade or hover, when a little window is full screen, fills the screen, or has no
+                           # room above it for the bar (its top is at the screen's top). one of: room (the page starts
+                           # below the bar, which stays showing) | over (the bar slides over the page's top)
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
   copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
   keep_open_when_main_closes: true   # closing the main window leaves little windows open (the Dock icon or ⌘T
