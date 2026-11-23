@@ -37,10 +37,10 @@ body.private #split { display: none; }
 body.rise > * { animation: rise .28s cubic-bezier(.22,1,.36,1); }
 @keyframes rise { from { transform: translateY(5px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { body.rise > * { animation: none; } }
-/* little_window.top_bar: fade: the window's top jumps up and the whole bar fades in quickly instead */
-html.fade body.rise { animation: fadein .15s ease-out; } html.fade body.rise > * { animation: none; }
-@keyframes fadein { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { html.fade body.rise { animation: none; } }
+/* little_window.top_bar: fade: the whole bar fades in as the window's top glides up, and is gone at once when it goes */
+html.fade body { transition: opacity .14s ease-out; } html.fade body.rise > * { animation: none; }
+html.fade.away body { opacity: 0; transition: none; }
+@media (prefers-reduced-motion: reduce) { html.fade body { transition: none; } }
 body.ask #addr { display: block; } body.ask #title, body.ask #back, body.ask #copy, body.ask #split { display: none; }
 /* little_window.tabs: with two or more tabs, they take the title's place */
 #tabs { display: none; flex: 1; min-width: 0; gap: 2px; align-items: center; overflow: hidden; }
@@ -111,11 +111,16 @@ function drawTabs(tabs) {
   document.body.classList.toggle("tabs", tabs.length > 1);
 }
 window.little = {
-  reveal() { const b = document.body; b.classList.remove("rise"); void b.offsetWidth; b.classList.add("rise"); },
+  // Whether the bar is showing, so a fading bar starts from nothing next time (top_bar: fade).
+  shown(on) { document.documentElement.classList.toggle("away", !on && document.documentElement.classList.contains("fade")); },
+  reveal() {
+    if (document.documentElement.classList.contains("fade")) { requestAnimationFrame(() => this.shown(true)); return; }
+    const b = document.body; b.classList.remove("rise"); void b.offsetWidth; b.classList.add("rise"); },
   render(s) {
     const r = document.documentElement;
     r.classList.toggle("light", s.theme.mode === "light");
     r.classList.toggle("fade", !!s.fade);
+    this.shown(!!s.shown);
     r.style.setProperty("--bg1", s.theme.background[0]);
     r.style.setProperty("--bg2", s.theme.background[1] || s.theme.background[0]);
     r.style.setProperty("--accent", s.theme.accent);

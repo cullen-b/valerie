@@ -186,7 +186,7 @@ changed in plain words. Some translations:
 | "The little window's bar should come out more easily" / "only at the very edge" | `little_window.reveal_zone` (pixels from the top, default 24; `6` = the very edge) |
 | "Square corners on the little window's page under the bar" | `little_window.page_corner_radius: 0` (default 10) |
 | "The little window's bar should slide down over the page instead of growing the window upward" | `little_window.bar_reveal: over` (`above`, the default, grows the window upward so the bar covers nothing) |
-| "In full screen, the little window's bar should cover the page, not push it down" | `little_window.full_screen_bar: over` (`room`, the default, keeps a strip for the bar above the page) |
+| "In full screen (or with the window at the screen's top), the little window's bar should cover the page, not push it down" | `little_window.full_screen_bar: over` (`room`, the default, keeps the bar showing in a strip above the page) |
 | "No tabs in little windows" / "the command bar in a little window should open the main window" | `little_window.tabs: false` (⌘T and the command bar then work as in the main window) |
 | "The command bar key in a little window should just ask for an address in its own bar" | `little_window.command_bar: false` (`true`, the default, opens the full command bar over the little window; what you open from it becomes a tab there) |
 | "⌘N in a little window should open another little window" / "a different key for that" / "turn it off" | `little_window.new_window_key: "CmdOrCtrl+N"` (the default) / `"CmdOrCtrl+Shift+N"` / `""` |

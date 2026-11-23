@@ -2190,6 +2190,22 @@ mod mac {
         true
     }
 
+    /// Points between the window's top and the top of its screen's usable area (below the menu bar).
+    pub fn room_above(window: &tao::window::Window) -> f64 {
+        use objc2_foundation::NSRect;
+        use tao::platform::macos::WindowExtMacOS;
+        let w = window.ns_window() as *mut AnyObject;
+        unsafe {
+            let frame: NSRect = msg_send![w, frame];
+            let screen: *mut AnyObject = msg_send![w, screen];
+            if screen.is_null() {
+                return f64::MAX;
+            }
+            let usable: NSRect = msg_send![screen, visibleFrame];
+            usable.origin.y + usable.size.height - (frame.origin.y + frame.size.height)
+        }
+    }
+
     /// Do what System Settings says a title-bar double-click does: zoom (also for "Fill"), minimize or nothing.
     pub fn title_bar_double_click(window: &tao::window::Window) {
         use tao::platform::macos::WindowExtMacOS;
@@ -2991,6 +3007,19 @@ pub fn follow_window(wv: &WebView, follow: Follow) {
 
 /// Move a window's top edge up by `dy` logical pixels (down when negative), its bottom staying put; false when there's no
 /// room on the screen above it. On macOS it glides there over `secs`; elsewhere it moves in one step.
+/// Points between the window's top and the top of its screen (below the menu bar on a Mac).
+pub fn room_above(window: &tao::window::Window) -> f64 {
+    #[cfg(target_os = "macos")]
+    return mac::room_above(window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let scale = window.scale_factor();
+        let Ok(pos) = window.outer_position() else { return f64::MAX };
+        let top = window.current_monitor().map(|m| m.position().to_logical::<f64>(m.scale_factor()).y).unwrap_or(0.0);
+        pos.to_logical::<f64>(scale).y - top
+    }
+}
+
 pub fn grow_window_top(window: &tao::window::Window, dy: f64, secs: f64) -> bool {
     #[cfg(target_os = "macos")]
     return mac::grow_window_top(window, dy, secs);
