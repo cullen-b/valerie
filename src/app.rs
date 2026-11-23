@@ -3637,6 +3637,9 @@ impl App {
                 platform::bring_to_front(&l.bar);
             }
             platform::set_traffic_lights_hidden(&l.window, !shown || self.little_bar_fades() && !l.bar_out);
+            if self.little_see_through() {
+                platform::set_titlebar_hidden(&l.window, !l.bar_out);
+            }
         }
         if self.answer_window == Some(id) {
             self.layout_answer();
@@ -3676,6 +3679,7 @@ impl App {
         let over = self.config.little_window.bar_reveal != "above";
         let corner = self.little_corner();
         if self.little_bar_fades() {
+            let see = self.little_see_through();
             let Some(l) = self.littles.get_mut(&id) else { return };
             if l.bar_out == out || (!out && l.asking()) {
                 return;
@@ -3683,6 +3687,9 @@ impl App {
             l.bar_out = out;
             let _ = l.bar.evaluate_script(&format!("window.little && little.show({out})"));
             platform::set_traffic_lights_hidden(&l.window, !out);
+            if see {
+                platform::set_titlebar_hidden(&l.window, !out);
+            }
             platform::refresh_shadow(&l.window);
             let p = self.proxy.clone();
             std::thread::spawn(move || {
