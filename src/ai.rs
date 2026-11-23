@@ -1420,6 +1420,9 @@ pub struct Chat {
     pub branch: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub base: String,
+    /// The space it was started in: it shows in that space's sidebar too (sidebar.space_chats). "" = only in Chats.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub space: String,
     /// Tools the user allowed for the rest of this chat ("Always Allow" on an Ask-first question).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,

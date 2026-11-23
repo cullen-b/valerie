@@ -117,6 +117,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["slide", "fade", "none"].contains(&c.sidebar.folder_animation.as_str()) {
                 problems.push(format!("sidebar: folder_animation is {:?}; use slide, fade or none", c.sidebar.folder_animation));
             }
+            if !["card", "plain"].contains(&c.sidebar.folder_style.as_str()) {
+                problems.push(format!("sidebar: folder_style is {:?}; use card or plain", c.sidebar.folder_style));
+            }
             if !["folder", "icons"].contains(&c.sidebar.compact_pinned.as_str()) {
                 problems.push(format!("sidebar: compact_pinned is {:?}; use folder or icons", c.sidebar.compact_pinned));
             }
@@ -340,7 +343,7 @@ fn check_new_settings(c: &Config) -> Vec<String> {
     one_of(&mut p, "vim: hint_labels".into(), &c.vim.hint_labels, &["stable", "reading_order"]);
     one_of(&mut p, "vim: hint_mode".into(), &c.vim.hint_mode, &["stay", "once"]);
     one_of(&mut p, "app: linux_nvidia_fix".into(), &c.app.linux_nvidia_fix, &["auto", "on", "off"]);
-    const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "kept", "today", "now_playing", "spaces"];
+    const PARTS: &[&str] = &["url", "favorites", "widgets", "space_name", "pinned", "chats", "kept", "today", "now_playing", "spaces"];
     for part in &c.sidebar.order {
         one_of(&mut p, "sidebar: order has".into(), part, PARTS);
     }

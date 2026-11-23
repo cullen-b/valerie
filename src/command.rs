@@ -507,6 +507,12 @@ pub enum Command {
         #[serde(default)]
         chat: Option<String>,
     },
+    /// Show a chat in this space's sidebar ("" = only in Chats).
+    MoveChat {
+        chat: String,
+        #[serde(default)]
+        space: String,
+    },
     ActivateChat {
         chat: String,
     },
@@ -1067,6 +1073,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("send_chat", "{ text, chat?, agent? }"),
     ("activate_chat", "{ chat }"),
     ("close_chat", "{ chat? }  (it moves to the Closed list)"),
+    ("move_chat", "{ chat, space }  (show the chat in that space's sidebar; space \"\" leaves it only in Chats)"),
     ("reopen_chat", "{ chat }  (from the Closed list)"),
     ("rename_chat", "{ chat, title }"),
     ("set_chat_options", "{ chat, agent?, model?, effort?: low|medium|high|max, access?: read|ask|full, plan? }"),
