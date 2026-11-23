@@ -149,12 +149,18 @@ sidebar:
                            # out) | fade (they fade as the folder shrinks or grows) | none (it snaps open or shut)
   folder_animation_ms: 320 # how long that takes, in milliseconds (0 = no animation; layout.animation_ms: 0 also turns it off)
   new_tab_button: false    # the "+ New Tab" row
+  space_chats: true        # chats you start in a space get a "Chats" list in that space's sidebar and stay there until
+                           # you close them or move them (right-click → Move to). They're in the Chats space too. true | false
+  needs_you: true          # a "1 needs you" pill at the bottom of the sidebar while an agent waits for your answer; click
+                           # it to go to that chat. true | false
+  folder_style: card       # how folders look in the sidebar. one of: card (a rounded card; folded up, it shows its first
+                           # icons and how many tabs it holds) | plain (a row with the tabs indented under it)
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
   space_switcher: true     # the space icons at the bottom
-  order: [url, favorites, widgets, space_name, pinned, kept, today, now_playing, spaces]
-                           # top-to-bottom order of the sidebar's parts (widgets are plugins' buttons). space_name,
-                           # pinned, kept and today scroll together. Parts left out keep their place at the end.
+  order: [url, favorites, widgets, space_name, pinned, chats, kept, today, now_playing, spaces]
+                           # top-to-bottom order of the sidebar's parts (widgets are plugins' buttons; chats is the
+                           # space's chats, sidebar.space_chats). space_name, pinned, chats, kept and today scroll together. Parts left out keep their place at the end.
   tab_height: 38           # height of each tab in the list, in pixels (16 tiny … 120 huge); text and icons scale with it
   now_playing: true        # a mini player above the space icons for video/audio playing in another tab
   now_playing_skip: 10     # seconds the mini player's back and forward buttons jump (1 to 99); 0 hides those buttons

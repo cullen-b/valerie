@@ -168,6 +168,7 @@ changed in plain words. Some translations:
 | "Put the menus back the old way" / "no File, History or Help menus" | `menu.browser_menus: false` (Edit, Tabs, Spaces, View, Tools, Window only) |
 | "No recent pages in the History menu" / "no Bookmarks menu" | `menu.recent_pages: 0`, `menu.bookmarks: false` |
 | "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
+| "Keep chats out of my spaces" / "plain folders" / "no needs-you pill" | `sidebar.space_chats: false` (chats only in the Chats space), `sidebar.folder_style: plain`, `sidebar.needs_you: false`; `move_chat {{ chat, space }}` moves a chat to another space's sidebar |
 | "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
 | "Let this map use my location" / "no site may ask where I am" | `sites: {{ maps.example.com: {{ location: allow }} }}`, `permissions.location: deny` (the `toggle_site_location` command flips the site you're on) |
 | "Use old Reddit" | `rules: [{{ redirect: "https://www.reddit.com/*", to: "https://old.reddit.com/*" }}]` |

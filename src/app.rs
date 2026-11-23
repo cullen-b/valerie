@@ -4081,6 +4081,20 @@ impl App {
         layout["sidebar_size"] = json!(self.sidebar_size());
         let window_size = self.window.inner_size().to_logical::<f64>(self.window.scale_factor());
         let arrangement = self.arrangement_vm(window_size.width, window_size.height);
+        let asking = |c: &crate::ai::Chat| self.chat_asks.values().any(|a| a.chat == c.id);
+        // This space's own chats (sidebar.space_chats), drawn as a list in its sidebar.
+        let here_chats: Vec<Value> = self
+            .chats
+            .iter()
+            .filter(|c| !self.chats_open && self.config.sidebar.space_chats && c.snoozed_until <= now() && c.space == s.name)
+            .map(|c| json!({
+                "id": c.id, "title": if c.title.is_empty() { "New chat" } else { &c.title }, "running": self.chat_running.contains(&c.id),
+                "started": self.chat_started.get(&c.id), "updated": c.updated, "agent": c.agent, "unread": c.unread,
+                "project": c.folder, "asking": asking(c),
+            }))
+            .collect();
+        // Chats waiting for an answer from you (sidebar.needs_you), oldest first.
+        let needs_you: Vec<Value> = self.chats.iter().rev().filter(|c| self.config.sidebar.needs_you && asking(c)).map(|c| json!({ "id": c.id, "title": c.title })).collect();
         let vm = json!({
             "spaces": self.state.spaces.iter().enumerate().map(|(i, sp)| json!({
                 "name": sp.name, "icon": self.space_cfg(i).and_then(|c| c.icon.clone()),
@@ -4118,6 +4132,9 @@ impl App {
                     "project": c.folder, "asking": self.chat_asks.values().any(|a| a.chat == c.id),
                 })).collect::<Vec<_>>(),
                 "group_by_project": self.config.chats.group_by_project,
+                "float": self.chat_float,
+                "here": here_chats,
+                "needs": needs_you,
                 "closed": if self.chats_open && self.config.chats.closed_list { &self.closed_chats[..self.closed_chats.len().min(300)] } else { &[] },
             },
             "now_playing": self.now_playing(),
@@ -8700,6 +8717,7 @@ impl App {
                         id
                     }
                 };
+                self.start_chat_here(&id);
                 // A chat already floating over the space stays the one shown.
                 if !(background && self.chat_float) {
                     self.active_chat = Some(id.clone());
@@ -8733,6 +8751,7 @@ impl App {
                         let c = crate::ai::Chat::new(&agent.clone().unwrap_or_else(|| self.config.agent_for("chat").0));
                         let id = c.id.clone();
                         self.chats.insert(0, c);
+                        self.start_chat_here(&id);
                         id
                     }
                 };
@@ -8860,14 +8879,32 @@ impl App {
                 }
                 self.render();
             }
+            Command::MoveChat { chat, space } => {
+                let space = self.state.spaces.iter().find(|s| s.name == space).map(|s| s.name.clone()).unwrap_or_default();
+                if let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) {
+                    c.space = space;
+                    crate::ai::save_chat(&chats_dir(&self.config), c);
+                }
+                self.render();
+            }
             Command::ActivateChat { chat } => {
+                let home = self.chats.iter().find(|c| c.id == chat).and_then(|c| self.chat_home(c));
                 if let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) {
                     if c.unread {
                         c.unread = false;
                         crate::ai::save_chat(&chats_dir(&self.config), c);
                     }
                     self.active_chat = Some(chat.clone());
-                    self.open_chats();
+                    // A chat that lives in a space opens there, over its tabs (outside Chats; sidebar.space_chats).
+                    match home.filter(|_| !self.chats_open) {
+                        Some(i) => {
+                            if i != self.state.active_space {
+                                self.switch_space(i);
+                            }
+                            self.show_chat_here();
+                        }
+                        None => self.open_chats(),
+                    }
                     self.refresh_changes(&chat);
                     if self.terminal_open && self.config.terminal_panel.follow_chat && self.select_chat_terminal(Some(&chat)) {
                         self.render_terminal();
@@ -12506,9 +12543,17 @@ impl App {
             Some(("Copy Chat ID".to_string(), json!({ "cmd": "copy_chat_id", "chat": id }))),
             Some(("Mark Unread".to_string(), json!({ "cmd": "mark_chat_unread", "chat": id }))),
             Some(("Rename…".to_string(), json!({ "cmd": "prompt", "label": "Rename chat", "value": c.title, "then": { "cmd": "rename_chat", "chat": id }, "field": "title" }))),
-            None,
-            Some(("Close Chat".to_string(), json!({ "cmd": "close_chat", "chat": id }))),
         ]);
+        if self.config.sidebar.space_chats {
+            e.push(None);
+            for s in self.state.spaces.iter().filter(|s| s.name != c.space) {
+                e.push(Some((format!("Move to {}", s.name), json!({ "cmd": "move_chat", "chat": id, "space": s.name }))));
+            }
+            if !c.space.is_empty() {
+                e.push(Some(("Only in Chats".to_string(), json!({ "cmd": "move_chat", "chat": id, "space": "" }))));
+            }
+        }
+        e.extend([None, Some(("Close Chat".to_string(), json!({ "cmd": "close_chat", "chat": id })))]);
         self.popup(e, x, y);
     }
 
@@ -14589,9 +14634,33 @@ impl App {
         self.closed_chats = crate::ai::load_closed(&dir);
         if self.active_chat.as_deref() == Some(id.as_str()) {
             self.active_chat = self.chats.first().map(|c| c.id.clone());
+            if self.chat_float {
+                self.chat_float = false;
+                self.layout();
+                self.focus_active();
+            }
         }
         self.render();
         self.render_chat();
+    }
+
+    /// A chat started outside Chats belongs to the space it was started in (shown in its sidebar, sidebar.space_chats).
+    fn start_chat_here(&mut self, id: &str) {
+        if self.chats_open {
+            return;
+        }
+        let space = self.state.space().name.clone();
+        if let Some(c) = self.chats.iter_mut().find(|c| c.id == id && c.messages.is_empty() && c.space != space) {
+            c.space = space;
+        }
+    }
+
+    /// The space a chat lives in, when it lives in one that still exists and space chats are on.
+    fn chat_home(&self, c: &crate::ai::Chat) -> Option<usize> {
+        if !self.config.sidebar.space_chats || c.space.is_empty() {
+            return None;
+        }
+        self.state.spaces.iter().position(|s| s.name == c.space)
     }
 
     /// Wake snoozed chats whose time has come, and close chats left alone for chats.auto_close_days.
