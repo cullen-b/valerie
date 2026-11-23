@@ -1833,7 +1833,7 @@ document.addEventListener("auxclick", onLinkClick, true);
 // Middle-click autoscroll / paste would otherwise start on mousedown.
 document.addEventListener("mousedown", (e) => { if (e.isTrusted && e.button === 1 && linkAt(e) && (cfg.links || {}).middle_click !== "default") e.preventDefault(); }, true);
 
-let linkMenu = null;
+let linkMenu = null, linkMenuFor = null;
 function hideLinkMenu() { if (linkMenu) { linkMenu.remove(); linkMenu = null; } }
 function copyText(text, msg = "Copied link") {
   const done = () => toast(msg);
@@ -1861,6 +1861,7 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault(); e.stopImmediatePropagation();
   hideLinkMenu(); hideMenu();
   const url = a.href;
+  linkMenuFor = a;
   linkMenu = document.createElement("div"); linkMenu.className = "menu";
   const items = [
     ["Open Link in New Tab", "new_tab"], ["Open Link in Background", "background_tab"], ["Open in Split View", "split"],
@@ -1883,7 +1884,13 @@ document.addEventListener("contextmenu", (e) => {
 }, true);
 // Clicks inside our (closed) shadow UI only show the host element in the event path.
 const inOurUi = (e) => e.composedPath && e.composedPath().some((n) => n.tagName === "VALERIE-UI");
-for (const ev of ["mousedown", "scroll", "blur"]) addEventListener(ev, (e) => { if (linkMenu && !inOurUi(e)) hideLinkMenu(); }, true);
+// Only the window losing focus or a scroll that moves the link closes it: sites blur and scroll their own parts on hover (YouTube).
+addEventListener("mousedown", (e) => { if (linkMenu && !inOurUi(e)) hideLinkMenu(); }, true);
+addEventListener("blur", (e) => { if (linkMenu && e.target === window) hideLinkMenu(); }, true);
+addEventListener("scroll", (e) => {
+  const t = e.target;
+  if (linkMenu && !inOurUi(e) && (t === document || t === window || !linkMenuFor || !linkMenuFor.isConnected || (t.contains && t.contains(linkMenuFor)))) hideLinkMenu();
+}, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideLinkMenu(); }, true);
 
 // ---------- ⌘Z (Ctrl+Z elsewhere) brings back the last closed tab when the page and its boxes don't use it ----------
