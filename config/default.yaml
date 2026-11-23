@@ -410,12 +410,18 @@ chats:
                            # any with their own `command`) | all (every agent under agents.available)
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go
   composer_hint: false     # "↵ send · ⇧↵ new line" in the composer
+  project_hints: false     # in a new coding chat, the line about how its agent works and three starter ideas under
+                           # "What should we build in …?" (click the project's name there to pick another). true | false
   sync: true               # sync chats between machines (encrypted with the sync passphrase). false = this machine only
   ask_in_find: true        # in find (/), Enter on something that reads like a question asks the find agent about the page
   find_answer_notification: true # notify you when an answer asked in find is ready and you'd clicked away from it. true | false
   find_question_words: 4   # a find query this many words long (or ending in "?") counts as a question
   page_text_limit: 60000   # most characters of the page sent along with a question
   browser_context: true    # tell chat agents which tabs you have open (titles and addresses) so they can answer about them
+  snooze: [hour, three_hours, evening, tomorrow, next_week, custom]
+                           # the Snooze choices when you right-click a chat, in order. Each is one of: hour | three_hours |
+                           # evening (6pm) | tomorrow (9am) | next_week (Monday 9am) | a length of time (30m, 2h, 3d, 1w) |
+                           # custom ("Snooze for…": you type how long). A snoozed chat comes back marked unread
   suggestions:             # ideas shown in an empty chat
     - "What's in my open tabs?"
     - "Summarize the page I'm on"

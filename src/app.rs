@@ -8950,6 +8950,9 @@ impl App {
             Command::SnoozeChat { chat, until } => {
                 let id = chat.or_else(|| self.active_chat.clone());
                 let wake = snooze_until(&until);
+                if wake == 0 && until.trim() != "wake" {
+                    return self.toast(&format!("Couldn't read “{}” as a time: try 45m, 2h, 3 days or 1w", until.trim()));
+                }
                 if let Some(c) = self.chats.iter_mut().find(|c| Some(&c.id) == id.as_ref()) {
                     c.snoozed_until = wake;
                     crate::ai::save_chat(&chats_dir(&self.config), c);
@@ -12497,6 +12500,7 @@ impl App {
             "default_agent": self.config.agent_for("chat").0, "default_access": self.config.chats.access,
             "default_effort": self.config.chats.effort, "suggestions": self.config.chats.suggestions,
             "plan_button": self.config.chats.plan_button, "composer_hint": self.config.chats.composer_hint,
+            "project_hints": self.config.chats.project_hints,
             "theme": self.chats_theme(), "font": self.config.layout.font,
             "projects": self.recent_projects(), "home": dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
             "changes": chat.and_then(chat_workdir).and_then(|w| self.chat_changes.get(&*w.to_string_lossy())).filter(|_| self.config.chats.changes),
@@ -12537,11 +12541,16 @@ impl App {
         if c.snoozed_until > 0 {
             e.push(snooze("Wake now", "wake"));
         } else {
-            e.push(snooze("Snooze 1 hour", "hour"));
-            e.push(snooze("Snooze 3 hours", "three_hours"));
-            e.push(snooze("Snooze until this evening", "evening"));
-            e.push(snooze("Snooze until tomorrow", "tomorrow"));
-            e.push(snooze("Snooze until next week", "next_week"));
+            // chats.snooze: the choices, in order; "custom" asks how long.
+            for s in &self.config.chats.snooze {
+                if s == "custom" {
+                    let then = json!({ "cmd": "snooze_chat", "chat": id });
+                    let ask = json!({ "cmd": "prompt", "label": "Snooze for how long? (e.g. 45m, 2h, 3 days, 1w)", "value": "", "then": then, "field": "until" });
+                    e.push(Some(("Snooze for…".to_string(), ask)));
+                } else if let Some(label) = snooze_label(s) {
+                    e.push(snooze(&label, s));
+                }
+            }
         }
         e.extend([
             None,
@@ -14602,8 +14611,55 @@ fn snooze_until(preset: &str) -> u64 {
             let today = days.iter().position(|d| weekday.starts_with(d)).unwrap_or(0) as u64;
             midnight + (7 - today) * 86400 + 9 * 3600
         }
-        _ => 0,
+        other => snooze_secs(other).map_or(0, |s| t + s),
     }
+}
+
+/// A length of time typed for a snooze ("45m", "2h30m", "3 days", "1 week"; a bare number is minutes), in seconds.
+/// At most a year.
+fn snooze_secs(s: &str) -> Option<u64> {
+    let s = s.trim().to_lowercase();
+    let mut total = 0u64;
+    let mut rest = s.as_str();
+    while !rest.trim_start().is_empty() {
+        rest = rest.trim_start().trim_start_matches(|c: char| c == ',' || c.is_whitespace()).trim_start_matches("and ");
+        let n_end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+        let n: f64 = rest[..n_end].parse().ok()?;
+        rest = rest[n_end..].trim_start();
+        let u_end = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+        let unit = match &rest[..u_end] {
+            "" | "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3600.0,
+            "d" | "day" | "days" => 86400.0,
+            "w" | "wk" | "week" | "weeks" => 604800.0,
+            _ => return None,
+        };
+        rest = &rest[u_end..];
+        total += (n * unit) as u64;
+    }
+    (total > 0 && total <= 366 * 86400).then_some(total)
+}
+
+/// For `valerie check-config`: a chats.snooze entry Valerie understands (besides "custom").
+pub fn snooze_choice_ok(s: &str) -> bool {
+    snooze_label(s).is_some()
+}
+
+/// The menu wording for a chats.snooze choice; None for one that isn't a preset or a length of time.
+fn snooze_label(s: &str) -> Option<String> {
+    Some(match s {
+        "hour" => "Snooze 1 hour".into(),
+        "three_hours" => "Snooze 3 hours".into(),
+        "evening" => "Snooze until this evening".into(),
+        "tomorrow" => "Snooze until tomorrow".into(),
+        "next_week" => "Snooze until next week".into(),
+        _ => {
+            let secs = snooze_secs(s)?;
+            let (n, unit) = [(604800, "week"), (86400, "day"), (3600, "hour"), (60, "minute")].into_iter().find(|(u, _)| secs % u == 0).unwrap_or((60, "minute"));
+            let k = secs / n;
+            format!("Snooze {k} {unit}{}", if k == 1 { "" } else { "s" })
+        }
+    })
 }
 
 impl App {
@@ -16283,6 +16339,24 @@ mod custom_tests {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn snooze_lengths() {
+        use super::{snooze_label, snooze_secs};
+        assert_eq!(snooze_secs("45m"), Some(45 * 60));
+        assert_eq!(snooze_secs("2h30m"), Some(2 * 3600 + 30 * 60));
+        assert_eq!(snooze_secs("3 days"), Some(3 * 86400));
+        assert_eq!(snooze_secs("1 hour and 15 minutes"), Some(4500));
+        assert_eq!(snooze_secs("90"), Some(90 * 60));
+        assert_eq!(snooze_secs("1.5h"), Some(5400));
+        assert_eq!(snooze_secs("soon"), None);
+        assert_eq!(snooze_secs(""), None);
+        assert_eq!(snooze_secs("2 years"), None);
+        assert_eq!(snooze_label("2h").as_deref(), Some("Snooze 2 hours"));
+        assert_eq!(snooze_label("90m").as_deref(), Some("Snooze 90 minutes"));
+        assert_eq!(snooze_label("1w").as_deref(), Some("Snooze 1 week"));
+        assert!(snooze_label("custom").is_none());
+    }
     #[test]
     fn browser_menus_name_real_commands() {
         for (menu, names) in super::BROWSER_MENUS {

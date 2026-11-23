@@ -1077,7 +1077,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("reopen_chat", "{ chat }  (from the Closed list)"),
     ("rename_chat", "{ chat, title }"),
     ("set_chat_options", "{ chat, agent?, model?, effort?: low|medium|high|max, access?: read|ask|full, plan? }"),
-    ("snooze_chat", "{ chat?, until: hour | three_hours | evening | tomorrow | next_week | wake }"),
+    ("snooze_chat", "{ chat?, until: hour | three_hours | evening | tomorrow | next_week | wake | a length of time like 45m, 2h30m, 3 days, 1w }"),
     ("copy_chat_id", "{ chat? }"),
     ("ai_action", "{ name, input? }  (run one of the ai_actions from the config)"),
     ("watch_page", "{ condition? }"),

@@ -162,6 +162,11 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["float", "chats"].contains(&c.chats.from_space.as_str()) {
                 problems.push(format!("chats: from_space is {:?}; use float or chats", c.chats.from_space));
             }
+            for s in &c.chats.snooze {
+                if s != "custom" && !crate::app::snooze_choice_ok(s) {
+                    problems.push(format!("chats: snooze has {s:?}; use hour, three_hours, evening, tomorrow, next_week, custom or a length of time like 2h"));
+                }
+            }
             if !["installed", "all"].contains(&c.chats.agent_menu.as_str()) {
                 problems.push(format!("chats: agent_menu is {:?}; use installed or all", c.chats.agent_menu));
             }
