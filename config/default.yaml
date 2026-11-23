@@ -401,6 +401,8 @@ chats:
   auto_close_days: 3       # chats untouched this many days move to Closed (click one there to bring it back); 0 = never
   closed_list: true        # a "Closed" fold at the bottom of the Chats sidebar with the chats you've closed; click one
                            # to bring it back. true | false
+  close_key_closes_chat: true # in the Chats space, ⌘W (Ctrl+W elsewhere) closes the open chat, and the window once no
+                           # chats are left. false = it acts as it does in a space (the tab, or the window when there's none)
   from_space: float        # a chat started from a space (the command bar, an AI action, ⌘N). one of: float (it opens in
                            # the middle of the window, over your space; Esc sends it on to Chats and you keep working,
                            # Shift+Esc goes to Chats with it) | chats (switch to the Chats space)

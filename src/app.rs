@@ -7870,6 +7870,11 @@ impl App {
                     self.navigate(t, &url);
                 }
             }
+            // In the Chats space ⌘W closes the open chat (chats.close_key_closes_chat); with none left, the window.
+            Command::CloseTab { tab: None } if self.chats_open && self.config.chats.close_key_closes_chat => match self.active_chat.clone() {
+                Some(id) if self.chats.iter().any(|c| c.id == id) => self.close_chat(id),
+                _ => self.dispatch(Command::CloseWindow, elwt),
+            },
             Command::CloseTab { tab } => {
                 if let Some(t) = self.target_tab(tab) {
                     self.close(t);

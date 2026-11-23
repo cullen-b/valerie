@@ -710,6 +710,7 @@ pub struct ChatsConfig {
     pub worktree_folder: String,
     pub worktree_copy: Vec<String>,
     pub closed_list: bool,
+    pub close_key_closes_chat: bool,
     pub from_space: String,
     pub agent_menu: String,
 }
