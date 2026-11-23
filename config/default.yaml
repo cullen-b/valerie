@@ -153,8 +153,9 @@ sidebar:
                            # you close them or move them (right-click → Move to). They're in the Chats space too. true | false
   needs_you: true          # a "1 needs you" pill at the bottom of the sidebar while an agent waits for your answer; click
                            # it to go to that chat. true | false
-  folder_style: card       # how folders look in the sidebar. one of: card (a rounded card; folded up, it shows its first
-                           # icons and how many tabs it holds) | plain (a row with the tabs indented under it)
+  folder_style: card       # how folders look in the sidebar. one of: card (an open folder is a rounded card; a folded one
+                           # is a plain row) | plain (a row with the tabs indented under it)
+  folder_preview: false    # card folders: a folded folder shows its first three icons and how many tabs it holds. true | false
   today_label: false       # the word "Today" on the divider above your tabs
   clear_button: hover      # "Clear" (archives today's tabs). one of: always | hover | never
   space_switcher: true     # the space icons at the bottom
@@ -420,6 +421,9 @@ chats:
     apps: [claude, codex, opencode, t3]  # which apps' chats to list. any of: claude (Claude Code) | codex | opencode |
                            # t3 (T3 Code)
     recent: 25             # how many of each app's newest chats are listed; the search box finds all the older ones
+    close_button: true     # an × on their rows. Closing one only takes it off Valerie's list (it goes to Closed); the
+                           # app keeps it. true | false
+    come_back: true        # a closed one comes back to the list when its app adds to it. true | false
   t3_button: true          # a "T3 Code" button in the Chats sidebar that opens T3 Code's own app in a tab, signed in
                            # (shown when T3 Code is installed). true | false
   plan_button: false       # a "Plan" toggle in the composer: the agent proposes a plan and waits for you to say go

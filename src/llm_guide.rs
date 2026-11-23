@@ -169,7 +169,7 @@ changed in plain words. Some translations:
 | "No recent pages in the History menu" / "no Bookmarks menu" | `menu.recent_pages: 0`, `menu.bookmarks: false` |
 | "Move the space icons to the top" / "favorites under my tabs" | `sidebar.order: [spaces, url, …]` |
 | "Hide my Codex chats" / "only show T3 chats" / "new chats should use Codex" | `chats.show: [claude, t3]` (apps listed; [] = all), `chats.other_apps.apps`, `agents.use.chat: codex` |
-| "Keep chats out of my spaces" / "plain folders" / "no needs-you pill" | `sidebar.space_chats: false` (chats only in the Chats space), `sidebar.folder_style: plain`, `sidebar.needs_you: false`; `move_chat {{ chat, space }}` moves a chat to another space's sidebar |
+| "Keep chats out of my spaces" / "plain folders" / "no needs-you pill" | `sidebar.space_chats: false` (chats only in the Chats space), `sidebar.folder_style: plain`, `sidebar.folder_preview: true` (icons and a tab count on folded folders), `sidebar.needs_you: false`; `move_chat {{ chat, space }}` moves a chat to another space's sidebar |
 | "Always let Meet use my camera" / "this site's video shouldn't autoplay" | `sites: {{ meet.google.com: {{ camera: allow, microphone: allow }} }}`, `sites: {{ youtube.com: {{ autoplay: false }} }}` |
 | "Let this map use my location" / "no site may ask where I am" | `sites: {{ maps.example.com: {{ location: allow }} }}`, `permissions.location: deny` (the `toggle_site_location` command flips the site you're on) |
 | "Use old Reddit" | `rules: [{{ redirect: "https://www.reddit.com/*", to: "https://old.reddit.com/*" }}]` |
@@ -445,7 +445,9 @@ go and `chats.worktree_copy` the untracked files (like `.env`) copied in. Change
 {{branch}} and {{base}}. The Chats sidebar also lists the other AI apps' chats on this computer (Claude Code, Codex,
 OpenCode, T3 Code; `chats.other_apps`: `enabled`, `apps`, `recent` = how many of each app's newest are listed). They're
 read where each app keeps them, never copied; opening one (`open_other_chat {{ source, id }}`) carries it on in Valerie
-through the same app and conversation (a T3 Code thread keeps running in T3 Code). `chats.search` is the search box
+through the same app and conversation (a T3 Code thread keeps running in T3 Code). Closing one (`close_other_chat {{ source,
+id }}`, the × on its row when `chats.other_apps.close_button` is on) only moves it to Closed in Valerie; the app keeps it,
+and with `chats.other_apps.come_back` it returns to the list when that app adds to it. `chats.search` is the search box
 (`search_chats {{ query }}`, every chat all the way back), `chats.app_buttons` the row of app buttons under it,
 `chats.show` which apps' chats are listed ([] = all; `toggle_chat_app {{ app, only? }}`), and `agents.use.chat` the agent
 new chats use (`set_new_chat_agent {{ agent }}`, also the menu beside "New chat"). `chats.t3_button` shows a T3 Code

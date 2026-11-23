@@ -1500,6 +1500,9 @@ pub struct ClosedChat {
     /// The other app's conversation it carried on, if any (so opening that conversation again brings this back).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub origin: String,
+    /// Closed from the other app's list without ever being opened here (it holds no messages of its own).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stub: bool,
 }
 
 /// Closed chats, most recently closed first.
@@ -1512,7 +1515,8 @@ pub fn load_closed(dir: &Path) -> Vec<ClosedChat> {
         .filter_map(|e| {
             let c: Chat = serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok()?;
             let title = if c.title.is_empty() { "New chat".to_string() } else { c.title };
-            Some(ClosedChat { id: c.id, title, folder: c.folder, agent: c.agent, closed: if c.closed_at > 0 { c.closed_at } else { c.updated }, origin: c.origin })
+            let stub = c.messages.is_empty() && !c.origin.is_empty();
+            Some(ClosedChat { id: c.id, title, folder: c.folder, agent: c.agent, closed: if c.closed_at > 0 { c.closed_at } else { c.updated }, origin: c.origin, stub })
         })
         .collect();
     out.sort_by(|a, b| b.closed.cmp(&a.closed));

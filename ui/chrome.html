@@ -309,8 +309,9 @@ body.pointer #needs:hover { background: var(--active); }
 body.size-compact #needs { justify-content: center; padding: 0; }
 body.size-compact #needs .what, body.size-compact #needs .n { display: none; }
 @media (prefers-reduced-motion: reduce) { #needs i { animation: none; } }
-/* sidebar.folder_style: card. Each folder is a rounded card; folded up, it shows its first icons and a count */
-body.folders-card .folder { background: var(--tile); border-radius: calc(var(--tab-h) * .32); padding: 2px; margin: 5px 0; }
+/* sidebar.folder_style: card. An open folder is a rounded card; folded up, it's a plain row (sidebar.folder_preview adds icons and a count) */
+body.folders-card .folder.open { background: var(--tile); }
+body.folders-card .folder { border-radius: calc(var(--tab-h) * .32); padding: 2px; margin: 5px 0; }
 body.folders-card .folder .folder { background: none; padding: 0; margin: 0; border-radius: 0; }
 body.folders-card .folder .kids { padding-left: 0; }
 body.folders-card .folder .folder .kids { padding-left: 14px; }
@@ -323,7 +324,6 @@ body.folders-card .folder-row .title { flex: 0 1 auto; }
 .fpeek { flex: none; display: flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .fpeek img.ico, .fpeek .letter { width: 14px; height: 14px; border-radius: 3.5px; font-size: 8px; }
 .fpeek .count { margin-left: 3px; }
-body.pointer .folder-row:hover .fpeek { display: none; }
 body.size-compact .fchev, body.size-compact .fpeek { display: none; }
 /* icons-only sidebar: pinned tabs tucked into one folder tile that opens a column on hover */
 .pinfolder .mini { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; }
@@ -1030,7 +1030,7 @@ function folderEl(n, section = "pinned", list = section, index = 0, around = { s
     fi.append(glyph(LINE.folder, "line-ic")); ch.append(glyph(LINE.down, "line-ic"));
     r.append(el("div", "chev", "▶"), fi, el("div", "title", n.name), ch);
     const tabs = flat(n.children);
-    if (!n.open && tabs.length) {
+    if (S.sidebar.folder_preview && !n.open && tabs.length) {
       const pk = el("div", "fpeek");
       tabs.slice(0, 3).forEach((t) => pk.append(icon(t, "ico", "fpeek")));
       pk.append(el("span", "count", String(tabs.length)));
@@ -1280,7 +1280,8 @@ function spaceChats(list) {
 // A chat you closed: click it to bring it back.
 function closedRow(c) {
   const r = el("div", "row chat closed-chat");
-  r.append(el("div", "chat-ic", "✦"), el("div", "title", c.title));
+  const from = c.origin && c.origin.split(":")[0];
+  r.append(from ? appMark(from) : el("div", "chat-ic", "✦"), el("div", "title", c.title));
   if (c.folder) r.append(el("div", "when proj", c.folder.replace(/\/+$/, "").split("/").pop()));
   r.append(el("div", "when", ago(c.closed)));
   r.title = "Closed " + ago(c.closed) + " ago · " + c.agent + (c.folder ? " · " + c.folder : "") + "\nClick to open it again";
@@ -1359,6 +1360,14 @@ function otherRow(o, snip) {
   else r.append(el("div", "title", o.title));
   r.append(el("div", "when", ago(o.updated)));
   r.title = o.title + "\n" + (o.app || o.source) + (o.folder ? " · " + o.folder : "") + "\nOpen it to carry on here";
+  // Closing only takes it off Valerie's list; the app keeps it.
+  const close = () => cmd({ cmd: "close_other_chat", source: o.source, id: o.id });
+  if (S.chats.other_close && !snip) {
+    const x = el("div", "x", "×"); x.title = "Close (" + (o.app || o.source) + " keeps it)";
+    x.onclick = (e) => { e.stopPropagation(); close(); };
+    r.append(x);
+    r.onauxclick = (e) => { if (e.button === 1) close(); };
+  }
   r.onclick = () => { r.classList.add("opening"); cmd({ cmd: "open_other_chat", source: o.source, id: o.id }); };
   r.oncontextmenu = (e) => { e.preventDefault(); send({ t: "other_chat_menu", source: o.source, id: o.id, x: e.clientX, y: e.clientY }); };
   return r;

@@ -8871,11 +8871,16 @@ impl App {
                 });
             }
             Command::OpenOtherChat { source, id } => self.open_other_chat(source, id, elwt),
+            Command::CloseOtherChat { source, id } => self.close_other_chat(&source, &id),
             Command::SearchChats { query } => self.search_chats(query),
             Command::ToggleChatApp { app, only } => self.toggle_chat_app(&app, only),
             Command::SetNewChatAgent { agent } => self.set_new_chat_agent(&agent),
             Command::OpenT3 { from, thread } => self.open_t3(from, thread),
             Command::ReopenChat { chat } => {
+                // One closed straight from another app's list holds nothing yet: open the app's conversation as it is now.
+                if let Some((source, id)) = self.closed_chats.iter().find(|c| c.id == chat && c.stub).and_then(|c| c.origin.split_once(':')).map(|(s, i)| (s.to_string(), i.to_string())) {
+                    return self.open_other_chat(source, id, elwt);
+                }
                 let dir = chats_dir(&self.config);
                 let Some(c) = crate::ai::reopen_chat(&dir, &chat) else { return self.toast("That chat isn't in the Closed list anymore") };
                 self.closed_chats.retain(|x| x.id != chat);
@@ -16594,8 +16599,33 @@ impl App {
             }
             out.extend(c.sessions.values().cloned());
         }
-        out.extend(self.closed_chats.iter().filter_map(|c| c.origin.split_once(':')).map(|o| o.1.to_string()));
+        out.extend(self.closed_chats.iter().filter(|c| !c.stub).filter_map(|c| c.origin.split_once(':')).map(|o| o.1.to_string()));
         out
+    }
+
+    /// Other apps' chats closed here without being opened, and when: kept off the list (until the app adds to them, with come_back).
+    fn closed_others(&self) -> HashMap<String, u64> {
+        self.closed_chats.iter().filter(|c| c.stub).filter_map(|c| Some((c.origin.split_once(':')?.1.to_string(), c.closed))).collect()
+    }
+
+    fn other_closed(&self, f: &crate::other_chats::Found, closed: &HashMap<String, u64>) -> bool {
+        closed.get(&f.id).is_some_and(|&at| !self.config.chats.other_apps.come_back || f.updated <= at)
+    }
+
+    /// Take another app's chat off the list: a Closed entry that remembers it (the app keeps the chat itself).
+    fn close_other_chat(&mut self, source: &str, id: &str) {
+        let Some(f) = self.other_chats.iter().find(|f| f.source == source && f.id == id).cloned() else { return };
+        let mut c = crate::ai::Chat::new(&self.agent_for_cli(source).unwrap_or_else(|| crate::other_chats::source_title(source).to_string()));
+        c.title = f.title;
+        c.folder = f.folder;
+        c.origin = format!("{source}:{id}");
+        c.updated = f.updated;
+        c.closed_at = now();
+        let dir = chats_dir(&self.config);
+        crate::ai::save_chat(&dir, &c);
+        crate::ai::close_chat(&dir, &c.id);
+        self.closed_chats = crate::ai::load_closed(&dir);
+        self.render();
     }
 
     /// The apps with a button above the Chats list: the other apps on this computer, then the ones Valerie's chats use.
@@ -16620,10 +16650,11 @@ impl App {
     fn other_chats_vm(&self) -> Value {
         let cc = &self.config.chats;
         let linked = self.linked_chats();
+        let closed = self.closed_others();
         let others: Vec<Value> = self
             .other_chats
             .iter()
-            .filter(|f| self.app_shown(f.source) && !linked.contains(&f.id))
+            .filter(|f| self.app_shown(f.source) && !linked.contains(&f.id) && !self.other_closed(f, &closed))
             .map(|f| {
                 let mut v = json!(f);
                 v["app"] = json!(crate::other_chats::source_title(f.source));
@@ -16648,6 +16679,7 @@ impl App {
             "apps": apps,
             "new_agent": new_agent,
             "t3": cc.t3_button && self.t3_installed,
+            "other_close": cc.other_apps.close_button,
             "search": cc.search,
             "found": (!self.chat_query.is_empty()).then(|| json!({
                 "query": self.chat_query, "busy": self.chat_searching,
@@ -16741,8 +16773,13 @@ impl App {
         if let Some(chat) = self.chats.iter().find(|c| c.origin == origin || c.sessions.values().any(|s| *s == id)).map(|c| c.id.clone()) {
             return self.dispatch(Command::ActivateChat { chat }, elwt);
         }
-        if let Some(chat) = self.closed_chats.iter().find(|c| c.origin == origin).map(|c| c.id.clone()) {
-            return self.dispatch(Command::ReopenChat { chat }, elwt);
+        if let Some(c) = self.closed_chats.iter().find(|c| c.origin == origin).cloned() {
+            if !c.stub {
+                return self.dispatch(Command::ReopenChat { chat: c.id }, elwt);
+            }
+            // Closed without being opened: forget that and read the app's conversation as it is now.
+            let _ = std::fs::remove_file(chats_dir(&self.config).join("closed").join(format!("{}.json", c.id)));
+            self.closed_chats.retain(|x| x.id != c.id);
         }
         let p = self.proxy.clone();
         std::thread::spawn(move || {
@@ -16981,6 +17018,7 @@ impl App {
         if source == "t3" {
             e.push(Some(("Open in T3 Code".to_string(), json!({ "cmd": "open_t3", "thread": id }))));
         }
+        e.push(Some(("Close".to_string(), json!({ "cmd": "close_other_chat", "source": source, "id": id }))));
         e.push(Some((format!("Hide {} Chats", crate::other_chats::source_title(source)), json!({ "cmd": "toggle_chat_app", "app": source }))));
         self.popup(e, x, y);
     }
