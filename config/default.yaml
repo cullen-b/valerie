@@ -621,16 +621,15 @@ links:
 
 little_window:
   enabled: true            # links opened from other apps appear in a small window (like Little Arc)
-  top_bar: fade            # the bar with "Open in …". one of: fade (it sits above the page, see-through so you see
-                           # what's behind the window, and fades in quickly when the mouse comes near; outside a Mac
-                           # the strip is plain) | hover (hidden; bring the
-                           # mouse to the window's top and the window grows to slide it out) | always
+  top_bar: fade            # the bar with "Open in …". one of: fade (hidden, nothing above the page; bring the mouse to
+                           # the window's top and the window's top moves up at once as the bar fades in quickly above
+                           # the page) | hover (the same, but the bar slides out more slowly) | always
   bar_reveal: above        # where the hidden bar slides out. one of: above (the window grows upward to fit it, so the
                            # bar sits on top of the page and covers nothing) | over (down over the page's top, inside the window)
-  reveal_zone: 24          # with top_bar: hover or fade, how close to the window's top the mouse has to move (upward) to bring
+  reveal_zone: 24          # with top_bar: fade or hover, how close to the window's top the mouse has to move (upward) to bring
                            # the bar out, pixels. Bigger = easier to reach; 6 = only the very edge
   page_corner_radius: 10   # rounds the page's top corners while the bar shows above it, pixels (Mac). 0 = square
-  full_screen_bar: room    # with top_bar: hover, when a little window is full screen (or fills the screen). one of: room
+  full_screen_bar: room    # with top_bar: fade or hover, when a little window is full screen (or fills the screen). one of: room
                            # (the page starts below the bar, which stays showing) | over (the bar slides over the page's top)
   space_picker: true       # a ▾ next to "Open in …" to choose which space the link moves to
   copy_button: false       # a "Copy link" button in the little window's bar (⌘⇧C copies either way)
