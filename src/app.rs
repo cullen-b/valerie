@@ -6633,6 +6633,7 @@ impl App {
     fn apply_app_settings(&mut self) {
         platform::QUICK_FULLSCREEN.store(self.config.pages.quick_full_screen, std::sync::atomic::Ordering::Relaxed);
         platform::ERROR_PAGE.store(self.config.pages.error_page, std::sync::atomic::Ordering::Relaxed);
+        platform::WEBCRYPTO_IN_KEYCHAIN.store(self.config.passwords.webcrypto_key == "keychain", std::sync::atomic::Ordering::Relaxed);
         platform::HTTP_SIGN_IN.store(self.config.pages.http_sign_in, std::sync::atomic::Ordering::Relaxed);
         platform::OFFLINE_GAME.store(self.config.pages.offline_game, std::sync::atomic::Ordering::Relaxed);
         platform::SITE_PRINT.store(self.config.pages.site_print, std::sync::atomic::Ordering::Relaxed);

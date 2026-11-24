@@ -311,7 +311,8 @@ body.size-compact #needs .what, body.size-compact #needs .n { display: none; }
 @media (prefers-reduced-motion: reduce) { #needs i { animation: none; } }
 /* sidebar.folder_style: card. An open folder is a rounded card; folded up, it's a plain row (sidebar.folder_preview adds icons and a count) */
 body.folders-card .folder.open { background: var(--tile); }
-body.folders-card .folder { border-radius: calc(var(--tab-h) * .32); padding: 2px; margin: 5px 0; }
+body.folders-card .folder { border-radius: calc(var(--tab-h) * .32); padding: 0 2px; margin: 0; }
+body.folders-card .folder.open { padding: 2px; margin: 5px 0; }
 body.folders-card .folder .folder { background: none; padding: 0; margin: 0; border-radius: 0; }
 body.folders-card .folder .kids { padding-left: 0; }
 body.folders-card .folder .folder .kids { padding-left: 14px; }

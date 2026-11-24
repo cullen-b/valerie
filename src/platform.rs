@@ -811,6 +811,70 @@ mod mac {
         }
     }
 
+    /// The key WebKit seals the keys that sites save (IndexedDB CryptoKeys) with. Left to itself WebKit reads it from
+    /// the Keychain on every save and load, so after each update the Mac asked for the login password over and over.
+    /// Valerie hands it over instead, read once a run (setting `passwords.webcrypto_key`).
+    pub fn install_webcrypto_key(wv: &WebView) {
+        use objc2::runtime::{AnyClass, Imp, Sel};
+        use objc2::sel;
+        type Done = block2::Block<dyn Fn(*mut AnyObject)>;
+        unsafe fn ns_key() -> *mut AnyObject {
+            match super::webcrypto_key() {
+                Some(k) => msg_send![objc2::class!(NSData), dataWithBytes: k.as_ptr() as *const std::ffi::c_void, length: k.len()],
+                None => std::ptr::null_mut(),
+            }
+        }
+        unsafe extern "C-unwind" fn key(_: *mut AnyObject, _: Sel, _wv: *mut AnyObject) -> *mut AnyObject {
+            ns_key()
+        }
+        unsafe extern "C-unwind" fn key_later(_: *mut AnyObject, _: Sel, _wv: *mut AnyObject, done: *mut Done) {
+            if let Some(done) = done.as_ref() {
+                done.call((ns_key(),));
+            }
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| unsafe {
+            let delegate: *mut AnyObject = msg_send![ptr(wv), navigationDelegate];
+            if delegate.is_null() {
+                return;
+            }
+            let cls = (*delegate).class() as *const AnyClass as *mut AnyClass;
+            let a = objc2::ffi::class_addMethod(cls, sel!(_webCryptoMasterKeyForWebView:), std::mem::transmute::<*const (), Imp>(key as *const ()), c"@@:@".as_ptr());
+            let b = objc2::ffi::class_addMethod(cls, sel!(_webCryptoMasterKeyForWebView:completionHandler:), std::mem::transmute::<*const (), Imp>(key_later as *const ()), c"v@:@@?".as_ptr());
+            if !a.as_bool() || !b.as_bool() {
+                crate::log::line("webcrypto", "couldn't hand WebKit the site key; the Mac may ask about the WebCrypto Master Key");
+            }
+        });
+    }
+
+    /// WebKit's own Keychain item, as raw bytes (it stores them base64). Asks the Mac, like WebKit did.
+    pub fn webkit_keychain_key() -> Option<Vec<u8>> {
+        let bundle = unsafe {
+            let b: *mut AnyObject = msg_send![objc2::class!(NSBundle), mainBundle];
+            let id: *mut objc2_foundation::NSString = msg_send![b, bundleIdentifier];
+            if id.is_null() { return None } else { (*id).to_string() }
+        };
+        let stored = match crate::passwords::keychain::get_by_account(&format!("com.apple.WebKit.WebCrypto.master+{bundle}")) {
+            Ok(v) => v?,
+            Err(e) => {
+                crate::log::line("webcrypto", format!("couldn't read WebKit's key from the Keychain: {e}"));
+                return None;
+            }
+        };
+        unsafe {
+            let d: *mut AnyObject = msg_send![objc2::class!(NSData), alloc];
+            let d: *mut AnyObject = msg_send![d, initWithBase64EncodedString: &*objc2_foundation::NSString::from_str(stored.trim()), options: 0usize];
+            if d.is_null() {
+                return None;
+            }
+            let len: usize = msg_send![d, length];
+            let bytes: *const u8 = msg_send![d, bytes];
+            let v = std::slice::from_raw_parts(bytes, len).to_vec();
+            let _: () = msg_send![d, release];
+            (!v.is_empty()).then_some(v)
+        }
+    }
+
     /// Two things WebKit leaves to the browser, added to wry's navigation delegate class once: a page that says why a
     /// site didn't load (WebKit shows nothing: the tab stays blank, or on the page before), and the name and password
     /// box for sites that sign in over HTTP (without one they only ever answer "401 Unauthorized").
@@ -3576,6 +3640,7 @@ pub fn install_page_dialogs(wv: &WebView) {
         mac::install_page_dialogs(wv);
         mac::cursor_from_top_view_only(wv);
         mac::install_load_failures(wv);
+        mac::install_webcrypto_key(wv);
     }
     #[cfg(not(target_os = "macos"))]
     let _ = wv;
@@ -3601,6 +3666,49 @@ pub struct Note<'a> {
 /// Whether a page's full screen is Valerie's quick kind (setting pages.quick_full_screen).
 /// `pages.error_page` and `pages.http_sign_in`, for the native code that has no way to the settings.
 pub static ERROR_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// `passwords.webcrypto_key: keychain`: read WebKit's own Keychain item (once a run) instead of Valerie's file.
+pub static WEBCRYPTO_IN_KEYCHAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The key sites' saved keys are sealed with, kept for the run. Normally a file in Valerie's data folder only this
+/// user can read; the first time, it's copied from WebKit's Keychain item (the last time the Mac asks) so keys sites
+/// already saved still open. A test copy never touches the Keychain.
+#[cfg(target_os = "macos")]
+fn webcrypto_key() -> Option<Vec<u8>> {
+    use std::sync::atomic::Ordering::Relaxed;
+    static KEY: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+    let mut held = KEY.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(k) = held.as_ref() {
+        return Some(k.clone());
+    }
+    let test_copy = std::env::var_os("VALERIE_DATA_DIR").is_some();
+    let path = crate::config::data_dir().join("webcrypto-key");
+    let from_file = || std::fs::read_to_string(&path).ok().and_then(|s| crate::crypt::unhex(s.trim()).ok()).filter(|k| !k.is_empty());
+    let key = if WEBCRYPTO_IN_KEYCHAIN.load(Relaxed) && !test_copy {
+        mac::webkit_keychain_key().or_else(from_file)
+    } else {
+        from_file()
+    };
+    let key = match key {
+        Some(k) => k,
+        None => {
+            let old = if test_copy || WEBCRYPTO_IN_KEYCHAIN.load(Relaxed) { None } else { mac::webkit_keychain_key() };
+            crate::log::line("webcrypto", if old.is_some() { "moved WebKit's site key out of the Keychain" } else { "made a new site key" });
+            let k = old.unwrap_or_else(|| crate::crypt::random::<16>().to_vec());
+            let saved = (|| -> std::io::Result<()> {
+                std::fs::create_dir_all(path.parent().unwrap_or(&path))?;
+                std::fs::write(&path, crate::crypt::hex(&k))?;
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            })();
+            if let Err(e) = saved {
+                crate::log::line("webcrypto", format!("couldn't save the site key: {e}"));
+            }
+            k
+        }
+    };
+    *held = Some(key.clone());
+    Some(key)
+}
 pub static HTTP_SIGN_IN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// `pages.offline_game`: the offline page has a hand of blackjack to play while you wait.
 pub static OFFLINE_GAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);

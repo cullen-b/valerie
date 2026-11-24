@@ -292,6 +292,9 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !c.updates.feed.starts_with("https://") && !c.updates.feed.starts_with("file://") {
                 problems.push(format!("updates: feed is {:?}; it has to be an https:// address", c.updates.feed));
             }
+            if !["valerie", "keychain"].contains(&c.passwords.webcrypto_key.as_str()) {
+                problems.push(format!("passwords: webcrypto_key is {:?}; use valerie or keychain", c.passwords.webcrypto_key));
+            }
             if !["auto", "on", "off"].contains(&c.passwords.offer_passkeys.as_str()) {
                 problems.push(format!("passwords: offer_passkeys is {:?}; use auto, on or off", c.passwords.offer_passkeys));
             }
