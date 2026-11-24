@@ -1272,6 +1272,8 @@ pub struct PasswordsConfig {
     pub passkeys_through_safari: bool,
     pub explain_keychain_prompt: bool,
     pub fewer_keychain_prompts: bool,
+    /// Where the key sealing sites' saved keys lives on Mac: "valerie" (a file, never asks) or "keychain".
+    pub webcrypto_key: String,
     /// One-time codes (TOTP) for saved logins: add, show, copy and offer to fill them.
     pub one_time_codes: bool,
     pub shared: Vec<SharedVault>,

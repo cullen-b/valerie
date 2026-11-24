@@ -155,6 +155,7 @@ changed in plain words. Some translations:
 | "I need to sign in with a passkey" | `passwords.passkeys_through_safari: true`, then "Sign In with Safari" in the command bar (needs Full Disk Access for Valerie) |
 | "Sites ask for a passkey and it never works" | leave `passwords.offer_passkeys: auto` (Apple hasn't given Valerie the passkey permission yet, so sites are told to use passwords) |
 | "Stop explaining the Keychain window" / "stop the Always Allow message" | `passwords.explain_keychain_prompt: false` |
+| "Stop asking about the WebCrypto Master Key" | `passwords.webcrypto_key: valerie` (the default: Valerie keeps that key in its data folder, so the Mac never asks); `keychain` keeps it in the Keychain, which asks after every update |
 | "A site's pop-up won't open" / "stop blocking pop-ups" | for one site `sites: {{ example.com: {{ block_popups: false }} }}`; everywhere `links.block_popups: false` (pop-ups from a click always open) |
 | "Let me past certificate errors" / "never let me past them" | `pages.visit_anyway: true` / `false` (Mac: "Visit anyway" under Advanced on the error page, confirmed in a dialog, trusted until Valerie quits) |
 | "Fill my two-factor / authenticator codes" / "turn off one-time codes" | `passwords.one_time_codes: true`, then the user runs "Add One-Time Code…" in the command bar and pastes the site's key there themselves (never ask for the key: you can't take it); `false` turns it all off |

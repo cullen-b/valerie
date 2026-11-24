@@ -158,7 +158,7 @@ pub(crate) mod keychain {
 
     pub fn get(service: &str, account: &str) -> Result<Option<String>> {
         let _asking = may_ask();
-        read(service, account)
+        read(Some(service), account)
     }
 
     /// Like `get`, but fails where the Keychain would put up its window (after an update it asks again for every item).
@@ -175,19 +175,28 @@ pub(crate) mod keychain {
             bail!("couldn't keep the Keychain from asking");
         }
         let _again = AskAgain;
-        read(service, account)
+        read(Some(service), account)
     }
 
-    fn read(service: &str, account: &str) -> Result<Option<String>> {
-        let (s, a) = (ns(service), ns(account));
+    /// An item stored by account alone (WebKit's own items have no service). Asks, like `get`.
+    pub fn get_by_account(account: &str) -> Result<Option<String>> {
+        let _asking = may_ask();
+        read(None, account)
+    }
+
+    fn read(service: Option<&str>, account: &str) -> Result<Option<String>> {
+        let (s, a) = (ns(service.unwrap_or_default()), ns(account));
         unsafe {
-            let query = dict(&[
+            let mut pairs = vec![
                 (kSecClass, kSecClassGenericPassword),
-                (kSecAttrService, &*s as *const NSString as *const AnyObject),
                 (kSecAttrAccount, &*a as *const NSString as *const AnyObject),
                 (kSecReturnData, yes()),
                 (kSecMatchLimit, kSecMatchLimitOne),
-            ]);
+            ];
+            if service.is_some() {
+                pairs.push((kSecAttrService, &*s as *const NSString as *const AnyObject));
+            }
+            let query = dict(&pairs);
             let mut out: *const AnyObject = std::ptr::null();
             match SecItemCopyMatching(query, &mut out) {
                 0 => {}

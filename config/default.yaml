@@ -962,6 +962,10 @@ passwords:
   fewer_keychain_prompts: true  # on Mac, after an update the system asks again before Valerie reads each saved
                            # password. With sync on, use this Mac's own encrypted synced copy instead of asking
                            # (false: every password comes straight from the Keychain, which asks). true | false
+  webcrypto_key: valerie   # on Mac, where the key that locks the keys websites save (WebCrypto, used by chat and
+                           # banking sites) is kept. valerie: a file in Valerie's data folder only you can read, so the
+                           # Mac never asks about the "Valerie WebCrypto Master Key". keychain: WebKit's own Keychain
+                           # item, read once a run (the Mac asks again after every update). one of: valerie | keychain
   one_time_codes: false    # one-time codes (the 6 to 8 digits sites ask for after the password): add a site's key to a
                            # saved login ("Add One-Time Code…"), see and copy the code in the command bar, and have it
                            # offered in the site's code box. true turns it on; false turns all of it off. true | false
