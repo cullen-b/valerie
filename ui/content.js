@@ -545,8 +545,7 @@ function ui() {
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
             outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: left .06s, top .06s, width .06s, height .06s; }
     .ring { position: fixed; border-radius: 6px; outline: 2px solid ${cfg.accent || "#9d8cff"}; pointer-events: none; }`;
-  shadow.appendChild(st);
-  shadow.appendChild(userStyle());
+  styleRoot(shadow, st);
   return shadow;
 }
 // ---------- small motions (`animations:` switches): transform and opacity only, none in hidden tabs or with reduced motion ----------
@@ -574,7 +573,19 @@ function userStyle() {
   const st = document.createElement("style"); st.className = "valerie-user-css"; st.textContent = cfg.ui_css || "";
   userStyles.push(st); return st;
 }
-function applyUserCss() { for (const st of userStyles) if (st.textContent !== (cfg.ui_css || "")) st.textContent = cfg.ui_css || ""; }
+// Constructed sheets, because a site whose CSP gives styles a nonce (Okta) blocks a <style> we add, leaving our UI unstyled.
+var SheetCtor = window.CSSStyleSheet, userSheet;
+function newSheet(css) { try { const s = new SheetCtor(); s.replaceSync(css); return s; } catch { return null; } }
+function styleRoot(root, st) {
+  if (userSheet === undefined) userSheet = newSheet(cfg.ui_css || "");
+  const s = userSheet && newSheet(st.textContent);
+  if (s) try { root.adoptedStyleSheets = [s, userSheet]; return; } catch {}
+  root.append(st, userStyle());
+}
+function applyUserCss() {
+  if (userSheet) try { userSheet.replaceSync(cfg.ui_css || ""); } catch {}
+  for (const st of userStyles) if (st.textContent !== (cfg.ui_css || "")) st.textContent = cfg.ui_css || "";
+}
 // Valerie's words in the user's language (`language`): exact text, or patterns with {} for the parts that change.
 function tr(text) {
   const S = cfg.strings; if (!S) return text;
@@ -2402,7 +2413,7 @@ function reader() {
     if (k === "figcaption") e.className = "figcaption";
     e.textContent = text; col.append(e);
   }
-  sh.append(st, userStyle(), col);
+  styleRoot(sh, st); sh.append(col);
   document.documentElement.append(host);
   readerHost = host; host.focus();
 }
