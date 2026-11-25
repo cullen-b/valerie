@@ -1960,9 +1960,10 @@ function mediaState() {
 }
 
 // ---------- a playing video pops out into picture-in-picture when you switch to another tab ----------
+// Valerie also calls covered() when its window is covered or on another desktop, since pages there don't go hidden.
 let autoPip = null;
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
+function leftView(gone) {
+  if (gone) {
     if (!(cfg.tabs && cfg.tabs.picture_in_picture_on_leave)) return;
     const v = [...document.querySelectorAll("video")].find((x) => !x.paused && !x.muted && x.readyState > 2 &&
       x.webkitSupportsPresentationMode && x.webkitSupportsPresentationMode("picture-in-picture") && x.webkitPresentationMode === "inline");
@@ -1971,7 +1972,8 @@ document.addEventListener("visibilitychange", () => {
     try { if (autoPip.webkitPresentationMode === "picture-in-picture") autoPip.webkitSetPresentationMode("inline"); } catch (_) {}
     autoPip = null;
   }
-});
+}
+document.addEventListener("visibilitychange", () => leftView(document.hidden));
 
 // ---------- page metadata for the sidebar ----------
 const ICON_LINKS = "link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']";
@@ -2707,7 +2709,7 @@ Object.defineProperty(window, "__valerie", {
     api: pluginApi, pluginReply, once,
     closeFind, media, reader, request, askAction,
     notificationPermission: (s) => notifyHooks.permission(s), notificationClicked: (id) => notifyHooks.clicked(id), locationFix: (r) => locationHooks.fix(r), keyed: () => kbArm(true), ask: (q) => { openFind(q); askPage(q); },
-    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, toast, find: openFind, findStep, hints: startHints, keepHints,
+    configure: (c) => { if (c.edge && !cfg.edge) edgeArmedAt = performance.now() + 700; cfg = withSite(c); applyBoostCss(); applyDark(); applyUserCss(); mdTheme(); }, splitPill: (on) => { splitPill = !!on; }, shown: () => { if (releaseHeld) releaseHeld(true); }, covered: (on) => leftView(!!on), toast, find: openFind, findStep, hints: startHints, keepHints,
     nextKey,
     accounts: (list, nonce) => { accounts = list; fillNonce = nonce; const f = deepActive(); if (loginField(f)) showAccounts(f); },
     codes: (list, nonce) => { codeLogins = list; codeNonce = nonce; const f = deepActive(); if (codeField(f)) showCodes(f); },

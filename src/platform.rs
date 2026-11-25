@@ -317,6 +317,26 @@ mod mac {
         }
     }
 
+    /// Calls `f(true)` when the window becomes fully covered or moves off screen (another desktop, another app over
+    /// it), `f(false)` when part of it shows again.
+    pub fn watch_window_covered(window: &tao::window::Window, f: impl Fn(bool) + 'static) {
+        use objc2::class;
+        use objc2_foundation::NSString;
+        use tao::platform::macos::WindowExtMacOS;
+        let w = window.ns_window() as *mut AnyObject;
+        let block = block2::RcBlock::new(move |_note: *mut AnyObject| {
+            // NSWindowOcclusionStateVisible
+            let state: usize = unsafe { msg_send![w, occlusionState] };
+            eprintln!("DEBUG occlusion state {state}");
+            f(state & 2 == 0);
+        });
+        unsafe {
+            let center: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let name = NSString::from_str("NSWindowDidChangeOcclusionStateNotification");
+            let _: *mut AnyObject = msg_send![center, addObserverForName: &*name, object: w, queue: std::ptr::null_mut::<AnyObject>(), usingBlock: &*block];
+        }
+    }
+
     /// Re-adding a subview moves it to the top of its siblings.
     pub fn bring_to_front(wv: &WebView) {
         let v = ptr(wv);
@@ -2951,6 +2971,14 @@ static PAUSE_WHEN_COVERED: std::sync::atomic::AtomicBool = std::sync::atomic::At
 /// pages.pause_when_covered, for webviews built from now on.
 pub fn set_pause_when_covered(on: bool) {
     PAUSE_WHEN_COVERED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Tells `f` when the main window becomes covered (true) or shows again (false); Mac only.
+pub fn watch_window_covered(window: &tao::window::Window, f: impl Fn(bool) + 'static) {
+    #[cfg(target_os = "macos")]
+    mac::watch_window_covered(window, f);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, f);
 }
 
 /// Unless pages.pause_when_covered is on, a page keeps drawing while its window is covered or on another desktop.

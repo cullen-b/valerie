@@ -83,6 +83,8 @@ pub enum UserEvent {
     Tick,
     /// ⌘ (Ctrl elsewhere) was let go while tab numbers showed, wherever focus was (`sidebar.tab_numbers`).
     TabNumbersOff,
+    /// The main window became fully covered or went to another desktop (true), or shows again (false).
+    WindowCovered(bool),
     /// SIGTERM, SIGINT or SIGHUP (this number) arrived: save and quit.
     #[cfg_attr(not(unix), allow(dead_code))]
     StopSignal(i32),
@@ -1681,6 +1683,8 @@ impl App {
         let window = builder.build(elwt)?;
         place_test_window(&window, elwt);
         realize_hidden(&window);
+        let p = proxy.clone();
+        platform::watch_window_covered(&window, move |covered| send(&p, UserEvent::WindowCovered(covered)));
         // Logins from the bare binary come along the first time Valerie runs as an app (before any page exists).
         let names: Vec<String> = config.profiles.iter().map(|p| p.name.clone()).collect();
         platform::merge_bare_logins(&config::data_dir().join("logins-merged-from-bare-binary.txt"), &names);
@@ -10476,6 +10480,17 @@ impl App {
             UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
             UserEvent::Tick => self.tick(),
             UserEvent::TabNumbersOff => self.show_tab_numbers(false),
+            // Pages keep drawing while covered (pages.pause_when_covered: false), so they never hear they're hidden: tell
+            // the tabs on show, so a playing video still pops out (tabs.picture_in_picture_on_leave).
+            UserEvent::WindowCovered(covered) => {
+                if !self.config.pages.pause_when_covered {
+                    for id in self.panes() {
+                        if let Some(v) = self.views.get(&id) {
+                            let _ = v.evaluate_script(&format!("window.__valerie && __valerie.covered && __valerie.covered({covered})"));
+                        }
+                    }
+                }
+            }
             UserEvent::StopSignal(sig) => {
                 crate::log::line("app", format!("signal {sig} asked Valerie to stop: saving and quitting"));
                 self.quit = true;
