@@ -142,7 +142,7 @@ changed in plain words. Some translations:
 | "Don't close my tabs" | `tabs.archive_after_hours: 0`, `tabs.unload_after_minutes: 0` |
 | "Free memory of unused tabs even while the window is open" | `tabs.unload_while_window_open: true` |
 | "Keep YouTube / this site loaded" / "never put this site's tabs to sleep" | `sites: {{ youtube.com: {{ unload: false }} }}` (the `toggle_keep_awake` command, "Keep This Site Awake", flips the site you're on) |
-| "Show tab numbers when I hold cmd" / "no numbers on my tabs" | `sidebar.tab_numbers: true` / `false` (they follow the `go_to_tab` keys in `keybindings`) |
+| "Show tab numbers when I hold cmd" / "no numbers on my tabs" | `sidebar.tab_numbers: true` / `false` (they follow the `go_to_tab` keys in `keybindings`); "show them sooner" → `sidebar.tab_numbers_delay_ms` (default 150) |
 | "Find should match capitals" / "only whole words" / "no buttons in the find bar" | `find.match_case: true`, `find.whole_words: true` (how find starts; Aa and W in the bar, or Alt+C and Alt+W, switch them), `find.option_buttons: false` |
 | "Peek should close when I switch tabs" / "…stay with its tab" | `peek.stays_with_tab: false` / `true` |
 | "Swiping back on a tab a link opened should close it" | `gestures.swipe_back_closes_tab: true` (only from the tab's first page; you land on the tab the link was in) |
