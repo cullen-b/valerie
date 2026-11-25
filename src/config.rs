@@ -344,6 +344,7 @@ pub struct SidebarConfig {
     pub tab_preview_delay_ms: f64,
     pub tab_preview_picture: bool,
     pub tab_numbers: bool,
+    pub tab_numbers_delay_ms: u64,
     pub double_click_edge: bool,
     pub multi_select: bool,
     pub drop_to_split: bool,

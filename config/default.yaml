@@ -187,6 +187,8 @@ sidebar:
                            # asleep shows the last one taken, if any). false = title and site only. true | false
   tab_numbers: true        # while you hold ⌘ (Ctrl on Windows and Linux) for a moment, each tab shows the number key that
                            # jumps to it (the go_to_tab keys in `keybindings`). true | false
+  tab_numbers_delay_ms: 150 # how long to hold ⌘ (Ctrl on Windows and Linux) before the numbers show, in milliseconds. Lower
+                           # is quicker; 0 also flashes them on every shortcut you press (⌘T, ⌘C…)
   double_click_edge: true  # double-clicking the sidebar's edge cycles full / medium / icons-only
   multi_select: true       # shift-click picks a run of tabs and folders, ⌘-click (Ctrl elsewhere) adds or drops one;
                            # drag them together, or right-click them to delete them together. Esc lets go. true | false

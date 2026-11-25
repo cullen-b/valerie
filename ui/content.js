@@ -1655,7 +1655,7 @@ addEventListener("pointerdown", () => clearTimeout(modTimer), true);
 addEventListener("keydown", (e) => {
   if (!e.isTrusted || e.key !== MOD_KEY) return clearTimeout(modTimer);
   if (e.repeat || !cfg.tab_numbers || e.shiftKey || e.altKey || (MOD_KEY === "Meta" ? e.ctrlKey : e.metaKey)) return;
-  clearTimeout(modTimer); modTimer = setTimeout(() => { modShown = true; post({ t: "mod_held", on: true }); }, 350);
+  clearTimeout(modTimer); modTimer = setTimeout(() => { modShown = true; post({ t: "mod_held", on: true }); }, cfg.tab_numbers_delay_ms ?? 150);
 }, true);
 addEventListener("keyup", (e) => { if (e.isTrusted && e.key === MOD_KEY) modUp(); }, true);
 addEventListener("blur", () => { if (modShown) modUp(); });
