@@ -474,6 +474,8 @@ pub struct App {
     location_off_said: bool,
     /// Sites already offered "Sign in with Safari" this session.
     passkey_offered: std::collections::HashSet<String>,
+    /// When "Sign In with Safari" last opened Safari, to tell whether Safari has saved the login since.
+    safari_opened: Option<std::time::SystemTime>,
     /// Recent notifications per site, so one site can't flood you.
     notify_times: HashMap<String, Vec<std::time::Instant>>,
     /// Bumped on every change worth syncing; a delayed SyncDue only runs if it's still the latest.
@@ -1827,6 +1829,7 @@ impl App {
             locating: false,
             location_off_said: false,
             passkey_offered: Default::default(),
+            safari_opened: None,
             notify_times: HashMap::new(),
             sync_gen: 0,
             littles: HashMap::new(),
@@ -14745,9 +14748,10 @@ impl App {
         if let Err(e) = crate::platform::command("open").args(["-a", "Safari", &url]).spawn() {
             return self.toast(&format!("Couldn't open Safari: {e}"));
         }
+        self.safari_opened = Some(std::time::SystemTime::now());
         let Some(v) = self.views.get(&tab) else { return };
         let p = self.proxy.clone();
-        let body = format!("Sign in to {site} in Safari (passkeys work there), then come back and bring the login over.");
+        let body = format!("Sign in to {site} in Safari (passkeys work there), then come back and bring the login over. If the site offers \"Remember this device\" or \"Stay signed in\", tick it: Safari only saves logins that last.");
         platform::ask(v, "Signing in with Safari", &body, "Bring Login Over", "Cancel", move |bring| {
             send(&p, UserEvent::SafariSignedIn { tab, bring });
         });
@@ -14757,7 +14761,7 @@ impl App {
     fn bring_login_from_safari(&mut self, tab: TabId) {
         let Some(host) = self.state.tabs.get(&tab).and_then(|t| url::Url::parse(&t.url).ok()).and_then(|u| u.host_str().map(str::to_lowercase)) else { return };
         let base = cookie_base(&host);
-        let cookies = match platform::safari_cookies() {
+        let (cookies, saved, files) = match platform::safari_cookies() {
             Ok(c) => c,
             Err(std::io::ErrorKind::PermissionDenied) => {
                 let Some(v) = self.views.get(&tab) else { return };
@@ -14776,6 +14780,12 @@ impl App {
             .into_iter()
             .filter(|c| c.expires > now && { let d = c.domain.trim_start_matches('.'); d == base || d.ends_with(&format!(".{base}")) })
             .collect();
+        let names: Vec<String> = mine.iter().map(|c| format!("{} ({}d)", c.name, ((c.expires - now) / 86400.0) as i64)).collect();
+        crate::log::line("safari", format!("{} cookies for {base} in {files} Safari cookie files: {}", mine.len(), names.join(", ")));
+        // Safari writes its cookie files now and then, so the login can still be only in its memory.
+        if self.safari_opened.take().is_some_and(|t| saved.is_none_or(|s| s < t)) {
+            return self.toast("Safari hasn't saved the login yet. Quit Safari (⌘Q) so it saves it, then run \"Bring Login from Safari\"");
+        }
         if mine.is_empty() {
             return self.toast(&format!("Safari has no login saved for {base} yet. Wait a few seconds and run \"Bring Login from Safari\""));
         }

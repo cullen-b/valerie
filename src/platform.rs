@@ -4236,13 +4236,37 @@ pub fn passkeys_work() -> bool {
 }
 
 /// Safari's saved cookies (it keeps them in its sandbox, which needs Full Disk Access to read).
-/// `VALERIE_SAFARI_COOKIES` points at another file, for tests.
-pub fn safari_cookies() -> Result<Vec<Cookie>, std::io::ErrorKind> {
-    let path = match std::env::var_os("VALERIE_SAFARI_COOKIES") {
+/// Every Safari profile's, newest file first so its copy of a cookie wins, with when Safari last saved one and how
+/// many files there were. `VALERIE_SAFARI_COOKIES` points at another Safari data folder, for tests.
+pub fn safari_cookies() -> Result<(Vec<Cookie>, Option<std::time::SystemTime>, usize), std::io::ErrorKind> {
+    let lib = match std::env::var_os("VALERIE_SAFARI_COOKIES") {
         Some(p) => std::path::PathBuf::from(p),
-        None => dirs::home_dir().ok_or(std::io::ErrorKind::NotFound)?.join("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+        None => dirs::home_dir().ok_or(std::io::ErrorKind::NotFound)?.join("Library/Containers/com.apple.Safari/Data/Library"),
     };
-    std::fs::read(path).map(|d| read_binary_cookies(&d)).map_err(|e| e.kind())
+    let default = lib.join("Cookies/Cookies.binarycookies");
+    std::fs::metadata(&default).map_err(|e| e.kind())?;
+    // Other Safari profiles keep theirs under WebKit/WebsiteDataStore/<profile id>/.
+    let mut files = vec![default];
+    let mut dirs = vec![(lib.join("WebKit/WebsiteDataStore"), 0)];
+    while let Some((dir, depth)) = dirs.pop() {
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() && depth < 3 {
+                dirs.push((p, depth + 1));
+            } else if p.extension().is_some_and(|x| x == "binarycookies") {
+                files.push(p);
+            }
+        }
+    }
+    let mut read: Vec<(std::time::SystemTime, Vec<Cookie>)> = files
+        .iter()
+        .filter_map(|f| Some((std::fs::metadata(f).and_then(|m| m.modified()).ok()?, std::fs::read(f).ok().map(|d| read_binary_cookies(&d))?)))
+        .collect();
+    read.sort_by(|a, b| b.0.cmp(&a.0));
+    let saved = read.first().map(|r| r.0);
+    let mut seen = std::collections::HashSet::new();
+    let cookies = read.into_iter().flat_map(|r| r.1).filter(|c| seen.insert((c.domain.clone(), c.name.clone(), c.path.clone()))).collect();
+    Ok((cookies, saved, files.len()))
 }
 
 /// Put cookies into a web view's profile; `done` gets how many were set.
@@ -4296,6 +4320,23 @@ mod cookie_tests {
         out.extend((page.len() as u32).to_be_bytes());
         out.extend(page);
         out
+    }
+
+    #[test]
+    fn reads_every_safari_profile_newest_first() {
+        let lib = std::env::temp_dir().join(format!("valerie-safari-{}", std::process::id()));
+        let prof = lib.join("WebKit/WebsiteDataStore/ABC-123/Cookies");
+        std::fs::create_dir_all(lib.join("Cookies")).unwrap();
+        std::fs::create_dir_all(&prof).unwrap();
+        std::fs::write(lib.join("Cookies/Cookies.binarycookies"), blob(".gemini.com", "sid", "/", "old", 9e8, 0)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(prof.join("Cookies.binarycookies"), blob(".gemini.com", "sid", "/", "new", 9e8, 0)).unwrap();
+        std::env::set_var("VALERIE_SAFARI_COOKIES", &lib);
+        let (c, saved, files) = super::safari_cookies().unwrap();
+        std::env::remove_var("VALERIE_SAFARI_COOKIES");
+        let _ = std::fs::remove_dir_all(&lib);
+        assert_eq!((files, c.len(), c[0].value.as_str()), (2, 1, "new"));
+        assert!(saved.is_some());
     }
 
     #[cfg(unix)]
