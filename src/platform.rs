@@ -2694,6 +2694,26 @@ pub fn idle_seconds() -> f64 {
     0.0
 }
 
+/// Whether ⌘ (Ctrl elsewhere) is down right now, asked of the system so it's right wherever focus is; None where that can't be known.
+pub fn primary_modifier_held() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGEventSourceFlagsState(state: i32) -> u64;
+        }
+        // kCGEventSourceStateCombinedSessionState, kCGEventFlagMaskCommand
+        Some(unsafe { CGEventSourceFlagsState(0) } & 0x10_0000 != 0)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
+        Some(unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) } < 0)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    None
+}
+
 /// Bring Valerie in front of other apps.
 pub fn activate_app() {
     #[cfg(target_os = "macos")]

@@ -81,6 +81,8 @@ pub enum UserEvent {
     Menu(MenuId),
     Mcp(McpRequest),
     Tick,
+    /// ⌘ (Ctrl elsewhere) was let go while tab numbers showed, wherever focus was (`sidebar.tab_numbers`).
+    TabNumbersOff,
     /// SIGTERM, SIGINT or SIGHUP (this number) arrived: save and quit.
     #[cfg_attr(not(unix), allow(dead_code))]
     StopSignal(i32),
@@ -1264,6 +1266,8 @@ fn download_rule(d: &config::DownloadsConfig, name: &str, url: &str, page: &str)
 }
 
 /// `links.block_popups`, for pages already open when it changes.
+/// Tab numbers are showing in the sidebar; their watcher thread runs while this is true.
+static TAB_NUMBERS_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static BLOCK_POPUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A URL's host without "www.", which is how boosts and per-site settings are keyed.
@@ -4237,7 +4241,23 @@ impl App {
                 }
             }
         }
+        let shown = !map.is_empty();
         let _ = self.chrome.evaluate_script(&format!("window.valerie && valerie.tabNumbers && valerie.tabNumbers({})", Value::Object(map)));
+        // The key-up can land where no page listens (a chat tab, another app), so watch the key itself until it's let go.
+        if !shown {
+            TAB_NUMBERS_SHOWN.store(false, std::sync::atomic::Ordering::Relaxed);
+        } else if !TAB_NUMBERS_SHOWN.swap(true, std::sync::atomic::Ordering::Relaxed) && crate::platform::primary_modifier_held().is_some() {
+            let p = self.proxy.clone();
+            std::thread::spawn(move || {
+                while TAB_NUMBERS_SHOWN.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                    if crate::platform::primary_modifier_held() == Some(false) {
+                        send(&p, UserEvent::TabNumbersOff);
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     /// `start_background` for the empty space, sent to the sidebar only when it changes.
@@ -10455,6 +10475,7 @@ impl App {
             }
             UserEvent::Mcp(req) => self.handle_mcp(req, elwt),
             UserEvent::Tick => self.tick(),
+            UserEvent::TabNumbersOff => self.show_tab_numbers(false),
             UserEvent::StopSignal(sig) => {
                 crate::log::line("app", format!("signal {sig} asked Valerie to stop: saving and quitting"));
                 self.quit = true;
