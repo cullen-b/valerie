@@ -171,7 +171,7 @@ async function start() {
   color.oninput = () => { localStorage.setItem("valerie-pdf-color", color.value); if (selected && selected.color) { if (!picking) snapshot(); picking = true; selected.color = color.value; drawMarks(selected.page); } };
   const undoBtn = btn("Undo", /Mac/.test(navigator.platform) ? "Undo (⌘Z)" : "Undo (Ctrl+Z)", () => undo());
   const readerBtn = btn("Reader", "Read the text in one column, in the type and colours you like", () => openReader());
-  const saveBtn = btn("Save Copy", "Save a copy with your marks to your downloads", () => save(), "primary");
+  const saveBtn = btn("Save Copy", "Save the PDF to your downloads, with your marks if you made any", () => save(), "primary");
   const toolGroup = el("div", "group"); toolGroup.append(...Object.values(tools));
   const zoomGroup = el("div", "group");
   zoomGroup.append(btn("−", "Zoom out", () => setZoom(zoom / 1.2)), zoomLabel, btn("+", "Zoom in", () => setZoom(zoom * 1.2)));
@@ -706,9 +706,10 @@ async function start() {
     return [c.toDataURL("image/png"), c.width / k, c.height / k];
   };
   async function save() {
-    if (!pages.some((p) => p.list.length)) return toast("Add text, a signature or an arrow first");
+    const marked = pages.some((p) => p.list.length);
     saveBtn.disabled = true; saveBtn.textContent = tr("Saving…");
     try {
+      if (!marked) { download(original, fileName); return; }
       const pdf = await PDFLib.PDFDocument.load(original, { ignoreEncryption: true });
       const font = await pdf.embedFont(PDFLib.StandardFonts.Helvetica);
       for (const p of pages) {
@@ -741,17 +742,20 @@ async function start() {
           }
         }
       }
-      const out = await pdf.save();
-      const url = URL.createObjectURL(new Blob([out], { type: "application/pdf" })), a = el("a");
-      a.href = url; a.download = fileName.replace(/\.pdf$/i, "") + " (marked up).pdf";
-      body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      download(await pdf.save(), fileName.replace(/\.pdf$/i, "") + " (marked up).pdf");
       dirty = false;
     } catch (e) {
       console.error("valerie pdf save", e);
       toast("Couldn't save the PDF: " + (e && e.message ? e.message : e));
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = tr("Save Copy");
     }
-    saveBtn.disabled = false; saveBtn.textContent = tr("Save Copy");
+  }
+  function download(bytes, name) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })), a = el("a");
+    a.href = url; a.download = /\.pdf$/i.test(name) ? name : name + ".pdf";
+    body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
   addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 }
