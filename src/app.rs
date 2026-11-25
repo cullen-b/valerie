@@ -1632,6 +1632,7 @@ fn mac_window(wb: WindowBuilder) -> WindowBuilder {
 
 impl App {
     fn new(elwt: &EventLoopWindowTarget<UserEvent>, config: Config, proxy: EventLoopProxy<UserEvent>) -> Result<App> {
+        platform::set_pause_when_covered(config.pages.pause_when_covered);
         // Last session's size and place (if it still fits a screen), else the configured size, else most of the screen.
         let mut state = State::load(&state_path());
         trace("  state read");
@@ -2506,7 +2507,6 @@ impl App {
             Ok(v) => {
                 platform::allow_magnification(&v, self.config.gestures.pinch_to_zoom);
                 platform::prefer_dark(&v, self.config.pages.dark_mode == "always");
-                platform::bench_in_view(&v);
                 self.zoom_applied.remove(&tab);
                 let z = self.zoom_for(tab);
                 if z != 1.0 {
@@ -5994,6 +5994,7 @@ impl App {
                 };
                 let blocking_changed = blocking(&c) != blocking(&self.config);
                 crate::log::set_level(&c.logs.level);
+                platform::set_pause_when_covered(c.pages.pause_when_covered);
                 self.config = c;
                 self.refresh_win_layout();
                 self.load_strings();
@@ -12106,6 +12107,7 @@ impl ChildOf for WebViewBuilder<'_> {
     fn child_of<W: wry::raw_window_handle::HasWindowHandle>(self, parent: &W) -> wry::Result<WebView> {
         let view = self.build_as_child(parent)?;
         platform::watch_page_fullscreen(&view);
+        platform::stay_drawn_when_covered(&view);
         #[cfg(target_os = "windows")]
         menu_shortcuts_inside(&view);
         // wry hides a hidden view before it knows the X11 window around it, which stays up as a black sheet over everything.

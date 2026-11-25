@@ -305,9 +305,9 @@ mod mac {
         }
     }
 
-    /// For scripts/perf-bench.py (VALERIE_BENCH=1): a test window sits behind the owner's, and an occluded page counts
-    /// as hidden, so it would never draw; this makes it draw as if in view (Ardia's bench does the same for itself).
-    pub fn bench_in_view(wv: &WebView) {
+    /// WebKit counts a page in a covered window, or one on another desktop, as hidden and drops what it drew; this
+    /// makes it draw as if in view, so Mission Control and switching desktops never show it grey.
+    pub fn stay_drawn_when_covered(wv: &WebView) {
         use objc2::sel;
         let v = ptr(wv);
         unsafe {
@@ -2926,10 +2926,19 @@ pub fn os_version() -> String {
     format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-pub fn bench_in_view(wv: &WebView) {
+static PAUSE_WHEN_COVERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// pages.pause_when_covered, for webviews built from now on.
+pub fn set_pause_when_covered(on: bool) {
+    PAUSE_WHEN_COVERED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Unless pages.pause_when_covered is on, a page keeps drawing while its window is covered or on another desktop.
+/// scripts/perf-bench.py (VALERIE_BENCH=1) always needs this: its test window sits behind the owner's.
+pub fn stay_drawn_when_covered(wv: &WebView) {
     #[cfg(target_os = "macos")]
-    if std::env::var_os("VALERIE_BENCH").is_some() {
-        mac::bench_in_view(wv);
+    if !PAUSE_WHEN_COVERED.load(std::sync::atomic::Ordering::Relaxed) || std::env::var_os("VALERIE_BENCH").is_some() {
+        mac::stay_drawn_when_covered(wv);
     }
     #[cfg(not(target_os = "macos"))]
     let _ = wv;
