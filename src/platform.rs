@@ -327,7 +327,6 @@ mod mac {
         let block = block2::RcBlock::new(move |_note: *mut AnyObject| {
             // NSWindowOcclusionStateVisible
             let state: usize = unsafe { msg_send![w, occlusionState] };
-            eprintln!("DEBUG occlusion state {state}");
             f(state & 2 == 0);
         });
         unsafe {
