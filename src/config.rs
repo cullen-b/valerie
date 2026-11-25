@@ -1009,6 +1009,7 @@ pub struct PagesConfig {
     pub wait_for_first_draw: bool,
     pub share_process_by_site: bool,
     pub slow_background_tabs: bool,
+    pub pause_when_covered: bool,
     pub youtube_sharp_start: bool,
     pub youtube_downloads: bool,
     pub quick_full_screen: bool,

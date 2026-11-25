@@ -574,6 +574,9 @@ pages:
                            # false = every tab gets its own process
   slow_background_tabs: true # tabs you aren't looking at run their timers less and less often the longer they stay
                            # out of sight, as in Safari (sound and video carry on): saves battery. false = full speed
+  pause_when_covered: false # Mac: true = the tab on show stops drawing while Valerie's window is covered or on another
+                           # desktop, as in Safari (a little less battery), but it can look grey in Mission Control or
+                           # after switching desktops until clicked. false = it keeps drawing, so it never looks grey
   quick_full_screen: true  # a page's full screen (a video's button) fills the whole screen straight away: no slide to a
                            # separate desktop on the Mac, and over the whole window everywhere. false = the system's own way:
                            # the Mac's slide; on Windows and Linux the video stays inside the tab's area
