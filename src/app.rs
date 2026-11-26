@@ -227,6 +227,8 @@ pub enum UserEvent {
     ExtensionLoaded { name: String, result: Result<(), String>, announce: bool },
     /// An extension asked to open, switch to or close a tab, or to show its popup.
     ExtensionAsk(crate::extensions::Ask),
+    /// An extension from the Chrome Web Store finished downloading into the extensions folder (its folder name).
+    StoreExtensionAdded(Result<String, String>),
 }
 
 /// History › Recently Closed, the recent pages under it, and the Bookmarks menu: refilled only when what they show changes.
@@ -2025,6 +2027,7 @@ impl App {
             "redirects": self.config.rules.iter().filter(|r| !r.redirect.is_empty() && !r.to.is_empty()).map(|r| json!({ "from": r.redirect, "to": r.to, "site": r.site })).collect::<Vec<_>>(),
             "hide_rules": self.config.rules.iter().filter(|r| !r.hide.trim().is_empty()).map(|r| json!({ "selector": r.hide, "site": r.site })).collect::<Vec<_>>(),
             "save_prompt_seconds": self.config.passwords.save_prompt_seconds, "dark": { "mode": self.config.pages.dark_mode, "sites": self.state.dark_sites }, "cookie_buttons": self.state.cookie_buttons, "pages": self.config.pages,
+            "chrome_web_store": self.config.extensions.enabled && self.config.extensions.chrome_web_store && crate::extensions::supported(),
             "notifications": { "policy": self.config.notifications.websites, "sites": self.notify_states() },
             "site_location": cfg!(target_os = "macos").then(|| json!({ "policy": self.config.permissions.location, "sites": self.state.location_sites.iter().map(|(s, a)| (s.clone(), json!(if *a { "granted" } else { "denied" }))).collect::<serde_json::Map<_, _>>() })),
             "ai": { "ask_in_find": self.config.chats.ask_in_find, "find_question_words": self.config.chats.find_question_words,
@@ -6284,6 +6287,8 @@ impl App {
                     "chromium" => "Chromium",
                     "safari" => "Safari",
                     "firefox" => "Firefox",
+                    "dia" => "Dia",
+                    "zen" => "Zen",
                     s => s,
                 };
                 let item = MenuItem::with_id(format!("import-{src}"), label, true, None);
@@ -6719,6 +6724,19 @@ impl App {
             Target::Peek | Target::Panel(_) => self.state.active_space,
         };
         self.config.vaults_for(&self.profile_for(space))
+    }
+
+    /// Download a Chrome Web Store extension (link or ID) off the main thread, then offer to load it.
+    fn add_from_store(&mut self, link: String) {
+        if !self.config.extensions.chrome_web_store {
+            return self.toast("Adding from the Chrome Web Store is off (extensions.chrome_web_store)");
+        }
+        if !crate::extensions::supported() {
+            return self.toast(&format!("Browser extensions {}", crate::extensions::unsupported_reason()));
+        }
+        self.toast("Adding the extension from the Chrome Web Store…");
+        let (dir, proxy) = (crate::extensions::dir(&self.config.extensions), self.proxy.clone());
+        std::thread::spawn(move || send(&proxy, UserEvent::StoreExtensionAdded(crate::chrome_store::add(&link, &dir).map_err(|e| format!("{e:#}")))));
     }
 
     /// The page's real origin, read from the webview rather than trusting the page.
@@ -9569,6 +9587,10 @@ impl App {
                 self.show_extensions();
             }
             Command::ExtensionAction { name, options } => self.extension_action(&name, options),
+            Command::AddExtension { app } if crate::chrome_store::extension_id(&app).is_some() => {
+                self.close_bar();
+                self.add_from_store(app);
+            }
             Command::AddExtension { app } => {
                 self.close_bar();
                 let found = crate::extensions::in_apps().into_iter().find(|a| a.app.eq_ignore_ascii_case(app.trim()));
@@ -10027,6 +10049,14 @@ impl App {
                 self.toast(&format!("Valerie will click “{text}” on {site} from now on"));
             }
             // A certificate error page's "Visit anyway": it only asks; the platform checks it and the user confirms.
+            // "Add to Valerie" on a Chrome Web Store page: the extension is the one in the tab's real address, not the message.
+            (Source::Page(target), "store_add") => {
+                let url = self.view_for(target).and_then(platform::page_url).unwrap_or_default();
+                let on_store = url::Url::parse(&url).ok().is_some_and(|u| u.scheme() == "https" && u.host_str() == Some("chromewebstore.google.com"));
+                if on_store && crate::chrome_store::extension_id(&url).is_some() {
+                    self.add_from_store(url);
+                }
+            }
             (Source::Page(target), "cert_visit") => {
                 if let Some(v) = self.view_for(target) {
                     platform::visit_anyway(v);
@@ -10751,6 +10781,15 @@ impl App {
                 self.market_send(&json!({ "type": "local", "plugins": self.market_installed(), "layouts": window_layout::gallery(), "on_screen": self.win_layout_name }));
             }
             UserEvent::ExtensionAsk(ask) => self.extension_asked(ask),
+            UserEvent::StoreExtensionAdded(result) => match result {
+                Ok(name) => {
+                    let limits = crate::extensions::find(&crate::extensions::dir(&self.config.extensions)).into_iter().find(|e| e.name == name).map(|e| e.limits).unwrap_or_default();
+                    let note = if limits.is_empty() { String::new() } else { format!(" (won't work here: {})", limits.join(", ")) };
+                    self.toast(&format!("Added {name} from the Chrome Web Store. Valerie asks before loading it{note}"));
+                    self.load_extensions(true);
+                }
+                Err(e) => self.toast(&format!("Couldn't add that extension: {e}")),
+            },
             UserEvent::ExtensionLoaded { name, result, announce } => {
                 self.ext_loading = self.ext_loading.saturating_sub(1);
                 match result {
@@ -15434,6 +15473,9 @@ impl App {
         for e in crate::extensions::find(&crate::extensions::dir(&self.config.extensions)) {
             if loaded.contains(&e.name) || !self.extension_on(&e.name) {
                 continue;
+            }
+            if let Err(err) = if e.appex { Ok(()) } else { crate::chrome_store::prepare(&e.dir) } {
+                crate::log::line("extensions", format!("{}: couldn't put Valerie's Chrome fixes in front of it: {err:#}", e.name));
             }
             if self.state.extension_grants.get(&e.name) == Some(&e.print) {
                 self.ext_loading += 1;
