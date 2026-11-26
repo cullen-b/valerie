@@ -544,7 +544,10 @@ function ui() {
                transition: width 2.5s cubic-bezier(.1,.7,.3,1), opacity .25s; }
     .pick { position: fixed; display: none; border-radius: 4px; background: color-mix(in srgb, ${cfg.accent || "#9d8cff"} 22%, transparent);
             outline: 2px solid ${cfg.accent || "#9d8cff"}; transition: left .06s, top .06s, width .06s, height .06s; }
-    .ring { position: fixed; border-radius: 6px; outline: 2px solid ${cfg.accent || "#9d8cff"}; pointer-events: none; }`;
+    .ring { position: fixed; border-radius: 6px; outline: 2px solid ${cfg.accent || "#9d8cff"}; pointer-events: none; }
+    .store { all: unset; position: fixed; right: 20px; bottom: 20px; padding: 10px 16px; border-radius: 999px; background: ${cfg.accent || "#9d8cff"}; color: #fff;
+             font: 600 14px/1.2 -apple-system, system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.25); pointer-events: auto; cursor: pointer; }
+    .store:hover { filter: brightness(1.08); } .store:active { transform: scale(.97); }`;
   styleRoot(shadow, st);
   return shadow;
 }
@@ -2021,8 +2024,36 @@ function watchIcons() {
   watchIcons.on = true;
   new MutationObserver(iconChanged).observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ["href", "rel"] });
 }
+// ---------- "Add to Valerie" on Chrome Web Store pages (the store only offers its own button to Chrome) ----------
+let storeBtn = null, storeTries = 0;
+function storeAdd(b) {
+  if (b.dataset.valerieBusy) return;
+  const label = b.textContent; b.dataset.valerieBusy = "1"; b.textContent = tr("Adding…"); post({ t: "store_add" });
+  setTimeout(() => { delete b.dataset.valerieBusy; b.textContent = label; }, 8000);
+}
+function storeButton() {
+  if (!cfg.chrome_web_store || location.hostname !== "chromewebstore.google.com" || window.top !== window) return;
+  const want = /^\/detail\/(?:[^/]+\/)?[a-p]{32}\/?$/.test(location.pathname);
+  // The store's own "Add to Chrome" button (greyed out outside Chrome) becomes ours; it renders late, so look a few times.
+  const theirs = want && [...document.querySelectorAll("button")].find((b) => /^\s*(Add to Chrome|Add to Valerie|Adding…)\s*$/.test(b.textContent));
+  if (theirs && !theirs.dataset.valerie) {
+    theirs.dataset.valerie = "1"; theirs.disabled = false; theirs.removeAttribute("disabled"); theirs.removeAttribute("aria-disabled");
+    for (const n of theirs.querySelectorAll("*")) if (!n.children.length && /Add to Chrome/.test(n.textContent)) n.textContent = tr("Add to Valerie");
+    if (/Add to Chrome/.test(theirs.textContent)) theirs.textContent = tr("Add to Valerie");
+    theirs.addEventListener("click", (e) => { e.preventDefault(); e.stopImmediatePropagation(); storeAdd(theirs); }, true);
+  }
+  if (!want || theirs) { if (storeBtn) { storeBtn.remove(); storeBtn = null; } }
+  else if (!storeBtn || !storeBtn.isConnected) {
+    storeBtn = document.createElement("button"); storeBtn.className = "store"; storeBtn.textContent = tr("Add to Valerie");
+    storeBtn.addEventListener("click", () => storeAdd(storeBtn));
+    ui().appendChild(storeBtn);
+  }
+  if (want && !theirs && storeTries < 6) { storeTries++; setTimeout(storeButton, 700); } else if (!want || theirs) storeTries = 0;
+}
+
 let lastMeta = "";
 function report() {
+  storeButton();
   const m = { t: "meta", favicon: favicon(), playing: [...document.querySelectorAll("video, audio")].some((v) => !v.paused && (!v.muted || tabMuted)),
     muted: tabMuted, media: mediaState(), url: location.href };
   const s = JSON.stringify(m); if (s !== lastMeta) { lastMeta = s; post(m); }

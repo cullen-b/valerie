@@ -680,8 +680,8 @@ Valerie runs web extensions on Safari's engine (WebKit), on macOS 15.4 or later;
   best choice, because it's the version made for this engine and it can talk to its app (biometric unlock, for
   example). "Extensions" in the command bar offers the ones in installed apps; or run `"{exe}" extensions add <app name>`
   (`extensions.offer_from_apps: false` stops the offers). It becomes a link to the app's `.appex` in `extensions/`.
-- **From the Chrome Web Store**: `"{exe}" extensions add <store link or 32-letter id>` (`extensions.chrome_web_store:
-  false` turns that off). It's the Chrome version running on Safari's engine: many work, some don't (Bitwarden's
+- **From the Chrome Web Store**: the user clicks "Add to Valerie" on the extension's store page, or run
+  `"{exe}" extensions add <store link or 32-letter id>` (`extensions.chrome_web_store: false` turns both off). It's the Chrome version running on Safari's engine: many work, some don't (Bitwarden's
   Chrome version doesn't start; use its Safari one).
 - **Unpacked** (a folder with a manifest.json, as for Safari or Chrome "load unpacked") in `extensions/`.
 

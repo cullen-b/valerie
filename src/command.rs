@@ -812,7 +812,7 @@ pub enum Command {
         #[serde(default)]
         options: bool,
     },
-    /// Add the Safari extension that comes with an installed app (by the app's name) to the extensions folder.
+    /// Add the Safari extension that comes with an installed app (by the app's name), or a Chrome Web Store link or ID.
     AddExtension {
         app: String,
     },
@@ -1094,7 +1094,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("move_to_little_window", "{ tab? }"),
     ("move_to_main_window", "{ space? }"),
     ("peek", "{ url }"),
-    ("import", "{ source: arc | chrome | brave | edge | vivaldi | chromium | safari | firefox }"),
+    ("import", "{ source: arc | chrome | brave | edge | vivaldi | chromium | dia | safari | firefox | zen }"),
     ("find_in_page", "{ query? }"),
     ("toggle_mute", "{ tab? }"),
     ("copy_text", "{ text }"),
@@ -1143,7 +1143,7 @@ pub const WITH_ARGS: &[(&str, &str)] = &[
     ("new_window", "{ url? }  (a separate window for one page)"),
     ("new_private_window", "{ url? }  (a window whose cookies and storage last only while it's open; no history)"),
     ("extension_action", "{ name, options? }  (open a browser extension's popup, or its options page)"),
-    ("add_extension", "{ app }  (add the Safari extension that comes with this installed app, e.g. Bitwarden; Valerie asks before loading it)"),
+    ("add_extension", "{ app }  (add the Safari extension that comes with this installed app, e.g. Bitwarden, or a Chrome Web Store link or extension ID; Valerie asks before loading it)"),
     ("toggle_plugin", "{ name, on?, extension? }  (turn a plugin or browser extension on or off; without `on`, switch it; `extension: true` when a plugin has the same name)"),
     ("save_settings", "{ name? }  (keep the settings in use, the whole config.yaml, under this name; replaces one by that name; no name: asks)"),
     ("switch_settings", "{ name? }  (use these saved settings: config.yaml becomes a copy of them; no name: the next saved ones; `valerie saved-settings` lists them)"),

@@ -6,13 +6,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SOURCES: [&str; 8] = [
-    "arc", "chrome", "brave", "edge", "vivaldi", "chromium", "safari", "firefox",
+const SOURCES: [&str; 10] = [
+    "arc", "chrome", "brave", "edge", "vivaldi", "chromium", "dia", "safari", "firefox", "zen",
 ];
 const MAX_DEPTH: usize = 64;
 const ARC_SIDEBAR: &str = "Library/Application Support/Arc/StorableSidebar.json";
 const SAFARI_BOOKMARKS: &str = "Library/Safari/Bookmarks.plist";
 const FIREFOX_PROFILES: &str = "Library/Application Support/Firefox/Profiles";
+const ZEN_PROFILES: &str = "Library/Application Support/zen/Profiles";
 const FIREFOX_QUERY: &str = "SELECT b.id AS id, b.parent AS parent, b.type AS kind, \
     b.title AS title, p.url AS url FROM moz_bookmarks b \
     LEFT JOIN moz_places p ON p.id = b.fk;";
@@ -66,7 +67,7 @@ pub fn import(source: &str) -> Result<Imported> {
     match source {
         "arc" => arc(&path),
         "safari" => safari(&path),
-        "firefox" => firefox(&path),
+        "firefox" | "zen" => firefox(&path),
         _ => chromium(&path),
     }
 }
@@ -82,6 +83,7 @@ fn locate(source: &str) -> Option<PathBuf> {
         "arc" => home.join(ARC_SIDEBAR),
         "safari" => home.join(SAFARI_BOOKMARKS),
         "firefox" => return firefox_places(&home.join(FIREFOX_PROFILES)),
+        "zen" => return firefox_places(&home.join(ZEN_PROFILES)),
         "chrome" => home.join("Library/Application Support/Google/Chrome/Default/Bookmarks"),
         "brave" => {
             home.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Bookmarks")
@@ -89,6 +91,7 @@ fn locate(source: &str) -> Option<PathBuf> {
         "edge" => home.join("Library/Application Support/Microsoft Edge/Default/Bookmarks"),
         "vivaldi" => home.join("Library/Application Support/Vivaldi/Default/Bookmarks"),
         "chromium" => home.join("Library/Application Support/Chromium/Default/Bookmarks"),
+        "dia" => home.join("Library/Application Support/Dia/User Data/Default/Bookmarks"),
         _ => return None,
     };
     path.is_file().then_some(path)

@@ -255,7 +255,7 @@ function importStep(root) {
   root.append(el("div", "kicker", "Step 1 · Bring your stuff"), el("h1", null, "Start with what you already have"),
     el("p", "lead", "Valerie can bring over your bookmarks, and from Arc your spaces, pinned tabs and folders too. Your old browser isn't changed."));
   const names = { arc: ["Arc", "Spaces, pinned tabs and folders"], chrome: ["Chrome", "Bookmarks"], brave: ["Brave", "Bookmarks"], edge: ["Edge", "Bookmarks"],
-    vivaldi: ["Vivaldi", "Bookmarks"], chromium: ["Chromium", "Bookmarks"], safari: ["Safari", "Bookmarks"], firefox: ["Firefox", "Bookmarks"] };
+    vivaldi: ["Vivaldi", "Bookmarks"], chromium: ["Chromium", "Bookmarks"], safari: ["Safari", "Bookmarks"], firefox: ["Firefox", "Bookmarks"], dia: ["Dia", "Bookmarks"], zen: ["Zen", "Bookmarks"] };
   const g = el("div", "grid");
   for (const src of W.imports) {
     const [name, what] = names[src] || [src, "Bookmarks"];

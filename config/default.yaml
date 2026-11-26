@@ -1262,6 +1262,7 @@ extensions:
   turned_off: []           # extensions that stay off, by folder name, e.g. [youtube-theater]. The switches in
                            # "Plugins" change this list; removing a name turns that extension back on
   folder: ""               # where they live; empty = the extensions folder next to this file
-  chrome_web_store: true   # let `valerie extensions add <Chrome Web Store link or id>` add extensions. true | false
+  chrome_web_store: true   # Chrome Web Store pages get an "Add to Valerie" button, and `valerie extensions add <store link or id>`
+                           # works. true | false
   offer_from_apps: true    # "Extensions" offers the Safari extensions that come with your installed apps (Bitwarden,
                            # 1Password, …) and `valerie extensions` lists them. true | false

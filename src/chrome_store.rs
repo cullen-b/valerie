@@ -5,6 +5,16 @@ use std::path::Path;
 
 /// Marks a folder that came from the store, so adding the same extension again updates it and nothing else.
 const MARKER: &str = ".chrome-web-store-id";
+/// The Chrome version Valerie asks the store as, and that store extensions are told they run in.
+const CHROME: &str = "142.0.7444.60";
+/// Put first in a store extension's background and pages (`prepare`).
+const SHIM: &str = include_str!("../ui/extension-shim.js");
+const SHIM_FILE: &str = "valerie-shim.js";
+/// Which shim a prepared folder carries, so it's only redone when the shim changes.
+const STAMP: &str = ".valerie-shim";
+const START: &str = "/* Valerie: Chrome behaviour WebKit lacks (ui/extension-shim.js) */";
+const END: &str = "/* Valerie: end of shim */";
+const TAG: &str = "<script src=\"/valerie-shim.js\"></script>";
 
 /// The extension's ID from a store link or a bare ID.
 pub fn extension_id(link_or_id: &str) -> Option<String> {
@@ -69,7 +79,7 @@ pub fn add(link_or_id: &str, dir: &Path) -> Result<String> {
     std::fs::create_dir_all(&work)?;
     let result = (|| -> Result<String> {
         let crx = work.join("package.crx");
-        let url = format!("https://clients2.google.com/service/update2/crx?response=redirect&prodversion=142.0.7444.60&acceptformat=crx2,crx3&x=id%3D{id}%26uc");
+        let url = format!("https://clients2.google.com/service/update2/crx?response=redirect&prodversion={CHROME}&acceptformat=crx2,crx3&x=id%3D{id}%26uc");
         let ok = crate::platform::command("curl").args(["-fsSL", "--max-time", "120", "--proto", "=https", "-o"]).arg(&crx).arg(&url).status()?.success();
         let bytes = std::fs::read(&crx).unwrap_or_default();
         if !ok || bytes.is_empty() {
@@ -93,6 +103,7 @@ pub fn add(link_or_id: &str, dir: &Path) -> Result<String> {
             std::fs::remove_dir_all(&dest).with_context(|| format!("couldn't replace {}", dest.display()))?;
         }
         std::fs::write(files.join(MARKER), &id)?;
+        prepare(&files)?;
         std::fs::rename(&files, &dest).with_context(|| format!("couldn't move it into {}", dest.display()))?;
         Ok(name)
     })();
@@ -101,6 +112,84 @@ pub fn add(link_or_id: &str, dir: &Path) -> Result<String> {
         crate::log::line("extensions", format!("adding {id} from the Chrome Web Store: {e:#}"));
     }
     result
+}
+
+/// A path from the manifest, if it's a plain file inside `dir` (not a link, not outside it).
+fn inside(dir: &Path, rel: &str) -> Option<std::path::PathBuf> {
+    let rel = rel.trim_start_matches('/');
+    if rel.split(['/', '\\']).any(|p| p == "..") || Path::new(rel).is_absolute() {
+        return None;
+    }
+    let p = dir.join(rel);
+    std::fs::symlink_metadata(&p).ok().filter(|m| m.is_file()).map(|_| p)
+}
+
+/// The script without a shim this put in front of it before.
+fn without_shim(source: &str) -> &str {
+    let mut s = source;
+    if s.starts_with(START) {
+        if let Some(i) = s.find(END) {
+            s = s[i + END.len()..].trim_start_matches('\n');
+        }
+    }
+    let import = format!("import \"/{SHIM_FILE}\";\n");
+    s.strip_prefix(import.as_str()).unwrap_or(s)
+}
+
+/// The page with the shim's script tag as the first thing in its head.
+fn page_with_shim(html: &str) -> String {
+    let html = html.replace(TAG, "");
+    let lower = html.to_ascii_lowercase();
+    let at = lower.find("<head").and_then(|h| lower[h..].find('>').map(|e| h + e + 1)).or_else(|| {
+        lower.trim_start().starts_with("<!doctype").then(|| lower.find('>').map(|e| e + 1)).flatten()
+    }).unwrap_or(0);
+    format!("{}{TAG}{}", &html[..at], &html[at..])
+}
+
+fn html_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let Ok(t) = e.file_type() else { continue };
+        let p = e.path();
+        if t.is_dir() {
+            html_files(&p, out);
+        } else if t.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("html") || x.eq_ignore_ascii_case("htm")) {
+            out.push(p);
+        }
+    }
+}
+
+/// Put the shim first in a store extension's background and in every page it ships, so it runs before the extension's
+/// own code. manifest.json is never changed (Valerie's "Load this extension?" answer is tied to it). Folders that didn't
+/// come from the store, and ones already carrying this shim, are left alone.
+pub fn prepare(dir: &Path) -> Result<()> {
+    if !dir.join(MARKER).is_file() {
+        return Ok(());
+    }
+    let script = SHIM.replace("__VALERIE_CHROME__", CHROME);
+    let version = crate::blocking::hash(&script);
+    if std::fs::read_to_string(dir.join(STAMP)).ok().as_deref() == Some(version.as_str()) {
+        return Ok(());
+    }
+    let manifest: serde_json::Value = serde_json::from_str(std::fs::read_to_string(dir.join("manifest.json"))?.trim_start_matches('\u{feff}'))?;
+    std::fs::write(dir.join(SHIM_FILE), &script)?;
+    let bg = &manifest["background"];
+    let module = bg["type"].as_str() == Some("module");
+    let first = bg["service_worker"].as_str().or_else(|| bg["scripts"].get(0).and_then(|v| v.as_str()));
+    if let Some(path) = first.and_then(|f| inside(dir, f)) {
+        let source = std::fs::read_to_string(&path)?;
+        let rest = without_shim(&source);
+        let out = if module && bg["service_worker"].is_string() { format!("import \"/{SHIM_FILE}\";\n{rest}") } else { format!("{START}\n{script}\n{END}\n{rest}") };
+        std::fs::write(&path, out)?;
+    }
+    let mut pages = vec![];
+    html_files(dir, &mut pages);
+    for p in pages {
+        if let Ok(html) = std::fs::read_to_string(&p) {
+            std::fs::write(&p, page_with_shim(&html))?;
+        }
+    }
+    std::fs::write(dir.join(STAMP), version)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -150,6 +239,37 @@ mod tests {
         assert_eq!(folder_name(&dir, ID), "ublock-origin");
         std::fs::write(dir.join("manifest.json"), r#"{"name":"…"}"#).unwrap();
         assert_eq!(folder_name(&dir, ID), ID);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_shim_goes_first_once() {
+        let dir = std::env::temp_dir().join(format!("valerie-cws-shim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("popup")).unwrap();
+        let manifest = r#"{"manifest_version":3,"background":{"service_worker":"bg.js"}}"#;
+        std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+        std::fs::write(dir.join("bg.js"), "start();\n").unwrap();
+        std::fs::write(dir.join("popup/index.html"), "<!doctype html><html><HEAD><title>x</title></head></html>").unwrap();
+        prepare(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("bg.js")).unwrap(), "start();\n", "not from the store: untouched");
+        std::fs::write(dir.join(MARKER), ID).unwrap();
+        prepare(&dir).unwrap();
+        std::fs::remove_file(dir.join(STAMP)).unwrap();
+        prepare(&dir).unwrap();
+        let bg = std::fs::read_to_string(dir.join("bg.js")).unwrap();
+        assert!(bg.starts_with(START) && bg.ends_with(&format!("{END}\nstart();\n")) && bg.matches(START).count() == 1, "{bg}");
+        assert!(bg.contains(CHROME) && !bg.contains("__VALERIE_CHROME__"));
+        let page = std::fs::read_to_string(dir.join("popup/index.html")).unwrap();
+        assert_eq!(page, format!("<!doctype html><html><HEAD>{TAG}<title>x</title></head></html>"));
+        assert_eq!(std::fs::read_to_string(dir.join("manifest.json")).unwrap(), manifest);
+        std::fs::write(dir.join("manifest.json"), r#"{"background":{"service_worker":"bg.js","type":"module"}}"#).unwrap();
+        std::fs::remove_file(dir.join(STAMP)).unwrap();
+        prepare(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("bg.js")).unwrap(), format!("import \"/{SHIM_FILE}\";\nstart();\n"));
+        std::fs::write(dir.join("manifest.json"), r#"{"background":{"service_worker":"../outside.js"}}"#).unwrap();
+        std::fs::remove_file(dir.join(STAMP)).unwrap();
+        prepare(&dir).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
