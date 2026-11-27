@@ -1,7 +1,7 @@
 // Games drawn as pixel art on <canvas id="casino">: blackjack, video poker, baccarat, roulette, slots, hearts, spades and bridge.
 // Used by the "You're offline" page (pages.offline_game) and valerie://page/casino (the play_* commands).
 (() => {
-  const W = 210, H = 142, OY = 20, cv = document.getElementById("casino");
+  const W = 210, H = 152, OY = 20, cv = document.getElementById("casino");
   if (!cv) return;
   const ctx = cv.getContext("2d");
   // A 3×5 pixel font: five rows of three, top to bottom.
@@ -34,7 +34,7 @@
   try { const s = OWN && JSON.parse(localStorage.getItem("casino") || "{}"); if (s && s.chips > 0) { chips = s.chips; best = s.best || chips; } if (s && s.bots >= 1 && s.bots <= 5) bots = s.bots; } catch {}
   const save = () => { best = Math.max(best, chips); if (OWN) try { localStorage.setItem("casino", JSON.stringify({ chips, best, bots, game: game.name })); } catch {} };
 
-  // Drawing, in the 210×124 grid of big pixels.
+  // Drawing, in the 210×152 grid of big pixels.
   const px = (x, y, w = 1, h = 1, c = ink) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x) * S, (Math.round(y) + oy) * S, w * S, h * S); };
   const wide = s => String(s).length * 4 - 1;
   const text = (s, x, y, c = ink) => {
@@ -460,13 +460,20 @@
     text(c.r, x + 2, y + 2, col);
     sprite(SUIT[c.s], x + 3, y + 8, 1, col);
   };
-  const rank = r => ({ A: 14, K: 13, Q: 12, J: 11 })[r] || +r;
+  // A card in your hand: double-size rank and suit in the 14 columns the next card leaves showing.
+  const held = (x, y, c, col = ink) => {
+    ctx.clearRect(x * S, (y + oy) * S, 22 * S, 30 * S);
+    box(x, y, 22, 30, col);
+    [...c.r].forEach((ch, j) => sprite(FONT[ch].match(/.../g), x + (c.r.length > 1 ? 1 : 5) + j * 7, y + 2, 2, col));
+    sprite(SUIT[c.s], x + 1, y + 14, 2, col);
+  };
+  const rank =r => ({ A: 14, K: 13, Q: 12, J: 11 })[r] || +r;
   const order = h => h.sort((a, b) => SUITS.indexOf(a.s) - SUITS.indexOf(b.s) || a.v - b.v);
   const deal4 = () => { const d = deck().map(c => ({ ...c, v: rank(c.r) })); return [0, 1, 2, 3].map(i => order(d.slice(i * 13, i * 13 + 13))); };
   const suited = (h, s) => h.filter(c => c.s === s);
   // The winning play: the highest trump, else the highest card of the suit led.
   const top = (trick, trump) => trick.reduce((w, x) => ((x.c.s === w.c.s ? x.c.v > w.c.v : x.c.s === trump) ? x : w));
-  const handX = n => Math.round((W - (n - 1) * 15 - 13) / 2);
+  const handX = n => Math.round((W - (n - 1) * 15 - 22) / 2);
 
   // The table a trick game plays on. `o` says who you play for, what's legal, how bots play and what a trick and a deal mean.
   const table = (g, o) => {
@@ -517,8 +524,8 @@
       s.sel = i;
     };
     s.at = (x, y) => {
-      const h = s.hands[s.view], x0 = handX(h.length), i = Math.floor((x - x0) / 15);
-      return y >= HY - 5 && y <= HY + 18 && i >= 0 && i < h.length && x - x0 - i * 15 < 14 ? i : -1;
+      const h = s.hands[s.view], x0 = handX(h.length), i = Math.min(Math.floor((x - x0) / 15), h.length - 1);
+      return y >= HY - 5 && y <= HY + 30 && i >= 0 && x - x0 - i * 15 < 22 ? i : -1;
     };
     // lab(p) is a seat's [name, detail]; `hot` the seat to play; `raised` cards lifted out of your hand.
     s.render = (lab, hot, raised, cursor) => {
@@ -535,8 +542,8 @@
       tag(one(s.view), 0, 62, hot === s.view, "mid");
       s.trick.forEach(({ p, c }) => pip(AT[p][0], AT[p][1], c));
       const h = s.hands[s.view], x0 = handX(h.length), ok = s.wait ? s.legal(s.turn) : null;
-      h.forEach((c, i) => pip(x0 + i * 15, HY - (raised && raised.has(c) ? 4 : 0), c, ok && !ok.includes(c) ? dim : ink));
-      if (cursor && h[s.sel]) px(x0 + s.sel * 15 + 2, HY + 19, 9, 1);
+      h.forEach((c, i) => held(x0 + i * 15, HY - (raised && raised.has(c) ? 4 : 0), c, ok && !ok.includes(c) ? dim : ink));
+      if (cursor && h[s.sel]) px(x0 + s.sel * 15 + 2, HY + 31, 11, 1);
     };
     return s;
   };

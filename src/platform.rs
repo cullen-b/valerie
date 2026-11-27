@@ -3845,7 +3845,7 @@ pub static OFFLINE_GAME_PICK: std::sync::RwLock<String> = std::sync::RwLock::new
 
 /// The games under "You're offline" (pages.offline_game); the same games as valerie://page/casino.
 const OFFLINE_CASINO: &str = concat!(
-    r#"<section style="margin-top:36px"><style>#casino{display:block;width:100%;max-width:420px;aspect-ratio:210/142;image-rendering:pixelated;cursor:pointer;touch-action:manipulation}#casino:focus-visible{outline:2px solid Highlight;outline-offset:4px}#casino-msg{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}</style>"#,
+    r#"<section style="margin-top:36px"><style>#casino{display:block;width:100%;max-width:420px;aspect-ratio:210/148;image-rendering:pixelated;cursor:pointer;touch-action:manipulation}#casino:focus-visible{outline:2px solid Highlight;outline-offset:4px}#casino-msg{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}</style>"#,
     r#"<canvas id="casino" tabindex="0" role="img" aria-label="Games: blackjack, poker, baccarat, roulette, slots, hearts, spades and bridge. Left and right arrows switch games, or pick a card during a card game; Space plays."></canvas><p id="casino-msg" role="status"></p><script>"#,
     include_str!("../ui/casino.js"),
     "</script></section>"
