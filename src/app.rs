@@ -6669,6 +6669,9 @@ impl App {
         platform::WEBCRYPTO_IN_KEYCHAIN.store(self.config.passwords.webcrypto_key == "keychain", std::sync::atomic::Ordering::Relaxed);
         platform::HTTP_SIGN_IN.store(self.config.pages.http_sign_in, std::sync::atomic::Ordering::Relaxed);
         platform::OFFLINE_GAME.store(self.config.pages.offline_game, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut pick) = platform::OFFLINE_GAME_PICK.write() {
+            pick.clone_from(&self.config.pages.offline_game_pick);
+        }
         platform::SITE_PRINT.store(self.config.pages.site_print, std::sync::atomic::Ordering::Relaxed);
         platform::VISIT_ANYWAY.store(self.config.pages.visit_anyway, std::sync::atomic::Ordering::Relaxed);
         BLOCK_POPUPS.store(self.config.links.block_popups, std::sync::atomic::Ordering::Relaxed);
@@ -8584,12 +8587,15 @@ impl App {
                     self.toast(&e);
                 }
             }
-            Command::PlayBlackjack | Command::PlayPoker | Command::PlayBaccarat | Command::PlayRoulette | Command::PlaySlots => {
+            Command::PlayBlackjack | Command::PlayPoker | Command::PlayBaccarat | Command::PlayRoulette | Command::PlaySlots | Command::PlayHearts | Command::PlaySpades | Command::PlayBridge => {
                 let game = match cmd {
                     Command::PlayPoker => "poker",
                     Command::PlayBaccarat => "baccarat",
                     Command::PlayRoulette => "roulette",
                     Command::PlaySlots => "slots",
+                    Command::PlayHearts => "hearts",
+                    Command::PlaySpades => "spades",
+                    Command::PlayBridge => "bridge",
                     _ => "blackjack",
                 };
                 self.open_casino(game);
