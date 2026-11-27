@@ -15,6 +15,7 @@ mod chrome_store;
 mod import;
 mod llm_guide;
 mod mcp;
+mod game_host;
 mod passwords;
 mod otp;
 mod permission_tile;

@@ -594,6 +594,11 @@ pages:
                            # blackjack | poker | baccarat | roulette | slots | hearts | spades | bridge
   game_help: true          # those games have a ? in the corner that shows how to play the one you're on (also the ? key).
                            # false = no ? and no rules. true | false
+  game_invites: true       # valerie://page/casino has INVITE in its top-left corner: it copies a link friends open in any
+                           # browser to play the same table (hearts, spades, bridge up to 4; poker up to 6; blackjack,
+                           # baccarat and roulette share the table, each with their own chips; slots is one player). Your
+                           # Valerie runs the games; the link goes through a Cloudflare quick tunnel (cloudflared, downloaded
+                           # the first time) and stops when you close the casino tab. false = no INVITE. true | false
   http_sign_in: true       # Mac: the name and password box for sites that ask the old way (HTTP sign-in: routers, staging
                            # sites, intranets). false = such sites only show their "401" page. true | false
   visit_anyway: true       # Mac: the error page for a site whose security certificate can't be checked has "Visit anyway"

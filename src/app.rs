@@ -213,6 +213,8 @@ pub enum UserEvent {
     WidgetText { key: String, text: String },
     /// Time to refresh sidebar widgets whose text is due.
     WidgetTick,
+    /// News for the casino tab about friends playing its games (game_host.rs): joins, leaves, clicks, the link.
+    GameHost(Value),
     /// Time to load the next page put to sleep while the window was closed, if the last one hasn't said it finished.
     RestoreNext,
     /// The answer to "Quit Valerie?".
@@ -790,7 +792,7 @@ fn brief_page(uri: &wry::http::Uri, proxy: &std::sync::Mutex<EventLoopProxy<User
 const BUILT_IN_PAGES: &[&str] = &["downloads", "history", "changes", "saved-settings", "task-manager", "casino"];
 
 /// Tools only built-in pages (and pages that list them) can use: they act on files Valerie downloaded.
-const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change", "list_saved_settings", "save_settings", "switch_settings", "delete_saved_settings", "list_tasks", "end_tab_process"];
+const PAGE_OPS: &[&str] = &["open_download", "reveal_download", "forget_download", "list_changes", "go_back_to_change", "list_saved_settings", "save_settings", "switch_settings", "delete_saved_settings", "list_tasks", "end_tab_process", "host_game", "stop_hosting", "game_frames", "hosting_status"];
 
 #[path = "task_manager.rs"]
 mod task_manager;
@@ -10778,6 +10780,17 @@ impl App {
                 }
             }
             UserEvent::WidgetTick => self.refresh_widgets(),
+            UserEvent::GameHost(v) => {
+                if let Some(link) = v["ready"].as_str() {
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(link));
+                }
+                let js = format!("window.casinoHost && casinoHost({v})");
+                for view in self.views.values() {
+                    if platform::page_url(view).is_some_and(|u| u.starts_with("valerie://page/casino")) {
+                        let _ = view.evaluate_script(&js);
+                    }
+                }
+            }
             UserEvent::RestoreNext => self.restore_next(),
             UserEvent::ExtensionGrant { name, print, allowed } => {
                 self.ext_asking = false;
@@ -12494,6 +12507,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
             }
             Event::LoopDestroyed => {
                 app.save();
+                crate::game_host::stop();
                 crate::log::note_quit();
             }
             _ => {}
@@ -12503,6 +12517,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
             app.drain_events(elwt);
             app.remember_frame();
             app.save();
+            crate::game_host::stop();
             crate::log::note_quit();
             *control_flow = ControlFlow::Exit;
         }
@@ -15965,6 +15980,25 @@ impl App {
             "list_saved_settings" | "save_settings" | "switch_settings" | "delete_saved_settings" => self.saved_settings_op(op, args),
             "list_tasks" => Ok(self.task_list()),
             "end_tab_process" => self.end_tab_process(args),
+            "host_game" if !self.config.pages.game_invites => Err("inviting friends to the games is off (pages.game_invites)".into()),
+            "host_game" => {
+                // Already open: INVITE (then LINK) copies the link again.
+                let r = crate::game_host::start(self.proxy.clone());
+                if let Some(link) = r["url"].as_str() {
+                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(link));
+                }
+                Ok(r)
+            }
+            "stop_hosting" => {
+                crate::game_host::stop();
+                Ok(json!("stopped"))
+            }
+            "game_frames" => Ok(crate::game_host::frames(args)),
+            "hosting_status" => {
+                let mut s = crate::game_host::status();
+                s["on"] = json!(self.config.pages.game_invites);
+                Ok(s)
+            }
             "forget_download" => {
                 let before = self.state.downloads.len();
                 self.state.downloads.retain(|d| if path.is_empty() { d.state == "downloading" } else { d.path != path });
