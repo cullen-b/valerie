@@ -242,6 +242,14 @@ mod mac {
             if msg_send![v, respondsToSelector: sel!(_setPageMuted:)] {
                 let _: () = msg_send![v, _setPageMuted: 1usize];
             }
+            // A picture-in-picture window can outlive its closed page and keep playing.
+            let none: *const AnyObject = std::ptr::null();
+            if msg_send![v, respondsToSelector: sel!(pauseAllMediaPlaybackWithCompletionHandler:)] {
+                let _: () = msg_send![v, pauseAllMediaPlaybackWithCompletionHandler: none];
+            }
+            if msg_send![v, respondsToSelector: sel!(closeAllMediaPresentationsWithCompletionHandler:)] {
+                let _: () = msg_send![v, closeAllMediaPresentationsWithCompletionHandler: none];
+            }
         }
     }
 
