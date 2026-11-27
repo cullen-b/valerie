@@ -585,10 +585,13 @@ pages:
   error_page: true         # Mac: when a site doesn't load (offline, a mistyped address, a site that's down), a page says
                            # why, with Try Again; it loads by itself when you're back online. false = the tab stays as it was.
                            # (Windows and Linux show their system's own error page either way.) true | false
-  offline_game: true       # Mac: the "You're offline" page has pixel-art casino games to play while you wait: blackjack,
-                           # video poker, baccarat, roulette and slots (left and right arrows switch games, Space plays). The
-                           # same games are always at valerie://page/casino (commands play_blackjack, play_poker, play_baccarat,
-                           # play_roulette, play_slots; hide them with command_bar.hide_commands). false = just the message. true | false
+  offline_game: true       # Mac: the "You're offline" page has pixel-art games to play while you wait: blackjack, video
+                           # poker, baccarat, roulette, slots, hearts, spades and bridge (left and right arrows switch games or
+                           # pick a card, Space plays). The same games are always at valerie://page/casino (commands
+                           # play_blackjack, play_poker, play_baccarat, play_roulette, play_slots, play_hearts, play_spades,
+                           # play_bridge; hide them with command_bar.hide_commands). false = just the message. true | false
+  offline_game_pick: random # which game the "You're offline" page opens on. One of: random (a different one each time) |
+                           # blackjack | poker | baccarat | roulette | slots | hearts | spades | bridge
   http_sign_in: true       # Mac: the name and password box for sites that ask the old way (HTTP sign-in: routers, staging
                            # sites, intranets). false = such sites only show their "401" page. true | false
   visit_anyway: true       # Mac: the error page for a site whose security certificate can't be checked has "Visit anyway"

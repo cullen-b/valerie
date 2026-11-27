@@ -1,7 +1,7 @@
-// Casino games drawn as pixel art on <canvas id="casino">: blackjack, video poker, baccarat, roulette and slots.
+// Games drawn as pixel art on <canvas id="casino">: blackjack, video poker, baccarat, roulette, slots, hearts, spades and bridge.
 // Used by the "You're offline" page (pages.offline_game) and valerie://page/casino (the play_* commands).
 (() => {
-  const W = 210, H = 132, cv = document.getElementById("casino");
+  const W = 210, H = 142, OY = 20, cv = document.getElementById("casino");
   if (!cv) return;
   const ctx = cv.getContext("2d");
   // A 3×5 pixel font: five rows of three, top to bottom.
@@ -62,12 +62,12 @@
     if (top) sprite(SUIT[c.s], x + 12, y + 19);
   };
   const MINI = { "♠": ["00100", "01110", "11111", "00100", "01110"], "♥": ["01010", "11111", "11111", "01110", "00100"], "♦": ["00100", "01110", "11111", "01110", "00100"], "♣": ["01110", "01110", "11111", "00100", "01110"] };
-  const mini = (x, y, c, down) => {
+  const mini = (x, y, c, down, col = ink) => {
     ctx.clearRect(x * S, (y + oy) * S, 13 * S, 15 * S);
-    box(x, y, 13, 15);
-    if (down) { for (let j = 2; j < 13; j++) for (let i = 2; i < 11; i++) if ((i + j) % 4 === 0) px(x + i, y + j); return; }
-    text(c.r, x + 2, y + 2);
-    sprite(MINI[c.s], x + 2, y + 8);
+    box(x, y, 13, 15, col);
+    if (down) { for (let j = 2; j < 13; j++) for (let i = 2; i < 11; i++) if ((i + j) % 4 === 0) px(x + i, y + j, 1, 1, col); return; }
+    text(c.r, x + 2, y + 2, col);
+    sprite(MINI[c.s], x + 2, y + 8, 1, col);
   };
   const hand = (cards, y, hideSecond) => { const x = Math.round((W - 22 - (cards.length - 1) * 14) / 2); cards.forEach((c, i) => card(x + i * 14, y, c, hideSecond && i === 1, i === cards.length - 1)); };
   const dashes = y => { for (let x = 0; x < W; x += 4) px(x, y, 2); };
@@ -450,7 +450,482 @@
     return g;
   })();
 
-  const games = [blackjack, poker, baccarat, roulette, slots];
+  // Trick-taking games (hearts, spades, bridge): four seats, you at the bottom, play goes clockwise.
+  const SEATS = ["YOU", "WEST", "NORTH", "EAST"], SUITS = ["♠", "♥", "♣", "♦"];
+  const AT = [[98, 43], [80, 30], [98, 17], [116, 30]], HY = 73;
+  // A small card with the big suit symbols, so spades and clubs (and hearts and diamonds) are easy to tell apart.
+  const pip = (x, y, c, col = ink) => {
+    ctx.clearRect(x * S, (y + oy) * S, 13 * S, 17 * S);
+    box(x, y, 13, 17, col);
+    text(c.r, x + 2, y + 2, col);
+    sprite(SUIT[c.s], x + 3, y + 8, 1, col);
+  };
+  const rank = r => ({ A: 14, K: 13, Q: 12, J: 11 })[r] || +r;
+  const order = h => h.sort((a, b) => SUITS.indexOf(a.s) - SUITS.indexOf(b.s) || a.v - b.v);
+  const deal4 = () => { const d = deck().map(c => ({ ...c, v: rank(c.r) })); return [0, 1, 2, 3].map(i => order(d.slice(i * 13, i * 13 + 13))); };
+  const suited = (h, s) => h.filter(c => c.s === s);
+  // The winning play: the highest trump, else the highest card of the suit led.
+  const top = (trick, trump) => trick.reduce((w, x) => ((x.c.s === w.c.s ? x.c.v > w.c.v : x.c.s === trump) ? x : w));
+  const handX = n => Math.round((W - (n - 1) * 15 - 13) / 2);
+
+  // The table a trick game plays on. `o` says who you play for, what's legal, how bots play and what a trick and a deal mean.
+  const table = (g, o) => {
+    const s = { hands: [[], [], [], []], trick: [], turn: 0, taken: [0, 0, 0, 0], gone: new Set(), sel: 0, wait: false, view: 0 };
+    s.leading = () => s.trick.length % 4 === 0;
+    s.follow = h => { if (s.leading()) return h; const f = suited(h, s.trick[0].c.s); return f.length ? f : h; };
+    s.legal = p => o.legal(p, s.hands[p]);
+    s.ok = i => s.wait && s.legal(s.turn).includes(s.hands[s.view][i]);
+    const step = () => {
+      if (o.mine(s.turn)) {
+        s.wait = true; s.view = s.turn; g.busy = false;
+        const ok = s.legal(s.turn), h = s.hands[s.turn];
+        if (!ok.includes(h[s.sel])) s.sel = h.indexOf(ok[0]);
+        g.msg = o.prompt();
+        return draw();
+      }
+      g.busy = true; draw();
+      later(() => put(s.turn, o.bot(s.turn, s.legal(s.turn))), 450);
+    };
+    const put = (p, c) => {
+      if (s.trick.length === 4) { s.trick = []; g.msg = ""; }
+      const h = s.hands[p];
+      h.splice(h.indexOf(c), 1);
+      s.trick.push({ p, c }); s.gone.add(c.r + c.s);
+      if (o.played) o.played(p, c);
+      if (s.trick.length < 4) { s.turn = (p + 1) % 4; return step(); }
+      const w = top(s.trick, o.trump()).p;
+      s.taken[w]++; s.turn = w;
+      g.msg = o.took(w);
+      // The trick stays on the table until the next card is led.
+      if (!h.length) return o.done();
+      draw(); later(step, 900);
+    };
+    s.start = p => { s.trick = []; s.taken = [0, 0, 0, 0]; s.gone = new Set(); s.turn = p; step(); };
+    s.play = i => {
+      if (!s.ok(i)) return false;
+      const c = s.hands[s.view][i];
+      s.wait = false; s.view = 0;
+      put(s.turn, c);
+      return true;
+    };
+    // The cursor skips cards you can't play.
+    s.move = d => {
+      const h = s.hands[s.view], ok = s.wait ? s.legal(s.turn) : h;
+      if (!ok.length) return;
+      let i = s.sel;
+      for (let k = 0; k < h.length; k++) { i = (i + d + h.length) % h.length; if (ok.includes(h[i])) break; }
+      s.sel = i;
+    };
+    s.at = (x, y) => {
+      const h = s.hands[s.view], x0 = handX(h.length), i = Math.floor((x - x0) / 15);
+      return y >= HY - 5 && y <= HY + 18 && i >= 0 && i < h.length && x - x0 - i * 15 < 14 ? i : -1;
+    };
+    // lab(p) is a seat's [name, detail]; `hot` the seat to play; `raised` cards lifted out of your hand.
+    s.render = (lab, hot, raised, cursor) => {
+      const tag = (str, x, y, on, how) => {
+        const w = wide(str);
+        x = how === "mid" ? Math.round((W - w) / 2) : how === "right" ? x - w : x;
+        if (on) { px(x - 1, y - 1, w + 2, 7); text(str, x, y, null); } else text(str, x, y);
+      };
+      const one = p => lab(p).filter(Boolean).join(" ");
+      tag(one(2), 0, 10, hot === 2, "mid");
+      const [w1, w2] = lab(1), [e1, e2] = lab(3);
+      tag(w1, 4, 48, hot === 1); if (w2) text(w2, 4, 55, dim);
+      tag(e1, 206, 48, hot === 3, "right"); if (e2) right(e2, 206, 55, dim);
+      tag(one(s.view), 0, 62, hot === s.view, "mid");
+      s.trick.forEach(({ p, c }) => pip(AT[p][0], AT[p][1], c));
+      const h = s.hands[s.view], x0 = handX(h.length), ok = s.wait ? s.legal(s.turn) : null;
+      h.forEach((c, i) => pip(x0 + i * 15, HY - (raised && raised.has(c) ? 4 : 0), c, ok && !ok.includes(c) ? dim : ink));
+      if (cursor && h[s.sel]) px(x0 + s.sel * 15 + 2, HY + 19, 9, 1);
+    };
+    return s;
+  };
+
+  // A partnership player (spades, bridge): leaves tricks its partner is winning, wins cheaply, leads its sure winners.
+  const partnerBot = (t, p, ok, trump, helpPal = true) => {
+    const h = t.hands[p], cost = c => c.v + (c.s === trump ? 20 : 0);
+    const low = cs => cs.reduce((a, b) => (cost(b) < cost(a) ? b : a)), high = cs => cs.reduce((a, b) => (cost(b) > cost(a) ? b : a));
+    // No higher card of its suit is still out.
+    const boss = c => { for (let v = c.v + 1; v <= 14; v++) if (!t.gone.has(RANKS[v === 14 ? 0 : v - 1] + c.s) && !h.some(x => x.v === v && x.s === c.s)) return false; return true; };
+    if (t.leading()) {
+      const sure = ok.filter(c => boss(c) && c.s !== trump);
+      if (sure.length) return high(sure);
+      const side = ok.filter(c => c.s !== trump);
+      if (!side.length) return boss(high(ok)) ? high(ok) : low(ok);
+      return SUITS.map(x => suited(side, x)).filter(x => x.length).sort((a, b) => b.length - a.length)[0][0];
+    }
+    const tr = t.trick, lead = tr[0].c.s, w = top(tr, trump), last = tr.length === 3;
+    const wins = ok.filter(c => (c.s === w.c.s ? c.v > w.c.v : c.s === trump));
+    if (helpPal && w.p === (p + 2) % 4 && (last || boss(w.c) || (w.c.s === trump && lead !== trump))) return low(ok);
+    if (!wins.length) return low(ok);
+    if (last || wins[0].s !== lead) return low(wins);
+    const sure = wins.filter(boss);
+    if (sure.length) return low(sure);
+    // Second hand low, third hand high.
+    return tr.length === 1 ? low(ok) : high(wins);
+  };
+
+  const hearts = (() => {
+    const g = { name: "HEARTS", cards: true, live: false, busy: false, msg: "AVOID HEARTS AND THE QUEEN OF SPADES. SPACE DEALS" };
+    const PASS = [1, 3, 2, 0], WAY = ["LEFT", "RIGHT", "ACROSS", ""];
+    let score = [0, 0, 0, 0], got = [0, 0, 0, 0], round = 0, phase = "idle", marked = new Set(), broken = false, first = true, finished = false;
+    const queen = c => c.s === "♠" && c.r === "Q";
+    const pts = c => (c.s === "♥" ? 1 : queen(c) ? 13 : 0);
+    const bot = (p, ok) => {
+      const t0 = t.trick;
+      if (t.leading()) {
+        const risky = c => c.s === "♠" && !t.gone.has("Q♠") && (c.v >= 12 || t.hands[p].some(queen));
+        const pool = ok.filter(c => !risky(c));
+        return (pool.length ? pool : ok).reduce((a, b) => (b.v < a.v || (b.v === a.v && a.s === "♥") ? b : a));
+      }
+      const w = top(t0, null).c, safe = ok.filter(c => !queen(c));
+      if (ok[0].s === t0[0].c.s) {
+        const under = ok.filter(c => c.v < w.v);
+        if (under.length) return under[under.length - 1];
+        const pool = safe.length ? safe : ok;
+        return t0.length === 3 && !t0.some(x => pts(x.c)) ? pool[pool.length - 1] : pool[0];
+      }
+      const q = ok.find(queen);
+      if (q) return q;
+      const big = ok.filter(c => c.s === "♠" && c.v > 12 && !t.gone.has("Q♠")), red = suited(ok, "♥");
+      if (big.length) return big[big.length - 1];
+      if (red.length) return red[red.length - 1];
+      return ok.reduce((a, b) => (b.v > a.v ? b : a));
+    };
+    const t = table(g, {
+      mine: p => p === 0,
+      trump: () => null,
+      legal: (p, h) => {
+        if (t.leading()) {
+          if (first) return h.filter(c => c.s === "♣" && c.r === "2");
+          const ok = broken ? h : h.filter(c => c.s !== "♥");
+          return ok.length ? ok : h;
+        }
+        const f = t.follow(h);
+        // Nothing worth points on the first trick, unless that's all you have.
+        if (first && f[0].s !== t.trick[0].c.s) { const clean = f.filter(c => !pts(c)); return clean.length ? clean : f; }
+        return f;
+      },
+      played: (p, c) => { if (c.s === "♥") broken = true; if (p === 0) marked.clear(); },
+      took: w => {
+        const n = t.trick.reduce((a, x) => a + pts(x.c), 0);
+        got[w] += n; first = false;
+        return SEATS[w] + (w ? " TAKES IT" : " TAKE IT") + (n ? " +" + n : "");
+      },
+      bot,
+      prompt: () => (t.leading() ? (first ? "LEAD THE 2 OF CLUBS" : broken ? "YOUR LEAD" : "YOUR LEAD. HEARTS AREN'T BROKEN YET") : "YOUR TURN"),
+      done: () => {
+        const moon = got.indexOf(26);
+        score = score.map((x, i) => x + (moon < 0 ? got[i] : i === moon ? 0 : 26));
+        g.live = g.busy = false; phase = "idle"; round++;
+        let m = moon === 0 ? "YOU SHOT THE MOON!" : moon > 0 ? SEATS[moon] + " SHOT THE MOON" : got[0] ? "YOU TOOK " + got[0] + " THIS HAND" : "A CLEAN HAND!";
+        if (Math.max(...score) >= 100) {
+          const low = Math.min(...score), best = [0, 1, 2, 3].filter(i => score[i] === low);
+          m = (best.includes(0) ? (best.length > 1 ? "YOU TIE FOR THE WIN" : "YOU WIN THE GAME") : SEATS[best[0]] + " WINS THE GAME") + " WITH " + low;
+          finished = true;
+        }
+        g.msg = m; over();
+      },
+    });
+    const begin = () => { phase = "play"; t.start(t.hands.findIndex(h => h.some(c => c.s === "♣" && c.r === "2"))); };
+    const deal = () => {
+      if (finished) { score = [0, 0, 0, 0]; round = 0; finished = false; }
+      t.hands = deal4(); t.trick = []; t.view = 0; t.sel = 0;
+      got = [0, 0, 0, 0]; broken = false; first = true; marked = new Set(); g.live = true;
+      if (PASS[round % 4]) { phase = "pass"; g.msg = "PICK 3 CARDS TO PASS " + WAY[round % 4]; }
+      else { g.msg = "NO PASSING THIS HAND"; begin(); }
+    };
+    const toggle = i => {
+      const c = t.hands[0][i];
+      if (!c) return;
+      t.sel = i;
+      if (marked.has(c)) marked.delete(c); else if (marked.size < 3) marked.add(c);
+      g.msg = marked.size === 3 ? "PRESS SPACE TO PASS THEM " + WAY[round % 4] : "PICK " + (3 - marked.size) + " MORE TO PASS " + WAY[round % 4];
+    };
+    // Bots pass what's most likely to cost them: high spades while short in spades, then high hearts, then high cards.
+    const danger = (c, h) => (c.s === "♠" && c.v >= 12 ? (suited(h, "♠").length < 5 ? 60 + c.v : c.v - 10) : c.s === "♥" ? 20 + c.v : c.v);
+    const pass = () => {
+      if (marked.size !== 3) return;
+      const way = PASS[round % 4];
+      const give = t.hands.map((h, p) => (p ? [...h].sort((a, b) => danger(b, h) - danger(a, h)).slice(0, 3) : [...marked]));
+      t.hands = t.hands.map((h, p) => h.filter(c => !give[p].includes(c)));
+      give.forEach((cards, p) => t.hands[(p + way) % 4].push(...cards));
+      t.hands.forEach(order);
+      marked = new Set(give[(4 - way) % 4]);
+      g.msg = "THE RAISED CARDS ARE THE ONES YOU GOT";
+      begin();
+    };
+    g.buttons = () => {
+      if (phase === "pass") {
+        const full = marked.size === 3;
+        return [
+          { label: marked.has(t.hands[0][t.sel]) ? "UNPICK" : "PICK", key: "enter", act: () => toggle(t.sel), on: true, lit: !full },
+          { label: "PASS " + WAY[round % 4], key: "p", act: pass, on: full, lit: full },
+        ];
+      }
+      if (phase === "play") return [{ label: "PLAY", key: "enter", act: () => t.play(t.sel), on: t.ok(t.sel), lit: true }];
+      return [{ label: finished || !round ? "NEW GAME" : "DEAL", key: "enter", act: deal, on: true, lit: true }];
+    };
+    g.key = k => { if (!g.live || !k.startsWith("arrow")) return false; t.move(k === "arrowleft" ? -1 : 1); return true; };
+    g.click = (x, y) => {
+      const i = t.at(x, y);
+      if (i < 0) return false;
+      if (phase === "pass") toggle(i); else if (phase === "play" && !t.play(i)) t.sel = i;
+      return true;
+    };
+    g.score = () => (round || g.live ? "HAND " + (round + (g.live ? 1 : 0)) + ". FIRST TO 100 LOSES" : "FIRST TO 100 POINTS LOSES");
+    g.render = () => t.render(p => [SEATS[p] + " " + score[p], g.live || round ? "+" + got[p] : ""], phase === "play" ? t.turn : -1, marked, phase === "pass" || t.wait);
+    return g;
+  })();
+
+  const spades = (() => {
+    const g = { name: "SPADES", cards: true, live: false, busy: false, msg: "YOU AND NORTH AGAINST WEST AND EAST. TO 500" };
+    let score = [0, 0], bags = [0, 0], bids = [null, null, null, null], dealer = 3, phase = "idle", myBid = 3, broken = false, finished = false, played = 0;
+    // About how many tricks a hand takes: aces, guarded kings and queens, long spades, and short suits to trump in.
+    const est = h => {
+      let n = 0;
+      const sp = suited(h, "♠").length;
+      for (const su of SUITS) {
+        const x = suited(h, su), has = r => x.some(c => c.r === r);
+        if (su === "♠") n += has("A") + (has("K") && sp >= 2) + (has("Q") && sp >= 3) * 0.6 + Math.max(0, sp - 4);
+        else {
+          n += has("A") * (x.length <= 5 ? 1 : 0.5) + (has("K") && x.length >= 2 && x.length <= 4) * 0.8 + (has("Q") && x.length === 3) * 0.3;
+          if (sp >= 3) n += x.length === 0 ? 1 : x.length === 1 ? 0.5 : 0;
+        }
+      }
+      return Math.min(13, Math.max(1, Math.round(n)));
+    };
+    const t = table(g, {
+      mine: p => p === 0,
+      trump: () => "♠",
+      legal: (p, h) => {
+        if (!t.leading()) return t.follow(h);
+        const ok = broken ? h : h.filter(c => c.s !== "♠");
+        return ok.length ? ok : h;
+      },
+      played: (p, c) => { if (c.s === "♠") broken = true; },
+      took: w => SEATS[w] + (w ? " TAKES IT" : " TAKE IT"),
+      // A partner who bid nil wants its tricks taken over.
+      bot: (p, ok) => partnerBot(t, p, ok, "♠", bids[(p + 2) % 4] !== 0),
+      prompt: () => (t.leading() && !broken && t.hands[0].some(c => c.s !== "♠") ? "YOUR LEAD. SPADES AREN'T BROKEN YET" : t.leading() ? "YOUR LEAD" : "YOUR TURN"),
+      done: () => {
+        const delta = [0, 1].map(k => {
+          const nil = [k, k + 2].filter(p => bids[p] === 0), bid = bids[k] + bids[k + 2], took = t.taken[k] + t.taken[k + 2];
+          let d = nil.reduce((a, p) => a + (t.taken[p] ? -100 : 100), 0);
+          if (!bid) bags[k] += took;
+          else if (took >= bid) { d += bid * 10 + took - bid; bags[k] += took - bid; }
+          else d -= bid * 10;
+          // Ten overtricks (bags) cost 100.
+          if (bags[k] >= 10) { bags[k] -= 10; d -= 100; }
+          score[k] += d;
+          return d;
+        });
+        g.live = g.busy = false; phase = "idle"; played++;
+        const sign = n => (n >= 0 ? "+" + n : String(n));
+        g.msg = "US " + sign(delta[0]) + "   THEM " + sign(delta[1]);
+        if (score.some(x => x >= 500 || x <= -200) && score[0] !== score[1]) {
+          finished = true;
+          g.msg = (score[0] > score[1] ? "YOU WIN THE GAME " : "THEY WIN THE GAME ") + Math.max(...score) + " TO " + Math.min(...score);
+        }
+        over();
+      },
+    });
+    const ask = p => {
+      if (bids.every(b => b !== null)) { phase = "play"; return t.start((dealer + 1) % 4); }
+      if (!p) { phase = "bid"; g.busy = false; g.msg = "HOW MANY TRICKS WILL YOU TAKE?"; return draw(); }
+      g.busy = true; draw();
+      later(() => { bids[p] = est(t.hands[p]); ask((p + 1) % 4); }, 450);
+    };
+    const deal = () => {
+      if (finished) { score = [0, 0]; bags = [0, 0]; played = 0; finished = false; }
+      dealer = (dealer + 1) % 4;
+      t.hands = deal4(); t.trick = []; t.view = 0; t.sel = 0; t.taken = [0, 0, 0, 0];
+      bids = [null, null, null, null]; broken = false; g.live = true; phase = "wait";
+      myBid = est(t.hands[0]);
+      ask((dealer + 1) % 4);
+    };
+    const bid = () => { if (phase !== "bid") return; bids[0] = myBid; phase = "wait"; ask(1); };
+    const nudge = d => { myBid = Math.min(13, Math.max(0, myBid + d)); };
+    g.buttons = () => {
+      if (phase === "bid") return [
+        { label: "-", key: "-", act: () => nudge(-1), on: myBid > 0 },
+        { label: myBid ? "BID " + myBid : "BID NIL", key: "enter", act: bid, on: true, lit: true },
+        { label: "+", key: "+", act: () => nudge(1), on: myBid < 13 },
+      ];
+      if (phase === "play") return [{ label: "PLAY", key: "enter", act: () => t.play(t.sel), on: t.ok(t.sel), lit: true }];
+      if (phase === "wait") return [{ label: "BIDDING", key: "", act: () => {}, on: false }];
+      return [{ label: finished || !played ? "NEW GAME" : "DEAL", key: "enter", act: deal, on: true, lit: true }];
+    };
+    g.key = k => {
+      if (k === "=" && phase === "bid") { nudge(1); return true; }
+      if (!g.live || !k.startsWith("arrow")) return false;
+      if (phase === "bid") nudge(k === "arrowleft" ? -1 : 1); else t.move(k === "arrowleft" ? -1 : 1);
+      return true;
+    };
+    g.click = (x, y) => {
+      const i = t.at(x, y);
+      if (i < 0 || phase !== "play") return false;
+      if (!t.play(i)) t.sel = i;
+      return true;
+    };
+    g.score = () => "US " + score[0] + " BAGS " + bags[0] + "   THEM " + score[1] + " BAGS " + bags[1];
+    g.render = () => t.render(p => {
+      const b = bids[p] === null ? "" : bids[p] ? "BID " + bids[p] : "NIL";
+      return [SEATS[p], b && (phase === "play" || !g.live) ? b + " TOOK " + t.taken[p] : b];
+    }, phase === "play" ? t.turn : -1, null, t.wait);
+    return g;
+  })();
+
+  // Contract bridge, scored like duplicate with nobody vulnerable and no doubles. When your side wins the auction you play
+  // both hands; when theirs does, you defend.
+  const bridge = (() => {
+    const g = { name: "BRIDGE", cards: true, live: false, busy: false, msg: "YOU AND NORTH AGAINST WEST AND EAST" };
+    const STRAIN = ["C", "D", "H", "S", "NT"], TRUMP = ["♣", "♦", "♥", "♠", null];
+    const call = b => (b < 0 ? "PASS" : ((b / 5) | 0) + 1 + STRAIN[b % 5]);
+    const hcp = h => h.reduce((a, c) => a + Math.max(0, c.v - 10), 0);
+    const balanced = h => SUITS.every(su => suited(h, su).length >= 2) && SUITS.filter(su => suited(h, su).length === 2).length <= 1;
+    let score = [0, 0], dealer = 3, calls = [], last = [], high = -1, by = -1, phase = "idle", contract = -1, declarer = -1, dummy = -1, myBid = 0, hint = -1, shown = false, played = 0;
+    const mine = p => p === 0 || (p === 2 && declarer % 2 === 0);
+    // A bot bids the cheapest contract it thinks its side can make, from its points and what its partner has bid.
+    const botCall = p => {
+      const h = t.hands[p], pal = (p + 2) % 4, palCalls = calls.filter(x => x.p === pal), palBids = palCalls.filter(x => x.b >= 0);
+      const opened = palBids.length > 0 && calls.find(x => x.b >= 0) === palBids[0];
+      const palPts = palBids.length ? (opened ? 13 : 9) : palCalls.length ? 6 : 8, palStrains = new Set(palBids.map(x => x.b % 5));
+      const options = [];
+      for (let st = 0; st < 5; st++) {
+        let tricks;
+        if (st < 4) {
+          const len = suited(h, TRUMP[st]).length, fit = len + (palStrains.has(st) ? (opened && palBids[0].b % 5 === st && st >= 2 ? 5 : 4) : 3);
+          if (fit < 8 && len < 6) continue;
+          const short = SUITS.filter(su => su !== TRUMP[st]).reduce((a, su) => a + Math.max(0, 3 - suited(h, su).length), 0);
+          tricks = 6 + (hcp(h) + short + palPts + Math.max(0, fit - 8) - 16) * 0.4;
+        } else {
+          if (!balanced(h) && !palStrains.has(4)) continue;
+          tricks = 6 + (hcp(h) + palPts - 17) * 0.4;
+        }
+        const game = [5, 5, 4, 4, 3][st];
+        let level = Math.min(7, Math.floor(tricks) - 6);
+        if (level > game && level < 6) level = game;
+        let b = high < 0 ? st : (((high / 5) | 0) + (high % 5 < st ? 0 : 1)) * 5 + st;
+        if (level < 1 || b > 34 || ((b / 5) | 0) + 1 > level) continue;
+        // Partner showed this suit and there's game (or a slam) in it: bid it straight away.
+        if (palStrains.has(st) && level >= game) b = Math.max(b, (level - 1) * 5 + st);
+        options.push({ b, st, rate: tricks + (st >= 2 ? 0.3 : 0) });
+      }
+      if (by === pal) {
+        const raise = options.find(x => x.st === high % 5);
+        if (raise) return raise.b;
+        if (high >= 5) return -1;
+      }
+      return options.length ? options.reduce((a, x) => (x.rate > a.rate ? x : a)).b : -1;
+    };
+    const say = (p, b) => { calls.push({ p, b }); last[p] = b; if (b >= 0) { high = b; by = p; } };
+    const ask = p => {
+      if (high < 0 && calls.length === 4) {
+        g.live = g.busy = false; phase = "idle";
+        g.msg = "EVERYONE PASSED. SPACE DEALS AGAIN";
+        return over();
+      }
+      if (high >= 0 && calls.length >= 4 && calls.slice(-3).every(x => x.b < 0)) return begin();
+      if (!p) {
+        phase = "call"; g.busy = false;
+        // Space makes the call a bot would make in your seat; the arrows change it.
+        hint = botCall(0);
+        myBid = Math.min(34, hint >= 0 ? hint : high + 1);
+        g.msg = "YOUR CALL. YOU HAVE " + hcp(t.hands[0]) + " POINTS";
+        return draw();
+      }
+      phase = "auction"; g.busy = true; draw();
+      later(() => { say(p, botCall(p)); ask((p + 1) % 4); }, 550);
+    };
+    const begin = () => {
+      const st = high % 5, side = by % 2;
+      declarer = calls.find(x => x.b >= 0 && x.b % 5 === st && x.p % 2 === side).p;
+      dummy = (declarer + 2) % 4; contract = high; shown = false; phase = "play";
+      t.start((declarer + 1) % 4);
+    };
+    const t = table(g, {
+      mine,
+      trump: () => TRUMP[contract % 5],
+      legal: (p, h) => t.follow(h),
+      played: () => { shown = true; },
+      took: w => SEATS[w] + (w ? " TAKES IT" : " TAKE IT"),
+      bot: (p, ok) => partnerBot(t, p, ok, TRUMP[contract % 5]),
+      prompt: () => (t.turn === 2 ? "PLAY FROM NORTH" : t.leading() && !t.gone.size ? "YOU LEAD FIRST AGAINST " + call(contract) : "YOUR TURN"),
+      done: () => {
+        const lvl = ((contract / 5) | 0) + 1, st = contract % 5, side = declarer % 2, need = lvl + 6, got = t.taken[side] + t.taken[side + 2];
+        let pts, who = side, m;
+        if (got >= need) {
+          const per = st < 2 ? 20 : 30, trick = st === 4 ? 40 + 30 * (lvl - 1) : per * lvl;
+          pts = trick + (got - need) * (st === 4 ? 30 : per) + (trick >= 100 ? 300 : 50) + (lvl === 6 ? 500 : lvl === 7 ? 1000 : 0);
+          m = (side ? "THEY MADE " : "YOU MADE ") + call(contract) + (got > need ? " WITH " + (got - need) + " OVER" : "");
+        } else {
+          pts = 50 * (need - got); who = 1 - side;
+          m = (side ? "THEY WENT DOWN " : "DOWN ") + (need - got);
+        }
+        score[who] += pts;
+        g.live = g.busy = false; phase = "idle"; played++;
+        g.msg = m + ". " + (who ? "THEM" : "US") + " +" + pts;
+        over();
+      },
+    });
+    const deal = () => {
+      dealer = (dealer + 1) % 4;
+      t.hands = deal4(); t.trick = []; t.view = 0; t.sel = 0; t.taken = [0, 0, 0, 0];
+      calls = []; last = []; high = by = contract = declarer = dummy = -1; shown = false; g.live = true;
+      ask(dealer);
+    };
+    const bid = b => () => { if (phase !== "call") return; say(0, b); ask(1); };
+    const nudge = d => { myBid = Math.min(34, Math.max(high + 1, myBid + d)); hint = myBid; };
+    g.buttons = () => {
+      if (phase === "call") return [
+        { label: "PASS", key: "p", act: bid(-1), on: true, lit: hint < 0 },
+        { label: "-", key: "-", act: () => nudge(-1), on: myBid > high + 1 },
+        { label: "BID " + call(myBid), key: "enter", act: bid(myBid), on: high < 34, lit: hint >= 0 },
+        { label: "+", key: "+", act: () => nudge(1), on: myBid < 34 },
+      ];
+      if (phase === "play") return [{ label: "PLAY", key: "enter", act: () => t.play(t.sel), on: t.ok(t.sel), lit: true }];
+      if (phase === "auction") return [{ label: "BIDDING", key: "", act: () => {}, on: false }];
+      return [{ label: "DEAL", key: "enter", act: deal, on: true, lit: true }];
+    };
+    g.key = k => {
+      if (k === "=" && phase === "call") { nudge(1); return true; }
+      if (!g.live || !k.startsWith("arrow")) return false;
+      if (phase === "call") nudge(k === "arrowleft" ? -1 : 1); else t.move(k === "arrowleft" ? -1 : 1);
+      return true;
+    };
+    g.click = (x, y) => {
+      const i = t.at(x, y);
+      if (i < 0 || phase !== "play") return false;
+      if (!t.play(i)) t.sel = i;
+      return true;
+    };
+    g.score = () => phase === "play"
+      ? call(contract) + " BY " + SEATS[declarer] + "   TRICKS US " + (t.taken[0] + t.taken[2]) + " THEM " + (t.taken[1] + t.taken[3])
+      : "SCORE US " + score[0] + "   THEM " + score[1];
+    // A face-up hand you aren't playing from right now (dummy, or yours while you play North), as four lines of ranks.
+    const listing = (p, x) => {
+      text(p === dummy ? SEATS[p] + " DUMMY" : SEATS[p], x, 10, dim);
+      ["♠", "♥", "♦", "♣"].forEach((su, j) => {
+        const y = 17 + j * 7;
+        text("SHDC"[j], x, y, dim);
+        text(suited(t.hands[p], su).map(c => c.r).reverse().join("") || "-", x + 6, y);
+      });
+    };
+    g.render = () => {
+      const playing = phase === "play" || (!g.live && contract >= 0);
+      t.render(p => {
+        if (!playing) return [SEATS[p] + (g.live && p === dealer ? (p ? " DEALS" : " DEAL") : ""), last[p] === undefined ? "" : call(last[p])];
+        return [SEATS[p], p === declarer ? "DECLARER" : p === dummy ? "DUMMY" : ""];
+      }, phase === "play" ? t.turn : phase === "call" ? 0 : -1, null, t.wait);
+      if (phase !== "play") return;
+      const other = declarer % 2 === 0 ? 2 - t.view : dummy;
+      if (other === 0 || shown) listing(other, other === 3 ? 150 : 2);
+    };
+    return g;
+  })();
+
+  const games = [blackjack, poker, baccarat, roulette, slots, hearts, spades, bridge];
   let game = blackjack, tabs = [], buttons = [];
   const choose = name => {
     const g = games.find(g => g.name === String(name || "").toUpperCase());
@@ -468,19 +943,26 @@
     ink = night ? "#acacac" : "#535353";
     dim = night ? "#5e5e5e" : "#c4c4c4";
     ctx.clearRect(0, 0, cv.width, cv.height);
+    // Two rows of tabs: the casino, then the card table.
     tabs = [];
-    let x = Math.round((W - games.reduce((t, g) => t + wide(g.name) + 8, -2)) / 2);
-    for (const g of games) {
-      const w = wide(g.name) + 6;
-      if (g === game) { px(x, 0, w, 9); text(g.name, x + 3, 2, null); }
-      else text(g.name, x + 3, 2, dim);
-      tabs.push({ g, x, w });
-      x += w + 2;
+    let x;
+    [games.filter(g => !g.cards), games.filter(g => g.cards)].forEach((row, j) => {
+      x = Math.round((W - row.reduce((t, g) => t + wide(g.name) + 8, -2)) / 2);
+      for (const g of row) {
+        const w = wide(g.name) + 6, y = j * 10;
+        if (g === game) { px(x, y, w, 9); text(g.name, x + 3, y + 2, null); }
+        else text(g.name, x + 3, y + 2, dim);
+        tabs.push({ g, x, y, w });
+        x += w + 2;
+      }
+    });
+    if (game.score) middle(game.score(), 22);
+    else {
+      const hi = "HI " + String(Math.round(best)).padStart(5, "0") + "  ", now = String(Math.round(chips)).padStart(5, "0");
+      x = Math.round((W - wide(hi + now)) / 2);
+      text(hi, x, 22, dim); text(now, x + wide(hi) + 1, 22);
     }
-    const hi = "HI " + String(Math.round(best)).padStart(5, "0") + "  ", now = String(Math.round(chips)).padStart(5, "0");
-    x = Math.round((W - wide(hi + now)) / 2);
-    text(hi, x, 12, dim); text(now, x + wide(hi) + 1, 12);
-    oy = 10; game.render(); oy = 0;
+    oy = OY; game.render(); oy = 0;
     middle(game.msg, H - 25);
     buttons = [];
     const list = game.buttons(), y = H - 12;
@@ -500,9 +982,9 @@
   const act = b => { b.act(); draw(); };
   cv.addEventListener("click", e => {
     const r = cv.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
-    if (y < 10) { const t = tabs.find(t => x >= t.x && x < t.x + t.w); if (t) choose(t.g.name); return; }
+    if (y < OY) { const t = tabs.find(t => y >= t.y && y < t.y + 10 && x >= t.x && x < t.x + t.w); if (t) choose(t.g.name); return; }
     if (y >= H - 13) { const b = buttons.find(b => b.on && x >= b.x - 1 && x <= b.x + b.w + 1); if (b) act(b); return; }
-    if (game.click && game.click(x, y - 10)) return draw();
+    if (game.click && game.click(x, y - OY)) return draw();
     const lit = buttons.find(b => b.on && b.lit);
     if (!game.live && lit) act(lit);
   });
@@ -512,6 +994,8 @@
     if ((k === " " || k === "enter") && e.target.closest && e.target.closest("button, a, summary")) return;
     if (k === "arrowleft" || k === "arrowright") {
       e.preventDefault();
+      // In the middle of a card game the arrows pick a card (or a bid); otherwise they switch games.
+      if (game.key && game.key(k)) return draw();
       choose(games[(games.indexOf(game) + (k === "arrowright" ? 1 : games.length - 1)) % games.length].name);
       return;
     }
@@ -534,8 +1018,10 @@
     if (h) h.textContent = "You're back online";
     if (p) p.textContent = "The page loads when this round ends.";
   };
-  let start = OWN && location.hash.slice(1);
+  // The offline page opens on the game in pages.offline_game_pick (window.casinoStart), or a random one.
+  let start = OWN ? location.hash.slice(1) : window.casinoStart || "random";
   try { if (!start && OWN) start = JSON.parse(localStorage.getItem("casino") || "{}").game; } catch {}
+  if (start === "random") start = games[Math.floor(Math.random() * games.length)].name;
   game = games.find(g => g.name === String(start || "").toUpperCase()) || blackjack;
   draw();
 })();

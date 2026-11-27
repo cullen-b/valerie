@@ -201,6 +201,10 @@ pub fn config_problems() -> (Vec<String>, usize) {
             if !["off", "system", "always"].contains(&c.pages.dark_mode.as_str()) {
                 problems.push(format!("pages: dark_mode is {:?}; use off, system or always", c.pages.dark_mode));
             }
+            const GAMES: [&str; 9] = ["random", "blackjack", "poker", "baccarat", "roulette", "slots", "hearts", "spades", "bridge"];
+            if !GAMES.contains(&c.pages.offline_game_pick.as_str()) {
+                problems.push(format!("pages: offline_game_pick is {:?}; use one of {}", c.pages.offline_game_pick, GAMES.join(", ")));
+            }
             if !["none", "invert"].contains(&c.pages.dark_fallback.as_str()) {
                 problems.push(format!("pages: dark_fallback is {:?}; use none or invert", c.pages.dark_fallback));
             }

@@ -796,12 +796,15 @@ pub enum Command {
     SavedSettings,
     /// The Task Manager page: each tab's memory and CPU, Valerie's own processes (valerie://page/task-manager).
     TaskManager,
-    /// Casino games drawn as pixel art (valerie://page/casino; also on the "You're offline" page), one per command.
+    /// Casino and card games drawn as pixel art (valerie://page/casino; also on the "You're offline" page), one per command.
     PlayBlackjack,
     PlayPoker,
     PlayBaccarat,
     PlayRoulette,
     PlaySlots,
+    PlayHearts,
+    PlaySpades,
+    PlayBridge,
     /// A chat where the user's AI helps find out what went wrong (the triage playbook).
     ReportProblem,
     /// The browser extensions Valerie loaded (and their buttons).
@@ -1055,6 +1058,9 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("play_baccarat", "Play Baccarat"),
     ("play_roulette", "Play Roulette"),
     ("play_slots", "Play Slots"),
+    ("play_hearts", "Play Hearts (against three bots)"),
+    ("play_spades", "Play Spades (you and a bot partner against two bots)"),
+    ("play_bridge", "Play Bridge (you and a bot partner against two bots)"),
     ("extensions", "Extensions"),
     ("quit", "Quit Valerie"),
 ];
