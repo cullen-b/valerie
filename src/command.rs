@@ -429,6 +429,9 @@ pub enum Command {
         /// Send it to the Chats space without showing it, so the user keeps browsing (Shift+Enter in the command bar).
         #[serde(default)]
         background: bool,
+        /// Open it as a tab in this space and go there (Cmd+Shift+Enter in the command bar).
+        #[serde(default)]
+        go_to_tab: bool,
     },
     /// The project folder a chat's agent works in ("" = none), before its first message.
     SetChatFolder {

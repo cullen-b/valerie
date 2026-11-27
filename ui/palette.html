@@ -68,7 +68,7 @@ html.anim-command-bar-selection .item.sel { background: none; box-shadow: none; 
 <div id="card">
   <div id="inputrow"><span class="glyph">⌕</span><span id="scope"></span><input id="q" spellcheck="false" autocomplete="off" placeholder="Search or enter URL…"></div>
   <div id="list"></div>
-  <div id="foot"><span><kbd>↑↓</kbd>navigate</span><span><kbd>↵</kbd><span id="foot-enter">open</span></span><span><kbd>⇧↵</kbd><span id="foot-shift">open in new tab</span></span><span id="foot-esc"><kbd>esc</kbd>close</span></div>
+  <div id="foot"><span><kbd>↑↓</kbd>navigate</span><span><kbd>↵</kbd><span id="foot-enter">open</span></span><span><kbd id="foot-shift-key">⇧↵</kbd><span id="foot-shift">open in new tab</span></span><span id="foot-esc"><kbd>esc</kbd>close</span></div>
 </div>
 <script>
 // Mac symbols only on a Mac.
@@ -401,19 +401,23 @@ function mark(instant, key) {
 }
 // On "Ask agent" the footer says what Enter and Shift+Enter do there.
 function foot() {
-  const ask = results[sel] && results[sel].kind === "agent" && (D.options || {}).shift_enter_to_chats !== false;
-  document.getElementById("foot-enter").textContent = ask ? "ask here" : "open";
-  document.getElementById("foot-shift").textContent = ask ? "send to Chats, keep browsing" : "open in new tab";
+  const o = D.options || {}, agent = results[sel] && results[sel].kind === "agent", mac = /Mac/.test(navigator.platform);
+  const cmd = agent && o.cmd_enter_keeps_browsing !== false, ask = agent && (cmd || o.shift_enter_to_chats !== false);
+  document.getElementById("foot-enter").textContent = agent ? "ask here" : "open";
+  document.getElementById("foot-shift-key").textContent = cmd ? (mac ? "⌘↵" : "Ctrl+Enter") : (mac ? "⇧↵" : "Shift+Enter");
+  document.getElementById("foot-shift").textContent = ask ? (cmd ? "send, keep browsing" : "send to Chats, keep browsing") : "open in new tab";
 }
 
-function choose(r, newTab) {
+function choose(r, newTab, mod) {
   if (!r) return;
   const nt = D.mode === "current" ? !!newTab : true;
   let c;
   if ((r.kind === "agent" || r.kind === "customize") && !r.cmd) return;
   if (r.kind === "site") return enterScope(r.site);
   if (r.kind === "go") c = { cmd: "go", input: r.go, new_tab: nt };
-  else if (r.kind === "agent" && newTab && (D.options || {}).shift_enter_to_chats !== false) c = { ...r.cmd, background: true };
+  else if (r.kind === "agent" && mod && newTab && (D.options || {}).cmd_shift_enter_goes_to_chat !== false) c = { ...r.cmd, go_to_tab: true };
+  else if (r.kind === "agent" && mod && !newTab && (D.options || {}).cmd_enter_keeps_browsing !== false) c = { ...r.cmd, background: true };
+  else if (r.kind === "agent" && newTab && !mod && (D.options || {}).shift_enter_to_chats !== false) c = { ...r.cmd, background: true };
   else if (r.cmd) c = r.cmd;
   else if (r.tab != null) c = { cmd: "activate_tab", tab: r.tab };
   else if (r.url) c = { cmd: "go", input: r.url, new_tab: nt };
@@ -440,7 +444,7 @@ q.addEventListener("keydown", (e) => {
     if (v && D.prompt.secret) send({ t: "one_time_key", nonce: D.prompt.nonce, key: v });
     else if (v) send({ t: "cmd", cmd: Object.assign({}, D.prompt.then, { [D.prompt.field]: v }) });
   }
-  else if (k === "Enter") { e.preventDefault(); choose(results[sel], e.shiftKey); }
+  else if (k === "Enter") { e.preventDefault(); choose(results[sel], e.shiftKey, /Mac/.test(navigator.platform) ? e.metaKey : e.ctrlKey); }
   else if (k === "Escape") { e.preventDefault(); close(); }
 });
 document.getElementById("backdrop").onmousedown = close;

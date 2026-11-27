@@ -459,7 +459,9 @@ A chat started from a space opens as a normal tab there (`chats.from_space`: tab
 stays in Chats' Closed list; reopening the tab brings it back). It's in the Chats space too. float shows it in the middle of
 the window instead (Esc sends it on to Chats, Shift+Esc goes to Chats with it); chats switches to the Chats space. In the
 command bar, Shift+Enter on "Ask agent" starts the chat without showing it (a background tab with tab, else Chats) (`command_bar.shift_enter_to_chats`; a one-time tip says so,
-`command_bar.send_to_chats_tip`).
+`command_bar.send_to_chats_tip`). Cmd+Enter (Ctrl+Enter off a Mac) does the same and a notification says when it's answered; clicking
+it goes to the chat (`command_bar.cmd_enter_keeps_browsing`). Cmd+Shift+Enter sends it and goes to the chat's tab
+(`command_bar.cmd_shift_enter_goes_to_chat`).
 Closed chats go to a folded "Closed" list at the bottom of the Chats sidebar (`chats.closed_list`); `reopen_chat`
 brings one back (a coding chat gets its worktree again).
 Spaces: right-click a space's icon to rename or remove it (`delete_space` archives its tabs and takes a space from

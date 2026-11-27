@@ -8822,7 +8822,7 @@ impl App {
                 self.chats.insert(0, c);
                 self.show_chat_here();
             }
-            Command::NewChat { prompt, agent, folder, in_project, background } => {
+            Command::NewChat { prompt, agent, folder, in_project, background, go_to_tab } => {
                 let from_bar = self.bar_open;
                 // Shift+Enter in the command bar: off to Chats while the user keeps browsing (moot when Chats is on screen).
                 let background = background && !self.chats_open && self.chats_block_rect().is_none();
@@ -8855,7 +8855,12 @@ impl App {
                     self.set_chat_folder(&id, &f);
                 }
                 let as_tab = background && self.config.chats.from_space == "tab";
-                if as_tab {
+                // Cmd+Shift+Enter: the chat becomes a tab here and the user goes with it (not from inside Chats).
+                if go_to_tab && !background && !self.chats_open && self.config.chats.enabled && self.chats_block_rect().is_none() {
+                    self.close_bar();
+                    self.close_peek();
+                    self.open_chat_tab(&id, true);
+                } else if as_tab {
                     self.close_bar();
                     self.open_chat_tab(&id, false);
                 } else if background {
@@ -8871,11 +8876,13 @@ impl App {
                     self.toast(&format!("Opened in a tab: {name} is on it"));
                 } else if background {
                     self.toast(&format!("Sent to Chats: {name} is on it"));
-                } else if from_bar && self.config.command_bar.shift_enter_to_chats && self.config.command_bar.send_to_chats_tip
+                } else if from_bar && (self.config.command_bar.shift_enter_to_chats || self.config.command_bar.cmd_enter_keeps_browsing) && self.config.command_bar.send_to_chats_tip
                     && self.state.tips_shown.insert("send_to_chats".into())
                 {
                     self.dirty = true;
-                    self.toast("Tip: Shift+Enter sends a question to Chats, so you can keep browsing while the agent works");
+                    let key = if cfg!(target_os = "macos") { "⌘↵" } else { "Ctrl+Enter" };
+                    let tip = if self.config.command_bar.cmd_enter_keeps_browsing { format!("Tip: {key} sends a question off so you can keep browsing; you're told when it's answered") } else { "Tip: Shift+Enter sends a question to Chats, so you can keep browsing while the agent works".into() };
+                    self.toast(&tip);
                 }
             }
             Command::SendChat { chat, text, agent, model, effort, access, plan, files } => {
@@ -11189,7 +11196,7 @@ impl App {
                     self.run_task(&t.name);
                 }
             }
-            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false }, elwt),
+            UserEvent::AiActionReady { prompt, agent } => self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false, go_to_tab: false }, elwt),
             UserEvent::OtherChats { list, here, t3 } => {
                 self.other_chats = list;
                 self.other_apps_here = here;
@@ -13482,7 +13489,7 @@ impl App {
         let view = tab.and_then(|t| self.views.get(&t.id));
         if a.mode == "chat" {
             if !prompt.contains("{selection}") {
-                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false }, elwt);
+                return self.dispatch(Command::NewChat { prompt: Some(prompt), agent, folder: None, in_project: false, background: false, go_to_tab: false }, elwt);
             }
             let Some(v) = view else { return self.toast("Open a page and select some text first") };
             let p = self.proxy.clone();

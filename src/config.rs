@@ -413,6 +413,10 @@ pub struct CommandBarConfig {
     #[serde(default = "yes")]
     pub exact_command_first: bool,
     pub shift_enter_to_chats: bool,
+    #[serde(default = "yes")]
+    pub cmd_enter_keeps_browsing: bool,
+    #[serde(default = "yes")]
+    pub cmd_shift_enter_goes_to_chat: bool,
     pub send_to_chats_tip: bool,
     #[serde(default = "yes")]
     pub over_other_apps: bool,

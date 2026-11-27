@@ -250,6 +250,11 @@ command_bar:
                            # customizes Valerie either way. true | false
   shift_enter_to_chats: true  # Shift+Enter on "Ask agent" sends the chat to the Chats space and you keep browsing (Enter
                            # opens it where you are). false = Shift+Enter does the same as Enter. true | false
+  cmd_enter_keeps_browsing: true  # Cmd+Enter (Ctrl+Enter off a Mac) on "Ask agent" sends the chat off and you stay on the
+                           # page you were on; a notification says when it's answered, and clicking it takes you to the
+                           # chat's tab. false = it does the same as Enter. true | false
+  cmd_shift_enter_goes_to_chat: true  # Cmd+Shift+Enter (Ctrl+Shift+Enter off a Mac) on "Ask agent" sends the chat and takes
+                           # you to the tab it's in (whatever chats.from_space says). false = it does the same as Enter
   send_to_chats_tip: true  # the first time you ask an agent from the command bar, one message says Shift+Enter sends it
                            # to Chats instead (shown once, ever). true | false
   over_other_apps: true    # a global shortcut (cmd+D) pressed in another app opens just the command bar over that app;
