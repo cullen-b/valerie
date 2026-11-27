@@ -145,6 +145,8 @@ sidebar:
   remove_closed_saved_tabs: true # a closed (unloaded) pinned or kept row shows × on hover: it removes the tab from the
                            # sidebar. So − then × (pointer still on the row) closes it for good. false = no button once closed
   close_folder_with_last_tab: true # closing (−) the last open tab in a folder also folds the folder up. false = it stays open
+  closed_tab_goes_home: true # closing (−) a pinned or kept tab sends it back to its pinned page, so opening it again starts
+                           # there. false = it reopens on the page you were last on
   folder_animation: slide  # how a folder opens and folds up. one of: slide (its tabs slide up into the folder and back
                            # out) | fade (they fade as the folder shrinks or grows) | none (it snaps open or shut)
   folder_animation_ms: 320 # how long that takes, in milliseconds (0 = no animation; layout.animation_ms: 0 also turns it off)

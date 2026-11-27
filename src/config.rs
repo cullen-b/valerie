@@ -313,6 +313,7 @@ pub struct SidebarConfig {
     pub minus_for_saved_tabs: bool,
     pub remove_closed_saved_tabs: bool,
     pub close_folder_with_last_tab: bool,
+    pub closed_tab_goes_home: bool,
     pub folder_animation: String,
     pub folder_animation_ms: f64,
     pub new_tab_button: bool,

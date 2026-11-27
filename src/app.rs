@@ -4438,6 +4438,17 @@ impl App {
             // Like Arc: closing a pinned tab unloads it but keeps it in the sidebar.
             let was_active = self.state.active_tab() == Some(tab);
             self.unload(tab);
+            if self.config.sidebar.closed_tab_goes_home {
+                let home = self.state.tabs.get(&tab).and_then(|t| t.pinned_url.clone()).filter(|h| self.state.tabs.get(&tab).is_some_and(|t| &t.url != h));
+                if let Some(home) = home {
+                    let title = self.state.history.iter().find(|h| h.url == home).map(|h| h.title.clone()).filter(|t| !t.is_empty());
+                    if let Some(t) = self.state.tabs.get_mut(&tab) {
+                        t.title = title.unwrap_or_else(|| home.clone());
+                        t.url = home;
+                    }
+                    self.committed_url.remove(&tab);
+                }
+            }
             if self.config.sidebar.close_folder_with_last_tab {
                 self.close_emptied_folders(tab);
             }
