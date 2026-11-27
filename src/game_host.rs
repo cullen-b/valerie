@@ -56,11 +56,15 @@ fn link(base: &str, token: &str) -> String {
 }
 
 /// Start hosting: the server now, the tunnel in the background (`{ready: link}` or `{error}` arrives as a GameHost event).
-pub fn start(proxy: EventLoopProxy<UserEvent>) -> Value {
+/// Without cloudflared and without `may_download`, nothing starts: `{state: "needs_download"}` (the user is asked first).
+pub fn start(proxy: EventLoopProxy<UserEvent>, may_download: bool) -> Value {
     let mut room = ROOM.lock().unwrap();
     if room.is_some() {
         drop(room);
         return status();
+    }
+    if !may_download && installed().is_none() {
+        return json!({ "state": "needs_download" });
     }
     let server = match tiny_http::Server::http(("127.0.0.1", 0)) {
         Ok(s) => Arc::new(s),
@@ -140,6 +144,7 @@ fn stop_session(session: u64) {
             let _ = c.kill();
             let _ = c.wait();
         }
+        let _ = std::fs::remove_file(pid_file());
         crate::log::line("games", "hosting stopped");
     }
     NEW_FRAME.notify_all();
@@ -278,6 +283,8 @@ fn open_tunnel(port: u16) -> Result<(std::process::Child, String), String> {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("couldn't start cloudflared: {e}"))?;
+    // Remembered so a Valerie that crashed can end it next time it starts (clean_up_leftovers).
+    let _ = std::fs::write(pid_file(), child.id().to_string());
     let err = child.stderr.take().ok_or("cloudflared has no output")?;
     let (tx, rx) = std::sync::mpsc::channel();
     // The address comes first; it works once a connection to Cloudflare is registered. Keeps reading after that, so
@@ -307,18 +314,53 @@ fn open_tunnel(port: u16) -> Result<(std::process::Child, String), String> {
     }
 }
 
-/// cloudflared: one Valerie downloaded before, one already installed, or a fresh download from Cloudflare's releases.
-fn cloudflared() -> Result<PathBuf, String> {
-    let name = if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" };
-    let own = crate::config::data_dir().join("bin").join(name);
+fn pid_file() -> PathBuf {
+    crate::config::data_dir().join("bin").join("quick-tunnel.pid")
+}
+
+/// At launch: a tunnel Valerie started before it crashed is still running for nobody, so end it. Only a process whose
+/// command line names Valerie's own quick-tunnel.yml, never someone's other cloudflared.
+pub fn clean_up_leftovers() {
+    let Some(pid) = std::fs::read_to_string(pid_file()).ok().and_then(|s| s.trim().parse::<u32>().ok()) else { return };
+    let _ = std::fs::remove_file(pid_file());
+    #[cfg(unix)]
+    let ours = crate::platform::command("ps").args(["-p", &pid.to_string(), "-o", "command="]).output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("quick-tunnel.yml"));
+    // tasklist shows no command lines; the process name and the pid Valerie wrote down have to do.
+    #[cfg(windows)]
+    let ours = crate::platform::command("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH"]).output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains("cloudflared"));
+    if !ours {
+        return;
+    }
+    #[cfg(unix)]
+    let _ = crate::platform::command("kill").arg(pid.to_string()).status();
+    #[cfg(windows)]
+    let _ = crate::platform::command("taskkill").args(["/PID", &pid.to_string(), "/F"]).status();
+    crate::log::line("games", "ended a game tunnel left running when Valerie last quit unexpectedly");
+}
+
+fn exe_name() -> &'static str {
+    if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" }
+}
+
+/// cloudflared already here: one Valerie downloaded before, or one installed on this computer.
+fn installed() -> Option<PathBuf> {
+    let own = crate::config::data_dir().join("bin").join(exe_name());
     if own.exists() {
-        return Ok(own);
+        return Some(own);
     }
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
-    if let Some(found) = dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file()) {
+    dirs.into_iter().map(|d| d.join(exe_name())).find(|p| p.is_file())
+}
+
+/// cloudflared: one already here, or a fresh download from Cloudflare's releases (the user said yes to it first).
+fn cloudflared() -> Result<PathBuf, String> {
+    if let Some(found) = installed() {
         return Ok(found);
     }
+    let own = crate::config::data_dir().join("bin").join(exe_name());
     download(&own)?;
     Ok(own)
 }

@@ -171,6 +171,9 @@
       done(h, total(h.cards) > 21 ? "BUST. " : "");
     };
     g.changed = p => { const h = hands.find(h => h.who === p); if (h && !h.done) { h.done = true; check(); } };
+    // The turn timer and SKIP: hands still being played (each card restarts the clock); standing is the move made for them.
+    g.waiting = () => (g.live && !g.busy ? hands.filter(h => !h.done).map(h => ({ seat: h.seat, key: h.cards.length })) : []);
+    g.auto = seat => { const h = hands.find(h => h.seat === seat && !h.done); if (h) done(h, ""); };
     g.buttons = () => {
       const h = mine(), play = g.live && !g.busy && h && !h.done;
       return [
@@ -345,6 +348,14 @@
       hurry();
       g.notes = { [me]: folded[me] ? "YOU FOLDED" : "" }; g.msg = "";
       draw(); wait();
+    };
+    // The turn timer and SKIP: the move made for someone is a check when it's free, else a fold.
+    g.waiting = () => (g.live && waiting >= 0 ? [{ seat: waiting, key: street + ":" + says.join() }] : []);
+    g.auto = seat => {
+      if (seat !== waiting) return;
+      const was = me;
+      me = seat;
+      try { you(bet - put[seat] > 0 ? "fold" : "call")(); } finally { me = was; }
     };
     // Someone who leaves mid-hand folds.
     g.changed = p => {
@@ -611,7 +622,7 @@
         s.wait = true; s.actor = a; g.busy = false;
         const ok = s.legal(s.turn), h = s.hands[s.turn];
         if (!ok.includes(h[s.sel[a]])) s.sel[a] = h.indexOf(ok[0]);
-        g.msg = () => (me === s.actor ? o.prompt() : nm(s.actor) + " TO PLAY");
+        g.msg = () => (me === a ? o.prompt() : nm(a) + " TO PLAY");
         return draw();
       }
       s.wait = false; s.actor = -1; g.busy = true; draw();
@@ -634,6 +645,15 @@
     s.start = p => { s.trick = []; s.taken = [0, 0, 0, 0]; s.gone = new Set(); s.turn = p; step(); };
     // Someone joined or left: a turn a person was waiting on goes to whoever plays that seat now.
     s.kick = () => { if (s.wait && o.who(s.turn) !== s.actor) step(); };
+    // Out of time or skipped: the card a bot would play.
+    s.auto = () => {
+      if (!s.wait) return;
+      const c = o.bot(s.turn, s.legal(s.turn));
+      s.wait = false; s.actor = -1;
+      put(s.turn, c);
+    };
+    // Who the table waits on while a card is to be played; each card played restarts the clock.
+    s.waiting = () => (s.wait ? [{ seat: s.actor, key: "play" + s.gone.size }] : []);
     s.play = i => {
       if (!s.ok(i)) return false;
       const c = s.hands[s.turn][i];
@@ -802,6 +822,18 @@
     };
     const pass = () => { if (marked[me].size !== 3 || ready[me]) return; ready[me] = true; swap(); };
     g.changed = () => { swap(); t.kick(); };
+    // The turn timer and SKIP: people still to pass pass the cards a bot would; a card to play is the one a bot would.
+    g.waiting = () => (phase === "pass" ? [0, 1, 2, 3].filter(p => human(g, p) && !ready[p]).map(seat => ({ seat, key: "pass" })) : t.waiting());
+    g.auto = p => {
+      if (phase === "pass") {
+        if (!human(g, p) || ready[p]) return;
+        const h = t.hands[p];
+        marked[p] = new Set([...h].sort((a, b) => danger(b, h) - danger(a, h)).slice(0, 3));
+        ready[p] = true;
+        return swap();
+      }
+      if (t.actor === p) t.auto();
+    };
     g.buttons = () => {
       if (phase === "pass") {
         const full = marked[me].size === 3, done = ready[me];
@@ -885,7 +917,7 @@
       if (bids.every(b => b !== null)) { phase = "play"; return t.start((dealer + 1) % 4); }
       if (human(g, p)) {
         phase = "bid"; bidder = p; g.busy = false;
-        g.msg = () => (me === bidder ? "HOW MANY TRICKS WILL YOU TAKE?" : nm(bidder) + " IS BIDDING");
+        g.msg = () => (me === p ? "HOW MANY TRICKS WILL YOU TAKE?" : nm(p) + " IS BIDDING");
         return draw();
       }
       phase = "wait"; g.busy = true; draw();
@@ -906,6 +938,12 @@
     g.changed = () => {
       if (phase === "bid" && !human(g, bidder)) { bids[bidder] = est(t.hands[bidder]); ask((bidder + 1) % 4); }
       t.kick();
+    };
+    // The turn timer and SKIP: a bid made for someone is the one their buttons suggest; a card, the one a bot would play.
+    g.waiting = () => (phase === "bid" ? [{ seat: bidder, key: "bid" }] : t.waiting());
+    g.auto = p => {
+      if (phase === "bid" && bidder === p) { bids[p] = myBid[p]; phase = "wait"; ask((p + 1) % 4); }
+      else if (t.actor === p) t.auto();
     };
     g.buttons = () => {
       const b = myBid[me];
@@ -1005,7 +1043,7 @@
         // Space makes the call a bot would make in your seat; the arrows change it.
         hint[p] = botCall(p);
         myBid[p] = Math.min(34, hint[p] >= 0 ? hint[p] : high + 1);
-        g.msg = () => (me === caller ? "YOUR CALL. YOU HAVE " + hcp(t.hands[me]) + " POINTS" : nm(caller) + " TO CALL");
+        g.msg = () => (me === p ? "YOUR CALL. YOU HAVE " + hcp(t.hands[me]) + " POINTS" : nm(p) + " TO CALL");
         return draw();
       }
       phase = "auction"; g.busy = true; draw();
@@ -1059,6 +1097,12 @@
     g.changed = () => {
       if (phase === "call" && !human(g, caller)) { const p = caller; say(p, botCall(p)); ask((p + 1) % 4); }
       t.kick();
+    };
+    // The turn timer and SKIP: the call or card a bot would make in that seat.
+    g.waiting = () => (phase === "call" ? [{ seat: caller, key: "call" + calls.length }] : t.waiting());
+    g.auto = p => {
+      if (phase === "call" && caller === p) { say(p, botCall(p)); ask((p + 1) % 4); }
+      else if (t.actor === p) t.auto();
     };
     g.buttons = () => {
       const b = myBid[me], h = hint[me];
@@ -1198,11 +1242,14 @@
       x = Math.round((W - wide(hi + now)) / 2);
       text(hi, x, 22, dim); text(now, x + wide(hi) + 1, 22);
     } else middle("CHIPS " + String(Math.round(who.chips)).padStart(5, "0"), 22);
+    // The turn timer: yours when it's your move; the host sees whoever's.
+    const left = timeLeft(who === host ? null : me);
+    if (left !== null) right(left + "S", W - 1, 22, left <= 10 ? ink : dim);
     if (helping) helpLines().forEach(([l, i], j) => text(l, 4, 31 + j * 7 + i * 3));
     else { oy = OY; game.render(); oy = 0; }
     const msg = note || msgOf(game);
     middle(msg, H - 25);
-    const buttons = layout(game.buttons()), y = H - 12;
+    const buttons = layout(who === host ? hostButtons() : game.buttons()), y = H - 12;
     for (const b of buttons) {
       const { x, w } = b, c = b.on ? ink : dim, solid = b.lit && b.on;
       if (solid) { px(x, y, w, 11, c); text(b.label, x + 3, y + 2, null); }
@@ -1246,6 +1293,8 @@
   const invite = () => {
     valerie.call("host_game").then(r => {
       if (r.error) { hosting = "off"; return note("COULDN'T OPEN A LINK. THE LOG SAYS WHY"); }
+      // Valerie asks before downloading cloudflared; the answer comes back through casinoHost.
+      if (r.state === "asking") return note("FRIENDS NEED CLOUDFLARED. VALERIE IS ASKING");
       hosting = r.state === "ready" ? "ready" : "starting";
       note(hosting === "ready" ? "LINK COPIED. SEND IT TO FRIENDS" : "OPENING A LINK FOR FRIENDS");
     }).catch(() => note("COULDN'T OPEN A LINK. THE LOG SAYS WHY"));
@@ -1305,9 +1354,37 @@
     } finally { me = 0; }
     draw();
   };
+  // Nobody holds up the table (pages.game_turn_seconds, pages.game_skip_button): with friends playing, each move a person owes
+  // has a clock, and SKIP lets you make it for them. Either way the move made is the one a bot would make (game.auto).
+  let turnSeconds = 30, skipOn = true, clock = {};
+  const together = () => hosting !== "off" && people.length > 1;
+  const waitedOn = () => (together() && game.waiting ? game.waiting() : []);
+  const stamp = w => game.name + w.seat + ":" + w.key;
+  // Seconds left for a seat's move (any seat's, soonest first, for null), or null when there's no clock.
+  const timeLeft = seat => {
+    if (!turnSeconds) return null;
+    const now = performance.now(), ends = waitedOn().filter(w => seat === null || w.seat === seat).map(w => (clock[stamp(w)] || now) + turnSeconds * 1000 - now);
+    return ends.length ? Math.max(0, Math.ceil(Math.min(...ends) / 1000)) : null;
+  };
+  const hostButtons = () => {
+    const list = game.buttons(), others = skipOn ? waitedOn().filter(w => w.seat !== seatOf(game, 0)) : [];
+    if (others.length) list.push({ label: "SKIP", key: "k", act: () => others.forEach(w => game.auto(w.seat)), on: true });
+    return list;
+  };
+  setInterval(() => {
+    const waits = waitedOn();
+    if (!waits.length) { clock = {}; return; }
+    const now = performance.now(), next = {};
+    for (const w of waits) next[stamp(w)] = clock[stamp(w)] || now;
+    clock = next;
+    if (turnSeconds) waits.filter(w => now - clock[stamp(w)] >= turnSeconds * 1000).forEach(w => game.auto(w.seat));
+    draw();
+  }, 1000);
   const freeK = () => { let k = 1; while (people.some(p => p.k === k)) k++; return k; };
   window.casinoHost = m => {
     if (m.ready) { hosting = "ready"; note("LINK COPIED. SEND IT TO FRIENDS"); }
+    else if (m.state === "starting") { hosting = "starting"; note("DOWNLOADING CLOUDFLARED, THEN OPENING A LINK"); }
+    else if (m.declined) note("NO LINK FOR FRIENDS WITHOUT CLOUDFLARED");
     else if (m.error) { hosting = "off"; note("COULDN'T OPEN A LINK. THE LOG SAYS WHY"); }
     else if (m.stopped) { hosting = "off"; everyoneLeft(); draw(); }
     else if (m.join) {
@@ -1328,6 +1405,8 @@
     // A reload ends any hosting the page did before (its friends' seats went with it).
     valerie.call("hosting_status").then(st => {
       invitesOn = !!st.on;
+      if (st.turn_seconds !== undefined) turnSeconds = Math.max(0, +st.turn_seconds || 0);
+      if (st.skip !== undefined) skipOn = !!st.skip;
       if (st.state && st.state !== "off") valerie.call("stop_hosting").catch(() => {});
       draw();
     }).catch(() => {});
@@ -1364,7 +1443,7 @@
       return;
     }
     if (e.repeat) return;
-    const all = game.buttons(), b = k === " " ? all.find(b => b.on && b.lit) : all.find(b => b.on && b.key === k);
+    const all = hostButtons(), b = k === " " ? all.find(b => b.on && b.lit) : all.find(b => b.on && b.key === k);
     if (b) {
       e.preventDefault();
       // A short pause after a round ends, so pressing Space again right away doesn't skip past the result.

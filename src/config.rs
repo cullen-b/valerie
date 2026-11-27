@@ -1024,6 +1024,8 @@ pub struct PagesConfig {
     pub crash_reloads_per_minute: u32,
     pub site_print: bool,
     pub game_invites: bool,
+    pub game_turn_seconds: u32,
+    pub game_skip_button: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

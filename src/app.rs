@@ -10791,7 +10791,11 @@ impl App {
                 }
             }
             UserEvent::WidgetTick => self.refresh_widgets(),
-            UserEvent::GameHost(v) => {
+            UserEvent::GameHost(mut v) => {
+                // The answer to "Download cloudflared?": yes starts hosting (downloading first); the page hears either way.
+                if let Some(ok) = v["download"].as_bool() {
+                    v = if ok { crate::game_host::start(self.proxy.clone(), true) } else { json!({ "declined": true }) };
+                }
                 if let Some(link) = v["ready"].as_str() {
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(link));
                 }
@@ -12465,6 +12469,7 @@ pub fn run(config: Config, urls: Vec<String>) -> Result<()> {
     muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| send(&p, UserEvent::Menu(e.id))));
     crate::mcp::set_web_tools(config.mcp.web_tools);
     crate::mcp::set_ask_user(config.mcp.ask_user);
+    std::thread::spawn(crate::game_host::clean_up_leftovers);
     if config.mcp.enabled {
         crate::mcp::spawn(config.mcp.port, crate::mcp::load_or_create_token(), proxy.clone());
     }
@@ -15994,9 +15999,17 @@ impl App {
             "host_game" if !self.config.pages.game_invites => Err("inviting friends to the games is off (pages.game_invites)".into()),
             "host_game" => {
                 // Already open: INVITE (then LINK) copies the link again.
-                let r = crate::game_host::start(self.proxy.clone());
+                let r = crate::game_host::start(self.proxy.clone(), false);
                 if let Some(link) = r["url"].as_str() {
                     let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(link));
+                }
+                // No cloudflared yet: ask before downloading it. The answer arrives as GameHost {download}.
+                if r["state"] == "needs_download" {
+                    let px = self.proxy.clone();
+                    platform::ask(&self.chrome, "Download cloudflared to play with friends?",
+                        "Friends join your games through a free Cloudflare tunnel, which needs Cloudflare's cloudflared program (about 40 MB, from Cloudflare's GitHub releases). Valerie keeps it in its own folder.",
+                        "Download", "Not Now", move |ok| send(&px, UserEvent::GameHost(json!({ "download": ok }))));
+                    return Ok(json!({ "state": "asking" }));
                 }
                 Ok(r)
             }
@@ -16008,6 +16021,8 @@ impl App {
             "hosting_status" => {
                 let mut s = crate::game_host::status();
                 s["on"] = json!(self.config.pages.game_invites);
+                s["turn_seconds"] = json!(self.config.pages.game_turn_seconds);
+                s["skip"] = json!(self.config.pages.game_skip_button);
                 Ok(s)
             }
             "forget_download" => {
