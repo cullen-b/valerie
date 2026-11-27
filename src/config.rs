@@ -1017,6 +1017,7 @@ pub struct PagesConfig {
     pub error_page: bool,
     pub offline_game: bool,
     pub offline_game_pick: String,
+    pub game_help: bool,
     pub http_sign_in: bool,
     pub visit_anyway: bool,
     pub crash_reloads_per_minute: u32,

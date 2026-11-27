@@ -811,7 +811,10 @@ fn page_source(name: &str) -> Option<(String, bool)> {
     if let Ok(html) = std::fs::read_to_string(pages_dir().join(format!("{name}.html"))) {
         return Some((html, false));
     }
-    BUILT_IN_PAGES.contains(&name).then(|| (ui(&format!("pages/{name}.html")), true))
+    let html = BUILT_IN_PAGES.contains(&name).then(|| ui(&format!("pages/{name}.html")))?;
+    // pages.game_help off: the casino's games leave out their ? and rules.
+    let off = name == "casino" && !platform::GAME_HELP.load(std::sync::atomic::Ordering::Relaxed);
+    Some((if off { html.replacen("<main>", "<main><script>window.casinoHelp=false</script>", 1) } else { html }, true))
 }
 
 /// The tools a page asks for: `<meta name="valerie-tools" content="open_tab close_tab">`.
@@ -6672,6 +6675,7 @@ impl App {
         if let Ok(mut pick) = platform::OFFLINE_GAME_PICK.write() {
             pick.clone_from(&self.config.pages.offline_game_pick);
         }
+        platform::GAME_HELP.store(self.config.pages.game_help, std::sync::atomic::Ordering::Relaxed);
         platform::SITE_PRINT.store(self.config.pages.site_print, std::sync::atomic::Ordering::Relaxed);
         platform::VISIT_ANYWAY.store(self.config.pages.visit_anyway, std::sync::atomic::Ordering::Relaxed);
         BLOCK_POPUPS.store(self.config.links.block_popups, std::sync::atomic::Ordering::Relaxed);

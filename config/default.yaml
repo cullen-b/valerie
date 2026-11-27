@@ -592,6 +592,8 @@ pages:
                            # play_bridge; hide them with command_bar.hide_commands). false = just the message. true | false
   offline_game_pick: random # which game the "You're offline" page opens on. One of: random (a different one each time) |
                            # blackjack | poker | baccarat | roulette | slots | hearts | spades | bridge
+  game_help: true          # those games have a ? in the corner that shows how to play the one you're on (also the ? key).
+                           # false = no ? and no rules. true | false
   http_sign_in: true       # Mac: the name and password box for sites that ask the old way (HTTP sign-in: routers, staging
                            # sites, intranets). false = such sites only show their "401" page. true | false
   visit_anyway: true       # Mac: the error page for a site whose security certificate can't be checked has "Visit anyway"
